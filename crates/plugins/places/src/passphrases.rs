@@ -15,7 +15,7 @@ use std::sync::Arc;
 use skwir_core::app::{App, NotifyLevel, SecretAnswer};
 use skwir_core::cancel::CancelToken;
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::{Arg, Words};
 
 /// Where Skwir's own passphrases are in the keyring
 /// (`skwir_platform::secrets`): one record per volume, by its UUID.
@@ -129,12 +129,25 @@ pub fn note(app: &App, uuid: &str, kept: bool) {
 }
 
 /// The locked volume to open: its device, what the question calls it
-/// (`None`: "this volume"), and its UUID where known (what its passphrase
-/// is kept by).
+/// (its label as written, or Skwir's words for one without, `4 TB
+/// encrypted`; `None`: "this volume"), and its UUID where known (what its
+/// passphrase is kept by).
 pub struct Locked<'a> {
     pub device: &'a str,
-    pub title: Option<&'a str>,
+    pub title: Option<&'a Words>,
     pub uuid: Option<&'a str>,
+}
+
+/// `title` as an argument of a sentence: a volume's label, as written,
+/// is a name, quoted and isolated; Skwir's words for a volume without one
+/// are words, said in the sentence's language (words.md: words said for
+/// the window never become a `Name`).
+pub(crate) fn named(title: &Words) -> Arg {
+    if title.is_message() {
+        Arg::Words(Box::new(title.clone()))
+    } else {
+        Arg::Name(title.english())
+    }
 }
 
 /// What gave the passphrase that unlocked a volume, past Skwir's own.
@@ -228,8 +241,8 @@ fn settle(
             let label = match volume.title {
                 Some(title) => words!(
                     places_keyring_label = "Skwir: { $volume } (encrypted volume)",
-                    volume = title,
-                    note = "What the desktop's keyring shows for a volume's passphrase Skwir keeps. The volume's label, as written."
+                    volume = title.clone(),
+                    note = "What the desktop's keyring shows for a volume's passphrase Skwir keeps. volume: its label, as written, or what Skwir calls a volume without one (4 TB encrypted)."
                 ),
                 None => words!(
                     places_keyring_label_this = "Skwir: this volume (encrypted volume)",
@@ -282,13 +295,13 @@ fn asked(
     let title = match (volume.title, refused) {
         (Some(title), true) => words!(
             places_unlock_refused = "Unlock { $volume }: that passphrase was not accepted",
-            volume = Name(title.to_owned()),
-            note = "The question asking a volume's passphrase again. The volume's label."
+            volume = named(title),
+            note = "The question asking a volume's passphrase again. volume: its label, quoted, or what Skwir calls a volume without one (4 TB encrypted)."
         ),
         (Some(title), false) => words!(
             places_unlock_ask = "Unlock { $volume }",
-            volume = Name(title.to_owned()),
-            note = "The question asking a volume's passphrase. The volume's label."
+            volume = named(title),
+            note = "The question asking a volume's passphrase. volume: its label, quoted, or what Skwir calls a volume without one (4 TB encrypted)."
         ),
         (None, true) => words!(
             places_unlock_this_refused = "Unlock “this volume”: that passphrase was not accepted",

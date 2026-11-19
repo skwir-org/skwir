@@ -54,7 +54,7 @@ places_in_trash = { $name } is in the trash: restore it first
 # Under Remember, while it is on, in the question asking a volume's passphrase.
 places_keeping = Once remembered, anyone who can open your keyring can unlock this volume.
 
-# What the desktop's keyring shows for a volume's passphrase Skwir keeps. The volume's label, as written.
+# What the desktop's keyring shows for a volume's passphrase Skwir keeps. volume: its label, as written, or what Skwir calls a volume without one (4 TB encrypted).
 places_keyring_label = Skwir: { $volume } (encrypted volume)
 
 # What the desktop's keyring shows for a volume's passphrase Skwir keeps, the volume unnamed.
@@ -162,12 +162,12 @@ places_unlock = Unlock volume
 # The button of the question asking a volume's passphrase.
 places_unlock_accept = Unlock
 
-# The question asking a volume's passphrase. The volume's label.
+# The question asking a volume's passphrase. volume: its label, quoted, or what Skwir calls a volume without one (4 TB encrypted).
 places_unlock_ask = Unlock { $volume }
 
 places_unlock_description = Unlock an encrypted volume with the passphrase given, mount it and open it. The passphrase is a secret: it is handed to the system on standard input, never logged, and never kept
 
-# The question asking a volume's passphrase again. The volume's label.
+# The question asking a volume's passphrase again. volume: its label, quoted, or what Skwir calls a volume without one (4 TB encrypted).
 places_unlock_refused = Unlock { $volume }: that passphrase was not accepted
 
 # The question asking an unnamed volume's passphrase.

@@ -229,23 +229,18 @@ fn carry_over(fresh: &[Place], measured: &[Place]) -> Vec<Place> {
 }
 
 /// `4 TB`, for a volume without a label: counted as sizes are
-/// (`fs::size_units`, ADR-139, 9). Disks are sold in powers of ten, so in
-/// those a whole number matches the one on the label; in powers of two
+/// (`fs::size_units`, ADR-139, 9), as words said where they are drawn
+/// (« 4 To » in French). Disks are sold in powers of ten, so in those a
+/// whole number matches the one on the label; in powers of two
 /// (`3.6 TiB`) it is said as any size is.
-fn size_label(bytes: u64) -> String {
-    use skwir_core::fs::{SizeUnits, size_said_in, size_units};
+fn size_label(bytes: u64) -> Words {
+    use skwir_core::fs::{SizeUnits, size_units, size_words_to};
     let units = size_units();
-    if units == SizeUnits::Binary {
-        return size_said_in(bytes, units);
-    }
-    let names = units.names();
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1000. && unit < names.len() - 1 {
-        value /= 1000.;
-        unit += 1;
-    }
-    format!("{value:.0} {}", names[unit])
+    let digits = match units {
+        SizeUnits::Decimal => 0,
+        SizeUnits::Binary => 1,
+    };
+    size_words_to(bytes, units, digits)
 }
 
 /// What names a volume in the user's arrangement of the sidebar
@@ -302,8 +297,9 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
             "places.open_locked",
             &serde_json::json!({
                 "device": volume.device,
-                // Plain: a name the passphrase question says in its words.
-                "title": title.say_plain(),
+                // As data: the passphrase question says Skwir's words in
+                // the reader's language, a label as written (`Locked`).
+                "title": title.to_data(),
                 "uuid": identity.uuid,
             }),
         )
@@ -905,9 +901,10 @@ struct UnlockArgs {
 struct OpenLockedArgs {
     /// The locked volume's device, as listed in the sidebar (`/dev/sdb2`).
     device: String,
-    /// What the question for its passphrase calls it.
+    /// What the question for its passphrase calls it: its label, or
+    /// Skwir's words for one without (as data, `Words::to_data`).
     #[serde(default)]
-    title: Option<String>,
+    title: Option<Words>,
     /// What its passphrase is kept by in the keyring: its container's UUID.
     #[serde(default)]
     uuid: Option<String>,
@@ -934,7 +931,7 @@ enum Unlock {
     /// own dialog where it asks itself (`places.open_locked`, ADR-088).
     Asking {
         /// What the question calls it; `None` for "this volume".
-        title: Option<String>,
+        title: Option<Words>,
         uuid: Option<String>,
         keyring: Arc<dyn Keyring>,
     },
@@ -962,7 +959,7 @@ fn unlocked_and_mounted(
         } => {
             let volume = passphrases::Locked {
                 device,
-                title: title.as_deref(),
+                title: title.as_ref(),
                 uuid: uuid.as_deref(),
             };
             match passphrases::unlock_kept_or_asked(app, &keyring, &volume, cancel, places::unlock)?
@@ -2205,6 +2202,43 @@ mod tests {
         })];
         mark_busy(&mut other, &busy, &[]);
         assert_eq!(other[0].busy, None);
+    }
+
+    /// A volume without a label is named by Skwir's words, its size said
+    /// where they are drawn (whole units joined to their number), and they
+    /// reach the passphrase question as words, never said into a name
+    /// first; a label is a name, quoted (PA-3).
+    #[test]
+    fn an_unlabelled_volume_is_named_by_words_its_question_says() {
+        let volume = skwir_platform::places::Volume {
+            device: "/dev/sdz2".into(),
+            label: String::new(),
+            size: 4_000_787_030_016,
+            locked: true,
+            hotplug: true,
+            container: None,
+            system: false,
+            uuid: None,
+        };
+        let place = volume_place(&volume);
+        assert_eq!(place.title.english(), "4\u{a0}TB encrypted");
+        let activate = place.activate.unwrap();
+        assert_eq!(&*activate.name, "places.open_locked");
+        let title: Words = serde_json::from_value(activate.args["title"].clone()).unwrap();
+        assert!(title.is_message(), "its words, as data");
+        let unlock = |title: &Words| {
+            words!(
+                test_unlock = "Unlock { $volume }",
+                volume = passphrases::named(title)
+            )
+            .english()
+        };
+        assert_eq!(unlock(&title), "Unlock 4\u{a0}TB encrypted");
+        let labelled = volume_place(&skwir_platform::places::Volume {
+            label: "Backup".into(),
+            ..volume
+        });
+        assert_eq!(unlock(&labelled.title), "Unlock “Backup”");
     }
 
     #[test]
