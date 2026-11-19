@@ -3077,19 +3077,19 @@ history_empty = Nothing to undo yet
 history_go_to = Go to { $title }
 
 # Why an action's Undo waits: an action done after it touched what it did. title: that action, capitalised (Copy 3 items to Docs), a link to its row.
-history_held_done = Undo “{ $title }” first: it touched what this did
+history_held_done = Undo { $title } first: it touched what this did
 
 # Why an action cannot be undone: an action after it took what it did for good (deleted it). title: that action, capitalised (Copy 3 items to Docs), a link to its row.
-history_held_for_good = “{ $title }” took what this did for good
+history_held_for_good = { $title } took what this did for good
 
 # Why an action's Undo waits: an action running touches what it did. title: that action, capitalised (Copy 3 items to Docs), a link to its row.
-history_held_running = “{ $title }” is running, and touches what this did
+history_held_running = { $title } is running, and touches what this did
 
 # Why an undone action's Redo waits: an action undone after it touched what it did. title: that action, capitalised (Copy 3 items to Docs), a link to its row.
-history_held_undone = Redo “{ $title }” first: it touched what this did
+history_held_undone = Redo { $title } first: it touched what this did
 
 # Why an action's Undo waits: an action waiting its turn touches what it did. title: that action, capitalised (Copy 3 items to Docs), a link to its row.
-history_held_waiting = “{ $title }” waits its turn, and touches what this did
+history_held_waiting = { $title } waits its turn, and touches what this did
 
 # The list of every action Undo can take back, opened above the footer's Undo.
 history_name = Undo history
@@ -3589,19 +3589,19 @@ keys_found_place = Keyboard: { $place }
 keys_free = Free these keys
 
 # The heading of the Keyboard page's bar: new keys for action (Quit), working in place (Anywhere, File list).
-keys_heading_add = New keys for “{ $action }” · { $place }
+keys_heading_add = New keys for { $action } · { $place }
 
 # The heading of the Keyboard page's bar: keys (Ctrl+Q) of action (Quit) changed, in place (Anywhere).
-keys_heading_change = { $keys } for “{ $action }” · { $place }
+keys_heading_change = { $keys } for { $action } · { $place }
 
 # The heading of the Keyboard page's bar while it takes the keys whose actions to list.
 keys_heading_find = Find the actions of a key
 
 # The heading of the Keyboard page's bar: action's keys as skwir ships them, in place.
-keys_heading_reset = Back to Skwir's keys for “{ $action }” · { $place }
+keys_heading_reset = Back to Skwir's keys for { $action } · { $place }
 
 # The heading of the Keyboard page's bar: keys of skwir's (Ctrl+Q) a shortcut of the user's took from action (Quit), in place.
-keys_heading_restore = { $keys } no longer runs “{ $action }” · { $place }
+keys_heading_restore = { $keys } no longer runs { $action } · { $place }
 
 # A fold of the Keyboard page's list: the actions whose keys work inside dialogs and menus, and how many.
 keys_inside = Keys inside dialogs and menus ({ $count })
@@ -3660,10 +3660,10 @@ keys_none_has_keys = No action has these keys.
 keys_not_kept = These keys cannot be kept
 
 # Said before new keys are saved: keys are the keys (Ctrl+Q), action what they keep running in place, under conditions the new keys do not ask for (File list (with a selection)).
-keys_note_besides = { $keys } still runs “{ $action }” in { $place }.
+keys_note_besides = { $keys } still runs { $action } in { $place }.
 
 # Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), action what they keep running in place (File list).
-keys_note_deeper = In { $place }, { $keys } still runs “{ $action }”: a place's own keys come first.
+keys_note_deeper = In { $place }, { $keys } still runs { $action }: a place's own keys come first.
 
 # Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), count the places with keys of their own, some the first three of them, then how many more, joined (File list, Address field, Sidebar and 2 more).
 keys_note_deeper_many = { $count ->
@@ -3677,7 +3677,7 @@ keys_note_deeper_more = { $count ->
     }
 
 # Said before new keys for one place are saved: keys are the keys (Ctrl+Q), action what they keep running in the rest of the window.
-keys_note_elsewhere = Elsewhere, { $keys } still runs “{ $action }”.
+keys_note_elsewhere = Elsewhere, { $keys } still runs { $action }.
 
 # Said before a key that types a character is bound: keys are the keys (Shift+A).
 keys_note_fields = In a text field, { $keys } still types: a field keeps its characters.
@@ -3686,19 +3686,19 @@ keys_note_fields = In a text field, { $keys } still types: a field keeps its cha
 keys_note_has = It has { $keys } here already.
 
 # Said before a change of keys is saved: keys (Escape) no longer run action (Clear the filter) in place (File list).
-keys_note_lost = { $keys } also stops running “{ $action }” ({ $place }).
+keys_note_lost = { $keys } also stops running { $action } ({ $place }).
 
 # Said before new keys are saved: keys are the keys (Ctrl+Q), action what they run now (Quit), place where (Anywhere, File list).
-keys_note_replaces = { $keys } runs “{ $action }” now ({ $place }): yours replaces it there.
+keys_note_replaces = { $keys } runs { $action } now ({ $place }): yours replaces it there.
 
 # Said before a letter is bound in the file list: typing there no longer jumps to a name; the / key still finds one.
 keys_note_typing = A letter bound in the file list stops typing a name there to jump to it; / then finds a name.
 
 # Said before new keys are saved: a shortcut of the user's on the same keys (keys, Ctrl+Q) runs action, whose plugin is off; it is kept.
-keys_note_waiting = Your “{ $action }” waits on { $keys } for its plugin: once it is back, the later of the two runs.
+keys_note_waiting = Your { $action } waits on { $keys } for its plugin: once it is back, the later of the two runs.
 
 # Said before new keys are saved: a shortcut of the user's on the same keys (keys, Ctrl+Q) runs action, whose plugin is off; it is replaced.
-keys_note_waiting_goes = Your “{ $action }”, waiting on { $keys } for its plugin, goes: yours takes these keys there.
+keys_note_waiting_goes = Your { $action }, waiting on { $keys } for its plugin, goes: yours takes these keys there.
 
 # A button of the Keyboard page's recorder: take the keys again from the first.
 keys_press_again = Press again
@@ -3734,7 +3734,7 @@ keys_restore = Restore
 keys_restore_freed = You freed these keys. Restoring gives them back.
 
 # Said in the Keyboard page's bar before keys of skwir's are restored: a shortcut of the user's for action (Quit) has them.
-keys_restore_hider = Your shortcut for “{ $action }” took these keys. Restoring removes it.
+keys_restore_hider = Your shortcut for { $action } took these keys. Restoring removes it.
 
 # A button of the Keyboard page's bar: keep the keys pressed.
 keys_save = Save
@@ -7268,7 +7268,7 @@ shortcuts_filter = Filter by action or keys
 shortcuts_none = No shortcut matches { $query }.
 
 # Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title as its menu writes it, quoted (Copy, Rename…).
-shortcuts_tip = Tip: press { $keys } for “{ $action }”. F1 lists the keys for where you are.
+shortcuts_tip = Tip: press { $keys } for { $action }. F1 lists the keys for where you are.
 
 # The title of the overview of shortcuts F1 opens: the keys that work where one is.
 shortcuts_title = Shortcuts here

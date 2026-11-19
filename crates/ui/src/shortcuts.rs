@@ -463,9 +463,9 @@ impl Shell {
         self.toast(
             Toast::new(
                 words!(
-                    shortcuts_tip = "Tip: press { $keys } for “{ $action }”. F1 lists the keys for where you are.",
+                    shortcuts_tip = "Tip: press { $keys } for { $action }. F1 lists the keys for where you are.",
                     keys = skwir_core::words::Keys(keymap::display_keys(&hint.keys)),
-                    action = keymap::title_of(&self.app, &hint),
+                    action = skwir_core::words::Named(keymap::title_of(&self.app, &hint)),
                     note = "Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title as its menu writes it, quoted (Copy, Rename…)."
                 ),
                 Tone::Info,

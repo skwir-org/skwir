@@ -1710,9 +1710,9 @@ impl SettingsView {
                         "warning",
                         theme.warning,
                         words!(
-                            keys_note_replaces = "{ $keys } runs “{ $action }” now ({ $place }): yours replaces it there.",
+                            keys_note_replaces = "{ $keys } runs { $action } now ({ $place }): yours replaces it there.",
                             keys = skwir_core::words::Keys(keys.clone()),
-                            action = title.clone(),
+                            action = skwir_core::words::Named(title.clone()),
                             place = place.clone(),
                             note = "Said before new keys are saved: keys are the keys (Ctrl+Q), action what they run now (Quit), place where (Anywhere, File list)."
                         ),
@@ -1728,9 +1728,9 @@ impl SettingsView {
                         "info",
                         theme.text_muted,
                         words!(
-                            keys_note_deeper = "In { $place }, { $keys } still runs “{ $action }”: a place's own keys come first.",
+                            keys_note_deeper = "In { $place }, { $keys } still runs { $action }: a place's own keys come first.",
                             keys = skwir_core::words::Keys(keys.clone()),
-                            action = title.clone(),
+                            action = skwir_core::words::Named(title.clone()),
                             place = place.clone(),
                             note = "Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), action what they keep running in place (File list)."
                         ),
@@ -1743,9 +1743,9 @@ impl SettingsView {
                         "info",
                         theme.text_muted,
                         words!(
-                            keys_note_elsewhere = "Elsewhere, { $keys } still runs “{ $action }”.",
+                            keys_note_elsewhere = "Elsewhere, { $keys } still runs { $action }.",
                             keys = skwir_core::words::Keys(keys.clone()),
-                            action = title.clone(),
+                            action = skwir_core::words::Named(title.clone()),
                             note = "Said before new keys for one place are saved: keys are the keys (Ctrl+Q), action what they keep running in the rest of the window."
                         ),
                     ),
@@ -1757,9 +1757,9 @@ impl SettingsView {
                         "info",
                         theme.text_muted,
                         words!(
-                            keys_note_besides = "{ $keys } still runs “{ $action }” in { $place }.",
+                            keys_note_besides = "{ $keys } still runs { $action } in { $place }.",
                             keys = skwir_core::words::Keys(keys.clone()),
-                            action = title.clone(),
+                            action = skwir_core::words::Named(title.clone()),
                             place = place.clone(),
                             note = "Said before new keys are saved: keys are the keys (Ctrl+Q), action what they keep running in place, under conditions the new keys do not ask for (File list (with a selection))."
                         ),
@@ -1768,9 +1768,9 @@ impl SettingsView {
                         "plugin",
                         theme.warning,
                         words!(
-                            keys_note_waiting_goes = "Your “{ $action }”, waiting on { $keys } for its plugin, goes: yours takes these keys there.",
+                            keys_note_waiting_goes = "Your { $action }, waiting on { $keys } for its plugin, goes: yours takes these keys there.",
                             keys = skwir_core::words::Keys(keys.clone()),
-                            action = title.clone(),
+                            action = skwir_core::words::Named(title.clone()),
                             note = "Said before new keys are saved: a shortcut of the user's on the same keys (keys, Ctrl+Q) runs action, whose plugin is off; it is replaced."
                         ),
                     ),
@@ -1778,9 +1778,9 @@ impl SettingsView {
                         "plugin",
                         theme.text_muted,
                         words!(
-                            keys_note_waiting = "Your “{ $action }” waits on { $keys } for its plugin: once it is back, the later of the two runs.",
+                            keys_note_waiting = "Your { $action } waits on { $keys } for its plugin: once it is back, the later of the two runs.",
                             keys = skwir_core::words::Keys(keys.clone()),
-                            action = title.clone(),
+                            action = skwir_core::words::Named(title.clone()),
                             note = "Said before new keys are saved: a shortcut of the user's on the same keys (keys, Ctrl+Q) runs action, whose plugin is off; it is kept."
                         ),
                     ),
@@ -1836,9 +1836,9 @@ impl SettingsView {
                     "warning",
                     theme.warning,
                     words!(
-                        keys_note_lost = "{ $keys } also stops running “{ $action }” ({ $place }).",
+                        keys_note_lost = "{ $keys } also stops running { $action } ({ $place }).",
                         keys = skwir_core::words::Keys(keymap::display_keys(&lost.keys)),
-                        action = lost.title.clone(),
+                        action = skwir_core::words::Named(lost.title.clone()),
                         place = lost.place.clone(),
                         note = "Said before a change of keys is saved: keys (Escape) no longer run action (Clear the filter) in place (File list)."
                     )
@@ -1898,31 +1898,31 @@ impl SettingsView {
             )
             .say(),
             (Target::Add(_), Some(action)) => words!(
-                keys_heading_add = "New keys for “{ $action }” · { $place }",
-                action = action.title.clone(),
+                keys_heading_add = "New keys for { $action } · { $place }",
+                action = skwir_core::words::Named(action.title_words.clone()),
                 place = action.place.clone(),
                 note = "The heading of the Keyboard page's bar: new keys for action (Quit), working in place (Anywhere, File list)."
             )
             .say(),
             (Target::Change(_, chip), Some(action)) => words!(
-                keys_heading_change = "{ $keys } for “{ $action }” · { $place }",
+                keys_heading_change = "{ $keys } for { $action } · { $place }",
                 keys = skwir_core::words::Keys(keymap::display_keys(&chip.keys)),
-                action = action.title.clone(),
+                action = skwir_core::words::Named(action.title_words.clone()),
                 place = action.place.clone(),
                 note = "The heading of the Keyboard page's bar: keys (Ctrl+Q) of action (Quit) changed, in place (Anywhere)."
             )
             .say(),
             (Target::Restore(_, chip), Some(action)) => words!(
-                keys_heading_restore = "{ $keys } no longer runs “{ $action }” · { $place }",
+                keys_heading_restore = "{ $keys } no longer runs { $action } · { $place }",
                 keys = skwir_core::words::Keys(keymap::display_keys(&chip.keys)),
-                action = action.title.clone(),
+                action = skwir_core::words::Named(action.title_words.clone()),
                 place = action.place.clone(),
                 note = "The heading of the Keyboard page's bar: keys of skwir's (Ctrl+Q) a shortcut of the user's took from action (Quit), in place."
             )
             .say(),
             (Target::Reset(_), Some(action)) => words!(
-                keys_heading_reset = "Back to Skwir's keys for “{ $action }” · { $place }",
-                action = action.title.clone(),
+                keys_heading_reset = "Back to Skwir's keys for { $action } · { $place }",
+                action = skwir_core::words::Named(action.title_words.clone()),
                 place = action.place.clone(),
                 note = "The heading of the Keyboard page's bar: action's keys as skwir ships them, in place."
             )
@@ -1949,8 +1949,8 @@ impl SettingsView {
                     .child(div().text_body().text_color(theme.text_muted).child(
                         match self.hider() {
                             Some(hider) => words!(
-                                keys_restore_hider = "Your shortcut for “{ $action }” took these keys. Restoring removes it.",
-                                action = hider.title.clone(),
+                                keys_restore_hider = "Your shortcut for { $action } took these keys. Restoring removes it.",
+                                action = skwir_core::words::Named(hider.title_words.clone()),
                                 note = "Said in the Keyboard page's bar before keys of skwir's are restored: a shortcut of the user's for action (Quit) has them."
                             ),
                             None => words!(

@@ -408,34 +408,34 @@ pub(crate) fn undo_held(action: &Action, by_plan: &HashMap<PlanId, HistoryRow>) 
 fn held(since: Since, title: Words) -> Words {
     match since {
         Since::Done => words!(
-            history_held_done = "Undo “{ $title }” first: it touched what this did",
-            title = title,
+            history_held_done = "Undo { $title } first: it touched what this did",
+            title = skwir_core::words::Named(title),
             note = "Why an action's Undo waits: an action done after it touched what it did. \
                     title: that action, capitalised (Copy 3 items to Docs), a link to its row."
         ),
         Since::Running => words!(
-            history_held_running = "“{ $title }” is running, and touches what this did",
-            title = title,
+            history_held_running = "{ $title } is running, and touches what this did",
+            title = skwir_core::words::Named(title),
             note = "Why an action's Undo waits: an action running touches what it did. title: \
                     that action, capitalised (Copy 3 items to Docs), a link to its row."
         ),
         Since::Waiting => words!(
-            history_held_waiting = "“{ $title }” waits its turn, and touches what this did",
-            title = title,
+            history_held_waiting = "{ $title } waits its turn, and touches what this did",
+            title = skwir_core::words::Named(title),
             note = "Why an action's Undo waits: an action waiting its turn touches what it \
                     did. title: that action, capitalised (Copy 3 items to Docs), a link to its \
                     row."
         ),
         Since::Undone => words!(
-            history_held_undone = "Redo “{ $title }” first: it touched what this did",
-            title = title,
+            history_held_undone = "Redo { $title } first: it touched what this did",
+            title = skwir_core::words::Named(title),
             note = "Why an undone action's Redo waits: an action undone after it touched what \
                     it did. title: that action, capitalised (Copy 3 items to Docs), a link to \
                     its row."
         ),
         Since::ForGood => words!(
-            history_held_for_good = "“{ $title }” took what this did for good",
-            title = title,
+            history_held_for_good = "{ $title } took what this did for good",
+            title = skwir_core::words::Named(title),
             note = "Why an action cannot be undone: an action after it took what it did for \
                     good (deleted it). title: that action, capitalised (Copy 3 items to Docs), \
                     a link to its row."
@@ -1070,23 +1070,30 @@ mod tests {
             title: Words::as_written("move “a.txt” to /example/b"),
             since,
         };
+        // Said for the window: the title isolated inside its quotes.
         let said = |state, can| why(&row(1, state, can, Vec::new()));
         assert_eq!(said(Done::Done, Can::Now), None);
         assert_eq!(
             said(Done::Done, after(Since::Done)).as_deref(),
-            Some("Undo “Move “a.txt” to /example/b” first: it touched what this did")
+            Some(
+                "Undo “\u{2068}Move “a.txt” to /example/b\u{2069}” first: it touched what this did"
+            )
         );
         assert_eq!(
             said(Done::Done, after(Since::Running)).as_deref(),
-            Some("“Move “a.txt” to /example/b” is running, and touches what this did")
+            Some(
+                "“\u{2068}Move “a.txt” to /example/b\u{2069}” is running, and touches what this did"
+            )
         );
         assert_eq!(
             said(Done::Undone, after(Since::Undone)).as_deref(),
-            Some("Redo “Move “a.txt” to /example/b” first: it touched what this did")
+            Some(
+                "Redo “\u{2068}Move “a.txt” to /example/b\u{2069}” first: it touched what this did"
+            )
         );
         assert_eq!(
             said(Done::Done, after(Since::ForGood)).as_deref(),
-            Some("“Move “a.txt” to /example/b” took what this did for good")
+            Some("“\u{2068}Move “a.txt” to /example/b\u{2069}” took what this did for good")
         );
         assert_eq!(
             said(Done::Running, Can::OnceEnded).as_deref(),
@@ -1105,7 +1112,8 @@ mod tests {
             Some("Cannot be undone")
         );
         // Every way an Undo is held reads as one sentence round the name,
-        // its link where the sentence places it.
+        // its link where the sentence places it, inside the quotes the
+        // sentence's language gives it: drawn apart, it needs no isolate.
         for since in [
             Since::Done,
             Since::Running,
@@ -1116,7 +1124,7 @@ mod tests {
             let (before, after) = held_around(since);
             assert_eq!(
                 format!("{before}Copy a{after}"),
-                held(since, Words::as_written("Copy a")).say(),
+                held(since, Words::as_written("Copy a")).say_plain(),
                 "{since:?}"
             );
         }
@@ -1155,7 +1163,7 @@ mod tests {
         );
         assert_eq!(
             undo_held(&undo_of(ids[3]), &by_plan).as_deref(),
-            Some("“Copy to /example” waits its turn, and touches what this did")
+            Some("“\u{2068}Copy to /example\u{2069}” waits its turn, and touches what this did")
         );
         assert_eq!(
             undo_held(&undo_of(ids[4]), &by_plan).as_deref(),

@@ -3597,19 +3597,19 @@ history_empty = Rien à annuler pour l’instant
 history_go_to = Aller à : { $title }
 
 # draft
-history_held_done = Annulez d’abord « { $title } » : cette action a touché à ce que celle-ci a fait
+history_held_done = Annulez d’abord { $title } : cette action a touché à ce que celle-ci a fait
 
 # draft
-history_held_for_good = « { $title } » a supprimé définitivement ce que celle-ci a fait
+history_held_for_good = { $title } a supprimé définitivement ce que celle-ci a fait
 
 # draft
-history_held_running = « { $title } » est en cours et touche à ce que celle-ci a fait
+history_held_running = { $title } est en cours et touche à ce que celle-ci a fait
 
 # draft
-history_held_undone = Rétablissez d’abord « { $title } » : cette action a touché à ce que celle-ci a fait
+history_held_undone = Rétablissez d’abord { $title } : cette action a touché à ce que celle-ci a fait
 
 # draft
-history_held_waiting = « { $title } » attend son tour et touche à ce que celle-ci a fait
+history_held_waiting = { $title } attend son tour et touche à ce que celle-ci a fait
 
 # draft
 history_name = Historique des annulations
@@ -4153,19 +4153,19 @@ keys_found_place = Clavier : { $place }
 keys_free = Libérer ces touches
 
 # draft
-keys_heading_add = Nouveau raccourci pour « { $action } » · { $place }
+keys_heading_add = Nouveau raccourci pour { $action } · { $place }
 
 # draft
-keys_heading_change = { $keys } pour « { $action } » · { $place }
+keys_heading_change = { $keys } pour { $action } · { $place }
 
 # draft
 keys_heading_find = Trouver les actions d’une touche
 
 # draft
-keys_heading_reset = Retour aux touches de Skwir pour « { $action } » · { $place }
+keys_heading_reset = Retour aux touches de Skwir pour { $action } · { $place }
 
 # draft
-keys_heading_restore = { $keys } n’exécute plus « { $action } » · { $place }
+keys_heading_restore = { $keys } n’exécute plus { $action } · { $place }
 
 # draft
 keys_inside = Touches des boîtes de dialogue et des menus ({ $count })
@@ -4225,10 +4225,10 @@ keys_none_has_keys = Aucune action n’a ces touches.
 keys_not_kept = Ces touches ne peuvent pas être enregistrées
 
 # draft
-keys_note_besides = { $keys } exécute toujours « { $action } » dans { $place }.
+keys_note_besides = { $keys } exécute toujours { $action } dans { $place }.
 
 # draft
-keys_note_deeper = Dans { $place }, { $keys } exécute toujours « { $action } » : les touches propres à un endroit passent en premier.
+keys_note_deeper = Dans { $place }, { $keys } exécute toujours { $action } : les touches propres à un endroit passent en premier.
 
 # draft
 keys_note_deeper_many = { $count ->
@@ -4242,7 +4242,7 @@ keys_note_deeper_more = { $count ->
     }
 
 # draft
-keys_note_elsewhere = Ailleurs, { $keys } exécute toujours « { $action } ».
+keys_note_elsewhere = Ailleurs, { $keys } exécute toujours { $action }.
 
 # draft
 keys_note_fields = Dans un champ de texte, { $keys } saisit toujours son caractère : un champ garde ses caractères.
@@ -4251,19 +4251,19 @@ keys_note_fields = Dans un champ de texte, { $keys } saisit toujours son caract�
 keys_note_has = Cette action a déjà { $keys } ici.
 
 # draft
-keys_note_lost = { $keys } cesse aussi d’exécuter « { $action } » ({ $place }).
+keys_note_lost = { $keys } cesse aussi d’exécuter { $action } ({ $place }).
 
 # draft
-keys_note_replaces = { $keys } exécute actuellement « { $action } » ({ $place }) : le vôtre le remplace à cet endroit.
+keys_note_replaces = { $keys } exécute actuellement { $action } ({ $place }) : le vôtre le remplace à cet endroit.
 
 # draft
 keys_note_typing = Une lettre attribuée dans la liste des fichiers n’y sert plus à taper un nom pour l’atteindre ; / trouve alors un nom.
 
 # draft
-keys_note_waiting = Votre raccourci pour « { $action } » attend son module sur { $keys } : quand celui-ci reviendra, le plus récent des deux s’exécutera.
+keys_note_waiting = Votre raccourci pour { $action } attend son module sur { $keys } : quand celui-ci reviendra, le plus récent des deux s’exécutera.
 
 # draft
-keys_note_waiting_goes = Votre raccourci pour « { $action } », qui attend son module sur { $keys }, disparaît : le vôtre prend ces touches à cet endroit.
+keys_note_waiting_goes = Votre raccourci pour { $action }, qui attend son module sur { $keys }, disparaît : le vôtre prend ces touches à cet endroit.
 
 # draft
 keys_press_again = Appuyer de nouveau
@@ -4299,7 +4299,7 @@ keys_restore = Restaurer
 keys_restore_freed = Vous avez libéré ces touches. Les restaurer les rend à leur action.
 
 # draft
-keys_restore_hider = Votre raccourci pour « { $action } » a pris ces touches. Les restaurer le supprime.
+keys_restore_hider = Votre raccourci pour { $action } a pris ces touches. Les restaurer le supprime.
 
 # draft
 keys_save = Enregistrer
@@ -8088,7 +8088,7 @@ shortcuts_filter = Filtrer par action ou par touches
 shortcuts_none = Aucun raccourci ne correspond à { $query }.
 
 # draft
-shortcuts_tip = Astuce : appuyez sur { $keys } pour « { $action } ». F1 liste les touches qui agissent là où vous êtes.
+shortcuts_tip = Astuce : appuyez sur { $keys } pour { $action }. F1 liste les touches qui agissent là où vous êtes.
 
 # draft
 shortcuts_title = Raccourcis disponibles ici

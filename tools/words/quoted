@@ -3,21 +3,3 @@
 # language's, so each is given as a `Name` (a `Folder`, a `Path`) or said
 # unquoted, and its line taken out. Each line: a crate's folder, a
 # message's id, the argument. The list only shrinks: nothing is added.
-crates/ui history_held_done title
-crates/ui history_held_for_good title
-crates/ui history_held_running title
-crates/ui history_held_undone title
-crates/ui history_held_waiting title
-crates/ui keys_heading_add action
-crates/ui keys_heading_change action
-crates/ui keys_heading_reset action
-crates/ui keys_heading_restore action
-crates/ui keys_note_besides action
-crates/ui keys_note_deeper action
-crates/ui keys_note_elsewhere action
-crates/ui keys_note_lost action
-crates/ui keys_note_replaces action
-crates/ui keys_note_waiting action
-crates/ui keys_note_waiting_goes action
-crates/ui keys_restore_hider action
-crates/ui shortcuts_tip action

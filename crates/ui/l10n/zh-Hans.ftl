@@ -3459,19 +3459,19 @@ history_empty = 暂无可撤销的操作
 history_go_to = 转到“{ $title }”
 
 # draft
-history_held_done = 请先撤销“{ $title }”：它改动了此操作所做的内容
+history_held_done = 请先撤销{ $title }：它改动了此操作所做的内容
 
 # draft
-history_held_for_good = “{ $title }”已永久删除了此操作所做的内容
+history_held_for_good = { $title }已永久删除了此操作所做的内容
 
 # draft
-history_held_running = “{ $title }”正在运行，并且涉及此操作所做的内容
+history_held_running = { $title }正在运行，并且涉及此操作所做的内容
 
 # draft
-history_held_undone = 请先重做“{ $title }”：它改动了此操作所做的内容
+history_held_undone = 请先重做{ $title }：它改动了此操作所做的内容
 
 # draft
-history_held_waiting = “{ $title }”排队中，并且涉及此操作所做的内容
+history_held_waiting = { $title }排队中，并且涉及此操作所做的内容
 
 # draft
 history_name = 撤销历史记录
@@ -4008,19 +4008,19 @@ keys_found_place = 键盘：{ $place }
 keys_free = 释放这些按键
 
 # draft
-keys_heading_add = 为“{ $action }”设置新按键 · { $place }
+keys_heading_add = 为{ $action }设置新按键 · { $place }
 
 # draft
-keys_heading_change = “{ $action }”的 { $keys } · { $place }
+keys_heading_change = { $action }的 { $keys } · { $place }
 
 # draft
 keys_heading_find = 查找按键对应的操作
 
 # draft
-keys_heading_reset = 恢复“{ $action }”的 Skwir 默认按键 · { $place }
+keys_heading_reset = 恢复{ $action }的 Skwir 默认按键 · { $place }
 
 # draft
-keys_heading_restore = { $keys } 不再运行“{ $action }” · { $place }
+keys_heading_restore = { $keys } 不再运行{ $action } · { $place }
 
 # draft
 keys_inside = 对话框和菜单内的按键（{ $count }）
@@ -4080,10 +4080,10 @@ keys_none_has_keys = 没有操作使用这些按键。
 keys_not_kept = 无法保存这些按键
 
 # draft
-keys_note_besides = { $keys } 仍会在{ $place }中运行“{ $action }”。
+keys_note_besides = { $keys } 仍会在{ $place }中运行{ $action }。
 
 # draft
-keys_note_deeper = 在{ $place }中，{ $keys } 仍会运行“{ $action }”：位置自身的按键优先。
+keys_note_deeper = 在{ $place }中，{ $keys } 仍会运行{ $action }：位置自身的按键优先。
 
 # draft
 keys_note_deeper_many = { $keys } 在 { $count } 个自行绑定它的位置（{ $some }）中仍运行原来的操作：位置自身的按键优先。
@@ -4094,7 +4094,7 @@ keys_note_deeper_more = { $count ->
     }
 
 # draft
-keys_note_elsewhere = 在其他位置，{ $keys } 仍会运行“{ $action }”。
+keys_note_elsewhere = 在其他位置，{ $keys } 仍会运行{ $action }。
 
 # draft
 keys_note_fields = 在文本框中，{ $keys } 仍会输入字符：文本框保留输入字符的按键。
@@ -4103,19 +4103,19 @@ keys_note_fields = 在文本框中，{ $keys } 仍会输入字符：文本框保
 keys_note_has = 它在此处已使用 { $keys }。
 
 # draft
-keys_note_lost = { $keys } 也将不再运行“{ $action }”（{ $place }）。
+keys_note_lost = { $keys } 也将不再运行{ $action }（{ $place }）。
 
 # draft
-keys_note_replaces = { $keys } 当前运行“{ $action }”（{ $place }）：您的设置将在该处取代它。
+keys_note_replaces = { $keys } 当前运行{ $action }（{ $place }）：您的设置将在该处取代它。
 
 # draft
 keys_note_typing = 在文件列表中绑定字母后，在该处输入该字母将不再跳转到对应名称；之后可按 / 查找名称。
 
 # draft
-keys_note_waiting = 您的“{ $action }”正在 { $keys } 上等待其插件：插件恢复后，两者中较晚设置的那个生效。
+keys_note_waiting = 您的{ $action }正在 { $keys } 上等待其插件：插件恢复后，两者中较晚设置的那个生效。
 
 # draft
-keys_note_waiting_goes = 您在 { $keys } 上等待其插件的“{ $action }”将被移除：您的新设置会在该处占用这些按键。
+keys_note_waiting_goes = 您在 { $keys } 上等待其插件的{ $action }将被移除：您的新设置会在该处占用这些按键。
 
 # draft
 keys_press_again = 重新按键
@@ -4151,7 +4151,7 @@ keys_restore = 恢复
 keys_restore_freed = 您已释放这些按键。恢复会将其还原。
 
 # draft
-keys_restore_hider = 您为“{ $action }”设置的快捷键占用了这些按键。恢复会移除该快捷键。
+keys_restore_hider = 您为{ $action }设置的快捷键占用了这些按键。恢复会移除该快捷键。
 
 # draft
 keys_save = 保存
@@ -7820,7 +7820,7 @@ shortcuts_filter = 按操作或按键筛选
 shortcuts_none = 没有与{ $query }匹配的快捷键。
 
 # draft
-shortcuts_tip = 提示：按 { $keys } 可执行“{ $action }”。F1 会列出当前位置可用的按键。
+shortcuts_tip = 提示：按 { $keys } 可执行{ $action }。F1 会列出当前位置可用的按键。
 
 # draft
 shortcuts_title = 此处的快捷键

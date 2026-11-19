@@ -571,6 +571,7 @@ impl SettingsView {
                 rank: at.rank,
                 inside: at.inside,
                 title: keymap::title_words(&self.app, &command, &args).say(),
+                title_words: keymap::title_words(&self.app, &command, &args),
                 command,
                 args,
                 chips: Vec::new(),

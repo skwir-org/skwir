@@ -78,7 +78,10 @@ pub(crate) struct Action {
     pub inside: bool,
     pub command: String,
     pub args: Value,
+    /// What it is called, said: what the page draws, finds and sorts by.
     pub title: String,
+    /// The same as words, what a sentence names it by (`Named`).
+    pub title_words: Words,
     pub chips: Vec<Chip>,
     /// Its keys may change, never all go (`CommandSpec::keeps_a_key`).
     pub keeps_a_key: bool,
@@ -196,6 +199,7 @@ impl Keyboard {
                     // Said as the keymap is read, as the page reads it
                     // again when the language moves.
                     title: keymap::title_words(app, command, args).say(),
+                    title_words: keymap::title_words(app, command, args),
                     chips: Vec::new(),
                     keeps_a_key: false,
                 });
@@ -260,6 +264,7 @@ impl Keyboard {
                 rank: usize::MAX,
                 inside: false,
                 title: keymap::title_words(app, &command, &args).say(),
+                title_words: keymap::title_words(app, &command, &args),
                 command,
                 args,
                 chips: Vec::new(),
@@ -601,7 +606,8 @@ pub(crate) struct Lost {
     /// The action, by what it runs (`Does`): what tells it apart from
     /// another, never its title.
     pub does: Does,
-    pub title: String,
+    /// What it is called, a sentence naming it (`Named`).
+    pub title: Words,
     /// Where, with its conditions in words (`context_label`).
     pub place: String,
     pub keys: String,
@@ -687,7 +693,7 @@ pub(crate) fn effects(
         }
         let lost = Lost {
             does: Does::of(&run.command, &run.args),
-            title: keymap::title_words(app, &run.command, &run.args).say(),
+            title: keymap::title_words(app, &run.command, &run.args),
             place: keymap::context_label(&run.context),
             keys: run.keys.clone(),
         };
@@ -705,18 +711,18 @@ pub(crate) enum Note {
     /// it runs, and as it is called.
     Replaces {
         does: Does,
-        title: String,
+        title: Words,
         place: String,
     },
     /// They keep running this where it is bound, as `why` says.
     Stays {
-        title: String,
+        title: Words,
         place: String,
         why: Stay,
     },
     /// A shortcut of the user's on the same keys waits for its plugin; it
     /// `goes` when the new keys cover where it would work.
-    Waits { title: String, goes: bool },
+    Waits { title: Words, goes: bool },
     /// A character bound in the file list stops typing a name there.
     Typing,
     /// A key that types a character still types it in a text field: the
@@ -784,7 +790,7 @@ pub(crate) fn verdict(
             }
             continue;
         }
-        let title = keymap::title_words(app, command, args).say();
+        let title = keymap::title_words(app, command, args);
         let place = keymap::context_label(&binding.context);
         let theirs = keymap::conditions(&binding.context);
         if mine.iter().all(|atom| theirs.contains(atom)) {
@@ -795,7 +801,7 @@ pub(crate) fn verdict(
                 .find(|a| a.place_id == at.id && a.command == *command && a.args == *args)
                 .is_some_and(|a| a.keeps_a_key && a.running().count() == 1);
             if last && verdict.refused.is_none() {
-                verdict.refused = Some(needs_a_key(&title, &at.place.say(), at.rank == 0));
+                verdict.refused = Some(needs_a_key(&title.say(), &at.place.say(), at.rank == 0));
             }
             verdict.notes.push(Note::Replaces {
                 does: Does::of(command, args),
@@ -825,7 +831,7 @@ pub(crate) fn verdict(
             let theirs = keymap::context_of(waiting.when.as_deref());
             let theirs = keymap::conditions(&theirs);
             verdict.notes.push(Note::Waits {
-                title: keymap::title_words(app, &command.name, &command.args).say(),
+                title: keymap::title_words(app, &command.name, &command.args),
                 goes: mine.iter().all(|atom| theirs.contains(atom)),
             });
         }
@@ -956,6 +962,7 @@ mod tests {
             command: "toggle_hidden".into(),
             args: serde_json::json!({}),
             title: "Toggle hidden files".into(),
+            title_words: Words::as_written("Toggle hidden files"),
             chips,
             keeps_a_key: false,
         };
@@ -1163,7 +1170,7 @@ mod tests {
         // Ctrl+Q quits anywhere: replaced.
         assert!(matches!(
             say("ctrl-q", &anywhere).notes.as_slice(),
-            [Note::Replaces { title, .. }] if title == "Quit"
+            [Note::Replaces { title, .. }] if title.english() == "Quit"
         ));
         // Ctrl+U in the file list is the plugin's, which comes first there.
         assert!(matches!(
@@ -1176,7 +1183,7 @@ mod tests {
         assert!(matches!(
             say("ctrl-alt-w", &anywhere).notes.as_slice(),
             // Not declared: its name as written (ADR-139, 8).
-            [Note::Waits { title, goes: true }] if title == "gone.open"
+            [Note::Waits { title, goes: true }] if title.english() == "gone.open"
         ));
         assert_eq!(
             say("j", &crate::keymap::context_of(Some("pane"))).notes,
@@ -1404,11 +1411,11 @@ mod tests {
         let none = action(&keyboard, "File list", "select_none");
         let escape = none.chips.iter().find(|c| c.keys == "escape").unwrap();
         let freed = effects(&app, &[], &Edit::Remove(escape), Some(&none.id()));
-        let lost: Vec<&str> = freed.lost.iter().map(|lost| lost.title.as_str()).collect();
+        let lost: Vec<String> = freed.lost.iter().map(|lost| lost.title.english()).collect();
         let filter = crate::keymap::title_words(&app, "filter", &serde_json::json!({})).english();
         let up = crate::keymap::title_words(&app, "up", &serde_json::json!({})).english();
-        assert!(lost.contains(&filter.as_str()), "{lost:?}");
-        assert!(lost.contains(&up.as_str()), "{lost:?}");
+        assert!(lost.contains(&filter), "{lost:?}");
+        assert!(lost.contains(&up), "{lost:?}");
         assert!(freed.refused.is_none());
         // Changed to other keys, the same: the old ones are freed.
         let changed = effects(
@@ -1421,7 +1428,12 @@ mod tests {
             },
             Some(&none.id()),
         );
-        assert!(changed.lost.iter().any(|lost| lost.title == filter));
+        assert!(
+            changed
+                .lost
+                .iter()
+                .any(|lost| lost.title.english() == filter)
+        );
     }
 
     /// Restoring a default, or going back to skwir's keys, never takes the
