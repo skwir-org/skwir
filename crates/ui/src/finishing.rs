@@ -768,8 +768,11 @@ fn deliver(cx: &mut App) {
     if let Some(at) = wake {
         crate::work::wake_after(&shared, &app, at, cx);
     }
+    // What is said goes to the front window, whichever it is; a question
+    // that stays waits for one of the user's own (ADR-141, 8), which the
+    // front is whenever one is up.
     let inbox = inboxes.entry(front).or_default();
-    inbox.notifications = app.take_notifications();
+    inbox.notifications = app.take_notifications_for(own_front.is_some());
     if let Some(front) = own_front {
         let inbox = inboxes.entry(front).or_default();
         inbox.proposals = app.take_proposals();

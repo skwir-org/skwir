@@ -3212,6 +3212,23 @@ impl App {
         std::mem::take(&mut *self.notifications.lock())
     }
 
+    /// Messages queued since the last call, oldest first, for a window:
+    /// for one of the user's own (`own`), all of them; for one answering
+    /// another program's dialog, all but the questions that stay
+    /// (`Notification::stays`), which wait queued, in their order, for a
+    /// window of the user's own, as the questions do (ADR-141, 8).
+    pub fn take_notifications_for(&self, own: bool) -> Vec<Notification> {
+        let mut queued = self.notifications.lock();
+        if own {
+            return std::mem::take(&mut *queued);
+        }
+        let (stay, said) = std::mem::take(&mut *queued)
+            .into_iter()
+            .partition(|n| n.stays);
+        *queued = stay;
+        said
+    }
+
     /// What a command acts on: the entries it names (a surface acting on
     /// what it showed: Properties, the tag editor; a script or an agent, which
     /// names files rather than select them, ADR-043), else the selection
@@ -6067,6 +6084,40 @@ mod tests {
             Vec::new(),
         );
         assert!(texts(&app).is_empty(), "turned off, it asks nothing");
+    }
+
+    /// What another program's dialog is given is what is said, never a
+    /// question that stays: that waits for a window of the user's own, in
+    /// its order.
+    #[test]
+    fn a_question_that_stays_waits_for_a_window_of_the_users_own() {
+        use super::NotifyLevel;
+        use crate::words::Words;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let texts = |said: Vec<super::Notification>| -> Vec<String> {
+            said.iter().map(|n| n.text.english()).collect()
+        };
+        app.notify(
+            NotifyLevel::Info,
+            Words::as_written("Said first".to_owned()),
+        );
+        app.ask_quietly("asker", Words::as_written("Asked?".to_owned()), Vec::new());
+        app.ask_quietly(
+            "asker",
+            Words::as_written("Asked again?".to_owned()),
+            Vec::new(),
+        );
+        app.notify(NotifyLevel::Info, Words::as_written("Said then".to_owned()));
+        assert_eq!(
+            texts(app.take_notifications_for(false)),
+            ["Said first", "Said then"]
+        );
+        assert!(app.take_notifications_for(false).is_empty());
+        assert_eq!(
+            texts(app.take_notifications_for(true)),
+            ["Asked?", "Asked again?"]
+        );
     }
 
     /// A plugin takes its handle when it registers, before the UI installs
