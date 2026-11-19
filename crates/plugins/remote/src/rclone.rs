@@ -671,10 +671,8 @@ impl Rclone {
         command
             .arg("--password-command")
             .arg(password_command(&program));
-        mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
-            let error = anyhow::anyhow!(words(&error.to_string()));
-            mounter::ended(&attempt, cancel, error)
-        })?;
+        mounter::mount(&mut command, &point, &attempt, PATIENCE)
+            .map_err(|error| mounter::ended(&attempt, cancel, mounter::told(error, words)))?;
         Ok(Connected {
             point,
             address: top,
@@ -1043,9 +1041,17 @@ fn logged_in(
             .as_deref()
             .map(|password| obscured(rclone, password))
             .transpose()?;
-        match listed(rclone, config, remote, variable, given.as_deref(), cancel) {
+        let error = match listed(rclone, config, remote, variable, given.as_deref(), cancel) {
             Ok(()) => return Ok(given),
-            Err(said) if refused(&said) && asked < TRIES => {
+            Err(error) => error,
+        };
+        // What rclone wrote is read; Skwir's own error goes on, told by
+        // its kind (`mounter::told`).
+        let Some(mounter::ToolSaid(said)) = error.downcast_ref() else {
+            return Err(mounter::told(error, words));
+        };
+        match said {
+            said if refused(said) && asked < TRIES => {
                 asked += 1;
                 let answer = ask.password(&title, &connect, cancel).ok_or_else(|| {
                     anyhow::anyhow!(words!(
@@ -1055,18 +1061,23 @@ fn logged_in(
                 })?;
                 password = Some(answer.text);
             }
-            Err(said) if refused(&said) => {
+            said if refused(said) => {
                 anyhow::bail!(words!(
                     remote_rclone_login_refused = "the server refused the login (wrong password?)"
                 ))
             }
-            Err(said) => anyhow::bail!(words(&said)),
+            said => anyhow::bail!(words(said)),
         }
     }
 }
 
 /// Whether rclone reaches `remote`, its top listed, given the obscured
-/// `password` in `variable`; else what it said.
+/// `password` in `variable`.
+///
+/// # Errors
+/// What rclone wrote where it failed, a [`mounter::ToolSaid`]; a
+/// [`mounter::Unanswered`] where it ran past its patience; else Skwir's own
+/// error (it could not start).
 fn listed(
     rclone: &Path,
     config: Option<&Path>,
@@ -1074,7 +1085,7 @@ fn listed(
     variable: &str,
     password: Option<&str>,
     cancel: &CancelToken,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let mut command = command(rclone, config);
     command
         .args([
@@ -1089,11 +1100,13 @@ fn listed(
     if let Some(password) = password {
         command.env(variable, password);
     }
-    match skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE) {
-        Ok(finished) if finished.status.success() => Ok(()),
-        Ok(finished) => Err(finished.stderr),
-        Err(error) => Err(format!("{error:#}")),
+    let started = std::time::Instant::now();
+    let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)
+        .map_err(|error| mounter::past_patience(error, started, PATIENCE, cancel))?;
+    if finished.status.success() {
+        return Ok(());
     }
+    Err(mounter::ToolSaid(finished.stderr).into())
 }
 
 /// `password` obscured as rclone reads it (`rclone obscure -`), given it
@@ -1201,8 +1214,9 @@ pub(crate) fn password_command(program: &Path) -> std::ffi::OsString {
     skwir_core::os_path::from_bytes(quoted)
 }
 
-/// What rclone says on failing, in the user's words where it can be told,
-/// else its line as it wrote it.
+/// What rclone wrote on failing (a [`mounter::ToolSaid`], never Skwir's own
+/// words), in the user's words where it can be told, else its line as it
+/// wrote it.
 pub(crate) fn words(said: &str) -> Words {
     let said = said.trim();
     let line = said

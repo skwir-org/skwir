@@ -152,10 +152,8 @@ impl Connector for Sshfs {
             None => mounter::Askpass::serve(ask, &attempt)?,
         };
         askpass.give(&mut command);
-        mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
-            let error = anyhow::anyhow!(words(&error.to_string()));
-            mounter::ended(&attempt, cancel, error)
-        })?;
+        mounter::mount(&mut command, &point, &attempt, PATIENCE)
+            .map_err(|error| mounter::ended(&attempt, cancel, mounter::told(error, words)))?;
         Ok(Connected {
             point,
             address: top,
@@ -246,9 +244,9 @@ pub fn of_source(source: &str) -> Option<Address> {
     Address::parse(&format!("sftp://{who}{path}")).ok()
 }
 
-/// What ssh and sshfs say on failing (in English, read as they print it),
-/// in the user's words where it can be told; else their last line, as
-/// written.
+/// What ssh and sshfs wrote on failing (in English, read as they print it:
+/// a [`mounter::ToolSaid`], never Skwir's own words), in the user's words
+/// where it can be told; else their last line, as written.
 pub(crate) fn words(said: &str) -> Words {
     let said = said.trim();
     if said.contains("Permission denied") {
@@ -267,7 +265,7 @@ pub(crate) fn words(said: &str) -> Words {
     } else if said.contains("Connection refused") {
         words!(remote_sshfs_connection_refused = "the server refused the connection")
     } else if said.contains("Connection timed out") || said.contains("timed out") {
-        words!(remote_sshfs_no_answer = "the server did not answer")
+        mounter::no_answer()
     } else {
         Words::as_written(said.lines().last().unwrap_or(said).to_owned())
     }

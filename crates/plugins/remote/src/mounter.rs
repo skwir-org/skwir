@@ -104,6 +104,74 @@ pub fn ended(
     }
 }
 
+/// What a tool wrote on failing (its standard error), as it wrote it: the
+/// one error a connector reads, to say it in the user's words where it can
+/// tell what it means ([`told`]). Skwir's own errors (a tool that could not
+/// start, was stopped as it ran past its time, mounted nothing) are never
+/// this: they go on as they are, said where they are shown in the reader's
+/// language, never read back (words.md, "Nothing reads words back").
+#[derive(Debug)]
+pub struct ToolSaid(pub String);
+
+impl std::fmt::Display for ToolSaid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ToolSaid {}
+
+/// Skwir's own error where a tool ran past its patience ([`mount`]), the
+/// timeout's error inside, said as it is. What a tool hangs on while it
+/// connects is nearly always a server that does not answer: [`told`] says
+/// so ([`no_answer`]) where the tool is a server's.
+#[derive(Debug)]
+pub struct Unanswered(pub anyhow::Error);
+
+impl std::fmt::Display for Unanswered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for Unanswered {}
+
+/// `error`, which ended a tool run since `started` with `patience`, as an
+/// [`Unanswered`] where the patience ran out, as the time it took says,
+/// never what the error says; else as it is.
+pub fn past_patience(
+    error: anyhow::Error,
+    started: Instant,
+    patience: Duration,
+    cancel: &CancelToken,
+) -> anyhow::Error {
+    if !cancel.is_cancelled() && started.elapsed() >= patience {
+        anyhow::Error::new(Unanswered(error))
+    } else {
+        error
+    }
+}
+
+/// Why a connection was not made where its server did not answer: what
+/// ssh says of it ("Connection timed out", `sshfs::words`), and a tool that
+/// ran past its patience ([`Unanswered`]).
+pub fn no_answer() -> Words {
+    words!(remote_sshfs_no_answer = "the server did not answer")
+}
+
+/// `error` in the user's words: what the tool wrote ([`ToolSaid`]) read by
+/// `words`, a tool past its patience as a server that did not answer
+/// ([`Unanswered`]), each told by its kind; any other error as it is.
+pub fn told(error: anyhow::Error, words: impl FnOnce(&str) -> Words) -> anyhow::Error {
+    if let Some(said) = error.downcast_ref::<ToolSaid>() {
+        return words(&said.0).into();
+    }
+    if error.is::<Unanswered>() {
+        return no_answer().into();
+    }
+    error
+}
+
 /// Run `command`, a tool that mounts at `point` and then runs on its own
 /// (sshfs daemonizes, `rclone mount --daemon`), until it has mounted: its
 /// exit, then the mount in the table. Cancelled or too long, the tool and
@@ -111,21 +179,24 @@ pub fn ended(
 /// touched (the ssh it started carries the mount).
 ///
 /// # Errors
-/// What the tool said when it failed.
+/// What the tool wrote when it failed, a [`ToolSaid`]; an [`Unanswered`]
+/// where it ran past `patience`; else Skwir's own error (it could not
+/// start, mounted nothing).
 pub fn mount(
     command: &mut Command,
     point: &Path,
     cancel: &CancelToken,
     patience: Duration,
 ) -> anyhow::Result<()> {
+    let started = Instant::now();
     let finished =
-        skwir_platform::process::run_leaving(command, cancel, patience).inspect_err(|_| {
+        skwir_platform::process::run_leaving(command, cancel, patience).map_err(|error| {
             let _ = remove_point(point);
+            past_patience(error, started, patience, cancel)
         })?;
     if !finished.status.success() {
         let _ = remove_point(point);
         let said = finished.stderr.trim();
-        // What the tool said, as it said it.
         if said.is_empty() {
             anyhow::bail!(words!(
                 remote_mounter_ended = "it ended ({ $status })",
@@ -134,7 +205,8 @@ pub fn mount(
                         it (exit status: 1)."
             ));
         }
-        anyhow::bail!("{said}");
+        // What the tool said, as it said it.
+        return Err(ToolSaid(said.to_owned()).into());
     }
     // A daemon may say it is ready a moment before the kernel lists it.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -419,5 +491,46 @@ mod tests {
             "“fish”, “less”, and “vim” are using it"
         );
         assert_eq!(in_use(&[]).english(), "another program is using it");
+    }
+
+    /// What a tool wrote is read for what it means; Skwir's own error (the
+    /// tool stopped as it ran past its time) is never read back, whatever
+    /// its words say: told by its kind, a server that did not answer.
+    #[cfg(unix)]
+    #[test]
+    fn only_what_a_tool_wrote_is_read() {
+        let folder = tempfile::tempdir().unwrap();
+        let point = folder.path().join("point");
+        let mount = |script: &str, patience: Duration| {
+            std::fs::create_dir_all(&point).unwrap();
+            let mut command = skwir_platform::process::command("sh");
+            command.args(["-c", script]);
+            mount(&mut command, &point, &CancelToken::new(), patience).unwrap_err()
+        };
+        let said = mount(
+            "echo 'ssh: connect to host h port 22: Connection timed out' >&2; exit 255",
+            Duration::from_secs(30),
+        );
+        assert!(said.downcast_ref::<ToolSaid>().is_some());
+        assert_eq!(
+            told(said, crate::sshfs::words).to_string(),
+            "the server did not answer"
+        );
+        let stopped = mount("sleep 30", Duration::from_millis(200));
+        assert!(stopped.downcast_ref::<ToolSaid>().is_none());
+        assert!(stopped.is::<Unanswered>(), "{stopped:#}");
+        let past = mount("sleep 30", Duration::from_millis(200));
+        assert_eq!(
+            Words::of_error(past).english(),
+            "sh timed out",
+            "a tool no server's says its own timeout"
+        );
+        assert_eq!(
+            told(stopped, crate::sshfs::words).to_string(),
+            "the server did not answer"
+        );
+        let silent = mount("exit 3", Duration::from_secs(30));
+        assert!(silent.downcast_ref::<ToolSaid>().is_none());
+        assert!(!point.exists(), "a mount that failed leaves no point");
     }
 }
