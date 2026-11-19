@@ -73,7 +73,8 @@ pub fn shown(shell: &Shell) -> Option<&Parked> {
 }
 
 /// What the member's bar names it by: the name and size its container's
-/// row gives the member shown (or on its way).
+/// row gives the member shown (or on its way), the name as it is drawn
+/// alone (`DrawnName`).
 pub fn title(shell: &Shell) -> Option<(String, Option<String>)> {
     let parked = shown(shell)?;
     let target = shell.preview.member_target(parked.depth)?;
@@ -81,7 +82,7 @@ pub fn title(shell: &Shell) -> Option<(String, Option<String>)> {
         .iter()
         .find(|row| row.target.as_deref() == Some(target))?;
     Some((
-        row.cells.first()?.clone(),
+        crate::views::entry::DrawnName::of_str(row.cells.first()?).to_string(),
         row.bytes.map(crate::format::size),
     ))
 }

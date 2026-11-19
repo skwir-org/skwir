@@ -175,7 +175,7 @@ impl MapView {
                 .iter()
                 .map(|p| {
                     pane.and_then(|pane| pane.entry(p.id))
-                        .map(|e| SharedString::from(e.name_str().into_owned()))
+                        .map(|e| crate::views::entry::DrawnName::of(&e.name).into())
                         .unwrap_or_default()
                 })
                 .collect()

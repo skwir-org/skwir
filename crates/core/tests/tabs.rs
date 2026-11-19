@@ -584,3 +584,44 @@ fn a_tab_an_agent_opened_behind_opens_as_the_agent_s_call() {
         opened.lock().clear();
     }
 }
+
+/// A folder's name drawn alone (a tab's, the window's title, a crumb of
+/// what a folder holds) shows its bidirectional controls as tags, never
+/// obeys them (ADR-139, 5): `Hello_` + U+202E + `gnp.js` is no `.png` in
+/// any saying, isolated where the window draws it; as data, the name as it
+/// is. A Hebrew name is drawn as it is.
+#[test]
+fn a_folder_s_title_shows_its_controls_never_obeys_them() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let dir = home_tempdir();
+    let spoof = "Hello_\u{202e}gnp.js";
+    std::fs::create_dir_all(dir.path().join(spoof)).unwrap();
+    std::fs::create_dir_all(dir.path().join("שלום")).unwrap();
+    let app = app(dir.path());
+    let title = app.location_title(&Location::from_path(dir.path().join(spoof)));
+    assert_eq!(title.english(), "Hello_⟨RLO⟩gnp.js");
+    assert_eq!(title.say_plain(), "Hello_⟨RLO⟩gnp.js");
+    assert_eq!(title.say(), format!("{FSI}Hello_⟨RLO⟩gnp.js{PDI}"));
+    assert_eq!(title.to_data(), serde_json::json!({ "alone": spoof }));
+    let hebrew = app.location_title(&Location::from_path(dir.path().join("שלום")));
+    assert_eq!(hebrew.say(), format!("{FSI}שלום{PDI}"));
+    // What the trail's chevron lists of the folder: each by its name, drawn
+    // alone, the name kept as data for Up to select.
+    let inside = app
+        .places_in(&Location::from_path(dir.path()), None, false)
+        .unwrap();
+    let crumb = inside
+        .iter()
+        .find(|crumb| crumb.name.as_deref() == Some(spoof))
+        .expect("the folder listed");
+    assert_eq!(crumb.label.say_plain(), "Hello_⟨RLO⟩gnp.js");
+    // And the tab, as agents read it.
+    navigate(&app, &dir.path().join(spoof));
+    let names: Vec<String> = app
+        .tab_list()
+        .into_iter()
+        .map(|t| t.title.english())
+        .collect();
+    assert_eq!(names, ["Hello_⟨RLO⟩gnp.js"]);
+}

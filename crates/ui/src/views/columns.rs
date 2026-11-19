@@ -469,7 +469,7 @@ fn side_column(
                     .map(|e| {
                         e.map(|e| SideRow {
                             id: e.id,
-                            label: e.name_str().into_owned().into(),
+                            label: crate::views::entry::DrawnName::of(&e.name).into(),
                             name: e.name.clone(),
                             is_dir: e.is_dir(),
                             icon: this.icons.for_entry(

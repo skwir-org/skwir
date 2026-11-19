@@ -621,13 +621,15 @@ fn clash_rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -
             root = &clashes.question.clashes[parent];
         }
         let base = root.there.path.parent().unwrap_or(&root.there.path);
-        let name = clash
-            .there
-            .path
-            .strip_prefix(base)
-            .unwrap_or(&clash.there.path)
-            .to_string_lossy()
-            .into_owned();
+        // Drawn alone, its controls shown.
+        let name: gpui::SharedString = crate::views::entry::DrawnName::of_path(
+            clash
+                .there
+                .path
+                .strip_prefix(base)
+                .unwrap_or(&clash.there.path),
+        )
+        .into();
         let (yours, theirs) = (said(&clash.source, &now), said(&clash.there, &now));
         let later = newer(clash);
         let earlier = matches!((clash.source.modified, clash.there.modified),

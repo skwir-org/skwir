@@ -155,10 +155,13 @@ fn written(
     crate::complete::written(dir, "~", home).into()
 }
 
+/// Its name as a row draws it alone, its controls shown (`DrawnName`).
 fn name_of(path: &Path) -> SharedString {
     path.file_name()
-        .map_or_else(|| path.to_string_lossy(), |name| name.to_string_lossy())
-        .into_owned()
+        .map_or_else(
+            || crate::views::entry::DrawnName::of_path(path),
+            crate::views::entry::DrawnName::of,
+        )
         .into()
 }
 

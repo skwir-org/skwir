@@ -1081,7 +1081,7 @@ impl Build<'_> {
             items.push(TreemapItem {
                 key,
                 weight: (child.measure(self.mode) as f64).max(floor),
-                label: child.name.clone().into(),
+                label: crate::views::entry::DrawnName::of_str(&child.name).into(),
                 detail: self.detail(child).into(),
                 color: fill.closed,
                 tray: fill.open,

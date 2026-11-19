@@ -12,9 +12,10 @@
 //! own copy of them.
 
 use crate::theme::Chosen;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 
-use gpui::{AnyElement, Context, Div, Stateful, prelude::*};
+use gpui::{AnyElement, Context, Div, SharedString, Stateful, prelude::*};
 use skwir_core::workspace::Pane;
 use skwir_core::{EntryId, Location};
 
@@ -24,11 +25,64 @@ use crate::icons;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
+/// A file's or a folder's name as it is drawn on its own (a row, a tile,
+/// a card, a column's heading, a label on a map, a drag's): its
+/// bidirectional controls shown as tags, never obeyed (ADR-139, 5), so
+/// `Hello_` + U+202E + `gnp.js` reads `Hello_⟨RLO⟩gnp.js`, not as a
+/// picture; nothing else added. Made from the name alone (`of`), so no
+/// surface that draws one draws it raw. What is drawn never changes the
+/// name: an operation, a copy or a search takes `Entry::name`. A name in a
+/// sentence is a `Name` or `Folder` argument, a location's title
+/// `App::location_title`, a crumb's `address::crumbs`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DrawnName(SharedString);
+
+impl DrawnName {
+    /// `name`, a file's or a folder's, as it is drawn.
+    pub fn of(name: &OsStr) -> Self {
+        Self::of_str(&name.to_string_lossy())
+    }
+
+    /// `path` written whole, as it is drawn alone (a tooltip, a folder's
+    /// row in a menu): made of names, each's controls shown.
+    pub fn of_path(path: &std::path::Path) -> Self {
+        Self::of_str(&path.display().to_string())
+    }
+
+    /// `name`, already text, as it is drawn.
+    pub fn of_str(name: &str) -> Self {
+        DrawnName(SharedString::from(
+            skwir_core::words::shown_controls(name).into_owned(),
+        ))
+    }
+
+    /// What is drawn, to hand to an element.
+    pub fn shared(&self) -> SharedString {
+        self.0.clone()
+    }
+}
+
+impl std::ops::Deref for DrawnName {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<DrawnName> for SharedString {
+    fn from(name: DrawnName) -> Self {
+        name.0
+    }
+}
+
 /// What every view knows of an entry it draws.
 #[allow(clippy::struct_excessive_bools)]
 pub struct Look {
     pub id: EntryId,
-    pub name: String,
+    /// Its name as it is drawn (`DrawnName`), and as a screen reader
+    /// hears it.
+    pub name: DrawnName,
     pub is_dir: bool,
     pub selected: bool,
     pub cursor: bool,
@@ -104,7 +158,7 @@ impl Shell {
         });
         Some(Look {
             id,
-            name: e.name_str().into_owned(),
+            name: DrawnName::of(&e.name),
             is_dir: e.is_dir(),
             selected: pane.selection.contains(id),
             // While the keys are on a heading, no entry is where they are.
@@ -229,7 +283,7 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
         } else {
             gpui::Role::ListBoxOption
         })
-        .aria_label(look.name.clone())
+        .aria_label(look.name.shared())
         .when_some(described, StatefulInteractiveElement::aria_description)
         .aria_selected(look.selected)
         .when(
@@ -347,7 +401,7 @@ pub fn name(el: Stateful<Div>, look: &Look) -> AnyElement {
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis_middle(),
-        look.name.clone(),
+        look.name.shared(),
     )
     .into_any_element()
 }
@@ -377,7 +431,7 @@ mod tests {
                 file: FileId::new(1, 1),
                 at: 0,
             },
-            name: "desktop.ini".into(),
+            name: super::DrawnName::of_str("desktop.ini"),
             is_dir: false,
             selected: false,
             cursor: false,
@@ -473,5 +527,35 @@ mod tests {
                 vcs: None,
             }
         );
+    }
+
+    /// A name drawn alone (a row, a tile, a card, a column, the Folder
+    /// column, a drag's label) shows each bidirectional control as a tag,
+    /// never obeys it (ADR-139, 5): an override, an embedding, an isolate;
+    /// a Hebrew name and the marks right-to-left names use are drawn as
+    /// they are. What a view draws and a screen reader hears is the look's.
+    #[test]
+    fn a_name_drawn_alone_shows_its_controls_never_obeys_them() {
+        use super::DrawnName;
+        use std::ffi::OsStr;
+        let drawn = |name: &str| DrawnName::of(OsStr::new(name)).to_string();
+        assert_eq!(drawn("Hello_\u{202e}gnp.js"), "Hello_⟨RLO⟩gnp.js");
+        assert_eq!(
+            drawn("a\u{202d}b\u{202b}c\u{202c}d\u{2066}e\u{2069}"),
+            "a⟨LRO⟩b⟨RLE⟩c⟨PDF⟩d⟨LRI⟩e⟨PDI⟩"
+        );
+        assert_eq!(drawn("שלום.txt"), "שלום.txt");
+        assert_eq!(drawn("\u{200f}שלום\u{200e} 2"), "\u{200f}שלום\u{200e} 2");
+        assert_eq!(drawn("readme.txt"), "readme.txt");
+        assert_eq!(
+            DrawnName::of_path(std::path::Path::new("/a/b\u{202e}c/d")).to_string(),
+            "/a/b⟨RLO⟩c/d"
+        );
+        let spoof = Look {
+            name: DrawnName::of(OsStr::new("Hello_\u{202e}gnp.js")),
+            ..look()
+        };
+        assert_eq!(&*spoof.name, "Hello_⟨RLO⟩gnp.js");
+        assert_eq!(spoof.name.shared(), "Hello_⟨RLO⟩gnp.js");
     }
 }

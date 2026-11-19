@@ -212,7 +212,7 @@ impl Shell {
             .map(|(steps, location)| NavRow {
                 label: self.app.location_title(&location).say().into(),
                 tip: match location.path() {
-                    Some(path) => path.display().to_string().into(),
+                    Some(path) => crate::views::entry::DrawnName::of_path(&path).into(),
                     None => location.to_string().into(),
                 },
                 icon: crate::trail::glyph(&self.app, &location),
@@ -412,7 +412,7 @@ fn inside_rows(
         .map(|place| NavRow {
             label: place.label.say().into(),
             tip: match place.location.path() {
-                Some(path) => path.display().to_string().into(),
+                Some(path) => crate::views::entry::DrawnName::of_path(&path).into(),
                 None => app.location_title(&place.location).say().into(),
             },
             icon: crate::trail::glyph(app, &place.location),
@@ -497,14 +497,15 @@ fn parent_rows(top: &Path, mark: bool) -> Vec<NavRow> {
         .into_iter()
         .enumerate()
         .map(|(depth, folder)| NavRow {
+            // Drawn alone, its controls shown.
             label: folder
                 .file_name()
                 .map_or_else(
-                    || folder.display().to_string(),
-                    |name| name.to_string_lossy().into_owned(),
+                    || crate::views::entry::DrawnName::of_path(folder),
+                    crate::views::entry::DrawnName::of,
                 )
                 .into(),
-            tip: folder.display().to_string().into(),
+            tip: crate::views::entry::DrawnName::of_path(folder).into(),
             icon: "folder",
             command: "navigate",
             args: serde_json::json!({ "location": PathArg::from(folder) }),

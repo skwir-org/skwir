@@ -347,7 +347,7 @@ impl BoardView {
             };
             columns.push(Column {
                 at: Some(id),
-                title: e.name_str().into_owned(),
+                title: crate::views::entry::DrawnName::of(&e.name).to_string(),
                 location,
                 path,
                 color,

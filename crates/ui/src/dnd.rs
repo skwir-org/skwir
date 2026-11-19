@@ -402,7 +402,7 @@ impl Shell {
                 .iter()
                 .next()
                 .and_then(|id| pane.entry(id))
-                .map(|e| e.name_str().into_owned())
+                .map(|e| crate::views::entry::DrawnName::of(&e.name).to_string())
                 .unwrap_or_default();
             (pane.selection.len(), label)
         })

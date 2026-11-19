@@ -490,7 +490,8 @@ impl skwir_core::suggest::SuggestSource for Places {
                     || c.path.display().to_string(),
                     |n| n.to_string_lossy().into_owned(),
                 );
-                let mut row = Suggestion::new(Section::Go, Words::as_written(name))
+                // A name drawn alone, its controls shown (ADR-139, 5).
+                let mut row = Suggestion::new(Section::Go, Words::name_alone(name))
                     .icon(if dir { "folder" } else { "open" })
                     .rank(i32::try_from(i).unwrap_or(i32::MAX) + 20)
                     .runs(Invocation::with_args(
@@ -498,8 +499,8 @@ impl skwir_core::suggest::SuggestSource for Places {
                         &serde_json::json!({ "path": PathArg::from(c.path.clone()), "pane": ask.pane }),
                     ));
                 if let Some(parent) = c.path.parent() {
-                    // A path, as written.
-                    row.detail = Some(Words::as_written(shown_from(parent, home.as_deref())));
+                    // A path, drawn alone.
+                    row.detail = Some(Words::name_alone(shown_from(parent, home.as_deref())));
                 }
                 if dir {
                     row.scope = Some(Location::from_path(&c.path));

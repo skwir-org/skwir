@@ -948,13 +948,15 @@ impl Shell {
                     let Some(dir) = from.or_else(folder) else {
                         continue;
                     };
-                    let name = dir.file_name().map_or_else(
-                        || dir.display().to_string(),
-                        |n| n.to_string_lossy().into_owned(),
-                    );
+                    // Its name and its path drawn alone, their controls
+                    // shown.
+                    let whole = crate::views::entry::DrawnName::of_path(&dir);
+                    let name = dir
+                        .file_name()
+                        .map_or_else(|| whole.clone(), crate::views::entry::DrawnName::of);
                     Said {
-                        text: name,
-                        whole: dir.display().to_string(),
+                        text: name.to_string(),
+                        whole: whole.to_string(),
                     }
                 }
                 Detail::Size => Said::text(

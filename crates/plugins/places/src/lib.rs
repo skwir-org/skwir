@@ -433,9 +433,10 @@ pub fn scan() -> Vec<Place> {
         ));
     }
     for d in skwir_platform::places::user_dirs() {
-        // The system's name of the folder, as it says it.
+        // The system's name of the folder, as it says it: a name drawn
+        // alone, its bidirectional controls shown (ADR-139, 5).
         out.push(folder(
-            Words::as_written(d.name),
+            Words::name_alone(d.name),
             d.path,
             icon_for_user_dir(&d.kind),
             skwir_core::registry::groups::PLACES.id,
@@ -463,8 +464,9 @@ pub fn scan() -> Vec<Place> {
                         &serde_json::json!({ "path": path }),
                     )),
                     reorder: Some(bookmark_reorder(&Marked::Folder(b.path.clone()))),
+                    // Its label or its folder's name, drawn alone.
                     ..folder(
-                        Words::as_written(b.title),
+                        Words::name_alone(b.title),
                         b.path,
                         "folder",
                         skwir_core::registry::groups::BOOKMARKS.id,
@@ -488,7 +490,7 @@ pub fn scan() -> Vec<Place> {
                     reorder: Some(bookmark_reorder(&Marked::Address(b.address.clone()))),
                     ..Place::new(
                         skwir_core::registry::groups::BOOKMARKS.id,
-                        Words::as_written(b.title),
+                        Words::name_alone(b.title),
                         "folder-remote",
                         Location::parse(&b.address),
                     )

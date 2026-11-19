@@ -245,13 +245,16 @@ impl App {
     /// (`Registry::place_title`), else the folder's name, else what its
     /// provider calls it (`LocationProvider::title`), else the text after
     /// the scheme. Said where it is shown, in English to agents (ADR-139,
-    /// 7); a name, a path or a location's text is as written.
+    /// 7); a folder's name, or a path without one, is a name drawn alone
+    /// (`Words::name_alone`: its bidirectional controls shown, never
+    /// obeyed, wherever a tab, a crumb or a title draws it), a location's
+    /// text as written.
     pub fn location_title(&self, location: &Location) -> Words {
         if let Some(title) = self.registry.place_title(location) {
             return title;
         }
         if let Some(path) = location.path() {
-            return Words::as_written(path.file_name().map_or_else(
+            return Words::name_alone(path.file_name().map_or_else(
                 || path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
             ));

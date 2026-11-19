@@ -273,7 +273,7 @@ impl Shell {
         let path = arrival.folder.join(&arrival.name);
         crate::views::entry::Look {
             id: e.id,
-            name: e.name_str().into_owned(),
+            name: crate::views::entry::DrawnName::of(&e.name),
             is_dir: e.is_dir(),
             selected: false,
             cursor: false,

@@ -2623,7 +2623,8 @@ fn tool_pane(
 /// above it, under the sidebar's name: `Papers › 2026` for a folder of
 /// Documents the user named Papers, `stick › Photos` on a drive. Of two
 /// on one folder, the first in the sidebar. With no roots (`ui.full_path`)
-/// it starts at `/`.
+/// it starts at `/`. Each folder's is a name drawn alone
+/// (`Words::name_alone`): its bidirectional controls shown, never obeyed.
 pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(Words, PathBuf)> {
     let root = roots
         .iter()
@@ -2654,7 +2655,7 @@ pub fn crumbs(path: &std::path::Path, roots: &[crate::sidebar::Root]) -> Vec<(Wo
             }
             other => other.as_os_str().to_string_lossy().into_owned(),
         };
-        out.push((Words::as_written(label), current.clone()));
+        out.push((Words::name_alone(label), current.clone()));
     }
     out
 }

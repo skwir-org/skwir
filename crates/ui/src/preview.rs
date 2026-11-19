@@ -229,6 +229,8 @@ pub enum Typing {
 
 #[derive(Clone, Default)]
 pub struct Info {
+    /// What the header names it by, as it is drawn: its name with its
+    /// controls shown (`DrawnName`), or the location's title, said.
     pub name: String,
     /// What the type is called until the database's name arrives
     /// (`typenames::fallback_of`).
@@ -2786,7 +2788,7 @@ impl Shell {
                 autoplay.id = key.id;
             }
             self.preview.key = Some(key.clone());
-            self.preview.info.name = entry.name_str().into_owned();
+            self.preview.info.name = crate::views::entry::DrawnName::of(&entry.name).to_string();
             cx.notify();
         }
         if self.preview.key.as_ref() != Some(&key) || stale || restand {
@@ -2838,7 +2840,7 @@ impl Shell {
                 .as_deref()
                 .is_some_and(crate::fullscreen::is_picture_type);
             self.preview.info = Info {
-                name: entry.name_str().into_owned(),
+                name: crate::views::entry::DrawnName::of(&entry.name).to_string(),
                 type_fallback: crate::typenames::fallback_of(&entry),
                 mime,
                 typing,
@@ -7220,8 +7222,15 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
     if last == 0 {
         return line.child(name(preview.info.name.clone(), 0));
     }
+    // A member's name drawn as the entry's is (`info.name`), its
+    // controls shown.
     let names = std::iter::once(preview.info.name.clone())
-        .chain(preview.nested.iter().map(|member| member.name.clone()))
+        .chain(
+            preview
+                .nested
+                .iter()
+                .map(|member| crate::views::entry::DrawnName::of_str(&member.name).to_string()),
+        )
         .take(last + 1);
     for (depth, name_at) in names.enumerate() {
         if depth > 0 {

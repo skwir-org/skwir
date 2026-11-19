@@ -606,8 +606,9 @@ impl GridView {
                     return *lines;
                 }
                 wrapped_now += 1;
+                // As the tile draws it, its controls shown.
                 let lines = crate::name_lines::count(
-                    &entry.name_str(),
+                    &crate::views::entry::DrawnName::of(&entry.name),
                     width,
                     usize::from(MAX_LINES),
                     &mut wrapper,
@@ -659,7 +660,7 @@ impl GridView {
                     let Some(arriving) = list.arriving.get(i) else {
                         return 1;
                     };
-                    let name = arriving.arrival.like.name_str();
+                    let name = crate::views::entry::DrawnName::of(&arriving.arrival.like.name);
                     let hash = {
                         let mut hasher = std::hash::DefaultHasher::new();
                         name.hash(&mut hasher);
@@ -699,14 +700,14 @@ impl GridView {
 /// reads best (`name_lines`), in the lines `measure` counted, so the row
 /// keeps its height.
 fn shown_name(
-    name: &str,
+    name: &crate::views::entry::DrawnName,
     lines: u8,
     zoom: u32,
     scale: Scale,
     theme: &Theme,
     cx: &gpui::App,
 ) -> gpui::SharedString {
-    let name = gpui::SharedString::from(name.to_owned());
+    let name = name.shared();
     if lines < 2 {
         return name;
     }

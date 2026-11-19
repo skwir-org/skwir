@@ -615,8 +615,9 @@ pub fn path_suggestions(
                     "pane": pane,
                 })
             };
-            let mut row = Suggestion::new(Section::Go, Words::as_written(name.text.clone()))
-                .detail(Words::as_written(complete::written(
+            // A name and a folder drawn alone, their controls shown.
+            let mut row = Suggestion::new(Section::Go, Words::name_alone(name.text.clone()))
+                .detail(Words::name_alone(complete::written(
                     &folder.path,
                     text,
                     home.as_deref(),

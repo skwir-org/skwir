@@ -737,12 +737,14 @@ impl Crumb {
     }
 
     /// A place that is an entry named `name` of the place before it (see
-    /// `Crumb::name`), called by that name as written.
+    /// `Crumb::name`), called by that name, a name drawn alone
+    /// (`Words::name_alone`: its bidirectional controls shown, never
+    /// obeyed).
     pub fn entry(name: impl Into<String>, location: Location) -> Self {
         let name = name.into();
         Crumb {
             name: Some(name.clone()),
-            ..Crumb::new(Words::as_written(name), location)
+            ..Crumb::new(Words::name_alone(name), location)
         }
     }
 

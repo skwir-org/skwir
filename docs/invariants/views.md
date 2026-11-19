@@ -12,6 +12,20 @@ around the views is in [shell.md](shell.md).
   (press, click, drag of the selection, cut dimming, a dropped tag or
   files) is `behave`, with what a screen reader hears of it (its name,
   selection and `Seat`; [accessibility.md](accessibility.md)).
+- **A name is drawn as a `DrawnName`** (`views/entry.rs`), wherever it
+  is drawn on its own: a row, a tile, a card, a column, the Folder
+  column, the preview's header, a drag's label, a map's, a menu's folder,
+  a dialog's row. Its bidirectional controls are shown as tags, never
+  obeyed (ADR-139, 5; [words.md](words.md)): `Hello_` + U+202E +
+  `gnp.js` reads `Hello_⟨RLO⟩gnp.js`, never as a picture. `Look::name` is
+  one, made from the entry's name alone, so no view draws a name raw; a
+  grid measures the name it draws. Where a name is words (a location's
+  title, `App::location_title`: a tab, the trail, the window's title; a
+  crumb, `Crumb::entry` and `address::crumbs`; a bookmark's or a user
+  folder's place in the sidebar; a suggestion of the address naming a
+  file), it is `Words::name_alone`. What is drawn
+  never changes the name: operations, copies and searches take
+  `Entry::name`.
 - A row, a tile or a card draws its own shape around these, never its
   own copy of them. The columns view's parent folders and the folder
   under its cursor are not the pane's entries: they take only the
