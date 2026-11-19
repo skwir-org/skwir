@@ -6,10 +6,11 @@
 //! On Linux, gettext's rules: messages from `LC_ALL`, else `LC_MESSAGES`,
 //! else `LANG`, where `LANGUAGE`, a list, comes first, unless the locale is
 //! C (`C`, `C.UTF-8`, `POSIX`), which means English and ignores it; each
-//! other kind from `LC_ALL`, else its own variable, else `LANG`. A variable
-//! set to nothing is not set. On macOS, the preferred languages and the
-//! region's locale; on Windows, the display languages and the user's
-//! locale.
+//! other kind from `LC_ALL`, else its own variable, else `LANG`, C there
+//! English's formats too. A variable set to nothing is not set. On macOS,
+//! the preferred languages and the region's locale; on Windows, the display
+//! languages and the user's locale: tags already, read as BCP 47 reads
+//! them, their script kept (`zh-Hant-TW`).
 //!
 //! What Skwir says is in `skwir_core::locale`, which is handed the system's
 //! languages as Skwir starts and adds the user's choice
@@ -48,8 +49,10 @@ pub fn languages() -> Vec<String> {
     system::languages()
 }
 
-/// The locale `category` is read in, as the system says it; `None` for
-/// the C locale or none said.
+/// The locale `category` is read in, as the system says it; `None` where
+/// it says none. The C locale (`C`, `C.UTF-8`, `POSIX`) writes as English
+/// does (`en`), and orders names by their letters folded: `None` for
+/// [`Category::Collate`], as for none said.
 pub fn of(category: Category) -> Option<String> {
     system::of(category)
 }
@@ -64,8 +67,9 @@ fn languages_from(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
     else {
         return Vec::new();
     };
-    let Some(locale) = bcp47(&messages) else {
-        // The C locale: English, whatever LANGUAGE says.
+    let Some(Read::Tag(locale)) = read(&messages) else {
+        // The C locale (or one no system could set, which leaves the C
+        // locale in place): English, whatever LANGUAGE says.
         return Vec::new();
     };
     let mut languages: Vec<String> = Vec::new();
@@ -89,26 +93,48 @@ fn of_from(var: &dyn Fn(&str) -> Option<String>, category: Category) -> Option<S
     let locale = set("LC_ALL")
         .or_else(|| set(category.variable()))
         .or_else(|| set("LANG"))?;
-    bcp47(&locale)
+    match read(&locale)? {
+        Read::Tag(tag) => Some(tag),
+        // Asked for, not unsaid: English's formats, whatever language the
+        // messages are in (`LANG=de_DE.UTF-8 LC_NUMERIC=C` writes 1,234.5).
+        Read::C => match category {
+            Category::Collate => None,
+            Category::Time | Category::Numeric | Category::Paper => Some("en".to_owned()),
+        },
+    }
 }
 
-/// A POSIX locale's name (`fr_FR.UTF-8@euro`, `sr_RS@latin`) as a BCP 47
-/// tag (`fr-FR`, `sr-Latn-RS`): its codeset left out, a modifier that names
-/// a script or a variant kept as one, any other dropped. `None` for the C
-/// locale (`C`, `C.UTF-8`, `POSIX`) and for what names no language.
-pub fn bcp47(posix: &str) -> Option<String> {
-    let (rest, modifier) = posix
+/// What a locale's name says.
+#[derive(Debug, PartialEq, Eq)]
+enum Read {
+    /// The C locale: English, its formats and its order.
+    C,
+    /// A language, as a BCP 47 tag.
+    Tag(String),
+}
+
+/// A locale's name, as Linux names it (POSIX's `fr_FR.UTF-8@euro`,
+/// `sr_RS@latin`, a `LANGUAGE` entry's `sr@latin`) or as macOS and
+/// Windows do (`zh-Hant-TW`, macOS's `zh-Hant_TW`, `sr-Latn-RS`), read:
+/// its codeset left out, `_` read as `-`, a modifier that names a script
+/// (`@latin`) or a variant (`@valencia`) kept as one, any other dropped
+/// (`@euro`, macOS's keywords `@rg=gbzzzz`), and the rest read by BCP 47's
+/// grammar, its script, region and variants kept as written. `None` for
+/// what names no language.
+fn read(name: &str) -> Option<Read> {
+    let (rest, modifier) = name
         .split_once('@')
-        .map_or((posix, None), |(rest, modifier)| (rest, Some(modifier)));
+        .map_or((name, None), |(rest, modifier)| (rest, Some(modifier)));
     let rest = rest.split('.').next().unwrap_or_default();
-    let (language, region) = rest
-        .split_once(['_', '-'])
-        .map_or((rest, None), |(language, region)| (language, Some(region)));
-    let lower = language.to_ascii_lowercase();
-    if lower.is_empty() || lower == "c" || lower == "posix" {
-        return None;
+    if rest.eq_ignore_ascii_case("c") || rest.eq_ignore_ascii_case("posix") {
+        return Some(Read::C);
     }
-    if !(2..=3).contains(&lower.len()) || !lower.bytes().all(|b| b.is_ascii_lowercase()) {
+    // A locale's extensions (`-u-hc-h23`), if any, are not the language's.
+    let mut tag = icu_locale_core::LanguageIdentifier::try_from_locale_bytes(
+        rest.replace('_', "-").as_bytes(),
+    )
+    .ok()?;
+    if tag.language.is_unknown() {
         return None;
     }
     let (script, variant) = match modifier.map(str::to_ascii_lowercase).as_deref() {
@@ -119,23 +145,28 @@ pub fn bcp47(posix: &str) -> Option<String> {
         // `@euro` and the rest say nothing a tag holds.
         _ => (None, None),
     };
-    let mut tag = lower;
-    if let Some(script) = script {
-        tag.push('-');
-        tag.push_str(script);
+    if let Some(script) = script.and_then(|script| script.parse().ok())
+        && tag.script.is_none()
+    {
+        tag.script = Some(script);
     }
-    if let Some(region) = region.filter(|region| {
-        (region.len() == 2 && region.bytes().all(|b| b.is_ascii_alphabetic()))
-            || (region.len() == 3 && region.bytes().all(|b| b.is_ascii_digit()))
-    }) {
-        tag.push('-');
-        tag.push_str(&region.to_ascii_uppercase());
+    if let Some(variant) = variant.and_then(|variant| variant.parse().ok()) {
+        tag.variants.push(variant);
     }
-    if let Some(variant) = variant {
-        tag.push('-');
-        tag.push_str(variant);
+    Some(Read::Tag(tag.to_string()))
+}
+
+/// A locale's name (POSIX's `fr_FR.UTF-8@euro`, `sr_RS@latin`, or a tag as
+/// macOS and Windows say it, `zh-Hant-TW`) as a BCP 47 tag (`fr-FR`,
+/// `sr-Latn-RS`, `zh-Hant-TW`): its codeset left out, a modifier that names
+/// a script or a variant kept as one, any other dropped, its script and
+/// region kept. `None` for the C locale (`C`, `C.UTF-8`, `POSIX`) and for
+/// what names no language.
+pub fn bcp47(name: &str) -> Option<String> {
+    match read(name)? {
+        Read::Tag(tag) => Some(tag),
+        Read::C => None,
     }
-    Some(tag)
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -228,12 +259,78 @@ mod tests {
         assert_eq!(bcp47("de").as_deref(), Some("de"));
         assert_eq!(bcp47("pt_BR").as_deref(), Some("pt-BR"));
         assert_eq!(bcp47("es_419").as_deref(), Some("es-419"));
-        // Already a tag (macOS, Windows).
-        assert_eq!(bcp47("zh-TW").as_deref(), Some("zh-TW"));
+        assert_eq!(bcp47("zh_TW.UTF-8").as_deref(), Some("zh-TW"));
+        // A LANGUAGE entry names a script by its modifier alone.
+        assert_eq!(bcp47("sr@latin").as_deref(), Some("sr-Latn"));
+        assert_eq!(bcp47("uz_UZ.UTF-8@cyrillic").as_deref(), Some("uz-Cyrl-UZ"));
         for c in ["C", "C.UTF-8", "POSIX", "", "c.utf8"] {
             assert_eq!(bcp47(c), None, "{c}");
         }
         assert_eq!(bcp47("not a locale"), None);
+        assert_eq!(bcp47("und"), None, "names no language");
+    }
+
+    /// macOS and Windows say tags already (`NSLocale::preferredLanguages`,
+    /// the display languages; macOS's `localeIdentifier` joins its region
+    /// with `_`): their script, region and variants are kept as written.
+    #[test]
+    fn tags_keep_their_script() {
+        for (said, tag) in [
+            ("zh-TW", "zh-TW"),
+            ("zh-Hant-TW", "zh-Hant-TW"),
+            ("zh-Hant-HK", "zh-Hant-HK"),
+            ("zh-Hant_TW", "zh-Hant-TW"),
+            ("zh-Hans-CN", "zh-Hans-CN"),
+            ("sr-Latn-RS", "sr-Latn-RS"),
+            ("sr-Cyrl", "sr-Cyrl"),
+            ("az-Arab", "az-Arab"),
+            ("ca-ES-valencia", "ca-ES-valencia"),
+            ("en_US@rg=gbzzzz", "en-US"),
+            ("en-US-u-hc-h23", "en-US"),
+            ("ZH-hant-tw", "zh-Hant-TW"),
+        ] {
+            assert_eq!(bcp47(said).as_deref(), Some(tag), "{said}");
+        }
+    }
+
+    /// A reader of Traditional Chinese, however the system names them, is
+    /// never said Simplified Chinese: with only `zh-Hans` shipped, no
+    /// catalog of theirs, which leaves English, said last to every reader
+    /// (ADR-139, 6; `words.md`, a catalog found by its script).
+    #[test]
+    fn traditional_chinese_never_finds_simplified() {
+        let shipped = ["fr", "zh-Hans"];
+        for said in [
+            "zh-Hant-TW",
+            "zh-Hant_TW",
+            "zh-Hant-HK",
+            "zh_TW.UTF-8",
+            "zh_HK",
+            "zh-MO",
+        ] {
+            let tag = bcp47(said).expect(said);
+            assert_eq!(
+                skwir_core::locale::matching(&tag, shipped),
+                Vec::<&str>::new(),
+                "{said} as {tag}"
+            );
+        }
+        for said in ["zh_CN.UTF-8", "zh-Hans-CN", "zh-SG", "zh"] {
+            let tag = bcp47(said).expect(said);
+            assert_eq!(
+                skwir_core::locale::matching(&tag, shipped).first(),
+                Some(&"zh-Hans"),
+                "{said} as {tag}"
+            );
+        }
+        // Latin Serbian never Cyrillic's catalog.
+        for said in ["sr-Latn-RS", "sr_RS@latin", "sr@latin"] {
+            let tag = bcp47(said).expect(said);
+            assert!(
+                skwir_core::locale::matching(&tag, ["sr"]).is_empty(),
+                "{said}"
+            );
+        }
     }
 
     #[test]
@@ -288,7 +385,32 @@ mod tests {
         // LC_ALL over every kind's own.
         let all = env(&[("LC_ALL", "fr_FR.UTF-8"), ("LC_PAPER", "en_US.UTF-8")]);
         assert_eq!(of_from(&all, Category::Paper).as_deref(), Some("fr-FR"));
-        assert_eq!(of_from(&env(&[("LANG", "C")]), Category::Time), None);
+        assert_eq!(of_from(&env(&[]), Category::Time), None, "none said");
+    }
+
+    /// The C locale asked for a kind writes it as English does, whatever
+    /// the rest says: never as though nothing were said, which would write
+    /// it in the messages' language.
+    #[test]
+    fn the_c_locale_writes_as_english() {
+        let german_numbers_c = env(&[("LANG", "de_DE.UTF-8"), ("LC_NUMERIC", "C")]);
+        assert_eq!(
+            of_from(&german_numbers_c, Category::Numeric).as_deref(),
+            Some("en")
+        );
+        assert_eq!(
+            of_from(&german_numbers_c, Category::Time).as_deref(),
+            Some("de-DE")
+        );
+        let time_posix = env(&[("LANG", "de_DE.UTF-8"), ("LC_TIME", "POSIX")]);
+        assert_eq!(of_from(&time_posix, Category::Time).as_deref(), Some("en"));
+        for category in [Category::Time, Category::Numeric, Category::Paper] {
+            assert_eq!(
+                of_from(&env(&[("LANG", "C.UTF-8")]), category).as_deref(),
+                Some("en"),
+                "{category:?}"
+            );
+        }
     }
 
     /// The order of names is `LC_COLLATE`'s (ADR-139, 15), apart from the

@@ -9474,6 +9474,7 @@ dependencies = [
  "flate2",
  "futures-lite",
  "globset",
+ "icu_locale_core",
  "image",
  "imagesize 0.15.0",
  "jiff",

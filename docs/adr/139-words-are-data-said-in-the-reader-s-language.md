@@ -249,10 +249,13 @@ says it is a draft (13).
      is ignored under the C locale; then come `LC_ALL`, `LC_MESSAGES`
      and `LANG`. `C`, `C.UTF-8` and `POSIX` mean English. Modifiers such
      as `@latin` are mapped to BCP 47. Formats come from `LC_TIME` and
-     `LC_NUMERIC`, apart from messages.
+     `LC_NUMERIC`, apart from messages; C there writes them as English
+     does.
    - **On macOS and Windows:** the preferred languages and the region's
      formats on macOS; the display languages and the user's locale on
-     Windows.
+     Windows. Their names are BCP 47 tags already, read whole: a script
+     they name stays (`zh-Hant-TW`, `sr-Latn-RS`), so a reader of
+     Traditional Chinese finds no Simplified catalog.
    - **`core.language`** is Automatic (the system's) or a list chosen
      in Settings, which a Windows user whose language is not an
      installed display language needs.
