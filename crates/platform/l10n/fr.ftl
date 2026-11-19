@@ -467,6 +467,12 @@ mime_kind_text = Texte et code
 mime_kind_videos = Vidéos
 
 # draft
+mime_unnamed = Fichier
+
+# draft
+mime_unnamed_extension = Fichier { $extension }
+
+# draft
 model_failed = Le modèle ne peut pas être dessiné : { $said }
 
 # draft

@@ -4,10 +4,11 @@
 //! each one's files.
 //!
 //! Each group is made once per keys and shared by every entry in it. Keys
-//! answer from memory: a type's name not read yet is read on a worker, the
-//! type itself standing for it meanwhile, and the keys say they changed
-//! once it is (`Keys::changed`); so are the users' names, an owner's
-//! number standing for its name.
+//! answer from memory: a type's name not read yet is read on a worker,
+//! what the Type column calls its files standing for it meanwhile
+//! (`mime::unnamed`), and the keys say they changed once it is
+//! (`Keys::changed`); so are the users' names, an owner's number standing
+//! for its name.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -253,7 +254,17 @@ fn by_kind() -> Keyer {
 #[derive(Default)]
 struct TypeGroups {
     said_at: u64,
-    groups: HashMap<String, Arc<Group>>,
+    groups: HashMap<String, TypeName>,
+}
+
+/// What the database said of a type's name.
+#[derive(Clone)]
+enum TypeName {
+    /// Its group, called by its name.
+    Named(Arc<Group>),
+    /// It names it not: its files are called by their names
+    /// (`mime::unnamed`).
+    Unnamed,
 }
 
 fn type_groups() -> &'static RwLock<TypeGroups> {
@@ -261,29 +272,30 @@ fn type_groups() -> &'static RwLock<TypeGroups> {
     NAMES.get_or_init(RwLock::default)
 }
 
-/// The group of type `mime` if its name was read in the words said now.
-fn known_type_group(mime: &str) -> Option<Arc<Group>> {
+/// What the database said of type `mime`'s name, if it was read in the
+/// words said now.
+fn known_type_group(mime: &str) -> Option<TypeName> {
     let now = words::revision();
     let kept = type_groups().read();
     (kept.said_at == now)
-        .then(|| kept.groups.get(mime).map(Arc::clone))
+        .then(|| kept.groups.get(mime).cloned())
         .flatten()
 }
 
-/// The group of type `mime`, its name read now if it is not known in the
-/// words said now. What was read before the words moved is forgotten
-/// once they have, and a name read while they moved is not kept.
-fn type_group(mime: &Mime) -> Arc<Group> {
+/// What the database says of type `mime`'s name, read now if it is not
+/// known in the words said now. What was read before the words moved is
+/// forgotten once they have, and a name read while they moved is not
+/// kept.
+fn type_group(mime: &Mime) -> TypeName {
     let now = words::revision();
     if let Some(group) = known_type_group(mime.as_str()) {
         return group;
     }
-    let name = mime.description().unwrap_or_else(|| mime.to_string());
-    let group = Group::new(1, &name).with_term(format!("mime:{mime}"));
-    let group = Arc::new(if mime.as_str() == "inode/directory" {
-        group.of_folders()
-    } else {
-        group
+    let group = mime.description().map_or(TypeName::Unnamed, |name| {
+        TypeName::Named(Arc::new(of_type(
+            mime,
+            Group::new(1, &name).with_term(format!("mime:{mime}")),
+        )))
     });
     let mut kept = type_groups().write();
     // The revisions only go up: one kept from before is let go of, and
@@ -297,17 +309,46 @@ fn type_group(mime: &Mime) -> Arc<Group> {
     if kept.said_at != now {
         return group;
     }
-    Arc::clone(kept.groups.entry(mime.as_str().to_owned()).or_insert(group))
+    kept.groups
+        .entry(mime.as_str().to_owned())
+        .or_insert(group)
+        .clone()
+}
+
+/// `group`, of type `mime`: one of only folders where `mime` is a
+/// folder's.
+fn of_type(mime: &Mime, group: Group) -> Group {
+    if mime.as_str() == "inode/directory" {
+        group.of_folders()
+    } else {
+        group
+    }
 }
 
 /// By what the type is called (`JPEG image`). Its name is read from the
 /// database, which reads files: on a worker (the sort's), at once; on the
-/// window's thread (what arrives, placed), the type stands for its name
-/// while a worker reads it, and the keys say they changed when it has.
+/// window's thread (what arrives, placed), what the Type column calls a
+/// file meanwhile stands for it (`mime::unnamed`: `PNG file`) while a
+/// worker reads it, and the keys say they changed when it has. A type the
+/// database names not is called so for good, never by its id.
 fn by_type(app: &Weak<App>, keys: &Keys) -> Keyer {
     let app = app.clone();
     let changed = Arc::clone(&keys.changed);
     let asked: Arc<Mutex<std::collections::HashSet<String>>> = Arc::default();
+    // By the type and what the file is called by its name, each made once.
+    let unnamed_made = Made::<(String, Option<String>)>::new();
+    let unnamed = move |mime: &Mime, e: &Of<'_>| {
+        let extension = mime::unnamed_extension(&e.type_name().to_string_lossy());
+        let key = (mime.as_str().to_owned(), extension);
+        let label = || mime::unnamed_by(key.1.as_deref()).say();
+        let group = || {
+            of_type(
+                mime,
+                Group::new(1, &label()).with_term(format!("mime:{mime}")),
+            )
+        };
+        unnamed_made.get(key.clone(), group)
+    };
     let unknown = Arc::new(Group::ranked(
         0,
         &words!(
@@ -320,11 +361,15 @@ fn by_type(app: &Weak<App>, keys: &Keys) -> Keyer {
         let Some(mime) = mime::of_entry(e) else {
             return Arc::clone(&unknown);
         };
-        if let Some(group) = known_type_group(mime.as_str()) {
-            return group;
+        let named = |name: TypeName| match name {
+            TypeName::Named(group) => group,
+            TypeName::Unnamed => unnamed(&mime, e),
+        };
+        if let Some(name) = known_type_group(mime.as_str()) {
+            return named(name);
         }
         if !skwir_core::scheduler::on_window_thread() {
-            return type_group(&mime);
+            return named(type_group(&mime));
         }
         if asked.lock().insert(mime.as_str().to_owned())
             && let Some(app) = app.upgrade()
@@ -344,7 +389,7 @@ fn by_type(app: &Weak<App>, keys: &Keys) -> Keyer {
                 },
             );
         }
-        Arc::new(Group::new(1, mime.as_str()).with_term(format!("mime:{mime}")))
+        unnamed(&mime, e)
     })
 }
 
@@ -1128,13 +1173,17 @@ mod tests {
     #[test]
     fn a_type_s_name_is_read_again_once_the_words_move() {
         let png = Mime("image/png".into());
-        let first = type_group(&png);
-        assert!(Arc::ptr_eq(&first, &type_group(&png)), "kept");
+        let named = || match type_group(&png) {
+            TypeName::Named(group) => group,
+            TypeName::Unnamed => panic!("the database names PNG"),
+        };
+        let first = named();
+        assert!(Arc::ptr_eq(&first, &named()), "kept");
         skwir_core::locale::set_chosen(Some(words::PSEUDO.into()));
         assert!(known_type_group("image/png").is_none(), "forgotten");
-        let again = type_group(&png);
+        let again = named();
         assert!(!Arc::ptr_eq(&first, &again), "read again");
-        assert!(Arc::ptr_eq(&again, &type_group(&png)), "kept again");
+        assert!(Arc::ptr_eq(&again, &named()), "kept again");
         // As if the words moved while the name was read: what it read is
         // answered, not kept.
         *type_groups().write() = TypeGroups {
@@ -1144,6 +1193,33 @@ mod tests {
         type_group(&png);
         assert!(type_groups().read().groups.is_empty(), "not kept");
         skwir_core::locale::set_chosen(None);
+    }
+
+    /// A type the database names not is headed as the Type column calls
+    /// its files, by their extension, never by its id; its term still
+    /// keeps the type's files.
+    #[test]
+    fn a_type_named_not_is_headed_by_its_files_extension() {
+        *type_groups().write() = TypeGroups {
+            said_at: words::revision(),
+            groups: HashMap::from([("image/png".to_owned(), TypeName::Unnamed)]),
+        };
+        let keys = keys_at(
+            &Weak::new(),
+            SortKey::Name,
+            Some(SortKey::Type),
+            &Calendar::utc(),
+            SystemTime::now(),
+        )
+        .unwrap();
+        let group = keys.group.unwrap();
+        let chart = entry(1, "chart.png", EntryKind::File);
+        let other = entry(2, "plan.png", EntryKind::File);
+        let g = group(&Of::entry(&chart));
+        assert_eq!(&*g.label, "PNG file");
+        assert_eq!(g.term.as_deref(), Some("mime:image/png"));
+        assert!(Arc::ptr_eq(&g, &group(&Of::entry(&other))), "one group");
+        assert_eq!(&*mime::unnamed("Makefile").say(), "File");
     }
 
     /// On Wednesday 11 November 2026, weeks from Monday: each date in the

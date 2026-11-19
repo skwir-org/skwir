@@ -9073,12 +9073,6 @@ typenames_broken_link = Lien cassé
 typenames_char_device = Périphérique caractère
 
 # draft
-typenames_extension_file = Fichier { $extension }
-
-# draft
-typenames_file = Fichier
-
-# draft
 typenames_folder = Dossier
 
 # draft

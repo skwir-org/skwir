@@ -131,28 +131,10 @@ pub fn fallback_of(entry: &skwir_core::Entry) -> String {
     }
 }
 
-/// `CSV file` for `budget.csv`, `File` without an extension.
+/// `CSV file` for `budget.csv`, `File` without an extension, as a type's
+/// group names it too (`mime::unnamed`).
 pub fn fallback(name: &str) -> String {
-    match name.rsplit_once('.') {
-        Some((stem, extension))
-            if !stem.is_empty()
-                && !extension.is_empty()
-                && extension.len() <= 5
-                && extension.chars().all(char::is_alphanumeric) =>
-        {
-            words!(
-                typenames_extension_file = "{ $extension } file",
-                extension = extension.to_uppercase(),
-                note = "The type of a file the type database names not yet, by its extension: CSV file."
-            )
-            .say()
-        }
-        _ => words!(
-            typenames_file = "File",
-            note = "The type of a file with no extension the type database names not yet."
-        )
-        .say(),
-    }
+    skwir_platform::mime::unnamed(name).say()
 }
 
 impl TypeNames {

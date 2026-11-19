@@ -8229,12 +8229,6 @@ typenames_broken_link = Broken link
 # The type of a device file read a character at a time (a terminal), in the Type column and the preview.
 typenames_char_device = Character device
 
-# The type of a file the type database names not yet, by its extension: CSV file.
-typenames_extension_file = { $extension } file
-
-# The type of a file with no extension the type database names not yet.
-typenames_file = File
-
 # The type of a folder, in the Type and Kind columns and captions.
 typenames_folder = Folder
 

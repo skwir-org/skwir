@@ -48,6 +48,48 @@ impl Mime {
     }
 }
 
+/// What a file named `name` is called while its type's name is not known
+/// (the database names it not, or not yet: [`Mime::description`]): by
+/// its extension, `CSV file` for `budget.csv`; `File` without one. Said
+/// so wherever a type is named, its column and its group alike, never by
+/// the type's id.
+pub fn unnamed(name: &str) -> skwir_core::words::Words {
+    unnamed_by(unnamed_extension(name).as_deref())
+}
+
+/// The extension [`unnamed`] names a file by, as it writes it (`CSV`):
+/// none for a name with none it names a file by (`Makefile`, `.hidden`,
+/// `notes.backup-of-march`).
+pub fn unnamed_extension(name: &str) -> Option<String> {
+    match name.rsplit_once('.') {
+        Some((stem, extension))
+            if !stem.is_empty()
+                && !extension.is_empty()
+                && extension.len() <= 5
+                && extension.chars().all(char::is_alphanumeric) =>
+        {
+            Some(extension.to_uppercase())
+        }
+        _ => None,
+    }
+}
+
+/// What [`unnamed`] says of a file with `extension` ([`unnamed_extension`]).
+pub fn unnamed_by(extension: Option<&str>) -> skwir_core::words::Words {
+    use skwir_core::words;
+    match extension {
+        Some(extension) => words!(
+            mime_unnamed_extension = "{ $extension } file",
+            extension = extension,
+            note = "The type of a file whose type the type database names not (or not yet), by its extension, written in capitals: CSV file. In the Type column and a heading of files grouped by type."
+        ),
+        None => words!(
+            mime_unnamed = "File",
+            note = "The type of a file with no extension whose type the type database names not (or not yet). In the Type column and a heading of files grouped by type."
+        ),
+    }
+}
+
 impl fmt::Display for Mime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)

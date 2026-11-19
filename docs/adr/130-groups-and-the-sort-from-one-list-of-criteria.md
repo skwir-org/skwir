@@ -101,8 +101,10 @@ name's heading in every script, as CLDR's index for the locale says it.
    query plugin's): for a sort, `Keys` that give an entry's value for a
    criterion core cannot read (Kind, Type, Owner) and an entry's group
    with its label, and when they next change. Keys answer from memory,
-   never blocking: a type's name not read yet is read on a worker, the
-   type itself standing for it meanwhile, and the order is made again
+   never blocking: a type's name not read yet is read on a worker, what
+   the Type column calls its files meanwhile standing for it (`PNG
+   file`, by their extension, never the type's id; for good where the
+   database names it not), and the order is made again
    once it is (`Keys::changed`). Core reads Name, Size, the dates,
    Rating, Extension and Tags itself. Keys are made again when the sort
    or the group changes, when the plugin is turned on or off, when the

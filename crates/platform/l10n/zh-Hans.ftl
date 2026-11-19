@@ -460,6 +460,12 @@ mime_kind_text = 文本和代码
 mime_kind_videos = 视频
 
 # draft
+mime_unnamed = 文件
+
+# draft
+mime_unnamed_extension = { $extension } 文件
+
+# draft
 model_failed = 无法绘制模型：{ $said }
 
 # draft

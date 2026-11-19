@@ -465,6 +465,12 @@ mime_kind_text = Text and code
 # A kind of files, as their group is named: in a search grouped by kind, Usage, the Quick filters.
 mime_kind_videos = Videos
 
+# The type of a file with no extension whose type the type database names not (or not yet). In the Type column and a heading of files grouped by type.
+mime_unnamed = File
+
+# The type of a file whose type the type database names not (or not yet), by its extension, written in capitals: CSV file. In the Type column and a heading of files grouped by type.
+mime_unnamed_extension = { $extension } file
+
 # said: what the model helper wrote of why, as it wrote it.
 model_failed = The model cannot be drawn: { $said }
 

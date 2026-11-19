@@ -8672,12 +8672,6 @@ typenames_broken_link = 损坏的链接
 typenames_char_device = 字符设备
 
 # draft
-typenames_extension_file = { $extension } 文件
-
-# draft
-typenames_file = 文件
-
-# draft
 typenames_folder = 文件夹
 
 # draft
