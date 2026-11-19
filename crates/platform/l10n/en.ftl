@@ -345,6 +345,18 @@ highlight_not_found = { $theme } (not found)
 # A choice of which grammars color code: the tree-sitter grammars found, unless only bat's know the language.
 highlight_tree_sitter_first = Tree-sitter first
 
+# Why a request was not made: what it was to be sent to is no web address.
+http_not_address = not an address
+
+# Why a request was not made: what makes them broke down.
+http_stopped = the requests stopped
+
+# Why a request failed: the server it was sent to was waited for long enough.
+http_timed_out = the server did not answer in time
+
+# Why a request failed: what the server sent could not be read whole. error: what the network library said, in English.
+http_unread = the answer could not be read: { $error }
+
 # A preview's notice: only the beginning of a long document is shown; Source is the button that shows the file's own text.
 inspection_blocks_notice = { $count ->
         [1] Only the first block is shown · Source shows the rest

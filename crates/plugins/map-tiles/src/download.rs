@@ -19,9 +19,9 @@ use skwir_core::CancelToken;
 use skwir_core::cache::CacheSlot;
 use skwir_core::tiles::{TileDone, TileRequest};
 use skwir_core::words;
+use skwir_platform::http;
 use skwir_platform::secrets::{SecretRef, SecretText};
 
-use crate::http;
 use crate::server::{Server, redact};
 
 /// Requests in flight at once: on HTTP/2, streams of one connection; on

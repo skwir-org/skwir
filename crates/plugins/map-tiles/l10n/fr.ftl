@@ -79,9 +79,6 @@ map_tiles_directory_ends = Un répertoire de l’archive se termine trop tôt
 map_tiles_directory_number = Un répertoire de l’archive contient un nombre trop grand
 
 # draft
-map_tiles_downloads_stopped = les téléchargements se sont arrêtés
-
-# draft
 map_tiles_format_avif = Images AVIF
 
 # draft
@@ -122,9 +119,6 @@ map_tiles_no_server = Aucun serveur de tuiles { $id }
 
 # draft
 map_tiles_no_subdomains = { $name } n’a pas de sous-domaines pour { "{s}" }
-
-# draft
-map_tiles_not_address = ce n’est pas une adresse
 
 # draft
 map_tiles_not_archive = Ce n’est pas une archive de tuiles
@@ -253,9 +247,6 @@ map_tiles_tile_too_large = Une tuile de l’archive est trop grande
 map_tiles_tiles_notice = Ses tuiles ne sont pas dessinées : la carte montre où le fichier a des tuiles
 
 # draft
-map_tiles_timed_out = le serveur de tuiles n’a pas répondu à temps
-
-# draft
 map_tiles_title = { $format } · { $name }
 
 # draft
@@ -263,9 +254,6 @@ map_tiles_too_deep = Les répertoires de l’archive sont imbriqués trop profon
 
 # draft
 map_tiles_unnamed_server = Un serveur de tuiles
-
-# draft
-map_tiles_unread = la tuile n’a pas pu être lue : { $error }
 
 # draft
 map_tiles_unreadable_notice = { $why } : la carte montre où le fichier a des tuiles

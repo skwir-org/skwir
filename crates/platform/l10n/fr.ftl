@@ -346,6 +346,18 @@ highlight_not_found = { $theme } (introuvable)
 highlight_tree_sitter_first = Tree-sitter d’abord
 
 # draft
+http_not_address = ce n’est pas une adresse
+
+# draft
+http_stopped = les requêtes se sont arrêtées
+
+# draft
+http_timed_out = le serveur n’a pas répondu à temps
+
+# draft
+http_unread = la réponse n’a pas pu être lue : { $error }
+
+# draft
 inspection_blocks_notice = { $count ->
         [1] Seul le premier bloc est affiché · Source affiche la suite
         [one] Seul le premier bloc est affiché · Source affiche la suite

@@ -1,9 +1,12 @@
-//! The HTTP client of tile downloads (ADR-020): HTTP/2 where the server
-//! speaks it, negotiated in TLS, so every tile of a view travels at once on
-//! one connection; HTTP/1.1 otherwise, on a few kept-alive connections.
-//! hyper and rustls as gpui already links them, with the system's
-//! certificates (`rustls-platform-verifier`), run by the download thread's
-//! own tokio runtime.
+//! The HTTP client of the plugins that make requests (ADR-020: map
+//! tiles; ADR-142: whether a new version is out), moved here from
+//! `map-tiles` once a second plugin needed it (the `http` feature): HTTP/2
+//! where the server speaks it, negotiated in TLS, so every tile of a view
+//! travels at once on one connection; HTTP/1.1 otherwise, on a few
+//! kept-alive connections. hyper and rustls as gpui already links them,
+//! with the system's certificates (`rustls-platform-verifier`), run by the
+//! caller's own tokio runtime. A utility, not a contract: the core has no
+//! network layer, and only a plugin declaring `network` uses it.
 //!
 //! The TLS configuration is a parameter: the application passes the
 //! system's, and only a test passes another, with the one certificate
@@ -19,9 +22,11 @@ use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use skwir_core::words;
 
-/// A request takes at most this long, from connecting to the last byte.
+/// A request takes at most this long, from connecting to the last byte,
+/// unless the client says otherwise (`Http::limited`).
 const DEADLINE: Duration = Duration::from_secs(15);
-/// A tile larger than this is not a tile.
+/// An answer larger than this is refused, unless the client says
+/// otherwise: a tile larger is not a tile.
 const MAX_BODY: usize = 4 * 1024 * 1024;
 /// How long an idle connection is kept.
 const IDLE: Duration = Duration::from_secs(60);
@@ -40,6 +45,9 @@ pub struct Answer {
 pub struct Http {
     client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Empty<Bytes>>,
     user_agent: HeaderValue,
+    /// The longest a request takes, and the largest answer read.
+    deadline: Duration,
+    max_body: usize,
     /// By server (scheme, host, port): when it last answered. Whether it
     /// speaks HTTP/2 is only learnt once a connection is open, so a burst
     /// of requests to a server not connected to would open a connection
@@ -76,8 +84,20 @@ impl Http {
         Ok(Http {
             client,
             user_agent: HeaderValue::from_str(user_agent)?,
+            deadline: DEADLINE,
+            max_body: MAX_BODY,
             servers: std::sync::Mutex::default(),
         })
+    }
+
+    /// The same client, a request taking at most `deadline` and an answer
+    /// read up to `max_body` bytes: a check for a new version waits less
+    /// and reads less than a tile does.
+    #[must_use]
+    pub fn limited(mut self, deadline: Duration, max_body: usize) -> Http {
+        self.deadline = deadline;
+        self.max_body = max_body;
+        self
     }
 
     /// GET `url` with `headers`, which replace skwir's User-Agent when
@@ -86,9 +106,10 @@ impl Http {
     /// The first request to a server not connected to goes alone
     /// (`servers`).
     pub async fn get(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
-        let uri: hyper::Uri = url
-            .parse()
-            .context(words!(map_tiles_not_address = "not an address"))?;
+        let uri: hyper::Uri = url.parse().context(words!(
+            http_not_address = "not an address",
+            note = "Why a request was not made: what it was to be sent to is no web address."
+        ))?;
         let server = format!(
             "{}://{}",
             uri.scheme_str().unwrap_or(""),
@@ -99,7 +120,8 @@ impl Http {
                 .lock()
                 .map_err(|_| {
                     anyhow::anyhow!(words!(
-                        map_tiles_downloads_stopped = "the downloads stopped"
+                        http_stopped = "the requests stopped",
+                        note = "Why a request was not made: what makes them broke down."
                     ))
                 })?
                 .entry(server)
@@ -129,7 +151,7 @@ impl Http {
     ) -> anyhow::Result<Answer> {
         match self.get_once(url, headers).await {
             Err(error) if error.is::<hyper_util::client::legacy::Error>() => {
-                tracing::debug!("map tiles: asking again after a failed connection");
+                tracing::debug!("http: asking again after a failed connection");
                 self.get_once(url, headers).await
             }
             result => result,
@@ -139,7 +161,7 @@ impl Http {
     async fn get_once(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
         let mut request = hyper::Request::get(url)
             .body(Empty::<Bytes>::new())
-            .context(words!(map_tiles_not_address = "not an address"))?;
+            .context(words!(http_not_address = "not an address"))?;
         let map = request.headers_mut();
         map.insert(USER_AGENT, self.user_agent.clone());
         for (name, value) in headers {
@@ -148,17 +170,17 @@ impl Http {
                 HeaderValue::from_str(value)?,
             );
         }
-        tokio::time::timeout(DEADLINE, async {
+        tokio::time::timeout(self.deadline, async {
             let response = self.client.request(request).await?;
             let (parts, body) = response.into_parts();
-            let body = Limited::new(body, MAX_BODY)
+            let body = Limited::new(body, self.max_body)
                 .collect()
                 .await
                 .map_err(|error| {
                     anyhow::anyhow!(words!(
-                        map_tiles_unread = "the tile could not be read: { $error }",
+                        http_unread = "the answer could not be read: { $error }",
                         error = error.to_string(),
-                        note = "error: what the network library said, in English."
+                        note = "Why a request failed: what the server sent could not be read whole. error: what the network library said, in English."
                     ))
                 })?
                 .to_bytes()
@@ -173,7 +195,8 @@ impl Http {
         .await
         .map_err(|_| {
             anyhow::anyhow!(words!(
-                map_tiles_timed_out = "the tile server did not answer in time"
+                http_timed_out = "the server did not answer in time",
+                note = "Why a request failed: the server it was sent to was waited for long enough."
             ))
         })?
     }
@@ -301,6 +324,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(answer.body, b"Mine/1");
+    }
+
+    /// A client limited to fewer bytes than the answer refuses it, and one
+    /// limited to less time than the server takes gives up.
+    #[tokio::test]
+    async fn a_limited_client_reads_no_more_and_waits_no_longer() {
+        let (address, _, _) = server(Duration::ZERO).await;
+        let small = client().limited(DEADLINE, 4);
+        assert!(small.get(&format!("{address}/a"), &[]).await.is_err());
+        let enough = client().limited(DEADLINE, 64);
+        assert_eq!(
+            enough.get(&format!("{address}/a"), &[]).await.unwrap().body,
+            b"skwir/test"
+        );
+        let (slow, _, _) = server(Duration::from_secs(5)).await;
+        let impatient = client().limited(Duration::from_millis(100), 64);
+        let started = std::time::Instant::now();
+        assert!(impatient.get(&format!("{slow}/a"), &[]).await.is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[tokio::test]

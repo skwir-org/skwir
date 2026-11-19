@@ -56,6 +56,8 @@ pub mod grammars;
 mod gtk_theme;
 pub mod handover;
 pub mod highlight;
+#[cfg(feature = "http")]
+pub mod http;
 #[cfg(target_os = "linux")]
 mod icon_theme;
 pub mod icons;

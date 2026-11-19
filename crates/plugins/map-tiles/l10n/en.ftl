@@ -66,8 +66,6 @@ map_tiles_directory_ends = A directory of the archive ends early
 
 map_tiles_directory_number = A directory of the archive holds a number too large
 
-map_tiles_downloads_stopped = the downloads stopped
-
 map_tiles_format_avif = AVIF pictures
 
 map_tiles_format_jpeg = JPEG pictures
@@ -102,8 +100,6 @@ map_tiles_no_server = No tile server { $id }
 
 # name: a tile server's, as the user named it. What is in braces is typed as it is in its address.
 map_tiles_no_subdomains = { $name } has no subdomains for { "{s}" }
-
-map_tiles_not_address = not an address
 
 map_tiles_not_archive = Not a tile archive
 
@@ -198,8 +194,6 @@ map_tiles_tile_too_large = A tile of the archive is too large
 
 map_tiles_tiles_notice = Its tiles are not drawn: the map shows where the file has tiles
 
-map_tiles_timed_out = the tile server did not answer in time
-
 # The title of a tile archive's preview: its format's name (PMTiles 3, MBTiles), then the name the archive gives itself, both as written.
 map_tiles_title = { $format } · { $name }
 
@@ -207,9 +201,6 @@ map_tiles_too_deep = The archive's directories nest too deep
 
 # A tile server not named yet, at the start of what is wrong with it.
 map_tiles_unnamed_server = A tile server
-
-# error: what the network library said, in English.
-map_tiles_unread = the tile could not be read: { $error }
 
 # why: why a tile archive's tiles cannot be read (they are compressed in a way skwir does not read).
 map_tiles_unreadable_notice = { $why }: the map shows where it has tiles

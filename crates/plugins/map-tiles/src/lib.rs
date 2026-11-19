@@ -8,7 +8,6 @@
 //! the map they hold (`preview.rs`), read from the file alone.
 mod archive;
 mod download;
-mod http;
 mod mbtiles;
 mod outline;
 mod pmtiles;

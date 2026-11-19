@@ -79,9 +79,6 @@ map_tiles_directory_ends = 瓦片包的某个目录提前结束
 map_tiles_directory_number = 瓦片包的某个目录包含过大的数字
 
 # draft
-map_tiles_downloads_stopped = 下载已停止
-
-# draft
 map_tiles_format_avif = AVIF 图片
 
 # draft
@@ -122,9 +119,6 @@ map_tiles_no_server = 没有瓦片服务器 { $id }
 
 # draft
 map_tiles_no_subdomains = { $name } 没有可用于 { "{s}" } 的子域名
-
-# draft
-map_tiles_not_address = 不是有效的地址
 
 # draft
 map_tiles_not_archive = 不是瓦片包
@@ -253,9 +247,6 @@ map_tiles_tile_too_large = 瓦片包中的某个瓦片过大
 map_tiles_tiles_notice = 不绘制其瓦片：地图显示文件中有瓦片的区域
 
 # draft
-map_tiles_timed_out = 瓦片服务器未及时应答
-
-# draft
 map_tiles_title = { $format } · { $name }
 
 # draft
@@ -263,9 +254,6 @@ map_tiles_too_deep = 瓦片包的目录嵌套过深
 
 # draft
 map_tiles_unnamed_server = 某个瓦片服务器
-
-# draft
-map_tiles_unread = 无法读取瓦片：{ $error }
 
 # draft
 map_tiles_unreadable_notice = { $why }：地图显示其中有瓦片的区域

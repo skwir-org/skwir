@@ -346,6 +346,18 @@ highlight_not_found = { $theme }（未找到）
 highlight_tree_sitter_first = Tree-sitter 优先
 
 # draft
+http_not_address = 不是有效的地址
+
+# draft
+http_stopped = 请求已停止
+
+# draft
+http_timed_out = 服务器未及时应答
+
+# draft
+http_unread = 无法读取应答：{ $error }
+
+# draft
 inspection_blocks_notice = { $count ->
         [1] 仅显示第一个块 · 在“源代码”中查看其余部分
        *[other] 仅显示前 { $count } 个块 · 在“源代码”中查看其余部分
