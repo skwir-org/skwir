@@ -251,9 +251,12 @@ The key is the owner's; the page is the subject's (ADR-072).
   own under them, against the right edge: a setting's row and a plugin's
   are an `elements::beside` (ADR-010, amended 2026-11-12). Their texts
   start at their share and never under their widest word, taffy's least
-  width for a text since gpui 0061; the control's narrowest and natural
-  widths are measured on it, and a choice's forms (its `Fit` says their
-  widths to the row, `adaptive::versions_laid_out`). The control is as
+  width for a text since gpui 0061 (never at their own widest line where
+  shorter, `Beside::fit`, as a toast's sentence does: taffy measures
+  their notes, an icon beside a line, at their whole length); the
+  control's narrowest and natural widths are measured on it, and a
+  choice's forms (its `Fit` says their widths to the row,
+  `adaptive::versions_laid_out`). The control is as
   wide as the form drawn, chosen once the row's width is known (gpui
   0079's `fit_content` basis), and the texts take the rest: a dropdown in
   place of the buttons leaves them the buttons' room. An empty revert slot

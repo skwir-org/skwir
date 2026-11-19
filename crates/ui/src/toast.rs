@@ -858,8 +858,9 @@ pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: us
     )
 }
 
-/// The share of a toast's row its words keep beside its buttons, before
-/// the buttons go under them (`elements::beside`).
+/// The share of a toast's row its words keep at most beside its buttons,
+/// before the buttons go under them (`elements::beside`): a short sentence
+/// keeps only its own width, its buttons beside it where both fit.
 const TEXTS_SHARE: f32 = 0.5;
 
 /// Characters (grapheme clusters, spaces included) read in a second,
@@ -1843,7 +1844,7 @@ pub fn render_answer(
             div()
                 .flex_1()
                 .min_w_0()
-                .child(crate::elements::beside::beside(said, actions, TEXTS_SHARE))
+                .child(crate::elements::beside::beside(said, actions, TEXTS_SHARE).fit())
                 .into_any_element()
         } else {
             said.into_any_element()

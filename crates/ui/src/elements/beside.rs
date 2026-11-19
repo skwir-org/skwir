@@ -1,6 +1,7 @@
 //! A row of texts and what acts on them (a setting's control, a plugin's
 //! switch): side by side while the texts keep their widest word, and their
-//! share of the row, beside the end at its narrowest; else the end on a
+//! share of the row (or, texts that `fit`, their own widest line where
+//! that is shorter), beside the end at its narrowest; else the end on a
 //! line of its own under them, against the right edge. A text narrowed
 //! below its widest word cuts it ("themse / lves"), and a control pushed
 //! past the row runs off the card: neither happens, at any width or text
@@ -9,7 +10,20 @@
 //! The row is a wrapping flex line laid out by taffy. The texts start at
 //! `share` of the row, and a flex item never starts narrower than its
 //! least width, a text's widest word (vendored gpui 0061): they start at
-//! the wider of the two. The end's narrowest and natural widths are
+//! the wider of the two.
+//!
+//! Texts that `fit` start at the narrower of the share and their own
+//! widest line: their flex basis fits their content within the share,
+//! held in a block, measured as wide as its widest line within the room
+//! it is given. A short sentence beside buttons that fit with it stays on
+//! one line with them (a toast's Show and Undo), and the share still
+//! keeps a long one from being squeezed. Only texts made of text and
+//! blocks of it measure so: taffy measures a flex row that keeps to one
+//! line (an icon beside a note, `controls::noted`; a title beside its
+//! badge) at its whole length, whatever the room, so texts holding one
+//! would start wider than the share and put the end under them where it
+//! sat beside (a setting's row whose notes are long). Those keep the
+//! share. The end's narrowest and natural widths are
 //! measured on it before the line is laid out, and the widths of its
 //! versions where it holds a `Fit` (`adaptive::versions_laid_out`): a
 //! choice's buttons, else its dropdown. In the line it starts at the width
@@ -23,10 +37,13 @@
 //! room. Alone on its line, the end grows to its natural width, and its
 //! `Fit` draws the first version that fits the line.
 //!
-//! The room is the share's, not the texts' widest word, which the end
-//! cannot know before the line is laid out: where that word is wider than
-//! the share, a version chosen for the share that no longer fits beside
-//! it goes to the next line, where a narrower one would have stayed.
+//! The room is the share's, not the texts' widest word nor their widest
+//! line, which the end cannot know before the line is laid out: where that
+//! word is wider than the share, a version chosen for the share that no
+//! longer fits beside it goes to the next line, where a narrower one would
+//! have stayed; where texts that fit are shorter than the share, the end
+//! keeps the version chosen for the share's room, though a wider one would
+//! fit.
 //!
 //! It is a flex item along the width (its basis nothing, growing into
 //! the room): hold it in a row (a card's row) or a block (a `div`), never
@@ -100,6 +117,9 @@ pub struct Beside {
     texts: AnyElement,
     end: AnyElement,
     share: f32,
+    /// The texts start at their widest line where it is narrower than the
+    /// share (`fit`).
+    fit: bool,
 }
 
 /// `texts` and `end` side by side, or `end` under `texts` where the texts
@@ -131,6 +151,19 @@ pub fn beside(texts: impl IntoElement, end: Div, share: f32) -> Beside {
             )
             .into_any_element(),
         share,
+        fit: false,
+    }
+}
+
+impl Beside {
+    /// Texts made of text and blocks of it (a toast's sentence), never of
+    /// a row that keeps to one line: they keep less than their share where
+    /// their widest line is narrower, so a line that fits whole beside the
+    /// end stays whole, the end beside it.
+    #[must_use]
+    pub fn fit(mut self) -> Self {
+        self.fit = true;
+        self
     }
 }
 
@@ -175,11 +208,21 @@ impl Element for Beside {
         });
         let widths = Widths::of(narrowest.width, natural.width, &laid_out);
         let texts = self.texts.request_layout(window, cx);
-        // Its least width left automatic: the texts' widest word.
+        // Its least width left automatic: the texts' widest word. Texts
+        // that fit are held in a block, measured within the share as wide
+        // as their widest line.
         let held = window.request_layout(
             Style {
-                display: Display::Flex,
-                flex_basis: Length::Definite(relative(self.share)),
+                display: if self.fit {
+                    Display::Block
+                } else {
+                    Display::Flex
+                },
+                flex_basis: if self.fit {
+                    fit_content(relative(self.share))
+                } else {
+                    Length::Definite(relative(self.share))
+                },
                 flex_grow: TEXTS_FIRST,
                 flex_shrink: 1.,
                 ..Style::default()
