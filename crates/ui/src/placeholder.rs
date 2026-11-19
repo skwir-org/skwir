@@ -190,8 +190,8 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
                 title: title.say(),
                 detail: words!(
                     placeholder_reading_detail =
-                        "The files “{ $filter }” keeps show as they are read.",
-                    filter = filter,
+                        "The files { $filter } keeps show as they are read.",
+                    filter = skwir_core::words::Name(filter.to_string()),
                     note = "filter: what was typed in the address to filter the folder."
                 )
                 .say(),
@@ -206,8 +206,8 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
                 title: words!(placeholder_looking = "Looking in the folders here…").say(),
                 detail: words!(
                     placeholder_looking_detail =
-                        "The folders that lead to “{ $filter }” show as they are found.",
-                    filter = filter
+                        "The folders that lead to { $filter } show as they are found.",
+                    filter = skwir_core::words::Name(filter.to_string())
                 )
                 .say(),
                 action: Some((show_everything(), "filter")),
@@ -216,18 +216,18 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
         }
         let detail = if state.lens().is_some() {
             words!(
-                placeholder_lens_empty = "Nothing here is “{ $filter }”. The filters stay as you go to other folders and searches, until you take them off in the address.",
-                filter = filter
+                placeholder_lens_empty = "Nothing here is { $filter }. The filters stay as you go to other folders and searches, until you take them off in the address.",
+                filter = skwir_core::words::Name(filter.to_string())
             )
         } else if state.read_filter().is_some() {
             words!(
-                placeholder_filter_empty = "Nothing here is “{ $filter }”. Press Enter in the address field to search the folders inside too.",
-                filter = filter
+                placeholder_filter_empty = "Nothing here is { $filter }. Press Enter in the address field to search the folders inside too.",
+                filter = skwir_core::words::Name(filter.to_string())
             )
         } else {
             words!(
-                placeholder_name_empty = "No name here holds “{ $filter }”. Press Enter in the address field to search the folders inside too.",
-                filter = filter
+                placeholder_name_empty = "No name here holds { $filter }. Press Enter in the address field to search the folders inside too.",
+                filter = skwir_core::words::Name(filter.to_string())
             )
         };
         return Some(Placeholder {

@@ -440,8 +440,10 @@ impl Reads {
         }
         let missing = |path: &str| {
             Some(Note::blocks(words!(
-                form_save_no_folder = "There is no folder “{ $path }”",
-                path = path.trim_end_matches(complete::is_separator),
+                form_save_no_folder = "There is no folder { $path }",
+                path = skwir_core::words::Arg::Path(
+                    path.trim_end_matches(complete::is_separator).to_owned()
+                ),
                 note = "Under a field where a file is saved: the folder typed is not there; \
                         path: the folder as it was typed."
             )))
@@ -1085,7 +1087,7 @@ mod tests {
             .note(&held(text), &Words::default(), &Words::default())
             .expect("said");
         assert!(note.blocks);
-        assert_eq!(note.text.english(), "There is no folder “/example/shut”");
+        assert_eq!(note.text.english(), "There is no folder /example/shut");
         assert!(!reads.ask(folder), "kept");
     }
 

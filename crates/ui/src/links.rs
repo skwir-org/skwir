@@ -531,9 +531,9 @@ impl Shell {
                     };
                     self.set_status(
                         words!(
-                            links_no_anchor = "{ $file } has no “#{ $anchor }”",
+                            links_no_anchor = "{ $file } has no { $anchor }",
                             file = Name(file),
-                            anchor = name,
+                            anchor = skwir_core::words::Name(format!("#{name}")),
                             note = "A link names a place in a document that has none of that name; file: the document's name; anchor: the place's name, as the link writes it."
                         ),
                         false,
@@ -580,14 +580,14 @@ impl Inside {
                 note = "A link of a document inside an archive; container: the archive's name."
             ),
             Inside::Missing(path) => words!(
-                links_inside_missing = "{ $container } holds no “{ $path }”",
+                links_inside_missing = "{ $container } holds no { $path }",
                 container = container,
-                path = path.as_str(),
+                path = skwir_core::words::Arg::Path(path.clone()),
                 note = "A link of a document inside an archive names nothing there; container: the archive's name; path: the path the link names in it."
             ),
             Inside::Folder(path) => words!(
-                links_inside_folder = "“{ $path }” is a folder of { $container }",
-                path = path.as_str(),
+                links_inside_folder = "{ $path } is a folder of { $container }",
+                path = skwir_core::words::Arg::Path(path.clone()),
                 container = container,
                 note = "A link of a document inside an archive names a folder of it; path: the folder's path in it; container: the archive's name."
             ),

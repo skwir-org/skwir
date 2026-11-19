@@ -896,8 +896,8 @@ impl SettingsView {
                 )
             } else if !filter.is_empty() {
                 words!(
-                    exclusions_none_match = "No exclusion matches “{ $filter }”.",
-                    filter = filter,
+                    exclusions_none_match = "No exclusion matches { $filter }.",
+                    filter = skwir_core::words::Name(filter.clone()),
                     note = "The Exclusions page's list when its filter finds nothing. filter: the words typed, as typed."
                 )
             } else if self.exclusions.changed_only {
@@ -3189,11 +3189,11 @@ impl SettingsView {
                 div().flex_1().min_w_0().child(
                     words!(
                         exclusions_found = "{ $count ->
-                            [1] One exclusion matches “{ $query }”
-                           *[other] { $count } exclusions match “{ $query }”
+                            [1] One exclusion matches { $query }
+                           *[other] { $count } exclusions match { $query }
                         }",
                         count = count,
-                        query = query.to_owned(),
+                        query = skwir_core::words::Name(query.to_owned()),
                         note = "What the settings' search finds on the Exclusions page. query: the words searched, as typed."
                     )
                     .say(),

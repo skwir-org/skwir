@@ -884,8 +884,8 @@ impl SettingsView {
         if shown.is_empty() {
             let said = if !query.is_empty() {
                 words!(
-                    records_none_match = "Nothing matches “{ $filter }”",
-                    filter = query.clone(),
+                    records_none_match = "Nothing matches { $filter }",
+                    filter = skwir_core::words::Name(query.clone()),
                     note = "A list of records in the settings, filtered: filter is what the user typed."
                 )
             } else if spec

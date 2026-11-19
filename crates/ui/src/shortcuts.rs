@@ -529,8 +529,8 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         lists = lists.child(
             div().text_color(theme.text_muted).child(
                 words!(
-                    shortcuts_none = "No shortcut matches “{ $query }”.",
-                    query = query.as_str(),
+                    shortcuts_none = "No shortcut matches { $query }.",
+                    query = skwir_core::words::Name(query.clone()),
                     note = "The overview of shortcuts finds nothing; query: what was typed."
                 )
                 .say(),

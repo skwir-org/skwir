@@ -1823,8 +1823,8 @@ pub(crate) fn choose_grammar(app: &App, language: &str, grammar: &str) -> anyhow
     anyhow::ensure!(
         grammar == "auto" || Choice::of_key(grammar).is_some(),
         words!(
-            settings_grammar_unknown = "“{ $grammar }” is no grammar to choose",
-            grammar = grammar,
+            settings_grammar_unknown = "{ $grammar } is no grammar to choose",
+            grammar = skwir_core::words::Name(grammar.to_string()),
             note = "An error of ui.grammar_choose: grammar is what was asked, as written."
         )
     );

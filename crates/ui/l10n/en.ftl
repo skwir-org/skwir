@@ -2489,8 +2489,8 @@ exclusions_fold = Fold
 
 # What the settings' search finds on the Exclusions page. query: the words searched, as typed.
 exclusions_found = { $count ->
-        [1] One exclusion matches “{ $query }”
-       *[other] { $count } exclusions match “{ $query }”
+        [1] One exclusion matches { $query }
+       *[other] { $count } exclusions match { $query }
     }
 
 # After a category's name on the Exclusions page: how many of its folders are excluded from the role chosen (kept), of all it holds (total).
@@ -2668,7 +2668,7 @@ exclusions_none_changed = You changed none of Skwir's exclusions and added none 
 exclusions_none_here = No exclusions here.
 
 # The Exclusions page's list when its filter finds nothing. filter: the words typed, as typed.
-exclusions_none_match = No exclusion matches “{ $filter }”.
+exclusions_none_match = No exclusion matches { $filter }.
 
 # A check of the Exclusions page: lists only the folders that are on this computer.
 exclusions_only_here = Only on this computer
@@ -2876,7 +2876,7 @@ form_save_in_folder = Saved in the folder { $folder }, named { $name }
 form_save_named = Named { $name }
 
 # Under a field where a file is saved: the folder typed is not there; path: the folder as it was typed.
-form_save_no_folder = There is no folder “{ $path }”
+form_save_no_folder = There is no folder { $path }
 
 # Under a field where a file is saved: no file can have that name; why: what makes it no name (it holds a /).
 form_save_refused = { $name } cannot be saved: { $why }
@@ -3643,13 +3643,13 @@ keys_new_shortcut = New shortcut…
 keys_new_where = Where they work
 
 # filter: what the user typed in the Keyboard page's filter.
-keys_no_action_matches = No action matches “{ $filter }”.
+keys_no_action_matches = No action matches { $filter }.
 
 # filter: what the user typed in the Keyboard page's filter.
-keys_no_changed_matches = No key you changed matches “{ $filter }”.
+keys_no_changed_matches = No key you changed matches { $filter }.
 
 # filter: what the user typed in the Keyboard page's filter.
-keys_no_shortcut_matches = No shortcut matches “{ $filter }”.
+keys_no_shortcut_matches = No shortcut matches { $filter }.
 
 keys_none_changed = You changed no keys yet.
 
@@ -3784,13 +3784,13 @@ layout_close_right = Close the right pane
 layout_close_upper = Close the upper pane
 
 # value: what ui.layout was given for an archive's file's preview, as given (right, bottom, auto).
-layout_not_member = “{ $value }” is not a place for a file's preview in an archive
+layout_not_member = { $value } is not a place for a file's preview in an archive
 
 # value: what ui.layout was given for the panes, as given (row, column, auto).
-layout_not_panes = “{ $value }” is not a way to arrange panes
+layout_not_panes = { $value } is not a way to arrange panes
 
 # value: what ui.layout was given for the preview, as given (right, bottom, auto).
-layout_not_preview = “{ $value }” is not a place for the preview
+layout_not_preview = { $value } is not a place for the preview
 
 # The Split toggle's tooltip: what it makes.
 layout_split_rows = Split panes one above the other
@@ -3799,10 +3799,10 @@ layout_split_rows = Split panes one above the other
 layout_split_side = Split panes side by side
 
 # A link of a document inside an archive names a folder of it; path: the folder's path in it; container: the archive's name.
-links_inside_folder = “{ $path }” is a folder of { $container }
+links_inside_folder = { $path } is a folder of { $container }
 
 # A link of a document inside an archive names nothing there; container: the archive's name; path: the path the link names in it.
-links_inside_missing = { $container } holds no “{ $path }”
+links_inside_missing = { $container } holds no { $path }
 
 # A link of a document inside an archive; container: the archive's name.
 links_inside_out = This link leads out of { $container }
@@ -3811,7 +3811,7 @@ links_inside_out = This link leads out of { $container }
 links_inside_unlisted = This link names a file inside { $container }, whose files are not listed here to follow it
 
 # A link names a place in a document that has none of that name; file: the document's name; anchor: the place's name, as the link writes it.
-links_no_anchor = { $file } has no “#{ $anchor }”
+links_no_anchor = { $file } has no { $anchor }
 
 links_no_file = That link does not name a file
 
@@ -4402,7 +4402,7 @@ omnibox_keys_waits = Enter waits
 omnibox_keys_writes = Enter · { $keys } writes it
 
 # A path typed in the address that starts from the folder shown (./, ../) where none is (a search, the trash); path: as typed.
-omnibox_no_folder = “{ $path }” starts from the folder shown, and no folder is shown
+omnibox_no_folder = { $path } starts from the folder shown, and no folder is shown
 
 omnibox_no_home = The home folder is not known
 
@@ -4727,7 +4727,7 @@ palettes_skwir = Skwir
 palettes_slate = Slate
 
 # to: where ui.cursor was asked to go, as given (down, home, page_up); ui.cursor is a command's id.
-pane_cursor_cannot_go = ui.cursor cannot go to “{ $to }”
+pane_cursor_cannot_go = ui.cursor cannot go to { $to }
 
 # Beside what was typed to reach a name, where no name begins with it.
 pane_no_match = No match
@@ -4751,7 +4751,7 @@ placeholder_empty = This folder is empty
 
 placeholder_failed = This location could not be opened
 
-placeholder_filter_empty = Nothing here is “{ $filter }”. Press Enter in the address field to search the folders inside too.
+placeholder_filter_empty = Nothing here is { $filter }. Press Enter in the address field to search the folders inside too.
 
 placeholder_filtered = Hidden by filters
 
@@ -4764,20 +4764,20 @@ placeholder_hidden_show = Show hidden files to see them.
 # keys: the keys that show hidden files (Ctrl+H).
 placeholder_hidden_show_keys = Show hidden files to see them ({ $keys }).
 
-placeholder_lens_empty = Nothing here is “{ $filter }”. The filters stay as you go to other folders and searches, until you take them off in the address.
+placeholder_lens_empty = Nothing here is { $filter }. The filters stay as you go to other folders and searches, until you take them off in the address.
 
 placeholder_looking = Looking in the folders here…
 
-placeholder_looking_detail = The folders that lead to “{ $filter }” show as they are found.
+placeholder_looking_detail = The folders that lead to { $filter } show as they are found.
 
-placeholder_name_empty = No name here holds “{ $filter }”. Press Enter in the address field to search the folders inside too.
+placeholder_name_empty = No name here holds { $filter }. Press Enter in the address field to search the folders inside too.
 
 placeholder_nothing = Nothing here
 
 placeholder_reading = Reading the details of the files…
 
 # filter: what was typed in the address to filter the folder.
-placeholder_reading_detail = The files “{ $filter }” keeps show as they are read.
+placeholder_reading_detail = The files { $filter } keeps show as they are read.
 
 placeholder_reading_files = Reading the details of { $count ->
         [one] one file
@@ -5882,7 +5882,7 @@ records_keyring_label = skwir: { $record } ({ $setting })
 records_none_found = None found
 
 # A list of records in the settings, filtered: filter is what the user typed.
-records_none_match = Nothing matches “{ $filter }”
+records_none_match = Nothing matches { $filter }
 
 # A list of records in the settings that the user fills (tile servers) is empty.
 records_none_yet = None yet
@@ -6205,7 +6205,7 @@ search_bar_remove_pill = Remove { $pill }
 search_bar_tag = Tag
 
 # A filter's pill holding the words typed, as typed, in quotes.
-search_bar_typed = “{ $text }”
+search_bar_typed = { $text }
 
 # At the foot of the window after keys typed that begin a binding of several (g, then h): no binding goes on from them where the focus is.
 sequence_nothing_follows = Nothing follows these keys here
@@ -6665,7 +6665,7 @@ settings_grammar_plain = Plain text
 settings_grammar_tree = { $source } (tree-sitter)
 
 # An error of ui.grammar_choose: grammar is what was asked, as written.
-settings_grammar_unknown = “{ $grammar }” is no grammar to choose
+settings_grammar_unknown = { $grammar } is no grammar to choose
 
 settings_grid_fill = Fill thumbnails
 
@@ -6802,7 +6802,7 @@ settings_narrow_choices = Type to narrow
 settings_no_file = There is no settings file yet: every setting has its default value
 
 # Said on the Plugins page when its filter keeps none: typed is what was typed.
-settings_no_plugin = No plugin matches “{ $typed }”.
+settings_no_plugin = No plugin matches { $typed }.
 
 # A choice of a setting, kept though it is not installed: name is a font's family or an icon theme's folder, as written.
 settings_not_installed = { $name } (not installed)
@@ -6811,7 +6811,7 @@ settings_not_installed = { $name } (not installed)
 settings_nothing_changed = Every setting has its default value, and every plugin is as Skwir comes.
 
 # Said when the settings' search finds nothing: typed is what was typed.
-settings_nothing_found = Nothing matches “{ $typed }”.
+settings_nothing_found = Nothing matches { $typed }.
 
 settings_notify_desktop = Tell the desktop when a long action ends
 
@@ -7159,7 +7159,7 @@ shell_find = Find
 shell_find_before = Find before
 
 # Said where Find again finds no name holding what was typed (pattern, as typed).
-shell_find_none = No name holds “{ $pattern }”
+shell_find_none = No name holds { $pattern }
 
 # Said where Find again is asked before anything was found.
 shell_find_nothing = Nothing to find again: press / first
@@ -7265,7 +7265,7 @@ shortcuts_elsewhere = Elsewhere
 shortcuts_filter = Filter by action or keys
 
 # The overview of shortcuts finds nothing; query: what was typed.
-shortcuts_none = No shortcut matches “{ $query }”.
+shortcuts_none = No shortcut matches { $query }.
 
 # Said once after a command was run three times with the pointer; keys: its shortcut; action: the command's title as its menu writes it, quoted (Copy, Rename…).
 shortcuts_tip = Tip: press { $keys } for “{ $action }”. F1 lists the keys for where you are.

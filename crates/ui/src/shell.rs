@@ -3629,8 +3629,8 @@ impl Shell {
                         Some(ix) => self.cursor_to(ix as isize, Step::Follow, window, cx),
                         None => self.set_status(
                             words!(
-                                shell_find_none = "No name holds “{ $pattern }”",
-                                pattern = pattern,
+                                shell_find_none = "No name holds { $pattern }",
+                                pattern = skwir_core::words::Name(pattern.clone()),
                                 note = "Said where Find again finds no name holding what was \
                                         typed (pattern, as typed)."
                             ),

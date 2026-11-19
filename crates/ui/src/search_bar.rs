@@ -423,8 +423,8 @@ fn typed_chip(text: &str) -> Chip {
         id: "typed".to_owned(),
         title: Words::default(),
         value: Some(words!(
-            search_bar_typed = "“{ $text }”",
-            text = text,
+            search_bar_typed = "{ $text }",
+            text = skwir_core::words::Name(text.to_string()),
             note = "A filter's pill holding the words typed, as typed, in quotes."
         )),
         written: None,

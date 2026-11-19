@@ -333,8 +333,8 @@ impl Shell {
         if let Some((v, None)) = panes {
             self.set_status(
                 words!(
-                    layout_not_panes = "“{ $value }” is not a way to arrange panes",
-                    value = v,
+                    layout_not_panes = "{ $value } is not a way to arrange panes",
+                    value = skwir_core::words::Name(v.to_string()),
                     note = "value: what ui.layout was given for the panes, as given (row, \
                             column, auto)."
                 ),
@@ -346,8 +346,8 @@ impl Shell {
         if let Some((v, None)) = preview {
             self.set_status(
                 words!(
-                    layout_not_preview = "“{ $value }” is not a place for the preview",
-                    value = v,
+                    layout_not_preview = "{ $value } is not a place for the preview",
+                    value = skwir_core::words::Name(v.to_string()),
                     note = "value: what ui.layout was given for the preview, as given (right, \
                             bottom, auto)."
                 ),
@@ -359,9 +359,9 @@ impl Shell {
         if let Some((v, None)) = member {
             self.set_status(
                 words!(
-                    layout_not_member = "“{ $value }” is not a place for a file's preview in \
+                    layout_not_member = "{ $value } is not a place for a file's preview in \
                                          an archive",
-                    value = v,
+                    value = skwir_core::words::Name(v.to_string()),
                     note = "value: what ui.layout was given for an archive's file's preview, \
                             as given (right, bottom, auto)."
                 ),

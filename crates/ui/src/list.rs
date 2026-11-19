@@ -1717,8 +1717,8 @@ impl Shell {
                 Some(nav) => self.navigate_by(nav, step, window, cx),
                 None => self.set_status(
                     words!(
-                        pane_cursor_cannot_go = "ui.cursor cannot go to “{ $to }”",
-                        to = to,
+                        pane_cursor_cannot_go = "ui.cursor cannot go to { $to }",
+                        to = skwir_core::words::Name(to.to_string()),
                         note = "to: where ui.cursor was asked to go, as given (down, home, \
                                 page_up); ui.cursor is a command's id."
                     ),

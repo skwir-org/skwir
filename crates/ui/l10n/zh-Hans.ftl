@@ -2908,8 +2908,8 @@ exclusions_fold = 折叠
 
 # draft
 exclusions_found = { $count ->
-        [1] 有一个排除项与“{ $query }”匹配
-       *[other] 有 { $count } 个排除项与“{ $query }”匹配
+        [1] 有一个排除项与{ $query }匹配
+       *[other] 有 { $count } 个排除项与{ $query }匹配
     }
 
 # draft
@@ -3065,7 +3065,7 @@ exclusions_none_changed = 您尚未更改 Skwir 的任何排除项，也未添�
 exclusions_none_here = 此处没有排除项。
 
 # draft
-exclusions_none_match = 没有与“{ $filter }”匹配的排除项。
+exclusions_none_match = 没有与{ $filter }匹配的排除项。
 
 # draft
 exclusions_only_here = 仅限本机
@@ -3258,7 +3258,7 @@ form_save_in_folder = 保存在文件夹{ $folder }中，名称为{ $name }
 form_save_named = 名称为{ $name }
 
 # draft
-form_save_no_folder = 没有文件夹“{ $path }”
+form_save_no_folder = 没有文件夹{ $path }
 
 # draft
 form_save_refused = 无法保存{ $name }：{ $why }
@@ -4062,13 +4062,13 @@ keys_new_shortcut = 新建快捷键…
 keys_new_where = 生效位置
 
 # draft
-keys_no_action_matches = 没有与“{ $filter }”匹配的操作。
+keys_no_action_matches = 没有与{ $filter }匹配的操作。
 
 # draft
-keys_no_changed_matches = 没有与“{ $filter }”匹配的已更改按键。
+keys_no_changed_matches = 没有与{ $filter }匹配的已更改按键。
 
 # draft
-keys_no_shortcut_matches = 没有与“{ $filter }”匹配的快捷键。
+keys_no_shortcut_matches = 没有与{ $filter }匹配的快捷键。
 
 # draft
 keys_none_changed = 您尚未更改任何按键。
@@ -4202,13 +4202,13 @@ layout_close_right = 关闭右侧窗格
 layout_close_upper = 关闭上方窗格
 
 # draft
-layout_not_member = “{ $value }”不是压缩文件中文件预览的有效位置
+layout_not_member = { $value }不是压缩文件中文件预览的有效位置
 
 # draft
-layout_not_panes = “{ $value }”不是有效的窗格排列方式
+layout_not_panes = { $value }不是有效的窗格排列方式
 
 # draft
-layout_not_preview = “{ $value }”不是有效的预览位置
+layout_not_preview = { $value }不是有效的预览位置
 
 # draft
 layout_split_rows = 上下分屏
@@ -4217,10 +4217,10 @@ layout_split_rows = 上下分屏
 layout_split_side = 左右分屏
 
 # draft
-links_inside_folder = “{ $path }”是{ $container }中的文件夹
+links_inside_folder = { $path }是{ $container }中的文件夹
 
 # draft
-links_inside_missing = { $container }中没有“{ $path }”
+links_inside_missing = { $container }中没有{ $path }
 
 # draft
 links_inside_out = 此链接指向{ $container }之外
@@ -4229,7 +4229,7 @@ links_inside_out = 此链接指向{ $container }之外
 links_inside_unlisted = 此链接指向{ $container }中的文件，但此处未列出其中的文件，无法跟随
 
 # draft
-links_no_anchor = { $file }中没有“#{ $anchor }”
+links_no_anchor = { $file }中没有{ $anchor }
 
 # draft
 links_no_file = 该链接没有指向文件
@@ -4799,7 +4799,7 @@ omnibox_keys_waits = Enter 等待
 omnibox_keys_writes = Enter · { $keys } 填入示例
 
 # draft
-omnibox_no_folder = “{ $path }”从当前显示的文件夹开始，但当前没有显示文件夹
+omnibox_no_folder = { $path }从当前显示的文件夹开始，但当前没有显示文件夹
 
 # draft
 omnibox_no_home = 主文件夹未知
@@ -5237,7 +5237,7 @@ palettes_skwir = Skwir
 palettes_slate = 石板
 
 # draft
-pane_cursor_cannot_go = ui.cursor 无法移到“{ $to }”
+pane_cursor_cannot_go = ui.cursor 无法移到{ $to }
 
 # draft
 pane_no_match = 无匹配
@@ -5267,7 +5267,7 @@ placeholder_empty = 此文件夹为空
 placeholder_failed = 无法打开此位置
 
 # draft
-placeholder_filter_empty = 此处没有符合“{ $filter }”的内容。在地址栏中按 Enter 可同时搜索其中的文件夹。
+placeholder_filter_empty = 此处没有符合{ $filter }的内容。在地址栏中按 Enter 可同时搜索其中的文件夹。
 
 # draft
 placeholder_filtered = 已被筛选条件隐藏
@@ -5285,16 +5285,16 @@ placeholder_hidden_show = 显示隐藏文件即可看到它们。
 placeholder_hidden_show_keys = 显示隐藏文件即可看到它们（{ $keys }）。
 
 # draft
-placeholder_lens_empty = 此处没有符合“{ $filter }”的内容。前往其他文件夹和搜索时，筛选条件会一直保留，直到您在地址栏中将其移除。
+placeholder_lens_empty = 此处没有符合{ $filter }的内容。前往其他文件夹和搜索时，筛选条件会一直保留，直到您在地址栏中将其移除。
 
 # draft
 placeholder_looking = 正在此处的文件夹中查找…
 
 # draft
-placeholder_looking_detail = 通向“{ $filter }”的文件夹会在找到后显示。
+placeholder_looking_detail = 通向{ $filter }的文件夹会在找到后显示。
 
 # draft
-placeholder_name_empty = 此处没有包含“{ $filter }”的名称。在地址栏中按 Enter 可同时搜索其中的文件夹。
+placeholder_name_empty = 此处没有包含{ $filter }的名称。在地址栏中按 Enter 可同时搜索其中的文件夹。
 
 # draft
 placeholder_nothing = 此处没有内容
@@ -5303,7 +5303,7 @@ placeholder_nothing = 此处没有内容
 placeholder_reading = 正在读取文件的详细信息…
 
 # draft
-placeholder_reading_detail = 符合“{ $filter }”的文件会在读取后显示。
+placeholder_reading_detail = 符合{ $filter }的文件会在读取后显示。
 
 # draft
 placeholder_reading_files = 正在读取 { $count } 个文件的详细信息…
@@ -6365,7 +6365,7 @@ records_keyring_label = skwir：{ $record }（{ $setting }）
 records_none_found = 未找到
 
 # draft
-records_none_match = 没有与“{ $filter }”匹配的项
+records_none_match = 没有与{ $filter }匹配的项
 
 # draft
 records_none_yet = 暂无
@@ -6680,7 +6680,7 @@ search_bar_remove_pill = 移除 { $pill }
 search_bar_tag = 标签
 
 # draft
-search_bar_typed = “{ $text }”
+search_bar_typed = { $text }
 
 # draft
 sequence_nothing_follows = 此处没有以这些按键开头的快捷键
@@ -7170,7 +7170,7 @@ settings_grammar_plain = 纯文本
 settings_grammar_tree = { $source }（tree-sitter）
 
 # draft
-settings_grammar_unknown = “{ $grammar }”不是可选择的语法
+settings_grammar_unknown = { $grammar }不是可选择的语法
 
 # draft
 settings_grid_fill = 填充缩略图
@@ -7320,7 +7320,7 @@ settings_narrow_choices = 输入以缩小范围
 settings_no_file = 尚无设置文件：所有设置均为默认值
 
 # draft
-settings_no_plugin = 没有与“{ $typed }”匹配的插件。
+settings_no_plugin = 没有与{ $typed }匹配的插件。
 
 # draft
 settings_not_installed = { $name }（未安装）
@@ -7329,7 +7329,7 @@ settings_not_installed = { $name }（未安装）
 settings_nothing_changed = 所有设置均为默认值，所有插件均保持 Skwir 的默认状态。
 
 # draft
-settings_nothing_found = 没有与“{ $typed }”匹配的内容。
+settings_nothing_found = 没有与{ $typed }匹配的内容。
 
 # draft
 settings_notify_desktop = 耗时较长的操作结束时通知桌面
@@ -7709,7 +7709,7 @@ shell_find = 查找
 shell_find_before = 向前查找
 
 # draft
-shell_find_none = 没有名称包含“{ $pattern }”
+shell_find_none = 没有名称包含{ $pattern }
 
 # draft
 shell_find_nothing = 没有可再次查找的内容：请先按 /
@@ -7817,7 +7817,7 @@ shortcuts_elsewhere = 其他位置
 shortcuts_filter = 按操作或按键筛选
 
 # draft
-shortcuts_none = 没有与“{ $query }”匹配的快捷键。
+shortcuts_none = 没有与{ $query }匹配的快捷键。
 
 # draft
 shortcuts_tip = 提示：按 { $keys } 可执行“{ $action }”。F1 会列出当前位置可用的按键。

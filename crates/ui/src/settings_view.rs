@@ -2271,8 +2271,8 @@ impl SettingsView {
             Self::note(
                 items,
                 words!(
-                    settings_no_plugin = "No plugin matches “{ $typed }”.",
-                    typed = typed,
+                    settings_no_plugin = "No plugin matches { $typed }.",
+                    typed = skwir_core::words::Name(typed.clone()),
                     note = "Said on the Plugins page when its filter keeps none: typed is what was typed."
                 )
                 .say(),
@@ -2589,8 +2589,8 @@ impl SettingsView {
             Self::note(
                 items,
                 words!(
-                    settings_nothing_found = "Nothing matches “{ $typed }”.",
-                    typed = query,
+                    settings_nothing_found = "Nothing matches { $typed }.",
+                    typed = skwir_core::words::Name(query.to_string()),
                     note = "Said when the settings' search finds nothing: typed is what was typed."
                 )
                 .say(),

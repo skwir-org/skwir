@@ -2271,8 +2271,8 @@ impl Shell {
                     } else {
                         words!(
                             omnibox_no_folder =
-                                "“{ $path }” starts from the folder shown, and no folder is shown",
-                            path = text.as_str(),
+                                "{ $path } starts from the folder shown, and no folder is shown",
+                            path = skwir_core::words::Arg::Path(text.clone()),
                             note = "A path typed in the address that starts from the folder shown (./, ../) where none is (a search, the trash); path: as typed."
                         )
                     };

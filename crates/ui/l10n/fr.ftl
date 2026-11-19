@@ -3008,9 +3008,9 @@ exclusions_fold = Replier
 
 # draft
 exclusions_found = { $count ->
-        [1] Une exclusion correspond à « { $query } »
-        [one] { $count } exclusion correspond à « { $query } »
-       *[other] { $count } exclusions correspondent à « { $query } »
+        [1] Une exclusion correspond à { $query }
+        [one] { $count } exclusion correspond à { $query }
+       *[other] { $count } exclusions correspondent à { $query }
     }
 
 # draft
@@ -3188,7 +3188,7 @@ exclusions_none_changed = Vous n’avez encore modifié aucune des exclusions de
 exclusions_none_here = Aucune exclusion ici.
 
 # draft
-exclusions_none_match = Aucune exclusion ne correspond à « { $filter } ».
+exclusions_none_match = Aucune exclusion ne correspond à { $filter }.
 
 # draft
 exclusions_only_here = Seulement sur cet ordinateur
@@ -3396,7 +3396,7 @@ form_save_in_folder = Enregistré dans le dossier { $folder }, sous le nom { $na
 form_save_named = Sous le nom { $name }
 
 # draft
-form_save_no_folder = Il n’y a pas de dossier « { $path } »
+form_save_no_folder = Il n’y a pas de dossier { $path }
 
 # draft
 form_save_refused = { $name } ne peut pas être enregistré : { $why }
@@ -4207,13 +4207,13 @@ keys_new_shortcut = Nouveau raccourci…
 keys_new_where = Où elles fonctionnent
 
 # draft
-keys_no_action_matches = Aucune action ne correspond à « { $filter } ».
+keys_no_action_matches = Aucune action ne correspond à { $filter }.
 
 # draft
-keys_no_changed_matches = Aucun raccourci que vous avez modifié ne correspond à « { $filter } ».
+keys_no_changed_matches = Aucun raccourci que vous avez modifié ne correspond à { $filter }.
 
 # draft
-keys_no_shortcut_matches = Aucun raccourci ne correspond à « { $filter } ».
+keys_no_shortcut_matches = Aucun raccourci ne correspond à { $filter }.
 
 # draft
 keys_none_changed = Vous n’avez encore modifié aucun raccourci.
@@ -4351,13 +4351,13 @@ layout_close_right = Fermer le panneau de droite
 layout_close_upper = Fermer le panneau du haut
 
 # draft
-layout_not_member = « { $value } » n’est pas une position possible pour l’aperçu d’un fichier d’une archive
+layout_not_member = { $value } n’est pas une position possible pour l’aperçu d’un fichier d’une archive
 
 # draft
-layout_not_panes = « { $value } » n’est pas une disposition possible des panneaux
+layout_not_panes = { $value } n’est pas une disposition possible des panneaux
 
 # draft
-layout_not_preview = « { $value } » n’est pas une position possible pour l’aperçu
+layout_not_preview = { $value } n’est pas une position possible pour l’aperçu
 
 # draft
 layout_split_rows = Diviser en panneaux superposés
@@ -4366,10 +4366,10 @@ layout_split_rows = Diviser en panneaux superposés
 layout_split_side = Diviser en panneaux côte à côte
 
 # draft
-links_inside_folder = « { $path } » est un dossier de { $container }
+links_inside_folder = { $path } est un dossier de { $container }
 
 # draft
-links_inside_missing = { $container } ne contient pas « { $path } »
+links_inside_missing = { $container } ne contient pas { $path }
 
 # draft
 links_inside_out = Ce lien mène hors de { $container }
@@ -4378,7 +4378,7 @@ links_inside_out = Ce lien mène hors de { $container }
 links_inside_unlisted = Ce lien désigne un fichier à l’intérieur de { $container }, dont les fichiers ne sont pas listés ici pour qu’il puisse être suivi
 
 # draft
-links_no_anchor = { $file } ne contient pas de « #{ $anchor } »
+links_no_anchor = { $file } ne contient pas de { $anchor }
 
 # draft
 links_no_file = Ce lien ne désigne pas de fichier
@@ -4988,7 +4988,7 @@ omnibox_keys_waits = Entrée attend
 omnibox_keys_writes = Entrée · { $keys } l’écrit
 
 # draft
-omnibox_no_folder = « { $path } » part du dossier affiché, et aucun dossier n’est affiché
+omnibox_no_folder = { $path } part du dossier affiché, et aucun dossier n’est affiché
 
 # draft
 omnibox_no_home = Le dossier personnel est inconnu
@@ -5426,7 +5426,7 @@ palettes_skwir = Skwir
 palettes_slate = Ardoise
 
 # draft
-pane_cursor_cannot_go = ui.cursor ne peut pas aller vers « { $to } »
+pane_cursor_cannot_go = ui.cursor ne peut pas aller vers { $to }
 
 # draft
 pane_no_match = Aucune correspondance
@@ -5456,7 +5456,7 @@ placeholder_empty = Ce dossier est vide
 placeholder_failed = Cet emplacement n’a pas pu être ouvert
 
 # draft
-placeholder_filter_empty = Rien ici ne correspond à « { $filter } ». Appuyez sur Entrée dans le champ d’adresse pour chercher aussi dans les sous-dossiers.
+placeholder_filter_empty = Rien ici ne correspond à { $filter }. Appuyez sur Entrée dans le champ d’adresse pour chercher aussi dans les sous-dossiers.
 
 # draft
 placeholder_filtered = Tout est masqué par les filtres
@@ -5474,16 +5474,16 @@ placeholder_hidden_show = Affichez les fichiers cachés pour les voir.
 placeholder_hidden_show_keys = Affichez les fichiers cachés pour les voir ({ $keys }).
 
 # draft
-placeholder_lens_empty = Rien ici ne correspond à « { $filter } ». Les filtres restent appliqués quand vous allez dans d’autres dossiers et recherches, jusqu’à ce que vous les retiriez dans la barre d’adresse.
+placeholder_lens_empty = Rien ici ne correspond à { $filter }. Les filtres restent appliqués quand vous allez dans d’autres dossiers et recherches, jusqu’à ce que vous les retiriez dans la barre d’adresse.
 
 # draft
 placeholder_looking = Recherche dans les sous-dossiers…
 
 # draft
-placeholder_looking_detail = Les dossiers qui mènent à « { $filter } » apparaissent à mesure qu’ils sont trouvés.
+placeholder_looking_detail = Les dossiers qui mènent à { $filter } apparaissent à mesure qu’ils sont trouvés.
 
 # draft
-placeholder_name_empty = Aucun nom ici ne contient « { $filter } ». Appuyez sur Entrée dans le champ d’adresse pour chercher aussi dans les sous-dossiers.
+placeholder_name_empty = Aucun nom ici ne contient { $filter }. Appuyez sur Entrée dans le champ d’adresse pour chercher aussi dans les sous-dossiers.
 
 # draft
 placeholder_nothing = Rien ici
@@ -5492,7 +5492,7 @@ placeholder_nothing = Rien ici
 placeholder_reading = Lecture des détails des fichiers…
 
 # draft
-placeholder_reading_detail = Les fichiers que retient « { $filter } » apparaissent à mesure qu’ils sont lus.
+placeholder_reading_detail = Les fichiers que retient { $filter } apparaissent à mesure qu’ils sont lus.
 
 # draft
 placeholder_reading_files = Lecture des détails de { $count ->
@@ -6604,7 +6604,7 @@ records_keyring_label = skwir : { $record } ({ $setting })
 records_none_found = Rien de trouvé
 
 # draft
-records_none_match = Rien ne correspond à « { $filter } »
+records_none_match = Rien ne correspond à { $filter }
 
 # draft
 records_none_yet = Rien pour l’instant
@@ -6931,7 +6931,7 @@ search_bar_remove_pill = Retirer { $pill }
 search_bar_tag = Étiquette
 
 # draft
-search_bar_typed = « { $text } »
+search_bar_typed = { $text }
 
 # draft
 sequence_nothing_follows = Aucun raccourci ne commence par ces touches ici
@@ -7433,7 +7433,7 @@ settings_grammar_plain = Texte brut
 settings_grammar_tree = { $source } (tree-sitter)
 
 # draft
-settings_grammar_unknown = « { $grammar } » n’est pas une grammaire que l’on peut choisir
+settings_grammar_unknown = { $grammar } n’est pas une grammaire que l’on peut choisir
 
 # draft
 settings_grid_fill = Remplir les vignettes
@@ -7583,7 +7583,7 @@ settings_narrow_choices = Tapez pour affiner
 settings_no_file = Il n’y a pas encore de fichier de paramètres : chaque paramètre a sa valeur par défaut
 
 # draft
-settings_no_plugin = Aucun module ne correspond à « { $typed } ».
+settings_no_plugin = Aucun module ne correspond à { $typed }.
 
 # draft
 settings_not_installed = { $name } (non installé)
@@ -7592,7 +7592,7 @@ settings_not_installed = { $name } (non installé)
 settings_nothing_changed = Chaque paramètre a sa valeur par défaut, et chaque module est tel qu’il est livré avec Skwir.
 
 # draft
-settings_nothing_found = Rien ne correspond à « { $typed } ».
+settings_nothing_found = Rien ne correspond à { $typed }.
 
 # draft
 settings_notify_desktop = Prévenir le bureau quand une longue action se termine
@@ -7975,7 +7975,7 @@ shell_find = Rechercher
 shell_find_before = Rechercher avant le curseur
 
 # draft
-shell_find_none = Aucun nom ne contient « { $pattern } »
+shell_find_none = Aucun nom ne contient { $pattern }
 
 # draft
 shell_find_nothing = Rien à rechercher à nouveau : appuyez d’abord sur /
@@ -8085,7 +8085,7 @@ shortcuts_elsewhere = Ailleurs
 shortcuts_filter = Filtrer par action ou par touches
 
 # draft
-shortcuts_none = Aucun raccourci ne correspond à « { $query } ».
+shortcuts_none = Aucun raccourci ne correspond à { $query }.
 
 # draft
 shortcuts_tip = Astuce : appuyez sur { $keys } pour « { $action } ». F1 liste les touches qui agissent là où vous êtes.

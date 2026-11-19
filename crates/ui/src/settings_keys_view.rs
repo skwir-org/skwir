@@ -613,18 +613,18 @@ impl SettingsView {
                 .child(
                     match (self.keys.show, filter.is_empty()) {
                         (Show::Keyed, false) => words!(
-                            keys_no_shortcut_matches = "No shortcut matches “{ $filter }”.",
-                            filter = filter.to_owned(),
+                            keys_no_shortcut_matches = "No shortcut matches { $filter }.",
+                            filter = skwir_core::words::Name(filter.to_owned()),
                             note = "filter: what the user typed in the Keyboard page's filter."
                         ),
                         (Show::All, false) => words!(
-                            keys_no_action_matches = "No action matches “{ $filter }”.",
-                            filter = filter.to_owned(),
+                            keys_no_action_matches = "No action matches { $filter }.",
+                            filter = skwir_core::words::Name(filter.to_owned()),
                             note = "filter: what the user typed in the Keyboard page's filter."
                         ),
                         (Show::Changed, false) => words!(
-                            keys_no_changed_matches = "No key you changed matches “{ $filter }”.",
-                            filter = filter.to_owned(),
+                            keys_no_changed_matches = "No key you changed matches { $filter }.",
+                            filter = skwir_core::words::Name(filter.to_owned()),
                             note = "filter: what the user typed in the Keyboard page's filter."
                         ),
                         (Show::Changed, true) => {
