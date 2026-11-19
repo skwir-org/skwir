@@ -224,6 +224,19 @@ impl Drop for Unwound<'_> {
     }
 }
 
+/// A picture the caches were keeping (`State::keeping`), kept or
+/// unwound: no longer served from there.
+struct Kept<'a> {
+    this: &'a Arc<Thumbnails>,
+    key: Key,
+}
+
+impl Drop for Kept<'_> {
+    fn drop(&mut self) {
+        self.this.state.lock().keeping.remove(&self.key);
+    }
+}
+
 /// What waits for a worker: how much it is wanted is its [`Flight`]'s,
 /// which a frame asking again updates in place.
 struct Queued {
@@ -306,6 +319,14 @@ struct State {
     /// Every request asked for and not answered, by key: a frame asking
     /// again finds it here, never by a walk of the queues.
     in_flight: HashMap<Key, Flight>,
+    /// What landed and is being written by the caches tried before the
+    /// provider that drew it, which keep it once its askers have it
+    /// (`Thumbnails::work_one`): served to whoever asks meanwhile (a
+    /// second window, after the first took it out of the LRU; the
+    /// preview's cover), who would otherwise miss a cache not written yet
+    /// and have it drawn again. One a worker at most, the pixels the
+    /// askers hold.
+    keeping: HashMap<Key, Arc<Image>>,
     /// Bumped when the providers change: a request that ran against an
     /// older set does not record the file as unavailable.
     providers: u64,
@@ -357,6 +378,30 @@ impl State {
     fn frame_of(&self, asker: Asker) -> u64 {
         self.frames.get(&asker).copied().unwrap_or(0)
     }
+
+    /// The picture of `key` made and not asked for since: out of the LRU
+    /// for a caller that keeps it (`take`), shared with it for another; or
+    /// the one the caches are keeping now (`keeping`), shared whoever asks.
+    fn ready(&mut self, key: &Key, take: bool) -> Option<Arc<Image>> {
+        let ready = if take {
+            self.lru.remove(key)
+        } else {
+            self.lru.get(key).cloned()
+        };
+        ready.or_else(|| self.keeping.get(key).cloned())
+    }
+
+    /// `asker` asks for `key` in flight, with `priority`: woken when it
+    /// lands. False if it is not in flight.
+    fn join(&mut self, key: &Key, asker: Asker, priority: Priority) -> bool {
+        let frame = self.frame_of(asker);
+        let Some(flight) = self.in_flight.get_mut(key) else {
+            return false;
+        };
+        flight.asked_by(asker, frame);
+        flight.priority = flight.priority.min(priority);
+        true
+    }
 }
 
 /// How many files without a picture are remembered at most
@@ -394,6 +439,7 @@ impl Thumbnails {
                 queue: Vec::new(),
                 parked: Vec::new(),
                 in_flight: HashMap::new(),
+                keeping: HashMap::new(),
                 providers: 0,
                 frames: HashMap::new(),
                 seq: 0,
@@ -574,21 +620,13 @@ impl Thumbnails {
         let key = req.key();
         {
             let mut s = self.state.lock();
-            let ready = if take {
-                s.lru.remove(&key)
-            } else {
-                s.lru.get(&key).cloned()
-            };
-            if let Some(img) = ready {
+            if let Some(img) = s.ready(&key, take) {
                 return ThumbState::Ready(img);
             }
             if s.unavailable.contains(&key) {
                 return ThumbState::Unavailable;
             }
-            let frame = s.frame_of(asker);
-            if let Some(flight) = s.in_flight.get_mut(&key) {
-                flight.asked_by(asker, frame);
-                flight.priority = flight.priority.min(priority);
+            if s.join(&key, asker, priority) {
                 return ThumbState::Pending;
             }
         }
@@ -609,8 +647,11 @@ impl Thumbnails {
             s.mark_unavailable(key);
             return ThumbState::Unavailable;
         }
-        if s.in_flight.contains_key(&key) || s.lru.contains(&key) {
-            // Another caller queued it (or it landed) while we asked.
+        // Another caller queued it, or it landed, while we asked.
+        if let Some(img) = s.ready(&key, take) {
+            return ThumbState::Ready(img);
+        }
+        if s.join(&key, asker, priority) {
             return ThumbState::Pending;
         }
         let frame = s.frame_of(asker);
@@ -876,6 +917,12 @@ impl Thumbnails {
             return true;
         }
         let produced = produced.map(|(i, img)| (i, Arc::new(img)));
+        // The caches tried before the provider that drew it, which keep it
+        // once its askers have it.
+        let stored = produced
+            .as_ref()
+            .filter(|(i, _)| *i > 0 && !cancelled)
+            .map(|(i, img)| (&providers[..*i], img));
         let mut askers = Vec::new();
         let evicted = {
             let mut s = self.state.lock();
@@ -885,6 +932,9 @@ impl Thumbnails {
             match &produced {
                 Some((_, img)) => {
                     s.decoded += 1;
+                    if stored.is_some() {
+                        s.keeping.insert(key, Arc::clone(img));
+                    }
                     s.lru.insert(key, Arc::clone(img), img.bytes())
                 }
                 // A cancelled request says nothing about the file: the next
@@ -909,18 +959,19 @@ impl Thumbnails {
             }
         };
         drop(evicted);
+        // Whoever asks until it is kept is served it (`State::keeping`),
+        // let go of once it is, a waker or a cache unwinding included.
+        let kept = stored.is_some().then(|| Kept { this: self, key });
         self.wake_for(&askers);
-        // Shown, then kept: the caches tried before the provider that drew
-        // it keep it once the window has it, so what is written for the
-        // next look (a PNG other applications read too) never holds the
-        // picture back.
-        if let Some((i, img)) = &produced
-            && !cancelled
-        {
-            for p in &providers[..*i] {
+        // Shown, then kept: the caches keep it once the window has it, so
+        // what is written for the next look (a PNG other applications read
+        // too) never holds the picture back.
+        if let Some((caches, img)) = stored {
+            for p in caches {
                 p.store(&req, img);
             }
         }
+        drop(kept);
         true
     }
 
@@ -975,6 +1026,8 @@ mod tests {
         failures: AtomicUsize,
         /// Called while it runs, before it answers.
         during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+        /// Called while it keeps a picture, before it is kept.
+        storing: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     }
 
     impl Fake {
@@ -987,6 +1040,7 @@ mod tests {
                 stored: AtomicUsize::new(0),
                 failures: AtomicUsize::new(0),
                 during: Mutex::new(None),
+                storing: Mutex::new(None),
             })
         }
     }
@@ -1047,6 +1101,9 @@ mod tests {
             }))
         }
         fn store(&self, _: &ThumbRequest, _: &Image) {
+            if let Some(storing) = self.storing.lock().take() {
+                storing();
+            }
             self.stored.fetch_add(1, Ordering::Relaxed);
         }
         // A cache remembers failures, as the desktop's does.
@@ -1294,6 +1351,54 @@ mod tests {
             ThumbState::Ready(_)
         ));
         assert_eq!(decoder.calls.load(Ordering::Relaxed), 1);
+    }
+
+    /// A picture landed is served to whoever asks until the caches have
+    /// kept it: a second window, asking once the first took it out, has
+    /// it drawn no second time while the cache's file is being written.
+    #[test]
+    fn a_picture_being_kept_is_served_to_a_second_asker() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let cache = Fake::new("cache", Stage::Cache, false);
+        let decoder = Fake::new("decoder", Stage::Generate, true);
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let (storing, started) = std::sync::mpsc::channel::<()>();
+        *cache.storing.lock() = Some(Box::new(move || {
+            let _ = storing.send(());
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        }));
+        t.register("desktop", cache.clone());
+        t.register("core", decoder.clone());
+        let (a, b) = (Asker(1), Asker(2));
+        let ready = |state: ThumbState| matches!(state, ThumbState::Ready(_));
+        assert!(!ready(t.take_for(a, req(1), Priority::Visible)));
+        started
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the cache is given it to keep");
+        assert!(
+            ready(t.take_for(a, req(1), Priority::Visible)),
+            "the first window takes it"
+        );
+        assert!(
+            ready(t.take_for(b, req(1), Priority::Visible)),
+            "the second while it is kept"
+        );
+        assert!(
+            ready(t.get_for(b, req(1), Priority::Visible)),
+            "and the preview's cover"
+        );
+        assert_eq!(decoder.calls.load(Ordering::Relaxed), 1, "drawn once");
+        release.send(()).ok();
+        assert_eq!(kept(&cache), 1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !t.state.lock().keeping.is_empty() {
+            assert!(std::time::Instant::now() < deadline, "let go of once kept");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            !ready(t.take_for(b, req(1), Priority::Visible)),
+            "asked of the cache again"
+        );
     }
 
     /// A provider that panics (a decoder's bug) ends its request as one
