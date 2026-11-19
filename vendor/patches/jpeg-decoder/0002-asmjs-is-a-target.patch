@@ -1,0 +1,12 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -57,3 +57,9 @@
+ [[test]]
+ name = "rayon-2"
+ required-features = ["rayon"]
++
++# The worker's threads are left out on asm.js as on WebAssembly; rustc no
++# longer knows that target.
++[lints.rust.unexpected_cfgs]
++level = "warn"
++check-cfg = ['cfg(target_arch, values("asmjs"))']

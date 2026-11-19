@@ -1,0 +1,39 @@
+--- a/src/decoder.rs
++++ b/src/decoder.rs
+@@ -314,6 +314,9 @@ impl<R: Read> Decoder<R> {
+         let mut previous_marker = Marker::SOI;
+         let mut pending_marker = None;
+         let mut scans_processed = 0;
++        // The components whose DC coefficients a progressive scan has
++        // brought, at any successive approximation.
++        let mut dc_seen = [false; MAX_COMPONENTS];
+         let mut planes = vec![
+             Vec::<u8>::new();
+             self.frame
+@@ -478,6 +481,26 @@ impl<R: Read> Decoder<R> {
+                     }
+ 
+                     scans_processed += 1;
++
++                    // Scaled to an eighth, a block is drawn from its DC
++                    // coefficient alone (a 1x1 IDCT). Once every component's
++                    // DC has come, the scans left in a progressive file add
++                    // only AC coefficients and the DC's lowest bits: what is
++                    // there is drawn now, as an unfinished file would be.
++                    if frame.coding_process == CodingProcess::DctProgressive
++                        && frame.components.iter().all(|c| c.dct_scale == 1)
++                    {
++                        if scan.spectral_selection.start == 0
++                            && scan.successive_approximation_high == 0
++                        {
++                            for &i in &scan.component_indices {
++                                dc_seen[i] = true;
++                            }
++                        }
++                        if dc_seen[..frame.components.len()].iter().all(|&seen| seen) {
++                            break;
++                        }
++                    }
+                 }
+ 
+                 // Table-specification and miscellaneous markers

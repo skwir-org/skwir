@@ -20758,3 +20758,57 @@ alongside it, read only, and nothing changed or built until it was done.
   (d0c013da..90efb6b8) and the user's follow-ups (f9494d83, 0d1c0d03,
   31300597, ac3e525b) had no second review. What they left is in
   PLAN's "What is left" ("From the review since 0.5.1").
+
+## 2026-11-19: a photo's thumbnail sooner, a progressive one read to its first scans
+
+The user found the thumbnails of 3 MB photos of 5464 × 8192 slow and
+asked whether another library, other parameters or the GPU would help.
+Measured on synthetic JPEGs of that size (a plasma blurred and grained,
+3.1 MB at quality 80), each step of the thumbnail at 256 px, release:
+the decode at an eighth (`picture::decode_fitted`, jpeg-decoder) 61 ms,
+the PNG the desktop's cache keeps 15 ms, the resize 3 ms; 100 ms with
+4:4:4 colour, 330 ms progressive, 240 ms at camera quality (15.7 MB).
+What the user saw was mostly their debug build: 550 ms for the same
+file. libjpeg-turbo at an eighth (`djpeg -scale 1/8`) took 45, 59, 224
+and 138 ms, about 1.4 times faster, not worth a C library on three
+systems; zune-jpeg has no reduced decode (185 ms whole and shrunk). The
+GPU was advised against: its decoders draw the whole picture and are
+each a vendor's, and what is left at an eighth is mostly the
+entropy-coded data, read in order.
+
+Two changes, as the user chose:
+- **Shown before it is kept** (66f66fc8): the worker gives the
+  thumbnail to the window, then writes the cache's PNG, now with the
+  encoder's fast compression (0.25 ms against 12.9 ms, the file a few
+  percent larger on noisy content). The tests that read the cache's file
+  after `Ready`, and the bench's warm pass, wait for it.
+- **A progressive JPEG at an eighth stops after its DC scans**
+  (`vendor/jpeg-decoder`, its patch `0001-an-eighth-from-the-dc-scans`):
+  at that scale a block is its DC coefficient alone, and the decoder
+  already draws an unfinished file's components. 256–314 ms became
+  62–64 ms for the progressive photo of 3.2 MB, 104–118 ms became 52 ms
+  for one whose DC came whole; a standard JPEG decodes as before (its
+  pixels identical, 61–69 against 63–66 ms). Where the first DC scan
+  leaves out a bit, a pixel moves 3 levels of 255 at most (0.7 on
+  average); a grey picture's 1. The crate's benchmark photographs were
+  left out of the copy: three hold the GPS position of whoever took them.
+
+**Checked:** rustfmt; clippy `-D warnings` on core, the platform, the
+thumbnails plugin and the bench, and skwir's `fallback_thumbnails`, for
+the first; nextest on core, the platform and the thumbnails plugin (1494
+passed). For the second, clippy on the platform, the thumbnails plugin
+and the window, nextest on the platform and the plugin (542 passed), the
+packages' notices current (`notices.py --check`); its manifest names
+`asmjs`, which rustc no longer knows, as a target the crate tests
+(patch `0002`), or it warned 8 times a build. A test of the patch on
+`crates/platform/testdata/synthetic-progressive.jpg` (1200 × 800,
+libjpeg's default progression) cuts the file after its first scan: at
+an eighth it decodes as the whole file does, while a decode at full size
+fails. The decodes compared pixel by pixel on the synthetic photos
+(standard, 4:4:4, progressive with interleaved or separate DC scans,
+grey). Timings alternated between builds, the machine's load between 1
+and 7, the user's own skwir running. Not run: the Windows and macOS
+checks (the patch has no system's code), the bench's budgets, a window.
+Left: what the progressive decode still spends goes mostly to the
+coefficients jpeg-decoder sets aside for the whole picture, 64 a block
+where an eighth reads one.

@@ -291,6 +291,56 @@ mod tests {
         assert_eq!((fitted.width(), fitted.height()), (2, 3));
     }
 
+    /// 1200 × 800, its left third red and the rest a ramp of blue,
+    /// progressive as libjpeg writes it: its first scan brings every
+    /// component's DC coefficients, less their lowest bit.
+    const PROGRESSIVE: &[u8] = include_bytes!("../testdata/synthetic-progressive.jpg");
+
+    #[test]
+    fn a_progressive_jpeg_at_an_eighth_is_read_to_its_first_scan() {
+        // Cut after the first scan: the next one's marker and nothing of it.
+        let next = PROGRESSIVE
+            .windows(2)
+            .enumerate()
+            .filter(|(_, w)| *w == [0xFF, 0xDA])
+            .nth(1)
+            .map(|(at, _)| at)
+            .expect("a second scan");
+        let cut = &PROGRESSIVE[..next + 2];
+        assert!(
+            jpeg_decoder::Decoder::new(Cursor::new(cut))
+                .decode()
+                .is_err(),
+            "the cut file is no picture at its full size"
+        );
+        let reduced = |bytes: &[u8]| {
+            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100).unwrap().unwrap();
+            image.to_rgb8()
+        };
+        let read = reduced(PROGRESSIVE);
+        assert_eq!(read.dimensions(), (150, 100));
+        assert_eq!(reduced(cut), read, "nothing after the first scan is read");
+        let fitted = decode_fitted(reader(cut), 100).unwrap();
+        assert_eq!((fitted.width(), fitted.height()), (100, 67));
+        // As the whole decode shrunk has it, give or take the bit the first
+        // scan leaves out and the filters' edges.
+        let whole = decode(reader(PROGRESSIVE))
+            .unwrap()
+            .thumbnail(150, 100)
+            .to_rgb8();
+        let differ = whole
+            .as_raw()
+            .iter()
+            .zip(read.as_raw())
+            .filter(|(a, b)| a.abs_diff(**b) > 40)
+            .count();
+        assert!(differ * 50 < whole.as_raw().len(), "{differ} bytes differ");
+        let [r, _, b] = read.get_pixel(20, 50).0;
+        assert!(r > 200 && b < 60, "the left is red");
+        let [r, _, b] = read.get_pixel(100, 5).0;
+        assert!(r < 60 && b > 200, "the top of the right is blue");
+    }
+
     #[test]
     fn linear_light_is_encoded_as_srgb() {
         // Middle grey in linear light, and a highlight past white.
