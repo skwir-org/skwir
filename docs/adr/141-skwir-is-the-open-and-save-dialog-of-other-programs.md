@@ -103,7 +103,11 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    answer, as the portal expects of a back end. `SaveFiles`: a folder
    chosen, each name of `files` in it, names taken asked Replace? once
    for all. Only local files, as `file://` URIs; the choices as set; the
-   filter in use.
+   filter in use. A name the program gives (`current_name`, each of
+   `files`) is one name, or the request is answered 2 without a window:
+   a `/`, `.`, `..` or nothing would put the file elsewhere than in the
+   folder the user chooses (the portal checks `files` since 1.22, never
+   `current_name`); only what the user types may be a path.
 6. **The program's filters are a lens** (ADR-107): the one in use
    (`current_filter`, else the first) shows what it admits, globs by
    name (case ignored: a camera's `.JPG` is the program's `*.jpg`) and

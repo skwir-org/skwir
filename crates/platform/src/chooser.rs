@@ -436,13 +436,16 @@ pub(crate) mod linux {
     }
 
     /// A request made of what the portal gave, and what waits for its
-    /// answer.
-    pub(crate) fn request(raw: &Raw) -> (Choosing, Arc<Reply>) {
-        Choosing::made(asked(raw))
+    /// answer; none for one that is refused (`asked`).
+    pub(crate) fn request(raw: &Raw) -> Option<(Choosing, Arc<Reply>)> {
+        asked(raw).map(Choosing::made)
     }
 
-    /// What `raw` asks, as data.
-    pub(crate) fn asked(raw: &Raw) -> Asked {
+    /// What `raw` asks, as data. None when a name the program gives
+    /// (`current_name`, each of `files`) is not one name (`one_name`): it
+    /// would put the file outside the folder the user chooses, and only
+    /// what the user types may be a path (ADR-141, 5).
+    pub(crate) fn asked(raw: &Raw) -> Option<Asked> {
         let options = &raw.options;
         let file = options.current_file.as_deref().and_then(path);
         let kind = match raw.method {
@@ -450,17 +453,30 @@ pub(crate) mod linux {
                 multiple: options.multiple.unwrap_or(false),
                 directory: options.directory.unwrap_or(false),
             },
-            Method::Save => Kind::Save {
-                name: options.current_name.clone().filter(|name| !name.is_empty()),
-                file: file.clone(),
-            },
+            Method::Save => {
+                let name = options.current_name.clone().filter(|name| !name.is_empty());
+                if name
+                    .as_deref()
+                    .is_some_and(|name| !one_name(std::ffi::OsStr::new(name)))
+                {
+                    return None;
+                }
+                Kind::Save {
+                    name,
+                    file: file.clone(),
+                }
+            }
             Method::SaveFiles => Kind::SaveFiles {
                 files: options
                     .files
                     .iter()
                     .flatten()
-                    .filter_map(|name| path(name).map(PathBuf::into_os_string))
-                    .collect(),
+                    .map(|name| {
+                        path(name)
+                            .map(PathBuf::into_os_string)
+                            .filter(|name| one_name(name))
+                    })
+                    .collect::<Option<Vec<_>>>()?,
             },
         };
         // The file saved again first: its folder and its name (ADR-141, 5).
@@ -469,7 +485,7 @@ pub(crate) mod linux {
             .and_then(|f| f.parent())
             .map(std::path::Path::to_path_buf)
             .or_else(|| options.current_folder.as_deref().and_then(path));
-        Asked {
+        Some(Asked {
             app_id: raw.app_id.clone(),
             parent_window: raw.parent_window.clone(),
             title: raw.title.clone(),
@@ -498,7 +514,15 @@ pub(crate) mod linux {
                 })
                 .collect(),
             folder,
-        }
+        })
+    }
+
+    /// Whether `name` is one name, as a folder holds it: not empty, no
+    /// `/`, neither `.` nor `..`.
+    fn one_name(name: &std::ffi::OsStr) -> bool {
+        let mut parts = std::path::Path::new(name).components();
+        matches!(parts.next(), Some(std::path::Component::Normal(part)) if part == name)
+            && parts.next().is_none()
     }
 
     fn filter((name, patterns): &RawFilter) -> Filter {
@@ -599,7 +623,11 @@ pub(crate) mod linux {
         raw: Raw,
         take: impl FnOnce(Choosing) -> bool,
     ) -> (u32, Results) {
-        let (choosing, reply) = request(&raw);
+        let Some((choosing, reply)) = request(&raw) else {
+            // Its window never opens: the name it gives is not one name.
+            tracing::info!("another program's dialog gave a name that is a path: refused");
+            return results(Answer::Failed);
+        };
         let exported = server.at(&handle, Request(Arc::clone(&reply))).await;
         if let Err(error) = &exported {
             tracing::debug!("a request's dialog cannot be closed by its program: {error}");
@@ -1153,7 +1181,7 @@ mod tests {
                 ..Options::default()
             },
         };
-        let got = asked(&raw);
+        let got = asked(&raw).expect("names that are one name each");
         assert_eq!(
             got.kind,
             Kind::Save {
@@ -1193,5 +1221,70 @@ mod tests {
         );
         assert_eq!(results(Answer::Cancelled).0, 1);
         assert_eq!(results(Answer::Failed).0, 2);
+    }
+
+    /// A name the program gives is one name, or the request is refused:
+    /// a path, `.`, `..` or nothing would put the file elsewhere than in
+    /// the folder the user chooses (ADR-141, 5).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_name_given_is_one_name() {
+        use linux::{Method, Options, Raw, asked};
+        let saving_files = |files: &[&[u8]]| Raw {
+            method: Method::SaveFiles,
+            options: Options {
+                files: Some(files.iter().map(|name| name.to_vec()).collect()),
+                ..Options::default()
+            },
+            ..Raw::default()
+        };
+        for refused in [
+            &b"/etc/xdg/autostart/a.desktop\0"[..],
+            b"../a.desktop\0",
+            b"sub/a.txt\0",
+            b"a.txt/\0",
+            b".\0",
+            b"..\0",
+            b"\0",
+            b"",
+        ] {
+            assert!(
+                asked(&saving_files(&[b"fine.txt\0", refused])).is_none(),
+                "{refused:?}"
+            );
+        }
+        let taken = asked(&saving_files(&[
+            b"r\xe9sum\xe9.txt\0",
+            b" it's #1 %20.txt\0",
+        ]))
+        .expect("one name each");
+        assert!(matches!(&taken.kind, Kind::SaveFiles { files } if files.len() == 2));
+
+        let saving = |name: &str| Raw {
+            method: Method::Save,
+            options: Options {
+                current_name: Some(name.to_owned()),
+                ..Options::default()
+            },
+            ..Raw::default()
+        };
+        for refused in [
+            "../../.bashrc",
+            "/etc/x.conf",
+            "notes/x.txt",
+            "x.txt/",
+            "..",
+            ".",
+        ] {
+            assert!(asked(&saving(refused)).is_none(), "{refused}");
+        }
+        assert!(matches!(
+            asked(&saving(" Lettre d'été .odt")).map(|a| a.kind),
+            Some(Kind::Save { name: Some(name), .. }) if name == " Lettre d'été .odt"
+        ));
+        assert!(matches!(
+            asked(&saving("")).map(|a| a.kind),
+            Some(Kind::Save { name: None, .. })
+        ));
     }
 }
