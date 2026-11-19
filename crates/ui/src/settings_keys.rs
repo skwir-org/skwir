@@ -44,8 +44,12 @@ pub(crate) struct Chip {
     pub keys: String,
     /// The context it is bound in, which a record's `when` says.
     pub context: String,
-    /// What it adds to its place, in words; empty for nothing.
-    pub conditions: String,
+    /// What it adds to its place, in words; no words for nothing
+    /// (`keymap::Where::conditions`).
+    pub conditions: Words,
+    /// What `conditions` says, as data (`keymap::Where::flags`): what
+    /// chips are compared by, never their words.
+    pub flags: String,
     pub layer: Layer,
     /// The user's record that binds it.
     pub record: Option<String>,
@@ -121,15 +125,12 @@ impl Action {
     }
 
     /// The conditions every one of its keys adds, said once beside its
-    /// title rather than on each key.
-    pub fn shared_conditions(&self) -> Option<&str> {
+    /// title rather than on each key: the same flags, never the same
+    /// words.
+    pub fn shared_conditions(&self) -> Option<&Words> {
         let first = self.chips.first()?;
-        (!first.conditions.is_empty()
-            && self
-                .chips
-                .iter()
-                .all(|chip| chip.conditions == first.conditions))
-        .then_some(first.conditions.as_str())
+        (!first.flags.is_empty() && self.chips.iter().all(|chip| chip.flags == first.flags))
+            .then_some(&first.conditions)
     }
 
     /// Whether a search finds it, by its words or by its keys
@@ -186,7 +187,7 @@ impl Keyboard {
             };
             let index = *at.entry(id).or_insert_with(|| {
                 actions.push(Action {
-                    place: place.place.clone(),
+                    place: place.place.say(),
                     place_id: place.id.clone(),
                     rank: place.rank,
                     inside: place.inside,
@@ -204,6 +205,7 @@ impl Keyboard {
                 keys: binding.keys.clone(),
                 context: binding.context.clone(),
                 conditions: place.conditions,
+                flags: place.flags,
                 layer: binding.layer,
                 record: binding.record.clone(),
                 hidden_by,
@@ -674,7 +676,7 @@ pub(crate) fn effects(
         if effects.refused.is_none() && kept.contains(&run.command) && !left.contains(&run.id) {
             let title = keymap::title_words(app, &run.command, &run.args).say();
             let at = keymap::place_of(&run.context);
-            effects.refused = Some(needs_a_key(&title, &at.place, at.rank == 0));
+            effects.refused = Some(needs_a_key(&title, &at.place.say(), at.rank == 0));
         }
         if Some(&run.id) == editing
             || still.contains(&(&run.id, run.normal.as_str(), run.context.as_str()))
@@ -791,7 +793,7 @@ pub(crate) fn verdict(
                 .find(|a| a.place_id == at.id && a.command == *command && a.args == *args)
                 .is_some_and(|a| a.keeps_a_key && a.running().count() == 1);
             if last && verdict.refused.is_none() {
-                verdict.refused = Some(needs_a_key(&title, &at.place, at.rank == 0));
+                verdict.refused = Some(needs_a_key(&title, &at.place.say(), at.rank == 0));
             }
             verdict.notes.push(Note::Replaces {
                 does: Does::of(command, args),
@@ -929,6 +931,46 @@ mod tests {
         assert_eq!(keyboard.actions[0].place, "Anywhere");
         let inside = keyboard.actions.iter().position(|a| a.inside).unwrap();
         assert!(keyboard.actions[inside..].iter().all(|a| a.inside));
+    }
+
+    /// What every key of an action adds is said once, decided by the
+    /// keys' flags as data, never by how their conditions are said (UA-2).
+    #[test]
+    fn shared_conditions_are_known_by_their_flags() {
+        let chip = |flags: &str, said: &str| super::Chip {
+            keys: "ctrl-j".into(),
+            context: format!("Pane && {flags}"),
+            conditions: Words::as_written(said.to_owned()),
+            flags: flags.into(),
+            layer: crate::keymap::Layer::Shell,
+            record: None,
+            hidden_by: None,
+        };
+        let action = |chips: Vec<super::Chip>| super::Action {
+            place: "File list".into(),
+            place_id: "pane".into(),
+            rank: 1,
+            inside: false,
+            command: "toggle_hidden".into(),
+            args: serde_json::json!({}),
+            title: "Toggle hidden files".into(),
+            chips,
+            keeps_a_key: false,
+        };
+        let alike = action(vec![chip("single", "one"), chip("single", "said again")]);
+        assert_eq!(
+            alike.shared_conditions().map(Words::english).as_deref(),
+            Some("one")
+        );
+        let apart = action(vec![chip("single", "same"), chip("folder", "same")]);
+        assert!(apart.shared_conditions().is_none());
+        // The keymap says them as one list, alternatives joined by "or".
+        let at = crate::keymap::place_of("Pane && (selection || folder) && !restores");
+        assert_eq!(at.flags, "(selection || folder) !restores");
+        assert_eq!(
+            at.conditions.english(),
+            "with a selection or in a folder and not in the trash"
+        );
     }
 
     /// The rows: places' captions, the fold of what is inside dialogs,

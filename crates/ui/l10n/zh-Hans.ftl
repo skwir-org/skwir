@@ -3667,6 +3667,9 @@ keymap_anywhere = 任意位置
 keymap_choose = { $title }…
 
 # draft
+keymap_conditions = { $conditions }
+
+# draft
 keymap_flag_choosing = 窗口正在应答其他程序的对话框时
 
 # draft

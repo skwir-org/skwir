@@ -3814,6 +3814,9 @@ keymap_anywhere = Partout
 keymap_choose = { $title }…
 
 # draft
+keymap_conditions = { $conditions }
+
+# draft
 keymap_flag_choosing = pendant que la fenêtre répond à la boîte de dialogue d’un autre programme
 
 # draft

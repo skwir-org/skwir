@@ -772,7 +772,7 @@ impl SettingsView {
             .as_ref()
             .filter(|editor| editor.target.action() == Some(&id))
             .map(|editor| editor.target.clone());
-        let shared = action.shared_conditions().map(str::to_owned);
+        let shared = action.shared_conditions().map(Words::say);
         // The keys give way before the title: a key's conditions are cut
         // short first (whole in its tooltip).
         let mut keys = div()
@@ -953,21 +953,14 @@ impl SettingsView {
                 note = "The tooltip of a key of skwir's on the Keyboard page."
             ),
         };
-        // Its conditions whole, which its row may cut short.
+        // Its conditions whole, which its row may cut short: words said
+        // inside sentences, here beginning one (`Words::heading`).
         let tip: SharedString = if chip.conditions.is_empty() {
             said.say().into()
         } else {
-            // Transitional: the keymap's conditions capitalised here,
-            // until the keymap says them as a sentence's start (ADR-139).
-            let mut chars = chip.conditions.chars();
-            let first: String = chars
-                .next()
-                .into_iter()
-                .flat_map(char::to_uppercase)
-                .collect();
             words!(
                 keys_chip_conditions = "{ $conditions }. { $tip }",
-                conditions = format!("{first}{}", chars.as_str()),
+                conditions = chip.conditions.heading(),
                 tip = said,
                 note = "A key's tooltip on the Keyboard page: when its keys work (In a folder, with a selection), then what a click does."
             )
@@ -1008,7 +1001,7 @@ impl SettingsView {
                         .truncate()
                         .text_small()
                         .text_color(theme.text_muted)
-                        .child(chip.conditions.clone()),
+                        .child(chip.conditions.say()),
                 )
             })
             .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))

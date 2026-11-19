@@ -560,7 +560,7 @@ impl SettingsView {
         let at = keymap::place_of(&context);
         Some((
             Action {
-                place: at.place,
+                place: at.place.say(),
                 place_id: at.id,
                 rank: at.rank,
                 inside: at.inside,

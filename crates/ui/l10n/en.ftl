@@ -3284,6 +3284,9 @@ keymap_anywhere = Anywhere
 # A key that offers a list to choose from; title: what the list is for, as the binding names it. The ellipsis says it asks more.
 keymap_choose = { $title }…
 
+# Where keys work: the conditions that must all hold there, joined (one item selected and not in the trash); alternatives are joined by or (with a selection or in a folder).
+keymap_conditions = { $conditions }
+
 # Where keys work: while the window is another program's Open or Save dialog.
 keymap_flag_choosing = while the window answers another program's dialog
 

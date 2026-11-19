@@ -349,7 +349,7 @@ impl Shell {
                 title: keymap::title_of(&self.app, hint).say(),
                 topic,
                 family,
-                place: keymap::place_of(&hint.context).place,
+                place: keymap::place_of(&hint.context).place.say(),
                 depth,
             }
         };

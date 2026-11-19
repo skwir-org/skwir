@@ -1773,8 +1773,8 @@ pub(crate) fn condition_words(flag: &str) -> Words {
 /// inside a dialog or a menu, and what conditions it adds, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Where {
-    /// What it is called, said.
-    pub place: String,
+    /// What it is called.
+    pub place: Words,
     /// Which place it is, as data: the groups of its places
     /// (`Place::group`), a plugin's own context as it is named, empty for
     /// anywhere. Two places called alike are alike in this: what groups by
@@ -1784,10 +1784,12 @@ pub struct Where {
     /// (a plugin's own) after them.
     pub rank: usize,
     pub inside: bool,
-    /// Empty for none.
-    pub conditions: String,
+    /// The conditions it adds, joined as the reader's language joins a
+    /// list (each of alternatives one item, joined by "or"); no words
+    /// (`Words::is_empty`) for none.
+    pub conditions: Words,
     /// What `conditions` says, as data: its flags as the context writes
-    /// them.
+    /// them. What compares conditions reads it, never their words.
     pub flags: String,
 }
 
@@ -1798,16 +1800,15 @@ pub fn place_of(context: &str) -> Where {
         place: words!(
             keymap_anywhere = "Anywhere",
             note = "Where keys work: anywhere in the window."
-        )
-        .say(),
+        ),
         id: String::new(),
         rank: 0,
         inside: false,
-        conditions: String::new(),
+        conditions: Words::default(),
         flags: String::new(),
     };
     let mut placed = false;
-    let mut words: Vec<String> = Vec::new();
+    let mut said: Vec<words::Arg> = Vec::new();
     let mut flags: Vec<&str> = Vec::new();
     for atom in conditions(context) {
         let alts: Vec<&str> = match atom.strip_prefix('(').and_then(|a| a.strip_suffix(')')) {
@@ -1837,8 +1838,7 @@ pub fn place_of(context: &str) -> Where {
                 keymap_places = "{ $places }",
                 places = words::List::and(named),
                 note = "Where a shortcut works, in the list of shortcuts: the places it works in, joined (File list, Sidebar and Address bar)."
-            )
-            .say();
+            );
             found.id = groups.join("|");
             found.rank = at.iter().min().map_or(0, |i| i + 1);
             found.inside = at.iter().all(|&i| PLACES[i].inside);
@@ -1847,19 +1847,26 @@ pub fn place_of(context: &str) -> Where {
         }
         if !placed && known(atom).is_none() && atom.chars().next().is_some_and(char::is_uppercase) {
             // A plugin's own context: a place of its own, after skwir's.
-            atom.clone_into(&mut found.place);
+            found.place = Words::as_written(atom.to_owned());
             atom.clone_into(&mut found.id);
             found.rank = PLACES.len() + 1;
             placed = true;
             continue;
         }
-        // Transitional: a list argument (ADR-139).
-        let said: Vec<String> = alts.iter().map(|alt| condition(alt)).collect();
-        words.push(said.join(" or "));
+        // One of alternatives (`(a || b)`), else the condition alone.
+        said.push(match alts.as_slice() {
+            [one] => condition_words(one).into(),
+            alts => words::List::or(alts.iter().map(|alt| condition_words(alt))).into(),
+        });
         flags.push(atom);
     }
-    // Transitional: a list argument (ADR-139).
-    found.conditions = words.join(", ");
+    if !said.is_empty() {
+        found.conditions = words!(
+            keymap_conditions = "{ $conditions }",
+            conditions = words::List::and(said),
+            note = "Where keys work: the conditions that must all hold there, joined (one item selected and not in the trash); alternatives are joined by or (with a selection or in a folder)."
+        );
+    }
     found.flags = flags.join(" ");
     found
 }
@@ -1868,7 +1875,7 @@ pub fn place_of(context: &str) -> Where {
 pub fn context_label(context: &str) -> String {
     let at = place_of(context);
     if at.conditions.is_empty() {
-        at.place
+        at.place.say()
     } else {
         words!(
             keymap_place_with_conditions = "{ $place } ({ $conditions })",
@@ -3593,22 +3600,30 @@ mod tests {
     #[test]
     fn a_context_is_a_place_with_conditions() {
         let anywhere = super::place_of(&context_of(None));
-        assert_eq!((anywhere.place.as_str(), anywhere.rank), ("Anywhere", 0));
+        assert_eq!(
+            (anywhere.place.english(), anywhere.rank),
+            ("Anywhere".into(), 0)
+        );
+        assert!(anywhere.conditions.is_empty());
         let rename = super::place_of(&context_of(Some("pane single !restores")));
-        assert_eq!(rename.place, "File list");
-        assert_eq!(rename.conditions, "one item selected, not in the trash");
+        assert_eq!(rename.place.english(), "File list");
+        // Joined as a list is, in the reader's language.
+        assert_eq!(
+            rename.conditions.english(),
+            "one item selected and not in the trash"
+        );
+        assert_eq!(rename.flags, "single !restores");
         assert!(!rename.inside);
         let settings = super::place_of(&context_of(Some("setting_control")));
-        assert_eq!(settings.place, "Settings");
+        assert_eq!(settings.place.english(), "Settings");
         assert!(settings.inside);
         let lists = super::place_of(&context_of(Some("palette|form")));
-        // Joined as a list is, in the reader's language.
-        assert_eq!(lists.place, "Command palette and Forms");
+        assert_eq!(lists.place.english(), "Command palette and Forms");
         assert!(lists.inside);
         let own = super::place_of("UsageMap && selection");
-        assert_eq!(own.place, "UsageMap");
+        assert_eq!(own.place.english(), "UsageMap");
         assert!(own.rank > rename.rank);
-        assert_eq!(own.conditions, "with a selection");
+        assert_eq!(own.conditions.english(), "with a selection");
     }
 
     #[test]
