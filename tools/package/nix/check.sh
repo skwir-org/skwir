@@ -10,7 +10,8 @@
 # out; skwir opens the window's libraries through its own search path,
 # not LD_LIBRARY_PATH, and names no GStreamer plugins for what it starts;
 # its fonts, notices, icon, desktop entry and metainfo (in every language
-# translated) are there; and it checks a settings file without a window.
+# translated) are there, and no word of how the copy came (ADR-142); and it
+# checks a settings file without a window.
 # Each closure's size is printed, for the STATUS-LOG.
 #
 #     tools/package/nix/check.sh [variant…]    (default: minimal default)
@@ -144,6 +145,14 @@ for variant in "$@"; do
             failed=1
         fi
     done
+
+    # How the copy came (ADR-142): never said, as Nix updates it.
+    if [ -e "$out/share/skwir/channel" ]; then
+        echo "found: share/skwir/channel, in a package Nix updates"
+        failed=1
+    else
+        echo "ok: no channel, as Nix updates it"
+    fi
 
     # The desktop entry and the metainfo in every language translated
     # (tools/package/linux/l10n.sh, ADR-139).

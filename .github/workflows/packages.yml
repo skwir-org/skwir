@@ -83,18 +83,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `channel`: the word the package writes of how the copy came
+          # (ADR-142), none for the AUR's, which a package manager updates.
           - distribution: debian
             image: debian:13
             git: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+            channel: deb
           - distribution: ubuntu
             image: ubuntu:24.04
             git: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+            channel: deb
           - distribution: fedora
             image: fedora:44
             git: dnf -y -q install git
+            channel: rpm
           - distribution: arch
             image: archlinux:latest
             git: pacman -Syu --noconfirm --needed git
+            channel: none
     name: ${{ matrix.distribution }}
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
@@ -123,7 +129,7 @@ jobs:
           fedora) dnf -y install --setopt=install_weak_deps=False target/generate-rpm/skwir-*.rpm ;;
           arch) pacman -U --noconfirm target/aur/skwir-[0-9]*.pkg.tar.zst ;;
           esac
-          tools/package/linux/check.sh
+          tools/package/linux/check.sh channel=${{ matrix.channel }}
           skwir --version
       - uses: actions/upload-artifact@v7
         with:
