@@ -438,7 +438,9 @@ pub struct RecordAction {
 /// Records their owner keeps elsewhere (rclone's remotes, in rclone's own
 /// configuration, ADR-086): the dialog lists what `list` answers
 /// (`{ "records": [{ "id": …, <field>: … }] }`, dispatched on the window's
-/// thread, so answered from the owner's memory) and changes them only
+/// thread, so answered from the owner's memory; its words as data,
+/// `Words::to_data`, which the dialog says and an agent reads in English,
+/// what is no one's to translate as text) and changes them only
 /// through the owner's commands, each run with `{ "id": <record id> }`
 /// (`add` with nothing): never edited in place, never moved. The setting's
 /// own value is never read nor saved. The dialog lists them again when
@@ -481,7 +483,8 @@ impl RecordSource {
 /// and so answered from the owner's memory, `{ "value", "label",
 /// "choices": [{ "value", "label", "detail"?, "disabled"? }], "command",
 /// "args"?, "field", "detail"? }` (a record's `choice`, with what the
-/// value means for the user in `detail`, said under the description), and
+/// value means for the user in `detail`, said under the description; its
+/// words as data, as a record's are), and
 /// choosing runs `command` with `args` and the value chosen in `field`.
 /// The setting's own value is never read nor saved: `settings.apply`
 /// refuses it, as the owner's command changes it. The dialog lists it

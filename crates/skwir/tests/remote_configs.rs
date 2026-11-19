@@ -376,11 +376,12 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
         std::thread::sleep(Duration::from_millis(50));
     }
     let record = record_of(&app, "nas-1", 30);
+    // Its words as data, which an agent reads in English.
     assert_eq!(
-        record["kind"], "webdav · in rclone's configuration",
+        record["kind"]["english"], "webdav · in rclone's configuration",
         "{record}"
     );
-    assert_eq!(record["actions"][0]["label"], "Test");
+    assert_eq!(record["actions"][0]["label"]["english"], "Test");
 
     // Edited: its secret never shown, kept unless another is typed; what
     // changed alone given.
@@ -893,13 +894,16 @@ fn a_remote_left_half_made_is_said_so_and_removed() {
     assert_eq!(unfinished(&second), ["half-made-1"]);
     let record = record_of(&second, "half-made-1", 30);
     assert!(
-        record["kind"]
+        record["kind"]["english"]
             .as_str()
             .unwrap()
             .ends_with("not finished setting up"),
         "{record}"
     );
-    assert_eq!(record["actions"][0]["label"], "Finish Setting Up…");
+    assert_eq!(
+        record["actions"][0]["label"]["english"],
+        "Finish Setting Up…"
+    );
     assert_eq!(record["actions"][0]["command"], "remote.edit_server");
     assert_eq!(record["actions"][0]["args"]["id"], "half-made-1");
     let place = |app: &App| {
@@ -1705,7 +1709,7 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     let record = record_of(&app, &id, 30);
     assert_eq!(record["name"], "It's my files");
     assert!(
-        record["kind"]
+        record["kind"]["english"]
             .as_str()
             .unwrap()
             .ends_with("in Skwir's list"),
@@ -1716,7 +1720,7 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a["label"].as_str().unwrap())
+        .map(|a| a["label"]["english"].as_str().unwrap())
         .collect();
     assert_eq!(labels, ["Mount Options…"], "no Test: rclone's alone");
     // Mounted, its place in the Network section is the mount's, with the
@@ -1837,7 +1841,7 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     );
     let record = record_of(&app, &id, 30);
     assert!(
-        record["kind"]
+        record["kind"]["english"]
             .as_str()
             .unwrap()
             .ends_with("in KDE's network folders"),
@@ -1863,7 +1867,7 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|a| a["label"] == "Forget Password")
+        .find(|a| a["label"]["english"] == "Forget Password")
         .unwrap_or_else(|| panic!("{record}"))
         .clone();
     assert_eq!(forget["args"]["server"], key.as_str());

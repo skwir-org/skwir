@@ -1436,7 +1436,8 @@ pub(crate) fn grammar_folders_spec(nearly: usize) -> SettingSpec {
 /// Where grammars were looked for, as the Reading page lists it
 /// (`ui.grammar_folders`): what was nearly found, each with what to do;
 /// then each folder there with the languages it held; then each source
-/// none of whose folders is there. Said for the window, which lists it.
+/// none of whose folders is there. Its words are data (`Words::to_data`):
+/// the dialog says them, an agent reads their English.
 pub(crate) fn grammar_folder_records() -> serde_json::Value {
     use skwir_platform::grammars::Source;
     let Some(report) = skwir_platform::grammars::report() else {
@@ -1447,7 +1448,7 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
         // Whose it is, unless what is said names it already ("Emacs
         // keeps no colors…").
         let detail = if nearly.names_source {
-            nearly.said.say()
+            nearly.said.clone()
         } else {
             words!(
                 settings_grammar_nearly = "{ $source }: { $said }",
@@ -1455,12 +1456,11 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
                 said = nearly.said.clone(),
                 note = "What was nearly found where grammars were looked for: source is whose folder it is (Zed, tree-sitter CLI), said what is wrong with it and what to do."
             )
-            .say()
         };
         records.push(serde_json::json!({
             "id": format!("nearly-{n}"),
             "name": home_shown(&nearly.what),
-            "detail": detail,
+            "detail": detail.to_data(),
             "wraps": true,
             "fixed": true,
         }));
@@ -1513,7 +1513,7 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
         records.push(serde_json::json!({
             "id": format!("exclusion-{}-{}", looked.source.key(), looked.folder.display()),
             "name": home_shown(&looked.folder),
-            "detail": held.say(),
+            "detail": held.to_data(),
             "fixed": true,
         }));
     }
@@ -1529,13 +1529,13 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
         let names: Vec<String> = folders.map(|looked| home_shown(&looked.folder)).collect();
         records.push(serde_json::json!({
             "id": format!("source-{}", source.key()),
-            "name": source.short_words().say(),
+            "name": source.short_words().to_data(),
             "detail": words!(
                 settings_grammar_none_there = "none of its folders is there: { $folders }",
                 folders = List::and(names),
                 note = "Said of a source of grammars on the Reading page (Zed, the tree-sitter CLI): folders are the folders it is read in, a list of paths, none of which exists."
             )
-            .say(),
+            .to_data(),
             "wraps": true,
             "fixed": true,
         }));
@@ -1623,7 +1623,8 @@ fn colors_from(found: &skwir_platform::grammars::Found) -> Option<Words> {
 /// record of its name and the files it colors, with a choice of what
 /// colors it: Automatic (saying what it picks now), bat's grammar (an
 /// added one where one is), each source's tree-sitter grammar (one that
-/// cannot be used greyed, saying why), Plain text.
+/// cannot be used greyed, saying why), Plain text. Its words are data
+/// (`Words::to_data`): the dialog says them, an agent reads their English.
 pub(crate) fn language_records(app: &App) -> serde_json::Value {
     let choices = skwir_platform::highlight::GrammarChoices::chosen(app);
     // What bat knows, from memory: answered on the window's thread, it
@@ -1680,17 +1681,17 @@ fn language_record(
             now = automatic,
             note = "A language's choice of grammar on the Reading page: Automatic, and what it colors with now (bat, Zed (tree-sitter), Plain text)."
         )
-        .say(),
+        .to_data(),
     })];
     if let Some(bat) = &bat {
-        offered.push(serde_json::json!({ "value": "bat", "label": bat.say() }));
+        offered.push(serde_json::json!({ "value": "bat", "label": bat.to_data() }));
     }
     // A combined grammar is offered once checked; one whose check
     // the helper could not make says why, and is checked again
     // when the settings open.
     for found in &language.tree {
         let detail = match (&found.problem, &found.unchecked) {
-            (Some(problem), _) => problem.said.say(),
+            (Some(problem), _) => problem.said.to_data(),
             (None, Some(why)) if found.checking => words!(
                 settings_grammar_not_checked =
                     "Not checked ({ $why }): checked again when the settings open",
@@ -1698,24 +1699,22 @@ fn language_record(
                 note =
                     "Under a combined grammar's choice: why is why the helper could not check it."
             )
-            .say(),
+            .to_data(),
             (None, None) if found.checking => words!(
                 settings_grammar_checking = "Checking…",
                 note = "Under a combined grammar's choice, while it is checked to fit."
             )
-            .say(),
-            (None, _) => colors_from(found)
-                .map(|from| from.say())
-                .unwrap_or_default(),
+            .to_data(),
+            (None, _) => colors_from(found).unwrap_or_default().to_data(),
         };
         offered.push(serde_json::json!({
             "value": found.source.key(),
-            "label": tree_label(found).say(),
+            "label": tree_label(found).to_data(),
             "detail": detail,
             "disabled": found.problem.is_some() || found.checking,
         }));
     }
-    offered.push(serde_json::json!({ "value": "plain", "label": plain_text().say() }));
+    offered.push(serde_json::json!({ "value": "plain", "label": plain_text().to_data() }));
     // The choice kept, where it is still offered and usable, or
     // colors while it is checked (as the engine uses it).
     let kept = choices.chosen.get(&language.key).copied();
@@ -1734,9 +1733,7 @@ fn language_record(
     let label = offered
         .iter()
         .find(|choice| choice["value"] == value)
-        .and_then(|choice| choice["label"].as_str())
-        .unwrap_or_default()
-        .to_owned();
+        .map_or_else(|| serde_json::json!(""), |choice| choice["label"].clone());
     // Transitional: a list argument (ADR-139); the file types are names.
     let mut detail = Words::as_written(language.file_types.join(", "));
     if let Some(kept) = kept.filter(|kept| !usable(kept.key())) {
@@ -1780,7 +1777,7 @@ fn language_record(
     serde_json::json!({
         "id": language.key,
         "name": language.title,
-        "detail": detail.say(),
+        "detail": detail.to_data(),
         "fixed": true,
         "choice": {
             "value": value,
@@ -3695,9 +3692,10 @@ pub struct SettingsView {
     settings_revision: u64,
     plugins_revision: u64,
     /// The records each setting's owner keeps elsewhere (`RecordSource`),
-    /// as last listed, by key: the revision listed at and the records'
-    /// JSON.
-    sourced: HashMap<String, (u64, String)>,
+    /// as last listed, by key: the owner's revision and the words'
+    /// (`words::revision`) listed at, and the records' JSON, their words
+    /// said (`settings_records::said_answer`).
+    sourced: HashMap<String, ((u64, u64), String)>,
     /// The settings file cannot be written (Home Manager's link): read
     /// when the dialog opens and at each wake, never while drawing.
     pub(crate) read_only: bool,
@@ -4019,9 +4017,11 @@ impl SettingsView {
 
     /// List again what owners keep elsewhere and say changed since
     /// (`RecordSource`, `ChoiceSource`), their commands answering from
-    /// memory: whether any did.
+    /// memory, and all of it once the window speaks another language
+    /// (their words are data, said here): whether any did.
     fn list_sourced(&mut self) -> bool {
         let mut changed = false;
+        let said_at = words::revision();
         let sources: Vec<(String, String, u64, bool)> = self
             .rows
             .iter()
@@ -4035,7 +4035,7 @@ impl SettingsView {
             if self
                 .sourced
                 .get(&key)
-                .is_some_and(|(at, _)| *at == revision)
+                .is_some_and(|(at, _)| *at == (revision, said_at))
             {
                 continue;
             }
@@ -4044,15 +4044,18 @@ impl SettingsView {
                 // A choice is the whole answer, records its list.
                 Ok(Outcome::Value(value)) if choice => {
                     if value.is_object() {
-                        value.to_string()
+                        crate::settings_records::said_answer(value).to_string()
                     } else {
                         none.to_owned()
                     }
                 }
-                Ok(Outcome::Value(value)) => value
-                    .get("records")
+                Ok(Outcome::Value(mut value)) => value
+                    .get_mut("records")
                     .filter(|records| records.is_array())
-                    .map_or_else(|| none.to_owned(), ToString::to_string),
+                    .map_or_else(
+                        || none.to_owned(),
+                        |records| crate::settings_records::said_answer(records.take()).to_string(),
+                    ),
                 Ok(_) => none.to_owned(),
                 Err(error) => {
                     tracing::debug!(key, "what its owner keeps is not listed: {error:#}");
@@ -4062,7 +4065,7 @@ impl SettingsView {
             if let Some(row) = self.rows.iter_mut().find(|row| row.spec.key == key) {
                 row.value.clone_from(&records);
             }
-            self.sourced.insert(key, (revision, records));
+            self.sourced.insert(key, ((revision, said_at), records));
             changed = true;
         }
         changed
@@ -5368,17 +5371,23 @@ mod tests {
         };
         let table = skwir_platform::highlight::added::Table::default();
         let automatic = GrammarChoices::automatic(First::TreeSitter);
+        // Its words as data, as an agent reads them: their English.
+        let english = |words: &serde_json::Value| {
+            serde_json::from_value::<Words>(words.clone())
+                .unwrap()
+                .english()
+        };
         let record = super::language_record(&language(&waiting), &automatic, &table);
         let choice = &record["choice"];
         assert_eq!(choice["value"], "auto");
         assert_eq!(
-            choice["label"],
+            english(&choice["label"]),
             "Automatic (Skwir's folder, with Emacs's library, being checked)"
         );
         let emacs = &choice["choices"][1];
         assert_eq!(
-            (&emacs["detail"], &emacs["disabled"]),
-            (&"Checking…".into(), &true.into())
+            (english(&emacs["detail"]).as_str(), &emacs["disabled"]),
+            ("Checking…", &true.into())
         );
         // Chosen before: still the choice, not "not here".
         let chosen = GrammarChoices {
@@ -5397,10 +5406,7 @@ mod tests {
             ..waiting.clone()
         };
         let record = super::language_record(&language(&unchecked), &automatic, &table);
-        let detail = record["choice"]["choices"][1]["detail"]
-            .as_str()
-            .unwrap()
-            .to_owned();
+        let detail = english(&record["choice"]["choices"][1]["detail"]);
         assert!(
             detail.starts_with("Not checked (the tree-sitter helper did not answer)"),
             "{detail}"
@@ -5412,7 +5418,7 @@ mod tests {
         };
         let record = super::language_record(&language(&fits), &automatic, &table);
         assert_eq!(
-            record["choice"]["label"],
+            english(&record["choice"]["label"]),
             "Automatic (Skwir's folder, with Emacs's library)"
         );
         assert_eq!(record["choice"]["choices"][1]["disabled"], false);

@@ -194,7 +194,9 @@ fn ask_shower(app: &App, cache: &Cached) {
 }
 
 /// The row's answer (`ChoiceSource`): what opens folders, the choice of
-/// what may, and what it means for other programs' Show in Folder.
+/// what may, and what it means for other programs' Show in Folder. Its
+/// words are data (`Words::to_data`): the dialog says them in the
+/// window's language, an agent or a script reads their English.
 pub(crate) fn answer(catalog: Option<&Catalog>, shower: Option<&Shower>) -> serde_json::Value {
     let Some(catalog) = catalog else {
         return serde_json::json!({
@@ -202,7 +204,7 @@ pub(crate) fn answer(catalog: Option<&Catalog>, shower: Option<&Shower>) -> serd
                 open_with_file_manager_reading = "Reading the applications that open folders…",
                 note = "Said under the Default file manager setting while the desktop's applications are read."
             )
-            .say(),
+            .to_data(),
         });
     };
     let own = own();
@@ -215,7 +217,7 @@ pub(crate) fn answer(catalog: Option<&Catalog>, shower: Option<&Shower>) -> serd
         )
         .collect();
     let (value, label) = if let Some(application) = named {
-        (application.id.clone(), application.name.clone())
+        (application.id.clone(), serde_json::json!(application.name))
     } else {
         // None named: the desktop opens folders with the first that says
         // it does, which is no one's choice.
@@ -231,7 +233,7 @@ pub(crate) fn answer(catalog: Option<&Catalog>, shower: Option<&Shower>) -> serd
                 note = "The Default file manager setting's choice when the desktop names none, and nothing opens folders."
             ),
         }
-        .say();
+        .to_data();
         choices.insert(
             0,
             serde_json::json!({ "value": "", "label": label, "disabled": true }),
@@ -270,7 +272,7 @@ pub(crate) fn answer(catalog: Option<&Catalog>, shower: Option<&Shower>) -> serd
         "command": "open_with.set_default",
         "args": { "mime": FOLDERS },
         "field": "app",
-        "detail": detail.say(),
+        "detail": detail.to_data(),
     })
 }
 
@@ -340,6 +342,13 @@ mod tests {
         Catalog::from_paths(&apps, &lists)
     }
 
+    /// Words the answer carries, as an agent reads them: their English.
+    fn english(words: &serde_json::Value) -> String {
+        serde_json::from_value::<Words>(words.clone())
+            .unwrap()
+            .english()
+    }
+
     fn said(choice: &serde_json::Value) -> (String, String, Vec<String>) {
         let values = choice["choices"]
             .as_array()
@@ -352,7 +361,7 @@ mod tests {
             .unwrap_or_default();
         (
             choice["value"].as_str().unwrap_or_default().to_owned(),
-            choice["detail"].as_str().unwrap().to_owned(),
+            english(&choice["detail"]),
             values,
         )
     }
@@ -407,12 +416,29 @@ mod tests {
         assert_eq!(value, "");
         assert_eq!(values.first().map(String::as_str), Some(""));
         assert!(unnamed["choices"][0]["disabled"].as_bool().unwrap());
-        assert!(
-            unnamed["label"]
-                .as_str()
-                .unwrap()
-                .starts_with("Not chosen (")
+        assert!(english(&unnamed["label"]).starts_with("Not chosen ("));
+    }
+
+    /// Its words travel as data: the dialog says them in the window's
+    /// language (here the pseudo-language), while what an agent or a
+    /// script reads of the answer is English (UA-1).
+    #[test]
+    fn the_row_answers_words_as_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let other = catalog(tmp.path(), true, Some("org.kde.dolphin.desktop"));
+        let listed = answer(Some(&other), None);
+        let detail: Words = serde_json::from_value(listed["detail"].clone()).unwrap();
+        let shows = "Chosen, Skwir also shows the files other programs show in their folder";
+        assert_eq!(detail.english(), shows);
+        let pseudo = detail.say_in(&[skwir_core::words::PSEUDO.to_owned()]);
+        assert_ne!(pseudo, shows, "said in the window's language");
+        assert_eq!(
+            listed["detail"]["english"].as_str(),
+            Some(shows),
+            "an agent reads English: {listed}"
         );
+        let reading = answer(None, None);
+        assert!(english(&reading["detail"]).starts_with("Reading"));
     }
 
     /// Listed from memory, then again once the catalog is read; chosen
@@ -441,12 +467,7 @@ mod tests {
         let first = row.file_manager.source.revision();
         // Not read yet: said so, and read on a worker, which moves it.
         assert!(listed(&app)["choices"].is_null());
-        assert!(
-            listed(&app)["detail"]
-                .as_str()
-                .unwrap()
-                .starts_with("Reading")
-        );
+        assert!(english(&listed(&app)["detail"]).starts_with("Reading"));
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while row.file_manager.source.revision() == first {
             assert!(std::time::Instant::now() < deadline, "never read");

@@ -42,7 +42,10 @@ the reasoning.
   the value means for the user, said under the description), drawn as a
   choice's row, never saved, reverted or counted as changed by the user,
   refused by `settings.apply` (its owner's command changes it): never a
-  list of one record for it; `data` for what the user makes
+  list of one record for it. What either command answers says its words
+  as data (`Words::to_data`): the dialog says them in the window's
+  language as it lists them, and again when that changes, while an agent
+  or a script asking the command reads English; `data` for what the user makes
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).

@@ -218,7 +218,9 @@ fn unnamed() -> Words {
 }
 
 /// The row's answer (`ChoiceSource`): what answers the dialogs, the back
-/// ends to choose from, and when a choice applies.
+/// ends to choose from, and when a choice applies. Its words are data
+/// (`Words::to_data`): the dialog says them in the window's language, an
+/// agent or a script reads their English.
 fn answer(read: Option<&Portals>) -> serde_json::Value {
     let Some(read) = read else {
         return serde_json::json!({
@@ -226,17 +228,17 @@ fn answer(read: Option<&Portals>) -> serde_json::Value {
                 settings_file_chooser_reading = "Reading the desktop portal's configuration…",
                 note = "Said under the Open and save dialogs setting while it is read."
             )
-            .say(),
+            .to_data(),
         });
     };
     let mut choices: Vec<serde_json::Value> = vec![serde_json::json!({
         "value": "",
-        "label": unnamed().say(),
+        "label": unnamed().to_data(),
     })];
     choices.extend(
         read.choosers
             .iter()
-            .map(|name| serde_json::json!({ "value": name, "label": label(name).say() })),
+            .map(|name| serde_json::json!({ "value": name, "label": label(name).to_data() })),
     );
     let value = read.chooser.clone().unwrap_or_default();
     let shown = if value.is_empty() {
@@ -259,12 +261,12 @@ fn answer(read: Option<&Portals>) -> serde_json::Value {
     };
     serde_json::json!({
         "value": value,
-        "label": shown.say(),
+        "label": shown.to_data(),
         "choices": choices,
         "command": SET,
         "args": {},
         "field": "portal",
-        "detail": detail.say(),
+        "detail": detail.to_data(),
     })
 }
 
@@ -403,8 +405,9 @@ mod tests {
         until("read", || list()["value"] == "kde");
         let said = list();
         assert_eq!(said["label"], "KDE");
+        // Words as data, which an agent reads in English.
         assert_eq!(
-            said["detail"],
+            said["detail"]["english"],
             "Skwir cannot be chosen here: its portal file is not installed"
         );
 
@@ -415,7 +418,7 @@ mod tests {
                 .is_some_and(|c| c.iter().any(|c| c["value"] == "skwir"))
         });
         assert_eq!(
-            list()["detail"],
+            list()["detail"]["english"],
             "Applies when the desktop portal starts again, at the next login"
         );
         let values: Vec<String> = list()["choices"]

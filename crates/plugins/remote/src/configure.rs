@@ -152,8 +152,9 @@ fn record_actions(
     remembered: &[String],
     unfinished: &[String],
 ) -> Vec<serde_json::Value> {
-    // Said for Settings' list, which draws them.
-    let action = |label: Words, command: &str, args: serde_json::Value| serde_json::json!({ "label": label.say(), "command": command, "args": args });
+    // Its words as data (`Words::to_data`): Settings' list says them, an
+    // agent reads their English.
+    let action = |label: Words, command: &str, args: serde_json::Value| serde_json::json!({ "label": label.to_data(), "command": command, "args": args });
     let top = server.address.top();
     let mut actions = Vec::new();
     if let Some(name) = remote_name(&server.address).filter(|n| unfinished.iter().any(|u| u == n)) {
@@ -463,12 +464,13 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 let records: Vec<serde_json::Value> = servers
                     .iter()
                     .map(|server| {
-                        // Said for Settings' list, which draws them: its
-                        // kind (rclone's type, or its address) as written.
+                        // Words as data (`Words::to_data`), which Settings'
+                        // list says and an agent reads in English: its kind
+                        // (rclone's type, or its address) as written.
                         let (id, name, kind) = match remote_name(&server.address) {
                             Some(name) if unfinished.iter().any(|u| u == name) => (
                                 name.to_owned(),
-                                name.to_owned(),
+                                serde_json::json!(name),
                                 words!(
                                     remote_configure_record_unfinished = "{ $kind } · { $kept } · not finished setting up",
                                     kind = server.kind.clone(),
@@ -478,7 +480,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             ),
                             Some(name) => (
                                 name.to_owned(),
-                                name.to_owned(),
+                                serde_json::json!(name),
                                 words!(
                                     remote_configure_record_kept = "{ $kind } · { $kept }",
                                     kind = server.kind.clone(),
@@ -488,7 +490,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             ),
                             None => (
                                 server.address.to_string(),
-                                server.label.say(),
+                                server.label.to_data(),
                                 words!(
                                     remote_configure_record_kept = "{ $kind } · { $kept }",
                                     kind = server.address.to_string(),
@@ -502,7 +504,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         serde_json::json!({
                             "id": id,
                             "name": name,
-                            "kind": kind.say(),
+                            "kind": kind.to_data(),
                             "actions": record_actions(server, &at_login, &remembered, &unfinished),
                             "fixed": fixed,
                         })

@@ -135,6 +135,33 @@ pub(crate) fn records(text: &str) -> Vec<Record> {
     serde_json::from_str(text).unwrap_or_default()
 }
 
+/// What an owner keeping a setting elsewhere answers (`RecordSource`,
+/// `ChoiceSource`), its words said for the window: each words' data in it
+/// (`Words::to_data`, which an agent reads in English) said in the
+/// window's language, text as written left as it is. What a choice or an
+/// action runs with (`args`) is the owner's, sent back as it came.
+pub(crate) fn said_answer(mut answer: serde_json::Value) -> serde_json::Value {
+    fn say(value: &mut serde_json::Value) {
+        // A record or a choice is no words' data, and reads as none.
+        if value.is_object()
+            && let Ok(words) = <Words as serde::Deserialize>::deserialize(&*value)
+        {
+            *value = serde_json::Value::String(words.say());
+            return;
+        }
+        match value {
+            serde_json::Value::Object(fields) => fields
+                .iter_mut()
+                .filter(|(name, _)| *name != "args")
+                .for_each(|(_, field)| say(field)),
+            serde_json::Value::Array(items) => items.iter_mut().for_each(say),
+            _ => {}
+        }
+    }
+    say(&mut answer);
+    answer
+}
+
 impl SettingsView {
     /// The records of setting `key` whose editor text is `value`, parsed
     /// once for each text: a list is drawn every frame, and may hold
@@ -1711,7 +1738,40 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::moved;
+    use super::{moved, said_answer};
+
+    /// An owner's answer says its words' data in the window's language
+    /// (here the pseudo-language), as the dialog lists it, where the
+    /// command's JSON holds their English for agents; text as written,
+    /// values and what a choice runs with are left as they came (UA-1).
+    #[test]
+    fn an_owners_words_are_said_where_the_dialog_lists_them() {
+        use skwir_core::words::{PSEUDO, Words};
+        let label = skwir_core::words!(test_records_label = "Automatic ({ $now })", now = "bat");
+        let answer = serde_json::json!({
+            "value": "auto",
+            "label": label.to_data(),
+            "choices": [
+                { "value": "auto", "label": label.to_data(), "detail": "" },
+                { "value": "plain", "label": "Plain text as written" },
+            ],
+            "command": "ui.grammar_choose",
+            "args": { "language": "rust", "said": label.to_data() },
+            "field": "grammar",
+        });
+        assert_eq!(answer["label"]["english"], "Automatic (bat)", "for agents");
+        skwir_core::locale::set_chosen(Some(PSEUDO.into()));
+        let said = said_answer(answer.clone());
+        let pseudo = label.say();
+        assert_ne!(pseudo, "Automatic (bat)");
+        assert_eq!(said["label"], pseudo.as_str());
+        assert_eq!(said["choices"][0]["label"], pseudo.as_str());
+        assert_eq!(said["choices"][0]["detail"], "");
+        assert_eq!(said["choices"][1]["label"], "Plain text as written");
+        assert_eq!(said["value"], "auto");
+        assert_eq!(said["args"], answer["args"], "sent back as it came");
+        let _: Words = serde_json::from_value(said["args"]["said"].clone()).unwrap();
+    }
 
     #[test]
     fn a_record_moves_into_the_gap_it_is_dropped_in() {
