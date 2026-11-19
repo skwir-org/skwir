@@ -243,16 +243,8 @@ impl Plugin for UpdatesPlugin {
                 let Some(app) = weak.upgrade() else {
                     return;
                 };
-                if cancel.is_cancelled() {
-                    return;
-                }
-                inner.run.lock().here = Some(here);
-                if here.downloaded().is_some() {
-                    inner.declare_tell(&app);
-                }
-                inner.stand(&app);
                 // A window looked at meanwhile is looked at now.
-                if app.looked_at() {
+                if inner.take_here(&app, here, &cancel) && app.looked_at() {
                     inner.looked_at(&app);
                 }
             },
@@ -272,12 +264,17 @@ impl Plugin for UpdatesPlugin {
     fn on_looked_at(&self, app: &App) {
         self.inner.looked_at(app);
     }
-    fn on_disable(&self, _app: &App) {
+    fn on_disable(&self, app: &App) {
         let mut run = self.inner.run.lock();
         if let Some(lifetime) = run.lifetime.take() {
             lifetime.cancel();
         }
         *run = Run::default();
+        // What a worker of this run added under this lock after the host
+        // withdrew the plugin's contributions, and before the cancel just
+        // made, goes too: commands have no owner's gate.
+        app.commands.unregister_owner(ID);
+        app.settings.undeclare(TELL);
     }
 }
 
@@ -291,19 +288,9 @@ struct AnswerArgs {
 }
 
 impl UpdatesPlugin {
+    /// The commands of every copy; `updates.check` is a downloaded copy's
+    /// alone (`Inner::take_here`).
     fn register_commands(&self, app: &App) {
-        let inner = Arc::clone(&self.inner);
-        app.commands
-            .register::<NoArgs, _>(
-                ID,
-                Topic::Skwir,
-                "updates.check",
-                words!(updates_check = "Check for a new version"),
-                words!(
-                    updates_check_description = "Ask skwir.org now whether a newer version of Skwir is out, for a copy that is told of them, on a metered connection too: a toast says what it found, that Skwir is up to date, or why it could not tell"
-                ),
-                move |_, app| inner.check_now(app),
-            );
         let inner = Arc::clone(&self.inner);
         app.commands
             .register::<NoArgs, _>(
@@ -423,6 +410,57 @@ impl Inner {
         self.here().and_then(Here::downloaded)
     }
 
+    /// How the copy came (`Setup::here`), read as the plugin starts and
+    /// again at each look of a copy its system may come to update (a
+    /// `.deb` or an `.rpm`, whose repository may be added or removed
+    /// since): what a downloaded copy alone has follows it, the setting
+    /// and `updates.check`, offered while it is downloaded and withdrawn
+    /// once the system updates it (the setting; the command stays, and
+    /// says so), with what About says. Taken only by
+    /// the run of `lifetime`, under its lock, so a read of an earlier run
+    /// adds nothing to the next or to a plugin turned off: whether it was.
+    fn take_here(self: &Arc<Self>, app: &App, here: Here, lifetime: &CancelToken) -> bool {
+        {
+            let mut run = self.run.lock();
+            if lifetime.is_cancelled() {
+                return false;
+            }
+            let before = run.here.replace(here);
+            let was = before.and_then(Here::downloaded).is_some();
+            match (was, here.downloaded().is_some()) {
+                (false, true) => {
+                    self.declare_tell(app);
+                    self.register_check(app);
+                }
+                (true, false) => {
+                    // `updates.check` stays until the next start, saying
+                    // that whatever installed the copy tells of versions.
+                    tracing::debug!("updates: the system updates this copy now");
+                    app.settings.undeclare(TELL);
+                }
+                _ if before == Some(here) => return true,
+                _ => {}
+            }
+        }
+        self.stand(app);
+        true
+    }
+
+    /// `updates.check`, a downloaded copy's.
+    fn register_check(self: &Arc<Self>, app: &App) {
+        let inner = Arc::clone(self);
+        app.commands.register::<NoArgs, _>(
+            ID,
+            Topic::Skwir,
+            "updates.check",
+            words!(updates_check = "Check for a new version"),
+            words!(
+                updates_check_description = "Ask skwir.org now whether a newer version of Skwir is out, for a copy that is told of them, on a metered connection too: a toast says what it found, that Skwir is up to date, or why it could not tell"
+            ),
+            move |_, app| inner.check_now(app),
+        );
+    }
+
     /// The setting a downloaded copy shows: no other copy asks anything.
     fn declare_tell(&self, app: &App) {
         let site = host(&self.setup.site);
@@ -450,14 +488,26 @@ impl Inner {
     /// A window came to the front: what is new is said once a run, the
     /// question asked when its day comes, and the day's check started.
     fn looked_at(self: &Arc<Self>, app: &App) {
-        let (here, look_for_whats_new) = {
+        let (lifetime, here, look_for_whats_new) = {
             let mut run = self.run.lock();
-            if run.lifetime.is_none() {
+            let Some(lifetime) = run.lifetime.clone() else {
                 return;
-            }
+            };
             let look = !run.looked_for_whats_new;
             run.looked_for_whats_new = true;
-            (run.here, look)
+            (lifetime, run.here, look)
+        };
+        // Whether the system came to update a `.deb` or an `.rpm` (or no
+        // longer does) is asked again: a stat, on this worker.
+        let here = match here {
+            Some(known) if known.channel.is_some_and(Channel::has_repository) => {
+                let now = (self.setup.here)();
+                if !self.take_here(app, now, &lifetime) {
+                    return;
+                }
+                Some(now)
+            }
+            other => other,
         };
         let today = (self.setup.today)();
         let check = {
@@ -726,7 +776,7 @@ impl Inner {
             return;
         };
         let today = (self.setup.today)();
-        let kept = {
+        {
             // `kept` before `run`, wherever both are held.
             let _held = self.kept.lock();
             let (asked, downloaded) = {
@@ -802,24 +852,23 @@ impl Inner {
                 },
             }
             kept.write(&app.settings);
-            kept
-        };
+            self.stand_with(&app, &kept);
+        }
         if let Err(error) = app.settings.save() {
             tracing::warn!("cannot save what the updates plugin keeps: {error:#}");
         }
-        self.stand_with(&app, &kept);
     }
 
     /// What About and More say, from what is kept.
+    /// Published under the lock it was read under, so what is said last
+    /// is what was read last.
     fn stand(&self, app: &App) {
-        let kept = {
-            let _held = self.kept.lock();
-            Kept::read(&app.settings)
-        };
-        self.stand_with(app, &kept);
+        let _held = self.kept.lock();
+        self.stand_with(app, &Kept::read(&app.settings));
     }
 
     /// A newer version kept said while the copy is told of them and older.
+    /// Called under the `kept` lock.
     fn stand_with(&self, app: &App, kept: &Kept) {
         let shown = self
             .setup

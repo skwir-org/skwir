@@ -117,7 +117,7 @@ impl Site {
 struct Fixture {
     _folder: tempfile::TempDir,
     app: Arc<App>,
-    plugin: UpdatesPlugin,
+    plugin: Arc<UpdatesPlugin>,
     day: Arc<AtomicI64>,
     minutes: Arc<AtomicU64>,
     metered: Arc<AtomicBool>,
@@ -125,6 +125,16 @@ struct Fixture {
 
 impl Fixture {
     fn new(site: &str, running: Version, here: Here) -> Fixture {
+        Fixture::with_here(site, running, Arc::new(move || here))
+    }
+
+    /// The plugin added to the application's plugins, as the program
+    /// adds it, on a copy whose coming `here` says each time it is read.
+    fn with_here(
+        site: &str,
+        running: Version,
+        here: Arc<dyn Fn() -> Here + Send + Sync>,
+    ) -> Fixture {
         let folder = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(folder.path())).unwrap();
         let day = Arc::new(AtomicI64::new(20_000));
@@ -133,15 +143,16 @@ impl Fixture {
         let (today, elapsed, costly) =
             (Arc::clone(&day), Arc::clone(&minutes), Arc::clone(&metered));
         let started = Instant::now();
-        let plugin = UpdatesPlugin::with(Setup {
+        let plugin = Arc::new(UpdatesPlugin::with(Setup {
             site: site.into(),
             running: Some(running),
-            here: Arc::new(move || here),
+            here,
             today: Arc::new(move || today.load(Ordering::SeqCst)),
             metered: Arc::new(move || Some(costly.load(Ordering::SeqCst))),
             now: Arc::new(move || started + Duration::from_mins(elapsed.load(Ordering::SeqCst))),
-        });
-        plugin.register(&app);
+        }));
+        app.plugins
+            .add(Arc::clone(&plugin) as Arc<dyn Plugin>, &app);
         let fixture = Fixture {
             _folder: folder,
             app,
@@ -549,7 +560,10 @@ fn a_copy_something_else_updates_is_never_checked() {
             f.app.settings.get::<bool>(TELL).is_none(),
             "no setting: {here:?}"
         );
-        assert!(f.app.dispatch(&Invocation::new("updates.check")).is_err());
+        assert!(
+            !f.app.commands.contains("updates.check"),
+            "nothing to check: {here:?}"
+        );
         let latest = f.app.dispatch(&Invocation::new("updates.latest")).unwrap();
         let skwir_core::command::Outcome::Value(latest) = latest else {
             panic!("{latest:?}")
@@ -661,4 +675,93 @@ fn a_check_that_fails_says_nothing_and_is_made_again_an_hour_later() {
     f.look_on(20_000);
     f.settled();
     assert_eq!(site.heads().len(), 3, "the day's check was made");
+}
+
+/// A `.deb` copy whose system comes to have Skwir's repository is asked
+/// again at each look: from then on it checks no more, offers no setting,
+/// and About says nothing of a version, until the repository goes again.
+#[test]
+fn a_copy_the_system_comes_to_update_is_checked_no_more() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let repository = Arc::new(AtomicBool::new(false));
+    let added = Arc::clone(&repository);
+    let f = Fixture::with_here(
+        &site.address,
+        Version(0, 5, 1),
+        Arc::new(move || Here {
+            channel: Some(Channel::Deb),
+            repository: added.load(Ordering::SeqCst),
+        }),
+    );
+    assert!(
+        f.app.commands.contains("updates.check"),
+        "a downloaded copy's"
+    );
+    f.answer(true);
+    f.settled();
+    assert_eq!(f.news(), ["Skwir 0.6.2 is out"]);
+    f.said();
+
+    repository.store(true, Ordering::SeqCst);
+    f.look_on(20_001);
+    f.settled();
+    assert_eq!(site.heads().len(), 1, "no check once the system updates it");
+    assert!(f.news().is_empty() && f.said().is_empty());
+    assert!(f.app.settings.spec(TELL).is_none(), "no setting");
+    assert!(
+        f.app.dispatch(&Invocation::new("updates.check")).is_err(),
+        "the check says why it is not made"
+    );
+
+    repository.store(false, Ordering::SeqCst);
+    f.look_on(20_002);
+    f.settled();
+    assert_eq!(site.heads().len(), 2, "downloaded again: checked");
+    assert!(f.app.settings.spec(TELL).is_some());
+    assert_eq!(f.news(), ["Skwir 0.6.2 is out"]);
+}
+
+/// Turned off while a check waits for the site, the plugin takes away
+/// what it said and offered; the earlier run's check, ending after, says
+/// nothing, and its failure holds back no check of the next run.
+#[test]
+fn turned_off_during_a_check_nothing_of_it_stays() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
+    f.answer(true);
+    f.settled();
+    f.said();
+    assert_eq!(f.news(), ["Skwir 0.6.2 is out"]);
+
+    site.serve("not json", "\"b\"");
+    let held = site.hold();
+    f.look_on(20_001);
+    f.wait_until("the site is asked", |_| site.heads().len() == 2);
+    let earlier = f.plugin.inner.run.lock().thread.take();
+    assert!(f.app.plugins.set_enabled(crate::ID, false, &f.app));
+    assert!(f.news().is_empty(), "About says nothing of a plugin off");
+    assert!(!f.app.commands.contains("updates.check"));
+    assert!(f.app.settings.spec(TELL).is_none());
+
+    assert!(f.app.plugins.set_enabled(crate::ID, true, &f.app));
+    f.wait_until("the copy's channel is read", |f| {
+        f.plugin.inner.here().is_some()
+    });
+    drop(held);
+    earlier.expect("a check under way").join().unwrap();
+    assert!(f.said().is_empty(), "the earlier run says nothing");
+    assert_eq!(
+        f.news(),
+        ["Skwir 0.6.2 is out"],
+        "said again by the next run"
+    );
+
+    site.serve(&file("0.6.2"), "\"c\"");
+    f.look_on(20_001);
+    f.settled();
+    assert_eq!(
+        site.heads().len(),
+        3,
+        "not held back an hour by the earlier run's failure"
+    );
 }
