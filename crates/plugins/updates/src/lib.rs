@@ -595,6 +595,7 @@ impl Inner {
             });
         }
         app.ask_quietly(
+            ID,
             words!(
                 updates_ask = "Tell you when a new version of Skwir is out? Skwir would ask { $site } once a day; Cloudflare, which serves it, sees your IP address.",
                 site = host(&self.setup.site),

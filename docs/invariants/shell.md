@@ -1343,7 +1343,9 @@ asks the direction.
   that stays (`App::ask_quietly`) stands beneath the answers
   (`ToastState::stand`): one said meanwhile is drawn over it, and it
   comes back once that one goes; only its own answers and its Close end
-  it, pressed on a frame drawn before another came over it too.
+  it, pressed on a frame drawn before another came over it too, and the
+  plugin that asked it turned off (`Notification::owner`: what it asked
+  goes, queued or shown).
   A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its

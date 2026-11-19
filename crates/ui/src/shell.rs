@@ -4365,11 +4365,12 @@ impl Shell {
                     .collect(),
             );
             if n.stays {
-                self.stand(toast, cx);
+                self.stand(toast, n.owner, cx);
             } else {
                 self.toast(toast, cx);
             }
         }
+        self.standing_follows_its_owner(cx);
         self.pending = self.app.pending.get();
         self.sync_clipboard_files(cx);
         // What the theme is made of (`theme_inputs_of`), counted up, never

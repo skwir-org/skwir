@@ -235,6 +235,11 @@ pub struct Notification {
     /// dialog.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stays: bool,
+    /// The plugin that asked it, for one that stays: turned off, its
+    /// question goes with it (`App::unregister_owner`), and the window
+    /// takes down one it shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
 }
 
 /// A button on a [`Notification`]: its label, the command it runs, and
@@ -978,6 +983,10 @@ impl App {
 
     /// Withdraw everything a plugin contributed.
     pub fn unregister_owner(&self, owner: &str) {
+        // What it asked and no window took yet goes unasked.
+        self.notifications
+            .lock()
+            .retain(|n| n.owner.as_deref() != Some(owner));
         self.commands.unregister_owner(owner);
         crate::words::withdraw(owner);
         self.ops.unregister_owner(owner);
@@ -3105,6 +3114,7 @@ impl App {
             setting: None,
             actions: Vec::new(),
             stays: false,
+            owner: None,
         });
         self.wake();
     }
@@ -3127,6 +3137,7 @@ impl App {
                 answers: true,
             }],
             stays: false,
+            owner: None,
         });
         self.wake();
     }
@@ -3138,14 +3149,25 @@ impl App {
     /// is said meanwhile is drawn over it, and it comes back once that
     /// goes. Closed unanswered, or asked again in its place, nothing ran:
     /// its owner may ask again another time.
-    pub fn ask_quietly(&self, text: impl Into<Words>, answers: Vec<NotifyAction>) {
-        self.notifications.lock().push(Notification {
-            level: NotifyLevel::Info,
-            text: text.into(),
-            setting: None,
-            actions: answers,
-            stays: true,
-        });
+    ///
+    /// `owner` is the plugin asking: turned off, it asks nothing, and what
+    /// it asked goes, queued or shown. Its gate is read under the queue's
+    /// lock, which the withdrawal takes after closing it.
+    pub fn ask_quietly(&self, owner: &str, text: impl Into<Words>, answers: Vec<NotifyAction>) {
+        {
+            let mut queued = self.notifications.lock();
+            if !self.registry.gate().is_open(owner) {
+                return;
+            }
+            queued.push(Notification {
+                level: NotifyLevel::Info,
+                text: text.into(),
+                setting: None,
+                actions: answers,
+                stays: true,
+                owner: Some(owner.to_owned()),
+            });
+        }
         self.wake();
     }
 
@@ -3180,6 +3202,7 @@ impl App {
             setting: Some(key.into()),
             actions: Vec::new(),
             stays: false,
+            owner: None,
         });
         self.wake();
     }
@@ -5994,6 +6017,56 @@ mod tests {
             Some(PathBuf::from("/data"))
         );
         assert_eq!(parent(&["/x/1", "/y/2"]), Some(PathBuf::from("/")));
+    }
+
+    /// A question that stays belongs to the plugin that asked it: asked
+    /// while that is off, it is not; queued when it is turned off, it goes,
+    /// and what others said stays.
+    #[test]
+    fn a_question_goes_with_the_plugin_that_asked_it() {
+        use super::NotifyLevel;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let texts = |app: &super::App| -> Vec<String> {
+            app.take_notifications()
+                .iter()
+                .map(|n| n.text.english())
+                .collect()
+        };
+        app.ask_quietly(
+            "asker",
+            crate::words::Words::as_written("Asked?".to_owned()),
+            Vec::new(),
+        );
+        app.notify(
+            NotifyLevel::Info,
+            crate::words::Words::as_written("Said".to_owned()),
+        );
+        let asked = app.take_notifications();
+        assert_eq!(asked[0].owner.as_deref(), Some("asker"));
+        assert_eq!(asked[1].owner, None);
+        app.ask_quietly(
+            "asker",
+            crate::words::Words::as_written("Asked?".to_owned()),
+            Vec::new(),
+        );
+        app.notify(
+            NotifyLevel::Info,
+            crate::words::Words::as_written("Said".to_owned()),
+        );
+        app.registry.set_owner_enabled("asker", false);
+        app.unregister_owner("asker");
+        assert_eq!(
+            texts(&app),
+            ["Said"],
+            "what it asked goes, not what was said"
+        );
+        app.ask_quietly(
+            "asker",
+            crate::words::Words::as_written("Asked?".to_owned()),
+            Vec::new(),
+        );
+        assert!(texts(&app).is_empty(), "turned off, it asks nothing");
     }
 
     /// A plugin takes its handle when it registers, before the UI installs

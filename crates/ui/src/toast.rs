@@ -252,6 +252,8 @@ pub struct ToastState {
 /// A question that stays, beneath what is said over it.
 struct Standing {
     toast: Toast,
+    /// The plugin that asked it: turned off, its question goes.
+    owner: Option<String>,
     /// Which one it is (`ToastState::stood`).
     id: u64,
 }
@@ -305,10 +307,11 @@ impl ToastState {
     /// `toast`, a question that stays, stands beneath what is said, in
     /// place of the one that stood: drawn now where nothing is said over
     /// it.
-    fn stand(&mut self, toast: Toast) {
+    fn stand(&mut self, toast: Toast, owner: Option<String>) {
         self.stood += 1;
         self.standing = Some(Standing {
             toast,
+            owner,
             id: self.stood,
         });
         if self.current.is_none() {
@@ -323,6 +326,21 @@ impl ToastState {
             (None, Some(standing)) => Some((&standing.toast, Drawn::Standing(standing.id))),
             (None, None) => None,
         }
+    }
+
+    /// The question standing goes where its owner is off (`on` false for
+    /// it): it asks for a plugin that no longer would, its words no longer
+    /// said and its answers no longer run. Whether it went.
+    fn owner_off(&mut self, on: impl Fn(&str) -> bool) -> bool {
+        let Some(id) = self
+            .standing
+            .as_ref()
+            .filter(|standing| standing.owner.as_deref().is_some_and(|owner| !on(owner)))
+            .map(|standing| standing.id)
+        else {
+            return false;
+        };
+        self.close(Drawn::Standing(id))
     }
 
     /// The one said over what stands goes (its caller done with it, its
@@ -883,9 +901,19 @@ impl Shell {
     /// what is said (`ToastState::stand`): a toast said meanwhile is drawn
     /// over it, and it comes back once that one goes. Only its answers and
     /// its Close end it; not kept in Earlier, and not timed.
-    pub(crate) fn stand(&mut self, toast: Toast, cx: &mut Context<Self>) {
-        self.toasts.stand(toast);
+    pub(crate) fn stand(&mut self, toast: Toast, owner: Option<String>, cx: &mut Context<Self>) {
+        self.toasts.stand(toast, owner);
         cx.notify();
+    }
+
+    /// A question standing goes once the plugin that asked it is turned
+    /// off (ADR-142 4: off, a plugin asks nothing), checked at each sync
+    /// against the gate the plugin host closes before it withdraws.
+    pub(crate) fn standing_follows_its_owner(&mut self, cx: &mut Context<Self>) {
+        let gate = self.app.registry.gate();
+        if self.toasts.owner_off(|owner| gate.is_open(owner)) {
+            cx.notify();
+        }
     }
 
     /// Show `toast` for as long as what it says lasts (a plan being worked
@@ -2904,7 +2932,7 @@ mod tests {
         // What's new and the question on one look: neither takes the
         // other's place.
         let (whats_new, _) = toasts.say(said("Skwir was updated to 0.6.2"), false);
-        toasts.stand(question);
+        toasts.stand(question, Some("updates".to_owned()));
         assert_eq!(
             drawn(&toasts).as_deref(),
             Some("Skwir was updated to 0.6.2")
@@ -2931,6 +2959,30 @@ mod tests {
         assert_eq!(drawn(&toasts).as_deref(), Some("Moved “a b.txt” to Trash"));
         assert!(toasts.over(moved));
         assert!(toasts.shown().is_none(), "answered, it is gone");
+    }
+
+    /// A question standing goes once the plugin that asked it is off, and
+    /// only then; what is said over it stays.
+    #[test]
+    fn a_question_goes_with_the_plugin_that_asked_it() {
+        let said =
+            |text: &str| Toast::new(Words::as_written(text.to_owned()), Tone::Info, Vec::new());
+        let mut toasts = ToastState::default();
+        toasts.stand(
+            said("Tell you when a new version is out?"),
+            Some("updates".to_owned()),
+        );
+        assert!(!toasts.owner_off(|_| true), "on, it stays");
+        toasts.say(said("Moved “a b.txt” to Trash"), false);
+        assert!(toasts.owner_off(|owner| owner != "updates"));
+        assert_eq!(
+            toasts
+                .shown()
+                .map(|(toast, _)| toast.text.english())
+                .as_deref(),
+            Some("Moved “a b.txt” to Trash")
+        );
+        assert!(toasts.standing.is_none());
     }
 
     /// What a reveal says joins the answer still shown, its Undo kept, and
