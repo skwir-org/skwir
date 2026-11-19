@@ -37,6 +37,8 @@ pub mod bat;
 #[cfg(target_os = "linux")]
 pub mod bus;
 pub mod calendar;
+mod carried;
+pub mod channel;
 pub mod chooser;
 pub mod desktop;
 #[cfg(target_os = "linux")]
@@ -73,6 +75,7 @@ pub mod media;
 pub mod mime;
 pub mod model;
 pub mod mp4;
+pub mod network;
 #[cfg(target_os = "linux")]
 mod omarchy;
 pub mod open;

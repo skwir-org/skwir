@@ -104,14 +104,7 @@ fn family_of(name: &str) -> Option<&'static str> {
 
 /// The folder of the fonts a package put beside the program in `bin`.
 fn bundled_beside(bin: &Path) -> Option<PathBuf> {
-    [
-        bin.join("share"),
-        bin.join("../share"),
-        bin.join("../Resources/share"),
-    ]
-    .into_iter()
-    .map(|share| share.join("skwir").join("fonts"))
-    .find(|folder| folder.is_dir())
+    crate::carried::beside(bin, "fonts", Path::is_dir)
 }
 
 /// Whether `name` is one of fontconfig's generic families, which no text
