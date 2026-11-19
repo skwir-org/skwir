@@ -254,6 +254,12 @@ rustPlatform.buildRustPackage {
     # (tools/package/linux/l10n.sh, ADR-139).
     sh tools/package/linux/l10n.sh merge $out/share
     install -Dm644 crates/ui/assets/org.skwir.skwir.svg -t $out/share/icons/hicolor/scalable/apps
+    # Other programs' Open and Save dialogs (ADR-141): the portal's back
+    # end, the bus starting this skwir.
+    install -Dm644 tools/package/linux/skwir.portal -t $out/share/xdg-desktop-portal/portals
+    install -Dm644 tools/package/linux/org.freedesktop.impl.portal.desktop.skwir.service -t $out/share/dbus-1/services
+    substituteInPlace $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service \
+      --replace-fail /usr/bin/skwir $out/bin/skwir
   '';
 
   # What the window opens at run time, found through the program's own

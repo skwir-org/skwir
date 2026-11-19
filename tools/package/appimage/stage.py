@@ -75,6 +75,11 @@ def main():
     # (ADR-139), in usr/share/applications and usr/share/metainfo.
     subprocess.run(["sh", str(TOOLS / "linux/l10n.sh"), "merge", str(APP / "usr/share")], check=True)
     copy(ROOT / "crates/ui/assets/org.skwir.skwir.svg", APP / "usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg")
+    # The portal's back end (ADR-141), for a package made of the tarball
+    # (skwir-bin) to install: an AppImage installs nothing.
+    copy(TOOLS / "linux/skwir.portal", APP / "usr/share/xdg-desktop-portal/portals/skwir.portal")
+    service = "org.freedesktop.impl.portal.desktop.skwir.service"
+    copy(TOOLS / "linux" / service, APP / "usr/share/dbus-1/services" / service)
     # Skwir's own fonts, read when they are drawn (ADR-118).
     shutil.copytree(ROOT / "target/fonts/fonts", APP / "usr/share/skwir/fonts")
     # This marker identifies the private, read-only runtime to sandboxes.

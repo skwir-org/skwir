@@ -66,6 +66,8 @@ package() {
   cd "$pkgdir/opt/skwir/usr/share"
   install -Dm644 applications/org.skwir.skwir.desktop -t "$pkgdir/usr/share/applications/"
   install -Dm644 metainfo/org.skwir.skwir.metainfo.xml -t "$pkgdir/usr/share/metainfo/"
+  install -Dm644 xdg-desktop-portal/portals/skwir.portal -t "$pkgdir/usr/share/xdg-desktop-portal/portals/"
+  install -Dm644 dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service -t "$pkgdir/usr/share/dbus-1/services/"
   for icon in icons/hicolor/*/apps/org.skwir.skwir.*; do
     install -Dm644 "$icon" "$pkgdir/usr/share/$icon"
   done

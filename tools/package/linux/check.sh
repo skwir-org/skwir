@@ -125,7 +125,9 @@ else
 fi
 # The desktop entry and the icon it names, where the desktop finds them.
 for file in /usr/share/applications/org.skwir.skwir.desktop \
-    /usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg; do
+    /usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg \
+    /usr/share/xdg-desktop-portal/portals/skwir.portal \
+    /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service; do
     if [ -s "$file" ]; then
         echo "ok: $file"
     else

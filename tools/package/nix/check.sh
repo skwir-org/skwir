@@ -134,7 +134,9 @@ for variant in "$@"; do
         share/licenses/skwir/LICENSE share/licenses/skwir/fonts/Inter/LICENSE.txt \
         share/licenses/skwir/THIRD-PARTY-NOTICES \
         share/applications/org.skwir.skwir.desktop share/metainfo/org.skwir.skwir.metainfo.xml \
-        share/icons/hicolor/scalable/apps/org.skwir.skwir.svg; do
+        share/icons/hicolor/scalable/apps/org.skwir.skwir.svg \
+        share/xdg-desktop-portal/portals/skwir.portal \
+        share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service; do
         if [ -s "$out/$file" ]; then
             echo "ok: $file"
         else

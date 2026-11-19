@@ -123,6 +123,10 @@ package_skwir() {
   install -Dm644 "$srcdir/LICENSE" "$srcdir"/licenses/* -t "$pkgdir/usr/share/licenses/skwir/pdfium/"
   install -Dm644 target/l10n/applications/org.skwir.skwir.desktop -t "$pkgdir/usr/share/applications/"
   install -Dm644 target/l10n/metainfo/org.skwir.skwir.metainfo.xml -t "$pkgdir/usr/share/metainfo/"
+  # Other programs' Open and Save dialogs, once chosen in Settings
+  # (ADR-141): the portal's back end, which the bus starts.
+  install -Dm644 tools/package/linux/skwir.portal -t "$pkgdir/usr/share/xdg-desktop-portal/portals/"
+  install -Dm644 tools/package/linux/org.freedesktop.impl.portal.desktop.skwir.service -t "$pkgdir/usr/share/dbus-1/services/"
   install -Dm644 crates/ui/assets/org.skwir.skwir.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
   install -Dm644 README.md -t "$pkgdir/usr/share/doc/skwir/"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/skwir/"
