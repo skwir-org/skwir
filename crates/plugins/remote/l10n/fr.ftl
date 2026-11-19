@@ -1,40 +1,40 @@
 # French catalog of skwir-plugin-remote, drafted by a model from en.ftl (ADR-139, step G): every message is a draft until reviewed.
 
 # draft
-remote_address_bad_device = « { $text } » n’est pas un nom de périphérique
+remote_address_bad_device = { $text } n’est pas un nom de périphérique
 
 # draft
-remote_address_bad_port = « { $port } » n’est pas un port
+remote_address_bad_port = { $port } n’est pas un port
 
 # draft
-remote_address_bad_remote = « { $name } » n’est pas un nom de stockage rclone
+remote_address_bad_remote = { $name } n’est pas un nom de stockage rclone
 
 # draft
-remote_address_bad_server = « { $host } » n’est pas un nom de serveur
+remote_address_bad_server = { $host } n’est pas un nom de serveur
 
 # draft
-remote_address_bad_ssh_user = « { $user } » n’est pas un nom d’utilisateur que l’on peut donner à ssh
+remote_address_bad_ssh_user = { $user } n’est pas un nom d’utilisateur que l’on peut donner à ssh
 
 # draft
-remote_address_bad_user = « { $user } » n’est pas un nom d’utilisateur
+remote_address_bad_user = { $user } n’est pas un nom d’utilisateur
 
 # draft
-remote_address_device_user = « { $text } » : l’adresse d’un périphérique ne nomme aucun utilisateur
+remote_address_device_user = { $text } : l’adresse d’un périphérique ne nomme aucun utilisateur
 
 # draft
-remote_address_ipv6 = « { $text } » n’a pas de ] pour terminer son adresse IPv6
+remote_address_ipv6 = { $text } n’a pas de ] pour terminer son adresse IPv6
 
 # draft
-remote_address_no_protocol = « { $text } » ne nomme aucun protocole
+remote_address_no_protocol = { $text } ne nomme aucun protocole
 
 # draft
-remote_address_no_server = « { $text } » ne nomme aucun serveur
+remote_address_no_server = { $text } ne nomme aucun serveur
 
 # draft
-remote_address_no_slashes = « { $text } » doit avoir // avant le serveur
+remote_address_no_slashes = { $text } doit avoir // avant le serveur
 
 # draft
-remote_address_not_protocol = « { $scheme }: » n’est pas un protocole qu’ouvre Skwir
+remote_address_not_protocol = { $scheme } n’est pas un protocole qu’ouvre Skwir
 
 # draft
 remote_address_password = une adresse ne contient pas de mot de passe : le serveur le demande
@@ -631,7 +631,7 @@ remote_kmtpd_linux_only = kmtpd de KDE n’est joignable que sous Linux
 remote_login_agent_read_only = l’agent de connexion est en lecture seule ; modifiez-le là où il est géré
 
 # draft
-remote_login_control_character = « { $part } » contient un caractère qu’un gestionnaire de services ne lit pas
+remote_login_control_character = { $part } contient un caractère qu’un gestionnaire de services ne lit pas
 
 # draft
 remote_login_ended = il s’est terminé ({ $status })
@@ -667,7 +667,7 @@ remote_login_no_user = Windows ne dit pas qui est l’utilisateur (USERNAME)
 remote_login_not_reached = il n’a pas pu être joint pour savoir s’il se connecte seul : { $why }
 
 # draft
-remote_login_not_text = « { $part } » n’est pas un texte que lit un gestionnaire de services
+remote_login_not_text = { $part } n’est pas un texte que lit un gestionnaire de services
 
 # draft
 remote_login_not_yet = La connexion à l’ouverture de session n’est pas encore disponible sous { $system }
@@ -960,7 +960,7 @@ remote_rclone_include = Inclure { $remote }
 remote_rclone_keep_it = Le garder
 
 # draft
-remote_rclone_keeps_no_link = « { $path } » : rclone ne garde aucun lien
+remote_rclone_keeps_no_link = { $path } : rclone ne garde aucun lien
 
 # draft
 remote_rclone_kind_detail = { $kind } : un stockage rclone
@@ -1005,7 +1005,7 @@ remote_rclone_next = Suivant
 remote_rclone_no_answer = { $remote } ne répond pas
 
 # draft
-remote_rclone_no_kind = rclone n’a pas de type de stockage « { $kind } »
+remote_rclone_no_kind = rclone n’a pas de type de stockage { $kind }
 
 # draft
 remote_rclone_no_link = rclone n’a créé aucun lien
@@ -1017,7 +1017,7 @@ remote_rclone_no_log_folder = aucun dossier pour son journal
 remote_rclone_no_mounts_folder = il n’y a pas de dossier où monter
 
 # draft
-remote_rclone_no_option = { $kind } n’a pas d’option « { $option } »
+remote_rclone_no_option = { $kind } n’a pas d’option { $option }
 
 # draft
 remote_rclone_no_reason = aucune raison donnée
@@ -1062,10 +1062,10 @@ remote_rclone_ok = OK
 remote_rclone_on_remotes = Sur d’autres stockages
 
 # draft
-remote_rclone_option_advanced = « { $option } » est une option avancée : l’utilisateur la règle dans la fenêtre
+remote_rclone_option_advanced = { $option } est une option avancée : l’utilisateur la règle dans la fenêtre
 
 # draft
-remote_rclone_option_secret = « { $option } » est un secret : l’utilisateur le tape dans la fenêtre
+remote_rclone_option_secret = { $option } est un secret : l’utilisateur le tape dans la fenêtre
 
 # draft
 remote_rclone_provider = Fournisseur
@@ -1155,7 +1155,7 @@ remote_rclone_unlisted_new = rclone n’a pas pu le lister : { $why }. Gardez-l
 remote_rclone_unmount_late = rclone ne l’a pas démonté
 
 # draft
-remote_rclone_unsaid = « { $path } » ne peut pas être transmis à rclone
+remote_rclone_unsaid = { $path } ne peut pas être transmis à rclone
 
 # draft
 remote_rclone_you_cancelled = vous avez annulé
@@ -1176,7 +1176,7 @@ remote_rsync_between = rsync copie entre cette machine et un serveur
 remote_rsync_failed = rsync a échoué ({ $status }) : { $said }
 
 # draft
-remote_rsync_unnamed = « { $path } » a un nom qui ne peut pas être donné à rsync
+remote_rsync_unnamed = { $path } a un nom qui ne peut pas être donné à rsync
 
 # draft
 remote_runs_failed = { $tool } a échoué ({ $status }) : { $said }
@@ -1314,7 +1314,7 @@ remote_server_form_nfs = Export NFS
 remote_server_form_nfs_detail = Le dossier partagé d’un serveur Unix
 
 # draft
-remote_server_form_no_part = l’adresse d’un serveur n’a pas de partie « { $key } »
+remote_server_form_no_part = l’adresse d’un serveur n’a pas de partie { $key }
 
 # draft
 remote_server_form_port = Port
@@ -1413,13 +1413,13 @@ remote_sftp_from_here = sftp copie de cette machine vers un serveur, ou au sein 
 remote_sftp_onto_server = sftp copie vers un serveur
 
 # draft
-remote_sftp_unsaid = « { $path } » ne peut pas être transmis à sftp
+remote_sftp_unsaid = { $path } ne peut pas être transmis à sftp
 
 # draft
 remote_share_label = { $share } sur { $server }
 
 # draft
-remote_ssh_still_there = « { $path } » est toujours là
+remote_ssh_still_there = { $path } est toujours là
 
 # draft
 remote_sshfs_connection_refused = le serveur a refusé la connexion
@@ -1449,7 +1449,7 @@ remote_system_shares_elsewhere = les partages du système lui-même sont ceux de
 remote_system_shares_login_refused = le serveur a refusé l’authentification
 
 # draft
-remote_system_shares_no_share = « { $address } » ne nomme aucun partage : smb://serveur/partage
+remote_system_shares_no_share = { $address } ne nomme aucun partage : smb://serveur/partage
 
 # draft
 remote_thumbnails = Vignettes dans les dossiers distants
@@ -1522,10 +1522,10 @@ remote_under_way_title = « { $title } »
 remote_unfinished_data = Les stockages rclone dont Skwir a commencé la configuration sans la terminer, par nom
 
 # draft
-remote_uploads_mount_gone = le montage de « { $path } » par rclone a disparu avant que son serveur ait reçu ce qui y a été écrit
+remote_uploads_mount_gone = le montage de { $path } par rclone a disparu avant que son serveur ait reçu ce qui y a été écrit
 
 # draft
-remote_uploads_never_queued = « { $path } » n’a jamais atteint la file d’attente de rclone : un programme le tient encore ouvert là-bas, et le serveur ne l’a pas
+remote_uploads_never_queued = { $path } n’a jamais atteint la file d’attente de rclone : un programme le tient encore ouvert là-bas, et le serveur ne l’a pas
 
 # draft
 remote_uploads_no_answer = rclone n’a pas répondu en { $seconds } s : son serveur a peut-être cessé de répondre
@@ -1534,7 +1534,7 @@ remote_uploads_no_answer = rclone n’a pas répondu en { $seconds } s : son s
 remote_uploads_no_cache_mode = rclone n’a pas dit quel cache il garde
 
 # draft
-remote_uploads_refused = le serveur a refusé « { $name } » { $tries ->
+remote_uploads_refused = le serveur a refusé { $name } { $tries ->
         [one] { $tries } fois
        *[other] { $tries } fois
     } : rclone le garde sur ce disque et réessaie

@@ -1,40 +1,40 @@
 # Made from the code by `just words` (tools/words/extract.py): never edit by hand.
 
 # text: what an address of a phone or a camera names as its device.
-remote_address_bad_device = “{ $text }” is no device's name
+remote_address_bad_device = { $text } is no device's name
 
 # port: what was typed after the server's name and a colon.
-remote_address_bad_port = “{ $port }” is no port
+remote_address_bad_port = { $port } is no port
 
 # name: what was typed as the name of a remote of rclone's.
-remote_address_bad_remote = “{ $name }” is no remote's name
+remote_address_bad_remote = { $name } is no remote's name
 
 # host: what was typed as a server's name or address.
-remote_address_bad_server = “{ $host }” is no server's name
+remote_address_bad_server = { $host } is no server's name
 
 # user: the user's name an address names.
-remote_address_bad_ssh_user = “{ $user }” is no user's name ssh can be given
+remote_address_bad_ssh_user = { $user } is no user's name ssh can be given
 
 # user: what was typed as the user's name (or an SMB domain).
-remote_address_bad_user = “{ $user }” is no user's name
+remote_address_bad_user = { $user } is no user's name
 
 # text: what an address of a phone or a camera names as its device.
-remote_address_device_user = “{ $text }”: a device's address names no user
+remote_address_device_user = { $text }: a device's address names no user
 
 # An error: an address's server opens an IPv6 address with [ but never closes it with ]. text: what was typed as the server's address and port.
-remote_address_ipv6 = “{ $text }” has no ] to end its IPv6 address
+remote_address_ipv6 = { $text } has no ] to end its IPv6 address
 
 # text: what was typed as an address.
-remote_address_no_protocol = “{ $text }” names no protocol
+remote_address_no_protocol = { $text } names no protocol
 
 # text: what was typed as an address.
-remote_address_no_server = “{ $text }” names no server
+remote_address_no_server = { $text } names no server
 
 # text: what was typed as an address.
-remote_address_no_slashes = “{ $text }” needs // before the server
+remote_address_no_slashes = { $text } needs // before the server
 
 # scheme: what an address names before its colon (sftp, smb).
-remote_address_not_protocol = “{ $scheme }:” is not a protocol Skwir opens
+remote_address_not_protocol = { $scheme } is not a protocol Skwir opens
 
 remote_address_password = an address holds no password: the server asks for it
 
@@ -520,7 +520,7 @@ remote_kmtpd_linux_only = KDE's kmtpd is reached on Linux only
 remote_login_agent_read_only = the login agent is read-only; change it where it is managed
 
 # part: a path or an argument of the command that connects at login.
-remote_login_control_character = “{ $part }” holds a character a service manager does not read
+remote_login_control_character = { $part } holds a character a service manager does not read
 
 # it: the service manager's program; status: how it ended, as the system says it (exit status: 1).
 remote_login_ended = it ended ({ $status })
@@ -549,7 +549,7 @@ remote_login_no_user = Windows does not say who the user is (USERNAME)
 remote_login_not_reached = it was not reached, to know it logs in alone: { $why }
 
 # part: a path or an argument of the command that connects at login.
-remote_login_not_text = “{ $part }” is not text a service manager reads
+remote_login_not_text = { $part } is not text a service manager reads
 
 # system: Linux, macOS or Windows.
 remote_login_not_yet = Connecting at login is not available on { $system } yet
@@ -789,7 +789,7 @@ remote_rclone_include = Include { $remote }
 remote_rclone_keep_it = Keep It
 
 # path: a link's path, which a copy on the server cannot make.
-remote_rclone_keeps_no_link = “{ $path }”: rclone keeps no link
+remote_rclone_keeps_no_link = { $path }: rclone keeps no link
 
 # kind: what rclone says a kind of storage is, and its type, as rclone writes them (Amazon S3 Compliant Storage Providers (s3)).
 remote_rclone_kind_detail = { $kind }: a remote of rclone's
@@ -827,7 +827,7 @@ remote_rclone_next = Next
 remote_rclone_no_answer = { $remote } Does Not Answer
 
 # kind: a type of rclone's storage, as rclone names it (s3, drive).
-remote_rclone_no_kind = rclone has no kind of storage “{ $kind }”
+remote_rclone_no_kind = rclone has no kind of storage { $kind }
 
 remote_rclone_no_link = rclone made no link
 
@@ -837,7 +837,7 @@ remote_rclone_no_log_folder = no folder for its log
 remote_rclone_no_mounts_folder = there is no folder to mount in
 
 # Read by agents. kind: a kind of storage as rclone names it (Amazon S3); option: one of its options, as rclone names it (endpoint).
-remote_rclone_no_option = { $kind } has no option “{ $option }”
+remote_rclone_no_option = { $kind } has no option { $option }
 
 # rclone refused a call and said nothing of why.
 remote_rclone_no_reason = no reason given
@@ -873,10 +873,10 @@ remote_rclone_ok = OK
 remote_rclone_on_remotes = On other remotes
 
 # Read by agents. option: an option of rclone's, as rclone names it.
-remote_rclone_option_advanced = “{ $option }” is an advanced option: the user sets it in the window
+remote_rclone_option_advanced = { $option } is an advanced option: the user sets it in the window
 
 # Read by agents. option: an option of rclone's, as rclone names it.
-remote_rclone_option_secret = “{ $option }” is a secret: the user types it in the window
+remote_rclone_option_secret = { $option } is a secret: the user types it in the window
 
 # Who provides a kind of storage (S3's: AWS, MinIO, Cloudflare).
 remote_rclone_provider = Provider
@@ -957,7 +957,7 @@ remote_rclone_unlisted_new = rclone could not list it: { $why }. Keep it as it i
 remote_rclone_unmount_late = rclone did not let go of it
 
 # path: a path whose name is not text (not UTF-8), which rclone takes none of.
-remote_rclone_unsaid = “{ $path }” cannot be said to rclone
+remote_rclone_unsaid = { $path } cannot be said to rclone
 
 # Why a connection did not go on: its password was not given.
 remote_rclone_you_cancelled = you cancelled
@@ -974,7 +974,7 @@ remote_rsync_between = rsync copies between this machine and a server
 remote_rsync_failed = rsync failed ({ $status }): { $said }
 
 # path: a file's or a folder's path.
-remote_rsync_unnamed = “{ $path }” has a name rsync cannot be given
+remote_rsync_unnamed = { $path } has a name rsync cannot be given
 
 # tool: a program's name (sftp, rsync); status: how it ended, as the system says it (exit status: 1); said: what it printed, in English.
 remote_runs_failed = { $tool } failed ({ $status }): { $said }
@@ -1074,7 +1074,7 @@ remote_server_form_nfs = NFS Export
 remote_server_form_nfs_detail = A Unix server's shared folder
 
 # key: the name of a part a caller gave (host, port), as it gave it.
-remote_server_form_no_part = a server's address has no part “{ $key }”
+remote_server_form_no_part = a server's address has no part { $key }
 
 remote_server_form_port = Port
 
@@ -1153,13 +1153,13 @@ remote_sftp_from_here = sftp copies from this machine onto a server, or within o
 remote_sftp_onto_server = sftp copies onto a server
 
 # path: a file's path, which sftp's commands cannot hold (a line break in it, or not UTF-8).
-remote_sftp_unsaid = “{ $path }” cannot be said to sftp
+remote_sftp_unsaid = { $path } cannot be said to sftp
 
 # What a share of a server (SMB, AFP, an NFS export) is called in the sidebar and elsewhere: share is its name, server the server's (with its port where it is not the usual one), both as written.
 remote_share_label = { $share } on { $server }
 
 # Why removing failed: path is a file's path, still on the server.
-remote_ssh_still_there = “{ $path }” is still there
+remote_ssh_still_there = { $path } is still there
 
 remote_sshfs_connection_refused = the server refused the connection
 
@@ -1180,7 +1180,7 @@ remote_system_shares_elsewhere = the system's own shares are Windows' and macOS'
 remote_system_shares_login_refused = the server refused the login
 
 # address: what was asked (smb://nas); after the colon, how an address names a share.
-remote_system_shares_no_share = “{ $address }” names no share: smb://server/share
+remote_system_shares_no_share = { $address } names no share: smb://server/share
 
 remote_thumbnails = Thumbnails in remote folders
 
@@ -1239,10 +1239,10 @@ remote_under_way_title = “{ $title }”
 remote_unfinished_data = The remotes of rclone's Skwir began to set up and did not finish, by name
 
 # path: a folder's path, in a folder rclone mounted.
-remote_uploads_mount_gone = rclone's mount of “{ $path }” is gone before its server had what was written
+remote_uploads_mount_gone = rclone's mount of { $path } is gone before its server had what was written
 
 # path: a file's path, in a folder rclone mounted.
-remote_uploads_never_queued = “{ $path }” never reached rclone's queue: a program still holds it open there, and the server does not have it
+remote_uploads_never_queued = { $path } never reached rclone's queue: a program still holds it open there, and the server does not have it
 
 # seconds: how long it was waited for; s: seconds.
 remote_uploads_no_answer = rclone did not answer within { $seconds } s: its server may have stopped answering
@@ -1250,7 +1250,7 @@ remote_uploads_no_answer = rclone did not answer within { $seconds } s: its ser
 remote_uploads_no_cache_mode = rclone did not say which cache it keeps
 
 # name: a file's path in the remote, as rclone's queue names it; tries: how many times rclone sent it.
-remote_uploads_refused = the server refused “{ $name }” { $tries ->
+remote_uploads_refused = the server refused { $name } { $tries ->
         [one] { $tries } time
        *[other] { $tries } times
     }: rclone keeps it on this disk and tries again

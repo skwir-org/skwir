@@ -1,40 +1,40 @@
 # Simplified Chinese catalog of skwir-plugin-remote, drafted by a model from en.ftl (ADR-139): every message is a draft until reviewed.
 
 # draft
-remote_address_bad_device = “{ $text }”不是设备名称
+remote_address_bad_device = { $text }不是设备名称
 
 # draft
-remote_address_bad_port = “{ $port }”不是有效的端口
+remote_address_bad_port = { $port }不是有效的端口
 
 # draft
-remote_address_bad_remote = “{ $name }”不是有效的远程名称
+remote_address_bad_remote = { $name }不是有效的远程名称
 
 # draft
-remote_address_bad_server = “{ $host }”不是有效的服务器名称
+remote_address_bad_server = { $host }不是有效的服务器名称
 
 # draft
-remote_address_bad_ssh_user = “{ $user }”不是可以交给 ssh 的用户名
+remote_address_bad_ssh_user = { $user }不是可以交给 ssh 的用户名
 
 # draft
-remote_address_bad_user = “{ $user }”不是有效的用户名
+remote_address_bad_user = { $user }不是有效的用户名
 
 # draft
-remote_address_device_user = “{ $text }”：设备的地址不包含用户
+remote_address_device_user = { $text }：设备的地址不包含用户
 
 # draft
-remote_address_ipv6 = “{ $text }”缺少结束其 IPv6 地址的 ]
+remote_address_ipv6 = { $text }缺少结束其 IPv6 地址的 ]
 
 # draft
-remote_address_no_protocol = “{ $text }”未指定协议
+remote_address_no_protocol = { $text }未指定协议
 
 # draft
-remote_address_no_server = “{ $text }”未指定服务器
+remote_address_no_server = { $text }未指定服务器
 
 # draft
-remote_address_no_slashes = “{ $text }”在服务器之前需要 //
+remote_address_no_slashes = { $text }在服务器之前需要 //
 
 # draft
-remote_address_not_protocol = “{ $scheme }:”不是 Skwir 能打开的协议
+remote_address_not_protocol = { $scheme }不是 Skwir 能打开的协议
 
 # draft
 remote_address_password = 地址中不包含密码：服务器会询问密码
@@ -608,7 +608,7 @@ remote_kmtpd_linux_only = KDE 的 kmtpd 仅能在 Linux 上访问
 remote_login_agent_read_only = 登录代理是只读的；请在管理它的地方修改
 
 # draft
-remote_login_control_character = “{ $part }”包含服务管理器无法读取的字符
+remote_login_control_character = { $part }包含服务管理器无法读取的字符
 
 # draft
 remote_login_ended = 它已结束（{ $status }）
@@ -644,7 +644,7 @@ remote_login_no_user = Windows 未说明当前用户是谁（USERNAME）
 remote_login_not_reached = 无法连接到它以确认它能否自行登录：{ $why }
 
 # draft
-remote_login_not_text = “{ $part }”不是服务管理器能读取的文本
+remote_login_not_text = { $part }不是服务管理器能读取的文本
 
 # draft
 remote_login_not_yet = { $system } 暂不支持登录时连接
@@ -930,7 +930,7 @@ remote_rclone_include = 包含{ $remote }
 remote_rclone_keep_it = 保留
 
 # draft
-remote_rclone_keeps_no_link = “{ $path }”：rclone 不保存链接
+remote_rclone_keeps_no_link = { $path }：rclone 不保存链接
 
 # draft
 remote_rclone_kind_detail = { $kind }：rclone 远程
@@ -975,7 +975,7 @@ remote_rclone_next = 下一步
 remote_rclone_no_answer = { $remote }没有响应
 
 # draft
-remote_rclone_no_kind = rclone 中没有存储种类“{ $kind }”
+remote_rclone_no_kind = rclone 中没有存储种类{ $kind }
 
 # draft
 remote_rclone_no_link = rclone 未生成链接
@@ -987,7 +987,7 @@ remote_rclone_no_log_folder = 没有用于存放其日志的文件夹
 remote_rclone_no_mounts_folder = 没有可用于挂载的文件夹
 
 # draft
-remote_rclone_no_option = { $kind } 没有选项“{ $option }”
+remote_rclone_no_option = { $kind } 没有选项{ $option }
 
 # draft
 remote_rclone_no_reason = 未给出原因
@@ -1032,10 +1032,10 @@ remote_rclone_ok = 确定
 remote_rclone_on_remotes = 基于其他远程
 
 # draft
-remote_rclone_option_advanced = “{ $option }”是高级选项：由用户在窗口中设置
+remote_rclone_option_advanced = { $option }是高级选项：由用户在窗口中设置
 
 # draft
-remote_rclone_option_secret = “{ $option }”是机密：由用户在窗口中输入
+remote_rclone_option_secret = { $option }是机密：由用户在窗口中输入
 
 # draft
 remote_rclone_provider = 提供商
@@ -1125,7 +1125,7 @@ remote_rclone_unlisted_new = rclone 无法列出它：{ $why }。请保留原样
 remote_rclone_unmount_late = rclone 未能卸载它
 
 # draft
-remote_rclone_unsaid = “{ $path }”无法传给 rclone
+remote_rclone_unsaid = { $path }无法传给 rclone
 
 # draft
 remote_rclone_you_cancelled = 您已取消
@@ -1146,7 +1146,7 @@ remote_rsync_between = rsync 在本机与服务器之间复制
 remote_rsync_failed = rsync 失败（{ $status }）：{ $said }
 
 # draft
-remote_rsync_unnamed = “{ $path }”的名称无法传给 rsync
+remote_rsync_unnamed = { $path }的名称无法传给 rsync
 
 # draft
 remote_runs_failed = { $tool } 失败（{ $status }）：{ $said }
@@ -1281,7 +1281,7 @@ remote_server_form_nfs = NFS 导出
 remote_server_form_nfs_detail = Unix 服务器的共享文件夹
 
 # draft
-remote_server_form_no_part = 服务器的地址没有“{ $key }”部分
+remote_server_form_no_part = 服务器的地址没有{ $key }部分
 
 # draft
 remote_server_form_port = 端口
@@ -1380,13 +1380,13 @@ remote_sftp_from_here = sftp 从本机复制到服务器，或在服务器内部
 remote_sftp_onto_server = sftp 复制到服务器
 
 # draft
-remote_sftp_unsaid = “{ $path }”无法传给 sftp
+remote_sftp_unsaid = { $path }无法传给 sftp
 
 # draft
 remote_share_label = { $server } 上的 { $share }
 
 # draft
-remote_ssh_still_there = “{ $path }”仍然存在
+remote_ssh_still_there = { $path }仍然存在
 
 # draft
 remote_sshfs_connection_refused = 服务器拒绝了连接
@@ -1416,7 +1416,7 @@ remote_system_shares_elsewhere = 系统自带的共享属于 Windows 和 macOS�
 remote_system_shares_login_refused = 服务器拒绝了登录
 
 # draft
-remote_system_shares_no_share = “{ $address }”未指定共享：smb://server/share
+remote_system_shares_no_share = { $address }未指定共享：smb://server/share
 
 # draft
 remote_thumbnails = 远程文件夹中的缩略图
@@ -1485,10 +1485,10 @@ remote_under_way_title = “{ $title }”
 remote_unfinished_data = Skwir 开始设置但未完成的 rclone 远程，按名称
 
 # draft
-remote_uploads_mount_gone = rclone 对“{ $path }”的挂载在其服务器收到写入的内容之前就已消失
+remote_uploads_mount_gone = rclone 对{ $path }的挂载在其服务器收到写入的内容之前就已消失
 
 # draft
-remote_uploads_never_queued = “{ $path }”从未进入 rclone 的队列：某个程序仍在那里打开着它，服务器上没有它
+remote_uploads_never_queued = { $path }从未进入 rclone 的队列：某个程序仍在那里打开着它，服务器上没有它
 
 # draft
 remote_uploads_no_answer = rclone 在 { $seconds } 秒内没有响应：其服务器可能已停止响应
@@ -1497,7 +1497,7 @@ remote_uploads_no_answer = rclone 在 { $seconds } 秒内没有响应：其服�
 remote_uploads_no_cache_mode = rclone 未说明它使用哪种缓存
 
 # draft
-remote_uploads_refused = 服务器 { $tries } 次拒绝了“{ $name }”：rclone 将它保留在此磁盘上并会重试
+remote_uploads_refused = 服务器 { $tries } 次拒绝了{ $name }：rclone 将它保留在此磁盘上并会重试
 
 # draft
 remote_winfsp_loopback = Windows 上的挂载在环回地址上响应

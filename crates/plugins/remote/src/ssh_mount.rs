@@ -279,8 +279,8 @@ pub(crate) fn remove_beside(
     anyhow::ensure!(
         still.is_empty(),
         skwir_core::words!(
-            remote_ssh_still_there = "“{ $path }” is still there",
-            path = still[0].display().to_string(),
+            remote_ssh_still_there = "{ $path } is still there",
+            path = skwir_core::words::Arg::from(&still[0]),
             note = "Why removing failed: path is a file's path, still on the server."
         )
     );

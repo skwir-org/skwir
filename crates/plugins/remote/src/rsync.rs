@@ -556,8 +556,8 @@ impl Transfer for Rsync {
 /// `path` has a name rsync cannot be given, said.
 fn unnamed(path: &Path) -> Words {
     words!(
-        remote_rsync_unnamed = "“{ $path }” has a name rsync cannot be given",
-        path = path.display().to_string(),
+        remote_rsync_unnamed = "{ $path } has a name rsync cannot be given",
+        path = skwir_core::words::Arg::from(path),
         note = "path: a file's or a folder's path."
     )
 }

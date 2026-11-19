@@ -337,8 +337,8 @@ pub fn add(
             .find(|f| f.key == *key)
             .ok_or_else(|| {
                 anyhow::anyhow!(words!(
-                    remote_server_form_no_part = "a server's address has no part “{ $key }”",
-                    key = key.as_str(),
+                    remote_server_form_no_part = "a server's address has no part { $key }",
+                    key = skwir_core::words::Name(key.clone()),
                     note = "key: the name of a part a caller gave (host, port), as it gave it."
                 ))
             })?;

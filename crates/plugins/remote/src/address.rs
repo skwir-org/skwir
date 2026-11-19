@@ -166,8 +166,8 @@ impl Address {
     pub fn parse(text: &str) -> Result<Address, NotAnAddress> {
         let (scheme, rest) = text.split_once(':').ok_or_else(|| {
             NotAnAddress(words!(
-                remote_address_no_protocol = "“{ $text }” names no protocol",
-                text = text,
+                remote_address_no_protocol = "{ $text } names no protocol",
+                text = skwir_core::words::Name(text.to_owned()),
                 note = "text: what was typed as an address."
             ))
         })?;
@@ -183,8 +183,8 @@ impl Address {
     pub fn parse_rest(scheme: Scheme, rest: &str) -> Result<Address, NotAnAddress> {
         let rest = rest.strip_prefix("//").ok_or_else(|| {
             NotAnAddress(words!(
-                remote_address_no_slashes = "“{ $text }” needs // before the server",
-                text = format!("{}:{rest}", scheme.name()),
+                remote_address_no_slashes = "{ $text } needs // before the server",
+                text = skwir_core::words::Name(format!("{}:{rest}", scheme.name())),
                 note = "text: what was typed as an address."
             ))
         })?;
@@ -224,8 +224,8 @@ impl Address {
         let (host, port) = split_port(hostport)?;
         if host.is_empty() {
             return Err(NotAnAddress(words!(
-                remote_address_no_server = "“{ $text }” names no server",
-                text = format!("{}://{rest}", scheme.name()),
+                remote_address_no_server = "{ $text } names no server",
+                text = skwir_core::words::Name(format!("{}://{rest}", scheme.name())),
                 note = "text: what was typed as an address."
             )));
         }
@@ -233,16 +233,16 @@ impl Address {
         // it nor several words: a server's name or address, a user's.
         if !server_name(host) {
             return Err(NotAnAddress(words!(
-                remote_address_bad_server = "“{ $host }” is no server's name",
-                host = host,
+                remote_address_bad_server = "{ $host } is no server's name",
+                host = skwir_core::words::Name(host.to_owned()),
                 note = "host: what was typed as a server's name or address."
             )));
         }
         for part in [&user, &domain].into_iter().flatten() {
             if !plain(part) {
                 return Err(NotAnAddress(words!(
-                    remote_address_bad_user = "“{ $user }” is no user's name",
-                    user = part.as_str(),
+                    remote_address_bad_user = "{ $user } is no user's name",
+                    user = skwir_core::words::Name(part.clone()),
                     note = "user: what was typed as the user's name (or an SMB domain)."
                 )));
             }
@@ -269,8 +269,8 @@ impl Address {
     pub fn rclone(name: &str, path: &[u8]) -> Result<Address, NotAnAddress> {
         if !rclone_name(name) {
             return Err(NotAnAddress(words!(
-                remote_address_bad_remote = "“{ $name }” is no remote's name",
-                name = name,
+                remote_address_bad_remote = "{ $name } is no remote's name",
+                name = skwir_core::words::Name(name.to_owned()),
                 note = "name: what was typed as the name of a remote of rclone's."
             )));
         }
@@ -297,16 +297,16 @@ impl Address {
     fn of_device(scheme: Scheme, authority: &str, path: &[u8]) -> Result<Address, NotAnAddress> {
         if authority.contains('@') {
             return Err(NotAnAddress(words!(
-                remote_address_device_user = "“{ $text }”: a device's address names no user",
-                text = authority,
+                remote_address_device_user = "{ $text }: a device's address names no user",
+                text = skwir_core::words::Name(authority.to_owned()),
                 note = "text: what an address of a phone or a camera names as its device."
             )));
         }
         let (host, port) = split_port(authority)?;
         if !device_name(host) || (port.is_some() && scheme != Scheme::Afc) {
             return Err(NotAnAddress(words!(
-                remote_address_bad_device = "“{ $text }” is no device's name",
-                text = authority,
+                remote_address_bad_device = "{ $text } is no device's name",
+                text = skwir_core::words::Name(authority.to_owned()),
                 note = "text: what an address of a phone or a camera names as its device."
             )));
         }
@@ -635,8 +635,8 @@ impl Address {
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) =>
             {
                 Err(NotAnAddress(words!(
-                    remote_address_bad_ssh_user = "“{ $user }” is no user's name ssh can be given",
-                    user = user.as_str(),
+                    remote_address_bad_ssh_user = "{ $user } is no user's name ssh can be given",
+                    user = skwir_core::words::Name(user.clone()),
                     note = "user: the user's name an address names."
                 )))
             }
@@ -648,8 +648,8 @@ impl Address {
 /// `scheme` names no protocol Skwir opens.
 fn not_a_protocol(scheme: &str) -> NotAnAddress {
     NotAnAddress(words!(
-        remote_address_not_protocol = "“{ $scheme }:” is not a protocol Skwir opens",
-        scheme = scheme,
+        remote_address_not_protocol = "{ $scheme } is not a protocol Skwir opens",
+        scheme = skwir_core::words::Name(format!("{scheme}:")),
         note = "scheme: what an address names before its colon (sftp, smb)."
     ))
 }
@@ -661,8 +661,8 @@ fn split_port(hostport: &str) -> Result<(&str, Option<u16>), NotAnAddress> {
             Some(end) => (&hostport[..=end], hostport[end + 1..].strip_prefix(':')),
             None => {
                 return Err(NotAnAddress(words!(
-                    remote_address_ipv6 = "“{ $text }” has no ] to end its IPv6 address",
-                    text = hostport,
+                    remote_address_ipv6 = "{ $text } has no ] to end its IPv6 address",
+                    text = skwir_core::words::Name(hostport.to_owned()),
                     note = "An error: an address's server opens an IPv6 address with [ but never closes it with ]. text: what was typed as the server's address and port."
                 )));
             }
@@ -677,8 +677,8 @@ fn split_port(hostport: &str) -> Result<(&str, Option<u16>), NotAnAddress> {
         Some("") | None => None,
         Some(port) => Some(port.parse::<u16>().map_err(|_| {
             NotAnAddress(words!(
-                remote_address_bad_port = "“{ $port }” is no port",
-                port = port,
+                remote_address_bad_port = "{ $port } is no port",
+                port = skwir_core::words::Name(port.to_owned()),
                 note = "port: what was typed after the server's name and a colon."
             ))
         })?),

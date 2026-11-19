@@ -129,8 +129,8 @@ fn attach(
     if cfg!(windows) {
         let unc = unc_of(top).ok_or_else(|| {
             skwir_platform::shares::Refused::Other(anyhow::anyhow!(words!(
-                remote_system_shares_no_share = "“{ $address }” names no share: smb://server/share",
-                address = top.to_string(),
+                remote_system_shares_no_share = "{ $address } names no share: smb://server/share",
+                address = skwir_core::words::Name(top.to_string()),
                 note = "address: what was asked (smb://nas); after the colon, how an address \
                         names a share."
             )))

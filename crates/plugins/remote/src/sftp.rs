@@ -213,8 +213,8 @@ impl Sftp {
 /// `path` cannot be written on sftp's command line, said.
 fn unsaid(path: &Path) -> Words {
     words!(
-        remote_sftp_unsaid = "“{ $path }” cannot be said to sftp",
-        path = path.display().to_string(),
+        remote_sftp_unsaid = "{ $path } cannot be said to sftp",
+        path = skwir_core::words::Arg::from(path),
         note = "path: a file's path, which sftp's commands cannot hold (a line break in it, or not UTF-8)."
     )
 }

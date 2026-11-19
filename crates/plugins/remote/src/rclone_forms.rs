@@ -109,9 +109,9 @@ impl Prefill {
             match backend.options.iter().find(|o| o.name == *key) {
                 None => {
                     return Some(words!(
-                        remote_rclone_no_option = "{ $kind } has no option “{ $option }”",
+                        remote_rclone_no_option = "{ $kind } has no option { $option }",
                         kind = backend.title.clone(),
-                        option = key.clone(),
+                        option = skwir_core::words::Name(key.clone()),
                         note = "Read by agents. kind: a kind of storage as rclone names it \
                                 (Amazon S3); option: one of its options, as rclone names it \
                                 (endpoint)."
@@ -120,16 +120,16 @@ impl Prefill {
                 Some(opt) if opt.secret() => {
                     return Some(words!(
                         remote_rclone_option_secret =
-                            "“{ $option }” is a secret: the user types it in the window",
-                        option = key.clone(),
+                            "{ $option } is a secret: the user types it in the window",
+                        option = skwir_core::words::Name(key.clone()),
                         note = "Read by agents. option: an option of rclone's, as rclone names it."
                     ));
                 }
                 Some(opt) if opt.advanced => {
                     return Some(words!(
                         remote_rclone_option_advanced =
-                            "“{ $option }” is an advanced option: the user sets it in the window",
-                        option = key.clone(),
+                            "{ $option } is an advanced option: the user sets it in the window",
+                        option = skwir_core::words::Name(key.clone()),
                         note = "Read by agents. option: an option of rclone's, as rclone names it."
                     ));
                 }
@@ -1272,8 +1272,8 @@ fn said(error: anyhow::Error) -> Words {
 /// rclone has no kind of storage of type `kind`.
 fn no_kind(kind: &str) -> Words {
     words!(
-        remote_rclone_no_kind = "rclone has no kind of storage “{ $kind }”",
-        kind = kind,
+        remote_rclone_no_kind = "rclone has no kind of storage { $kind }",
+        kind = skwir_core::words::Name(kind.to_owned()),
         note = "kind: a type of rclone's storage, as rclone names it (s3, drive)."
     )
 }

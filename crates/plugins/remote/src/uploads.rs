@@ -87,11 +87,11 @@ fn asked(
 /// The server refused `refused` as many times as it was tried, said.
 fn refused_times(refused: &Waiting) -> Words {
     words!(
-        remote_uploads_refused = "the server refused “{ $name }” { $tries ->
+        remote_uploads_refused = "the server refused { $name } { $tries ->
             [one] { $tries } time
            *[other] { $tries } times
         }: rclone keeps it on this disk and tries again",
-        name = refused.name.as_str(),
+        name = skwir_core::words::Name(refused.name.clone()),
         tries = refused.tries,
         note = "name: a file's path in the remote, as rclone's queue names it; tries: how \
                 many times rclone sent it."
@@ -480,8 +480,8 @@ pub fn send_written(
             && let Some(file) = unsent.keys().find(|file| !queued.contains(*file))
         {
             anyhow::bail!(words!(
-                remote_uploads_never_queued = "“{ $path }” never reached rclone's queue: a program still holds it open there, and the server does not have it",
-                path = file.display().to_string(),
+                remote_uploads_never_queued = "{ $path } never reached rclone's queue: a program still holds it open there, and the server does not have it",
+                path = skwir_core::words::Arg::from(file),
                 note = "path: a file's path, in a folder rclone mounted."
             ));
         }
@@ -582,8 +582,8 @@ impl Transfer for RcloneSends {
         }) else {
             anyhow::bail!(words!(
                 remote_uploads_mount_gone =
-                    "rclone's mount of “{ $path }” is gone before its server had what was written",
-                path = folder.display().to_string(),
+                    "rclone's mount of { $path } is gone before its server had what was written",
+                path = skwir_core::words::Arg::from(folder),
                 note = "path: a folder's path, in a folder rclone mounted."
             ));
         };

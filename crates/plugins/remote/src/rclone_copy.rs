@@ -134,8 +134,8 @@ fn copy_tree(
     anyhow::ensure!(
         meta.is_dir(),
         words!(
-            remote_rclone_keeps_no_link = "“{ $path }”: rclone keeps no link",
-            path = src.display().to_string(),
+            remote_rclone_keeps_no_link = "{ $path }: rclone keeps no link",
+            path = skwir_core::words::Arg::from(src),
             note = "path: a link's path, which a copy on the server cannot make."
         )
     );
@@ -163,8 +163,8 @@ fn copy_tree(
 /// `path` holds what is no text, which rclone cannot be given.
 fn unsaid(path: &Path) -> Words {
     words!(
-        remote_rclone_unsaid = "“{ $path }” cannot be said to rclone",
-        path = path.display().to_string(),
+        remote_rclone_unsaid = "{ $path } cannot be said to rclone",
+        path = skwir_core::words::Arg::from(path),
         note = "path: a path whose name is not text (not UTF-8), which rclone takes none of."
     )
 }

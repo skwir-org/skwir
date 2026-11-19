@@ -213,8 +213,8 @@ impl AtLogin {
         for part in paths.chain(self.args.iter().map(OsString::as_os_str)) {
             let text = part.to_str().ok_or_else(|| {
                 anyhow::anyhow!(words!(
-                    remote_login_not_text = "“{ $part }” is not text a service manager reads",
-                    part = part.display().to_string(),
+                    remote_login_not_text = "{ $part } is not text a service manager reads",
+                    part = skwir_core::words::Arg::from(std::path::Path::new(part)),
                     note = "part: a path or an argument of the command that connects at login."
                 ))
             })?;
@@ -224,8 +224,8 @@ impl AtLogin {
                     .any(|c| c.is_ascii_control() && !matches!(c, '\t' | '\n')),
                 words!(
                     remote_login_control_character =
-                        "“{ $part }” holds a character a service manager does not read",
-                    part = text.escape_debug().to_string(),
+                        "{ $part } holds a character a service manager does not read",
+                    part = skwir_core::words::Name(text.escape_debug().to_string()),
                     note = "part: a path or an argument of the command that connects at login."
                 )
             );
