@@ -124,14 +124,16 @@ fn rows_of<'a>(dir: &Path, held: &HashMap<&'a Path, Held<'a>>, ascending: bool) 
     let Some(here) = held.get(dir) else {
         return Vec::new();
     };
+    // One key a folder, not two a comparison (`collate::sort_key`, as
+    // `fs::subfolders` sorts); no two folders of `dir` share a name, so the
+    // order turned round is the order down.
     let mut folders = here.folders.clone();
-    folders.sort_by(|a, b| {
-        let order = crate::collate::compare(
-            a.file_name().unwrap_or_default(),
-            b.file_name().unwrap_or_default(),
-        );
-        if ascending { order } else { order.reverse() }
+    folders.sort_by_cached_key(|folder| {
+        crate::collate::sort_key(folder.file_name().unwrap_or_default())
     });
+    if !ascending {
+        folders.reverse();
+    }
     let files = here
         .files
         .iter()
@@ -248,5 +250,28 @@ mod tests {
         })
         .unwrap();
         assert_eq!(stats, 2, "once each");
+    }
+
+    /// Folders stand as names are ordered (`collate`): an accented name
+    /// among its letter's, case aside, either way.
+    #[test]
+    fn folders_stand_as_names_are_ordered() {
+        let hits = [
+            (id(1), "/r/Zeta/f"),
+            (id(2), "/r/éclat/f"),
+            (id(3), "/r/alpha/f"),
+        ];
+        let names = |tree: &Made| -> Vec<String> {
+            tree.order
+                .iter()
+                .filter(|id| tree.way_ids.contains(id))
+                .map(|id| {
+                    let way = tree.ways.iter().find(|w| w.entry.id == *id).unwrap();
+                    way.entry.name_str().into_owned()
+                })
+                .collect()
+        };
+        assert_eq!(names(&made(&hits, true)), ["alpha", "éclat", "Zeta"]);
+        assert_eq!(names(&made(&hits, false)), ["Zeta", "éclat", "alpha"]);
     }
 }
