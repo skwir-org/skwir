@@ -1738,7 +1738,7 @@ fn settings_from_a_file_are_checked_as_the_dialog_checks_them() {
             .map(|(_, problem)| problem.english())
             .unwrap()
     };
-    assert_eq!(said("sample.engine"), "choose one of first, second");
+    assert_eq!(said("sample.engine"), "choose one of first or second");
     assert_eq!(said("sample.budget"), "enter a whole number from 4 to 4096");
     assert_eq!(said("sample.enabled"), "expected true or false, not text");
     assert_eq!(said("sample.engin"), "no such setting");

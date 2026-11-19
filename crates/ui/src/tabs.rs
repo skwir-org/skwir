@@ -69,6 +69,9 @@ pub struct Label {
     /// The place each of its panes shows, in the order they are laid out
     /// (left to right, top to bottom): one name, two when it is split.
     pub names: Vec<SharedString>,
+    /// Each of `names` as words (`App::location_title`): what a sentence
+    /// naming them is given.
+    pub titles: Vec<Words>,
     /// Which of `names` is the pane with the keys.
     pub active: usize,
     /// Each pane's full location, a line each, for the tooltip.
@@ -108,7 +111,7 @@ impl Label {
     /// Its panes' names said as one: what a screen reader hears and a drag
     /// of the tab shows.
     pub fn spoken(&self) -> String {
-        spoken(&self.names).say()
+        spoken(&self.titles).say()
     }
 
     pub fn is_split(&self) -> bool {
@@ -116,22 +119,22 @@ impl Label {
     }
 }
 
-fn spoken(names: &[SharedString]) -> Words {
-    match names {
-        [one] => Words::as_written(one.to_string()),
+/// A tab's places said as one, each given as its words.
+fn spoken(titles: &[Words]) -> Words {
+    match titles {
+        [] => Words::default(),
+        [one] => one.clone(),
         [first, second] => words!(
             tabs_split = "{ $first } and { $second }",
-            first = first.to_string(),
-            second = second.to_string(),
+            first = first.clone(),
+            second = second.clone(),
             note = "A split tab, as a screen reader hears it and a drag of it shows; first, second: the places its two panes show, as their tabs name them."
         ),
-        // Transitional: a list argument (ADR-139). A tab splits once.
-        _ => Words::as_written(
-            names
-                .iter()
-                .map(SharedString::as_ref)
-                .collect::<Vec<&str>>()
-                .join(" and "),
+        // A tab splits once: should it split more, a list.
+        titles => words!(
+            tabs_split_many = "{ $places }",
+            places = skwir_core::words::List::and(titles.iter().cloned()),
+            note = "A tab split more than once, as a screen reader hears it: the places its panes show, as their tabs name them, joined (Docs, Maps and Field Guide)."
         ),
     }
 }
@@ -565,19 +568,20 @@ impl Shell {
                 let not_folder = location.and_then(|l| self.app.location_icon(l));
                 let themed = themed(place.and_then(|p| p.icon.clone()), not_folder);
                 let glyph = not_folder.unwrap_or("folder");
+                let titles: Vec<Words> = shows
+                    .iter()
+                    .map(|l| {
+                        l.as_ref()
+                            .map(|l| self.app.location_title(l))
+                            .unwrap_or_default()
+                    })
+                    .collect();
                 Label {
                     tab: *tab,
-                    names: shows
-                        .iter()
-                        // Said as the window says it: the key moves with
-                        // what words say (`Roots::generation`).
-                        .map(|l| {
-                            l.as_ref()
-                                .map(|l| self.app.location_title(l).say())
-                                .unwrap_or_default()
-                                .into()
-                        })
-                        .collect(),
+                    // Said as the window says it: the key moves with what
+                    // words say (`Roots::generation`).
+                    names: titles.iter().map(|title| title.say().into()).collect(),
+                    titles,
                     active: *active,
                     tip: shows
                         .iter()
@@ -1262,10 +1266,15 @@ mod tests {
 
     #[test]
     fn a_split_tab_is_said_by_both_its_panes_names() {
-        assert_eq!(spoken(&["Field Guide".into()]).english(), "Field Guide");
+        let title = |name: &'static str| skwir_core::words::Words::as_written(name);
+        assert_eq!(spoken(&[title("Field Guide")]).english(), "Field Guide");
         assert_eq!(
-            spoken(&["Field Guide".into(), "Maps".into()]).english(),
+            spoken(&[title("Field Guide"), title("Maps")]).english(),
             "Field Guide and Maps"
+        );
+        assert_eq!(
+            spoken(&[title("Docs"), title("Maps"), title("Field Guide")]).english(),
+            "Docs, Maps, and Field Guide"
         );
     }
 

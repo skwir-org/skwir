@@ -1668,19 +1668,38 @@ impl SettingsView {
                 })
                 .collect();
             if deeper.len() > 2 {
-                // Transitional: a list argument (ADR-139).
-                let some = deeper[..3].join(", ");
+                // The first by name, then how many more: one list, joined
+                // as the reader's language joins one.
+                const NAMED: usize = 3;
+                let mut some: Vec<skwir_core::words::Arg> = deeper
+                    .iter()
+                    .take(NAMED)
+                    .map(|&place| place.into())
+                    .collect();
+                if deeper.len() > NAMED {
+                    some.push(
+                        words!(
+                            keys_note_deeper_more = "{ $count ->
+        [one] { $count } more
+       *[other] { $count } more
+    }",
+                            count = deeper.len() - NAMED,
+                            note = "The last item of the places that bind keys themselves, after the first three by name: how many others (File list, Address field, Sidebar and 2 more)."
+                        )
+                        .into(),
+                    );
+                }
                 notes = notes.child(line(
                     "info",
                     theme.text_muted,
                     words!(
                         keys_note_deeper_many = "{ $count ->
-       *[other] { $keys } still runs what it runs in { $count } places that bind it themselves ({ $some }…): a place's own keys come first.
+       *[other] { $keys } still runs what it runs in { $count } places that bind it themselves ({ $some }): a place's own keys come first.
     }",
                         keys = skwir_core::words::Keys(keys.clone()),
                         count = deeper.len(),
-                        some = some,
-                        note = "Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), count the places with keys of their own, some the first three of them (File list, Address field, Sidebar)."
+                        some = skwir_core::words::List::and(some),
+                        note = "Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), count the places with keys of their own, some the first three of them, then how many more, joined (File list, Address field, Sidebar and 2 more)."
                     )
                     .say(),
                 ));

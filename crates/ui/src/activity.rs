@@ -2476,34 +2476,34 @@ const INTO_NAMED: usize = 3;
 /// the whole path of each folder it brings something into, the first
 /// `INTO_NAMED`, then how many others; its title naming them alone.
 fn into_said(folders: &[std::path::PathBuf]) -> Option<SharedString> {
-    let named: Vec<String> = folders
+    // Each path as it is, then how many others: one list, joined as the
+    // reader's language joins one.
+    let mut named: Vec<words::Arg> = folders
         .iter()
         .take(INTO_NAMED)
-        .map(|f| f.display().to_string())
+        .map(|f| f.display().to_string().into())
         .collect();
     let others = folders.len().saturating_sub(INTO_NAMED);
-    (!named.is_empty()).then(|| {
-        // Transitional: a list argument (ADR-139).
-        let folders = named.join(", ");
-        if others > 0 {
+    if others > 0 {
+        named.push(
             words!(
-                activity_into_others = "Into { $folders } and { $count ->
+                activity_into_more = "{ $count ->
                     [one] { $count } other folder
                    *[other] { $count } other folders
                 }",
-                folders = folders,
                 count = others,
-                note = "Where an action goes, as its card says it when pointed at: the paths \
-                        of the first folders it brings something into, then how many others."
+                note = "The last item of where an action goes, as its card says it when pointed at, after the paths of the first folders it brings something into: how many others (Into /a, /b, /c and 2 other folders)."
             )
-        } else {
-            words!(
-                activity_into = "Into { $folders }",
-                folders = folders,
-                note = "Where an action goes, as its card says it when pointed at: the paths \
-                        of the folders it brings something into."
-            )
-        }
+            .into(),
+        );
+    }
+    (!named.is_empty()).then(|| {
+        words!(
+            activity_into = "Into { $folders }",
+            folders = words::List::and(named),
+            note = "Where an action goes, as its card says it when pointed at: the paths \
+                    of the folders it brings something into, joined, the last item perhaps how many others."
+        )
         .say()
         .into()
     })
@@ -2869,11 +2869,11 @@ mod tests {
             .collect();
         assert_eq!(
             super::into_said(&folders).as_deref(),
-            Some("Into /a, /b, /c and 2 other folders")
+            Some("Into /a, /b, /c, and 2 other folders")
         );
         assert_eq!(
             super::into_said(&folders[..4]).as_deref(),
-            Some("Into /a, /b, /c and 1 other folder")
+            Some("Into /a, /b, /c, and 1 other folder")
         );
         assert_eq!(super::into_said(&folders[..1]).as_deref(), Some("Into /a"));
         assert_eq!(super::into_said(&[]), None);

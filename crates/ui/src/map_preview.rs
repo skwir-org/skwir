@@ -84,8 +84,9 @@ pub fn element(
     map::map(id, shapes, handles, colors(theme), Some(tiles))
 }
 
-/// What a map holds, in words: its lines, places and areas.
-fn holds(shapes: &Shapes) -> String {
+/// What a map holds, in words: its lines, places and areas, joined as the
+/// reader's language joins a list.
+fn holds(shapes: &Shapes) -> skwir_core::words::Words {
     use skwir_core::words;
     let (lines, places, areas) = (shapes.lines.len(), shapes.markers.len(), shapes.areas.len());
     let counted = [
@@ -120,16 +121,18 @@ fn holds(shapes: &Shapes) -> String {
             )
         }),
     ];
-    let words: Vec<String> = counted.into_iter().flatten().map(|w| w.say()).collect();
-    if words.is_empty() {
+    let counted: Vec<skwir_core::words::Words> = counted.into_iter().flatten().collect();
+    if counted.is_empty() {
         words!(
             map_holds_nothing = "Nothing with a position",
             note = "What a screen reader hears a map holds where nothing of its file has a place on the earth."
         )
-        .say()
     } else {
-        // Transitional: a list argument (ADR-139).
-        words.join(", ")
+        words!(
+            map_holds = "{ $holds }",
+            holds = words::List::and(counted),
+            note = "What a screen reader hears a map holds: its lines, places and areas counted, joined (2 lines and 5 places)."
+        )
     }
 }
 

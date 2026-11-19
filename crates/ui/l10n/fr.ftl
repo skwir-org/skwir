@@ -158,7 +158,7 @@ activity_how_waiting = { $how } · { $count } en attente
 activity_into = Vers { $folders }
 
 # draft
-activity_into_others = Vers { $folders } et { $count ->
+activity_into_more = { $count ->
         [one] { $count } autre dossier
        *[other] { $count } autres dossiers
     }
@@ -632,6 +632,9 @@ address_under_names_menu = Sous les noms
 
 # draft
 address_under_names_none = Rien
+
+# draft
+address_under_names_shown = { $captions }
 
 # draft
 address_undo = Annuler
@@ -3676,6 +3679,9 @@ history_view_ref_remote = { $name } (distante)
 history_view_ref_tag = étiquette { $name }
 
 # draft
+history_view_refs = { $names }
+
+# draft
 history_view_the_hash = l’empreinte du commit
 
 # draft
@@ -3736,7 +3742,13 @@ inspector_full_width = Pleine largeur
 inspector_go_to_chapter = Aller au chapitre
 
 # draft
+inspector_hex_row = { $cells }
+
+# draft
 inspector_history_heading = { $names } · { $day }
+
+# draft
+inspector_history_names = { $names }
 
 # draft
 inspector_jump = Aller à l’octet
@@ -4208,7 +4220,13 @@ keys_note_deeper = Dans { $place }, { $keys } exécute toujours « { $action }
 
 # draft
 keys_note_deeper_many = { $count ->
-       *[other] { $keys } garde son action dans { $count } endroits qui lui en donnent une ({ $some }…) : les touches propres à un endroit passent en premier.
+       *[other] { $keys } garde son action dans { $count } endroits qui lui en donnent une ({ $some }) : les touches propres à un endroit passent en premier.
+    }
+
+# draft
+keys_note_deeper_more = { $count ->
+        [one] { $count } autre
+       *[other] { $count } autres
     }
 
 # draft
@@ -4481,6 +4499,9 @@ map_background = Fond de carte
 map_file_tiles_failed = Les tuiles de carte de ce fichier n’ont pas pu être lues : { $error }
 
 # draft
+map_holds = { $holds }
+
+# draft
 map_holds_areas = { $count ->
         [one] { $count } zone
        *[other] { $count } zones
@@ -4647,6 +4668,9 @@ media_previous_track = Piste précédente
 
 # draft
 media_speed = Vitesse de lecture
+
+# draft
+media_speed_value = { $speed }×
 
 # draft
 media_subtitles = Sous-titres
@@ -8308,6 +8332,9 @@ tabs_new = Nouvel onglet
 tabs_split = { $first } et { $second }
 
 # draft
+tabs_split_many = { $places }
+
+# draft
 tabs_strip = Onglets
 
 # draft
@@ -8362,10 +8389,10 @@ tag_editor_placeholder = Filtrer, ou saisir une nouvelle étiquette
 tag_editor_removed = retirée
 
 # draft
-tag_editor_said_tagged = Étiqueté { $tags }
+tag_editor_said_tagged = étiqueté { $tags }
 
 # draft
-tag_editor_said_tagged_rated = Étiqueté { $tags } ; { $stars }
+tag_editor_said_tagged_rated = étiqueté { $tags } ; { $stars }
 
 # draft
 tag_editor_stars = { $halves ->
@@ -8393,6 +8420,9 @@ tag_editor_title = { $count ->
 
 # draft
 tag_editor_unreadable = étiquettes illisibles
+
+# draft
+tags_strip_more_named = { $tags }
 
 # draft
 terminal_did_not_start = Le terminal n’a pas démarré : { $error }
@@ -9340,6 +9370,9 @@ views_entry_described = { $group } ; { $said }
 
 # draft
 views_entry_hidden = caché
+
+# draft
+views_entry_marks = { $marks }
 
 # draft
 views_entry_only_leads = mène à ce que garde le filtre

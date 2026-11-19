@@ -154,7 +154,9 @@ activity_how_waiting = { $how } · { $count } 个排队中
 activity_into = 目标：{ $folders }
 
 # draft
-activity_into_others = 目标：{ $folders } 及另外 { $count } 个文件夹
+activity_into_more = { $count ->
+       *[other] 另外 { $count } 个文件夹
+    }
 
 # draft
 activity_left_waiting = { $left } · { $count } 个排队中
@@ -611,6 +613,9 @@ address_under_names_menu = 名称下方
 
 # draft
 address_under_names_none = 无
+
+# draft
+address_under_names_shown = { $captions }
 
 # draft
 address_undo = 撤销
@@ -3535,6 +3540,9 @@ history_view_ref_remote = { $name }（远程）
 history_view_ref_tag = 标签 { $name }
 
 # draft
+history_view_refs = { $names }
+
+# draft
 history_view_the_hash = 提交的哈希值
 
 # draft
@@ -3595,7 +3603,13 @@ inspector_full_width = 全宽
 inspector_go_to_chapter = 转到章节
 
 # draft
+inspector_hex_row = { $cells }
+
+# draft
 inspector_history_heading = { $names } · { $day }
+
+# draft
+inspector_history_names = { $names }
 
 # draft
 inspector_jump = 跳转到字节偏移量
@@ -4060,7 +4074,12 @@ keys_note_besides = { $keys } 仍会在{ $place }中运行“{ $action }”。
 keys_note_deeper = 在{ $place }中，{ $keys } 仍会运行“{ $action }”：位置自身的按键优先。
 
 # draft
-keys_note_deeper_many = { $keys } 在 { $count } 个自行绑定它的位置（{ $some }…）中仍运行原来的操作：位置自身的按键优先。
+keys_note_deeper_many = { $keys } 在 { $count } 个自行绑定它的位置（{ $some }）中仍运行原来的操作：位置自身的按键优先。
+
+# draft
+keys_note_deeper_more = { $count ->
+       *[other] 另外 { $count } 个
+    }
 
 # draft
 keys_note_elsewhere = 在其他位置，{ $keys } 仍会运行“{ $action }”。
@@ -4324,6 +4343,9 @@ map_background = 地图背景
 map_file_tiles_failed = 无法读取此文件的地图瓦片：{ $error }
 
 # draft
+map_holds = { $holds }
+
+# draft
 map_holds_areas = { $count } 个区域
 
 # draft
@@ -4469,6 +4491,9 @@ media_previous_track = 上一首
 
 # draft
 media_speed = 播放速度
+
+# draft
+media_speed_value = { $speed }×
 
 # draft
 media_subtitles = 字幕
@@ -7984,6 +8009,9 @@ tabs_new = 新建标签页
 tabs_split = { $first } 和 { $second }
 
 # draft
+tabs_split_many = { $places }
+
+# draft
 tabs_strip = 标签页
 
 # draft
@@ -8064,6 +8092,9 @@ tag_editor_title = { $count ->
 
 # draft
 tag_editor_unreadable = 无法读取的标签
+
+# draft
+tags_strip_more_named = { $tags }
 
 # draft
 terminal_did_not_start = 终端未能启动：{ $error }
@@ -8918,6 +8949,9 @@ views_entry_described = { $group }；{ $said }
 
 # draft
 views_entry_hidden = 隐藏
+
+# draft
+views_entry_marks = { $marks }
 
 # draft
 views_entry_only_leads = 通向筛选条件保留的项目

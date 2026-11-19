@@ -1889,12 +1889,18 @@ pub(crate) fn playback_parts(state: &Playback, send: Send) -> Vec<crate::toolbar
     use crate::toolbar::MenuPart;
     let speeds = [0.5, 1., 1.25, 1.5, 2.]
         .into_iter()
-        .map(|value| {
-            // A speed as English writes it, until numbers arrive with
-            // each language (PLAN.md, step F).
-            let label = format!("{value}×");
-            let said = Words::as_written(label.clone());
-            send(format!("rate-{label}"), said.clone(), "rate", value.into())
+        .map(|value: f64| {
+            // As the reader's language writes the number (1.25, 1,25), with
+            // only the digits it has after the point.
+            let digits = (0u8..2)
+                .find(|&d| (value * 10f64.powi(i32::from(d))).fract().abs() < 1e-9)
+                .unwrap_or(2);
+            let said = words!(
+                media_speed_value = "{ $speed }×",
+                speed = skwir_core::words::Decimal::of(value, digits),
+                note = "A playback speed among the player's choices: speed is how many times as fast (0.5×, 1×, 1.25×)."
+            );
+            send(format!("rate-{value}"), said.clone(), "rate", value.into())
                 .label(said)
                 .active((state.rate - value).abs() < 0.01)
                 .enabled(state.seekable)

@@ -276,22 +276,29 @@ fn said(look: &Look) -> Option<String> {
             )
         }),
     ];
-    let words: Vec<String> = look
+    let marks: Vec<skwir_core::words::Words> = look
         .plays
-        .map(|plays| plays.said().say())
+        .map(crate::icons::Plays::said)
         .into_iter()
         .chain(look.vcs.and_then(|state| vcs_said(state, look.is_dir)))
-        .chain(states.into_iter().flatten().map(|word| word.say()))
-        .chain(crate::tags::said(&look.tags, look.rating))
+        .chain(states.into_iter().flatten())
+        .chain(crate::tags::said_words(&look.tags, look.rating))
         .collect();
-    // Transitional: a list argument (ADR-139).
-    (!words.is_empty()).then(|| words.join(", "))
+    // Joined as the reader's language joins a list.
+    (!marks.is_empty()).then(|| {
+        skwir_core::words!(
+            views_entry_marks = "{ $marks }",
+            marks = skwir_core::words::List::and(marks),
+            note = "What a screen reader hears after a file's name: what marks it, joined (cut, hidden and tagged print)."
+        )
+        .say()
+    })
 }
 
 /// What a screen reader hears of the mark its repository's state puts on
 /// an entry (`icons::vcs_mark`): a file's state, what a folder holds below
 /// it; nothing for what is ignored, which is not marked.
-fn vcs_said(state: skwir_core::vcs::State, is_dir: bool) -> Option<String> {
+fn vcs_said(state: skwir_core::vcs::State, is_dir: bool) -> Option<skwir_core::words::Words> {
     use skwir_core::vcs::State;
     use skwir_core::words;
     let words = match (state, is_dir) {
@@ -329,7 +336,7 @@ fn vcs_said(state: skwir_core::vcs::State, is_dir: bool) -> Option<String> {
             note = "What a screen reader hears after a folder's name: its state in Git, files below it are in no commit yet."
         ),
     };
-    Some(words.say())
+    Some(words)
 }
 
 /// Its name, cut in the middle when too long (the extension tells files
@@ -405,7 +412,7 @@ mod tests {
             tags: vec![("work".into(), 0)],
             ..look()
         };
-        assert_eq!(said(&hidden).as_deref(), Some("hidden, Tagged work"));
+        assert_eq!(said(&hidden).as_deref(), Some("hidden and tagged work"));
         let leads = Look {
             is_dir: true,
             only_leads: true,
@@ -414,7 +421,7 @@ mod tests {
         };
         assert_eq!(
             said(&leads).as_deref(),
-            Some("cut, leads to what the filter keeps")
+            Some("cut and leads to what the filter keeps")
         );
         // What plays first: it is what the badge on its picture says.
         let playing = Look {
@@ -422,7 +429,7 @@ mod tests {
             tags: vec![("work".into(), 0)],
             ..look()
         };
-        assert_eq!(said(&playing).as_deref(), Some("paused, Tagged work"));
+        assert_eq!(said(&playing).as_deref(), Some("paused and tagged work"));
         assert_eq!(
             playing.mark().plays,
             Some(crate::icons::Plays::Paused),

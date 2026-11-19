@@ -2847,12 +2847,7 @@ pub fn refuse_exposure(
         exposed.is_empty(),
         words!(
             exclusions_agent_exposes = "an agent may not make private folders readable ({ $folders }): only you can, in Settings, Exclusions",
-            // Transitional: a list argument (ADR-139); an agent reads it.
-            folders = exposed
-                .iter()
-                .map(Words::english)
-                .collect::<Vec<_>>()
-                .join(", "),
+            folders = crate::words::List::and(exposed),
             note = "Said to an agent that asked to change the exclusions: what it would have let agents read, each as the Exclusions page says it. Settings and Exclusions are a dialog's and its page's names."
         )
     );

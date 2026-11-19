@@ -2189,7 +2189,7 @@ settings_check_unreadable = “{ $path }” cannot be read: { $why }
 # A setting's default choice and what it comes to here and now: Automatic (Dark).
 settings_choice_now = { $choice } ({ $now })
 
-# The values a setting takes, as a file writes them.
+# The values a setting takes, as a file writes them, joined as one of them is chosen (light, dark or auto).
 settings_choose_one = choose one of { $choices }
 
 settings_close_split = Pane that closes

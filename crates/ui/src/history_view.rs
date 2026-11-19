@@ -197,8 +197,10 @@ pub fn tagged(row: &Row) -> impl Iterator<Item = &str> {
 /// What a screen reader hears of a row's names: each with what it is.
 pub fn said_names(cell: &str) -> String {
     use skwir_core::words;
-    // Transitional: a list argument (ADR-139): the names, each said.
-    cell.split(REFS_JOIN)
+    // The names, each with what it is, joined as the reader's language
+    // joins a list.
+    let names: Vec<words::Words> = cell
+        .split(REFS_JOIN)
         .filter(|name| !name.is_empty())
         .map(|name| match RefKind::of(name) {
             (RefKind::Current, name) => words!(
@@ -206,26 +208,28 @@ pub fn said_names(cell: &str) -> String {
                 name = name,
                 note = "What a screen reader hears of a branch at a commit, checked out. name: \
                         the branch (main)."
-            )
-            .say(),
-            (RefKind::Branch, name) => name.to_owned(),
+            ),
+            (RefKind::Branch, name) => words::Words::as_written(name.to_owned()),
             (RefKind::Remote, name) => words!(
                 history_view_ref_remote = "{ $name } (remote)",
                 name = name,
                 note = "What a screen reader hears of a remote's branch at a commit. name: the \
                         branch (origin/main)."
-            )
-            .say(),
+            ),
             (RefKind::Tag, name) => words!(
                 history_view_ref_tag = "tag { $name }",
                 name = name,
                 note = "What a screen reader hears of a tag at a commit (a version's). name: \
                         the tag (v1)."
-            )
-            .say(),
+            ),
         })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect();
+    words!(
+        history_view_refs = "{ $names }",
+        names = words::List::and(names),
+        note = "What a screen reader hears of the branches and tags at a commit, each with what it is, joined (main (checked out) and tag v1)."
+    )
+    .say()
 }
 
 /// A row's part of the graph in `bounds`: the lines going by, those from
@@ -412,7 +416,7 @@ mod tests {
         .join(REFS_JOIN);
         assert_eq!(
             said_names(&cell),
-            "main (checked out), feature/x, origin/main (remote), tag v1"
+            "main (checked out), feature/x, origin/main (remote), and tag v1"
         );
         assert_eq!(RefKind::of("tag:v1"), (RefKind::Tag, "v1"));
         assert_eq!(RefKind::of("plain"), (RefKind::Branch, "plain"));

@@ -241,7 +241,7 @@ fn settings_are_checked_with_no_window_open() {
     let wrong = said(&skwir_cmd(runtime.path(), &["settings.check", &args]));
     assert!(wrong.contains("core.startp: no such setting"), "{wrong}");
     assert!(
-        wrong.contains("ui.theme: choose one of auto, light, dark"),
+        wrong.contains("ui.theme: choose one of auto, light, or dark"),
         "{wrong}"
     );
 }

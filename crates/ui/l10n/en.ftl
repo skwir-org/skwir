@@ -153,11 +153,11 @@ activity_getting_ready_opening = Getting ready…
 # How what runs goes (42% · about 3 min left), then how many actions wait their turn.
 activity_how_waiting = { $how } · { $count } waiting
 
-# Where an action goes, as its card says it when pointed at: the paths of the folders it brings something into.
+# Where an action goes, as its card says it when pointed at: the paths of the folders it brings something into, joined, the last item perhaps how many others.
 activity_into = Into { $folders }
 
-# Where an action goes, as its card says it when pointed at: the paths of the first folders it brings something into, then how many others.
-activity_into_others = Into { $folders } and { $count ->
+# The last item of where an action goes, as its card says it when pointed at, after the paths of the first folders it brings something into: how many others (Into /a, /b, /c and 2 other folders).
+activity_into_more = { $count ->
         [one] { $count } other folder
        *[other] { $count } other folders
     }
@@ -582,6 +582,9 @@ address_under_names_menu = Under names
 
 # What the View menu's Under names row says when tiles say nothing under their names.
 address_under_names_none = None
+
+# What the View menu's Under names row says tiles say under their names, joined (Size and Modified).
+address_under_names_shown = { $captions }
 
 # An item of the More menu, while there is nothing to undo; and its tooltip.
 address_undo = Undo
@@ -3146,6 +3149,9 @@ history_view_ref_remote = { $name } (remote)
 # What a screen reader hears of a tag at a commit (a version's). name: the tag (v1).
 history_view_ref_tag = tag { $name }
 
+# What a screen reader hears of the branches and tags at a commit, each with what it is, joined (main (checked out) and tag v1).
+history_view_refs = { $names }
+
 # What was copied, said after Copied (Copied the commit's hash).
 history_view_the_hash = the commit's hash
 
@@ -3206,8 +3212,14 @@ inspector_full_width = Full width
 # Pointing at the chapter number between a book's previous and next buttons: a click lets one be typed.
 inspector_go_to_chapter = Go to chapter
 
-# An entry of a Git history's contents: the branches and tags of a commit, then its day (2024-03-01).
+# What a screen reader hears of a row of a file's bytes: its offset, its bytes and what they read as, joined (00000010, 48 65 6C and Hel).
+inspector_hex_row = { $cells }
+
+# An entry of a Git history's contents: the branches and tags of a commit, joined (main and v1.2), then its day (2024-03-01).
 inspector_history_heading = { $names } · { $day }
+
+# An entry of a Git history's contents: the branches and tags of a commit, joined (main and v1.2), where its day is not known.
+inspector_history_names = { $names }
 
 # A button of a file's bytes shown in hexadecimal, and the title of what it opens: go to the byte at a number typed.
 inspector_jump = Jump to byte offset
@@ -3633,9 +3645,15 @@ keys_note_besides = { $keys } still runs “{ $action }” in { $place }.
 # Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), action what they keep running in place (File list).
 keys_note_deeper = In { $place }, { $keys } still runs “{ $action }”: a place's own keys come first.
 
-# Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), count the places with keys of their own, some the first three of them (File list, Address field, Sidebar).
+# Said before new keys are saved, anywhere: keys are the keys (Ctrl+Q), count the places with keys of their own, some the first three of them, then how many more, joined (File list, Address field, Sidebar and 2 more).
 keys_note_deeper_many = { $count ->
-       *[other] { $keys } still runs what it runs in { $count } places that bind it themselves ({ $some }…): a place's own keys come first.
+       *[other] { $keys } still runs what it runs in { $count } places that bind it themselves ({ $some }): a place's own keys come first.
+    }
+
+# The last item of the places that bind keys themselves, after the first three by name: how many others (File list, Address field, Sidebar and 2 more).
+keys_note_deeper_more = { $count ->
+        [one] { $count } more
+       *[other] { $count } more
     }
 
 # Said before new keys for one place are saved: keys are the keys (Ctrl+Q), action what they keep running in the rest of the window.
@@ -3898,6 +3916,9 @@ map_background = Map background
 # A file that holds its own map tiles (MBTiles, PMTiles) could not be read. error: why, as the reader said it.
 map_file_tiles_failed = This file's map tiles could not be read: { $error }
 
+# What a screen reader hears a map holds: its lines, places and areas counted, joined (2 lines and 5 places).
+map_holds = { $holds }
+
 # What a screen reader hears a map holds: its areas (shapes drawn filled).
 map_holds_areas = { $count ->
         [one] { $count } area
@@ -4065,6 +4086,9 @@ media_previous_track = Previous track
 
 # A player's menu row: how fast it plays, chosen among 0.5×, 1×, 2×.
 media_speed = Playback speed
+
+# A playback speed among the player's choices: speed is how many times as fast (0.5×, 1×, 1.25×).
+media_speed_value = { $speed }×
 
 # The title of a film's subtitles, among which one is chosen, or none.
 media_subtitles = Subtitles
@@ -5616,7 +5640,7 @@ properties_unread = { $count ->
 # A row's label in Properties: what of a folder could not be counted.
 properties_unreadable = Unreadable
 
-# The value of a field of a file that holds several, in Properties' More: each as the field says it, joined as a list.
+# The value of a row of Properties that holds several (a field's, the tags, the stores notes are kept in): each as it is said, joined as a list.
 properties_value_list = { $items }
 
 # The value of a field of a file that is yes or no, in Properties' More.
@@ -7469,6 +7493,9 @@ tabs_new = New tab
 # A split tab, as a screen reader hears it and a drag of it shows; first, second: the places its two panes show, as their tabs name them.
 tabs_split = { $first } and { $second }
 
+# A tab split more than once, as a screen reader hears it: the places its panes show, as their tabs name them, joined (Docs, Maps and Field Guide).
+tabs_split_many = { $places }
+
 # What a screen reader calls the strip of the window's tabs.
 tabs_strip = Tabs
 
@@ -7478,7 +7505,7 @@ tag_editor_add = Add { $tag }
 # What a screen reader calls the tag editor's row adding the tags typed (print, Paris).
 tag_editor_add_named = Add { $tags }
 
-# The tag editor's row adding the tags typed, each quoted (“print”, “Paris”).
+# The tag editor's row adding the tags typed, each quoted, joined (“print” and “Paris”).
 tag_editor_add_several = Add { $tags }
 
 # After a tag in the tag editor: Apply gives it to every file edited, which did not all have it.
@@ -7523,11 +7550,11 @@ tag_editor_placeholder = Filter, or type a new tag
 # After a tag in the tag editor: Apply takes it from the files edited that have it.
 tag_editor_removed = removed
 
-# What a screen reader hears of a file after its name: its tags, by their own names (print, Paris).
-tag_editor_said_tagged = Tagged { $tags }
+# What a screen reader hears of a file after its name, among what marks it (cut and tagged print): its tags, by their own names (print and Paris). Begun in lower case: what begins what is heard is cased in code.
+tag_editor_said_tagged = tagged { $tags }
 
-# What a screen reader hears of a file after its name: its tags, by their own names (print, Paris), then its rating (4 stars).
-tag_editor_said_tagged_rated = Tagged { $tags }; { $stars }
+# What a screen reader hears of a file after its name, among what marks it: its tags, by their own names (print and Paris), then its rating (4 stars). Begun in lower case: what begins what is heard is cased in code.
+tag_editor_said_tagged_rated = tagged { $tags }; { $stars }
 
 # A file's rating, of five stars: halves is the rating in half stars (0 to 10), stars the whole stars (halves / 2), which choose their words where the rating is whole (0 stars, 1 star, 4 stars).
 tag_editor_stars = { $halves ->
@@ -7553,6 +7580,9 @@ tag_editor_title = { $count ->
 
 # Why the tag editor closed: the tags read from the files came in a form it could not read. Followed by why.
 tag_editor_unreadable = unreadable tags
+
+# The tooltip of the chip that counts the tags a strip has no room for: their names, joined (print, Paris and work).
+tags_strip_more_named = { $tags }
 
 # error: why its shell did not start, as the system said it.
 terminal_did_not_start = The terminal did not start: { $error }
@@ -8471,6 +8501,9 @@ views_entry_described = { $group }; { $said }
 
 # What a screen reader hears after a file's name: it is a hidden file, though its name does not begin with a dot.
 views_entry_hidden = hidden
+
+# What a screen reader hears after a file's name: what marks it, joined (cut, hidden and tagged print).
+views_entry_marks = { $marks }
 
 # What a screen reader hears after a folder's name: it is shown only because files the filter keeps are inside it.
 views_entry_only_leads = leads to what the filter keeps

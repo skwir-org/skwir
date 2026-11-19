@@ -482,13 +482,19 @@ fn text_of(value: &Value) -> String {
         Value::Float(v) => format!("{v:.3}"),
         Value::Text(v) => v.to_string(),
         Value::Time(v) => crate::format::exact_time(*v),
-        Value::List(items) => words!(
-            properties_value_list = "{ $items }",
-            items = words::List::and(items.iter().map(text_of)),
-            note = "The value of a field of a file that holds several, in Properties' More: each as the field says it, joined as a list."
-        )
-        .say(),
+        Value::List(items) => listed(words::List::and(items.iter().map(text_of))),
     }
+}
+
+/// A value that holds several, said as one: joined as the reader's
+/// language joins a list.
+fn listed(items: words::List) -> String {
+    words!(
+        properties_value_list = "{ $items }",
+        items = items,
+        note = "The value of a row of Properties that holds several (a field's, the tags, the stores notes are kept in): each as it is said, joined as a list."
+    )
+    .say()
 }
 
 fn source_of(provenance: &Provenance) -> Option<SharedString> {
@@ -608,14 +614,13 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, noting: Noting<'_>) -> [O
             .get(keys::TAGS)
             .and_then(|f| note_source(&f.provenance)),
         // No gist: a folded heading draws them as chips (`Group::tags`).
-        // Transitional: a list argument (ADR-139).
         ..Row::new(
             words!(
                 properties_tags = "Tags",
                 note = "A row's label in Properties: the file's tags."
             )
             .say(),
-            tags.join(", "),
+            listed(words::List::and(tags.iter().map(String::as_str))),
         )
     };
     tags_row = tags_row.action(
@@ -760,12 +765,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, noting: Noting<'_>) -> [O
     let titles = |key| match meta.value(key) {
         Some(Value::List(items)) => {
             let ids: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
-            noting
-                .stores
-                .titles(&ids)
-                .iter()
-                .map(Words::say)
-                .collect::<Vec<_>>()
+            noting.stores.titles(&ids)
         }
         _ => Vec::new(),
     };
@@ -774,7 +774,6 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, noting: Noting<'_>) -> [O
     rows.extend([rating_row, comment_row]);
     // Where the notes are, and the stores that say otherwise (ADR-027).
     let kept = titles(keys::NOTES_KEPT);
-    // Transitional: a list argument (ADR-139).
     if !kept.is_empty() {
         rows.push(Row::new(
             words!(
@@ -782,7 +781,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, noting: Noting<'_>) -> [O
                 note = "A row's label in Properties: the stores the file's notes are kept in (its attributes, a sidecar)."
             )
             .say(),
-            kept.join("; "),
+            listed(words::List::and(kept)),
         ));
     }
     let differ = titles(keys::NOTES_DIFFER);
@@ -793,7 +792,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, noting: Noting<'_>) -> [O
                 note = "A row's label in Properties: the stores whose notes on the file say otherwise."
             )
             .say(),
-            differ.join("; "),
+            listed(words::List::and(differ)),
         )
         .action(
             &words!(
@@ -909,14 +908,15 @@ pub fn entry_groups(
     if let Some(Value::List(beside)) = meta.value(keys::COMPANIONS) {
         let names: Vec<&str> = beside.iter().filter_map(Value::as_str).collect();
         if !names.is_empty() {
-            // Transitional: a list argument (ADR-139).
             location.push(Row::new(
                 words!(
                     properties_beside_it = "Beside it",
                     note = "A row's label in Properties: the files beside it that keep its notes (a sidecar, a Mac's ._ file)."
                 )
                 .say(),
-                names.join(", "),
+                listed(words::List::and(
+                    names.into_iter().map(|name| Name(name.to_owned())),
+                )),
             ));
         }
     }
@@ -2376,7 +2376,6 @@ fn content_group(shell: &Shell) -> Option<Group> {
                 .iter()
                 .map(|(label, value)| Row::new(label.clone(), value.clone())),
         );
-        // Transitional: a list argument (ADR-139).
         if state.audio_tracks.len() > 1 {
             rows.push(Row::new(
                 words!(
@@ -2384,7 +2383,9 @@ fn content_group(shell: &Shell) -> Option<Group> {
                     note = "A row's label in Properties: a film's sound tracks (their languages)."
                 )
                 .say(),
-                state.audio_tracks.join(", "),
+                listed(words::List::and(
+                    state.audio_tracks.iter().map(String::as_str),
+                )),
             ));
         }
         // What the file says of itself, read with its poster: where a
@@ -2399,7 +2400,9 @@ fn content_group(shell: &Shell) -> Option<Group> {
                     note = "A row's label in Properties: a film's subtitles (their languages)."
                 )
                 .say(),
-                state.subtitle_tracks.join(", "),
+                listed(words::List::and(
+                    state.subtitle_tracks.iter().map(String::as_str),
+                )),
             ));
         }
     }

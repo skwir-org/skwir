@@ -389,12 +389,15 @@ pub fn strip_acting(
     };
     let theme_more = theme.clone();
     let more = Box::new(move |left: std::ops::Range<usize>| {
-        let names: Vec<&str> = items[left.clone()]
-            .iter()
-            .map(|(t, _)| t.as_str())
-            .collect();
-        // Transitional: a list argument (ADR-139).
-        let tip: gpui::SharedString = names.join(", ").into();
+        // Joined as the reader's language joins a list, each named as its
+        // chip names it.
+        let tip: gpui::SharedString = words!(
+            tags_strip_more_named = "{ $tags }",
+            tags = words::List::and(items[left.clone()].iter().map(|(t, _)| t.as_str())),
+            note = "The tooltip of the chip that counts the tags a strip has no room for: their names, joined (print, Paris and work)."
+        )
+        .say()
+        .into();
         let n = left.len();
         match on {
             StripOn::Row { .. } => more_chip(n, muted),
@@ -660,33 +663,33 @@ impl Shell {
 }
 
 /// What a screen reader hears of an entry besides its name: its tags, as
-/// their chips name them, and its stars ("Tagged print, Paris; 4
-/// stars"). `None` with neither.
+/// their chips name them, and its stars ("Tagged print and Paris; 4
+/// stars"), where they begin what it hears. `None` with neither.
 pub fn said(tags: &[(String, usize)], rating: Option<u64>) -> Option<String> {
-    // Transitional: a list argument (ADR-139).
-    let names = (!tags.is_empty()).then(|| {
-        tags.iter()
-            .map(|(tag, _)| tag_leaf(tag))
-            .collect::<Vec<_>>()
-            .join(", ")
-    });
+    said_words(tags, rating).map(|said| said.heading().say())
+}
+
+/// What `said` says, as words said inside a sentence or a list ("cut and
+/// tagged print"): its tags joined as the reader's language joins a list.
+pub fn said_words(tags: &[(String, usize)], rating: Option<u64>) -> Option<Words> {
+    let names: Option<words::Arg> = (!tags.is_empty())
+        .then(|| words::List::and(tags.iter().map(|(tag, _)| tag_leaf(tag))).into());
     let stars = rating.filter(|stars| *stars > 0).map(stars_said);
-    let said = match (names, stars) {
+    Some(match (names, stars) {
         (Some(tags), None) => words!(
-            tag_editor_said_tagged = "Tagged { $tags }",
+            tag_editor_said_tagged = "tagged { $tags }",
             tags = tags,
-            note = "What a screen reader hears of a file after its name: its tags, by their own names (print, Paris)."
+            note = "What a screen reader hears of a file after its name, among what marks it (cut and tagged print): its tags, by their own names (print and Paris). Begun in lower case: what begins what is heard is cased in code."
         ),
         (None, Some(stars)) => stars,
         (Some(tags), Some(stars)) => words!(
-            tag_editor_said_tagged_rated = "Tagged { $tags }; { $stars }",
+            tag_editor_said_tagged_rated = "tagged { $tags }; { $stars }",
             tags = tags,
             stars = stars,
-            note = "What a screen reader hears of a file after its name: its tags, by their own names (print, Paris), then its rating (4 stars)."
+            note = "What a screen reader hears of a file after its name, among what marks it: its tags, by their own names (print and Paris), then its rating (4 stars). Begun in lower case: what begins what is heard is cased in code."
         ),
         (None, None) => return None,
-    };
-    Some(said.say())
+    })
 }
 
 /// Where a tag is, or will be, among the entries edited.
@@ -1235,8 +1238,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 a11y.then(|| {
                     words!(
                         tag_editor_add_named = "Add { $tags }",
-                        // Transitional: a list argument (ADR-139).
-                        tags = tags.join(", "),
+                        tags = words::List::and(tags.iter().map(String::as_str)),
                         note = "What a screen reader calls the tag editor's row adding the tags typed (print, Paris)."
                     )
                     .say()
@@ -1295,13 +1297,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         ),
                         tags => words!(
                             tag_editor_add_several = "Add { $tags }",
-                            // Transitional: a list argument (ADR-139).
-                            tags = tags
-                                .iter()
-                                .map(|t| format!("“{t}”"))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            note = "The tag editor's row adding the tags typed, each quoted (“print”, “Paris”)."
+                            tags = words::List::and(tags.iter().map(|t| Name(t.clone()))),
+                            note = "The tag editor's row adding the tags typed, each quoted, joined (“print” and “Paris”)."
                         ),
                     }
                     .say(),

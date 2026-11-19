@@ -3749,22 +3749,26 @@ impl Contents {
                 .get(3)
                 .map_or("", |date| date.get(..10).unwrap_or(date));
             headings.push((index, entries.len()));
-            // Transitional: a list argument (ADR-139).
-            let names = names.join(", ");
+            // Joined as the reader's language joins a list.
+            let names: skwir_core::words::Arg = skwir_core::words::List::and(names).into();
             entries.push(crate::outline::Entry {
                 depth: 0,
                 title: if day.is_empty() {
-                    names.into()
+                    words!(
+                        inspector_history_names = "{ $names }",
+                        names = names,
+                        note = "An entry of a Git history's contents: the branches and tags of a commit, joined (main and v1.2), where its day is not known."
+                    )
                 } else {
                     words!(
                         inspector_history_heading = "{ $names } · { $day }",
                         names = names,
                         day = day,
-                        note = "An entry of a Git history's contents: the branches and tags of a commit, then its day (2024-03-01)."
+                        note = "An entry of a Git history's contents: the branches and tags of a commit, joined (main and v1.2), then its day (2024-03-01)."
                     )
-                    .say()
-                    .into()
-                },
+                }
+                .say()
+                .into(),
                 command: Some((
                     "ui.inspect",
                     serde_json::json!({"action":"row","index":index}),
@@ -4996,9 +5000,15 @@ pub(crate) fn said_hex(
                 .map(String::as_str)
                 .filter(|cell| !cell.is_empty())
                 .collect();
-            // A label's words are its value, as gpui's text gives them.
-            // Transitional: a list of what the file holds (ADR-139).
-            d.aria_value(cells.join(", ")).aria_selected(selected)
+            // A label's words are its value, as gpui's text gives them:
+            // its offset, bytes and text, joined as the reader's language
+            // joins a list.
+            let said = words!(
+                inspector_hex_row = "{ $cells }",
+                cells = skwir_core::words::List::and(cells),
+                note = "What a screen reader hears of a row of a file's bytes: its offset, its bytes and what they read as, joined (00000010, 48 65 6C and Hel)."
+            );
+            d.aria_value(said.say_plain()).aria_selected(selected)
         })
         .into_any_element()
 }
@@ -5223,7 +5233,8 @@ mod tests {
         };
         let contents = Contents::of(&data, &Anchors::of(&data)).unwrap();
         let titles: Vec<&str> = contents.entries.iter().map(|e| e.title.as_ref()).collect();
-        assert_eq!(titles, ["v2, v2.0 · 2026-10-06", "v1 · 2026-10-06"]);
+        // Joined as the reader's language joins a list.
+        assert_eq!(titles, ["v2 and v2.0 · 2026-10-06", "v1 · 2026-10-06"]);
         assert_eq!(
             contents.entries[1]
                 .command

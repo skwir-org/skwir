@@ -1046,10 +1046,10 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     // What the tiles say under their names, one row saying which ("Size,
     // Modified"), opening them beside it to choose.
     if shell.ui().view_id == crate::view::GRID {
-        let said: Vec<String> = under_names(shell)
+        let said: Vec<Words> = under_names(shell)
             .into_iter()
             .filter(|(_, spec, _)| shell.grid_captions().contains(&spec.caption))
-            .map(|(_, spec, _)| spec.label_words().say())
+            .map(|(_, spec, _)| spec.label_words())
             .collect();
         let value = if said.is_empty() {
             words!(
@@ -1058,8 +1058,12 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             )
             .say()
         } else {
-            // Transitional: a list argument (ADR-139).
-            said.join(", ")
+            words!(
+                address_under_names_shown = "{ $captions }",
+                captions = skwir_core::words::List::and(said),
+                note = "What the View menu's Under names row says tiles say under their names, joined (Size and Modified)."
+            )
+            .say()
         };
         parts.push(MenuPart::Sub(
             UNDER_NAMES.into(),

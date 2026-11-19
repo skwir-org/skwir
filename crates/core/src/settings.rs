@@ -1864,9 +1864,9 @@ impl SettingSpec {
                     .any(|s| Some(s.as_str()) == value.as_str()),
             crate::words!(
                 settings_choose_one = "choose one of { $choices }",
-                // Transitional: a list argument (ADR-139)
-                choices = self.constraints.choices.join(", "),
-                note = "The values a setting takes, as a file writes them."
+                choices =
+                    crate::words::List::or(self.constraints.choices.iter().map(String::as_str)),
+                note = "The values a setting takes, as a file writes them, joined as one of them is chosen (light, dark or auto)."
             )
         );
         if let Some((min, max)) = self.constraints.integer_range {
