@@ -151,6 +151,25 @@ fn admits_of(asked: &Asked, filter: Option<usize>) -> Option<Admits> {
     Some(Admits(Arc::new(filter.admits())))
 }
 
+/// What of `paths` is taken: how many (a file, a link, anything there),
+/// and the first a folder takes (followed through a link), which no file
+/// can be saved over. Reads the disk: on a worker.
+fn taken(paths: &[PathBuf]) -> (usize, Option<PathBuf>) {
+    let mut count = 0;
+    let mut folder = None;
+    for path in paths {
+        let Ok(meta) = std::fs::symlink_metadata(path) else {
+            continue;
+        };
+        count += 1;
+        if folder.is_none() && (meta.is_dir() || std::fs::metadata(path).is_ok_and(|m| m.is_dir()))
+        {
+            folder = Some(path.clone());
+        }
+    }
+    (count, folder)
+}
+
 /// The name to save under, of the field's `text`: none while it is empty
 /// (or spaces alone); `given`'s bytes while the text still says them (a
 /// name not UTF-8 is shown in its lossy form), else the text as typed,
@@ -680,15 +699,28 @@ impl Shell {
             "ui-chooser-names",
             {
                 let paths = paths.clone();
-                move || {
-                    paths
-                        .iter()
-                        .filter(|path| std::fs::symlink_metadata(path).is_ok())
-                        .count()
-                }
+                move || taken(&paths)
             },
-            move |this, taken, window, cx| {
+            move |this, (taken, folder_taken), window, cx| {
                 if this.chooser.as_ref().is_none_or(|c| c.asking != asking) {
+                    return;
+                }
+                // No file can be saved over a folder: said, and nothing
+                // answered, another folder to be chosen.
+                if let Some(taken) = folder_taken {
+                    this.set_status(
+                        words!(
+                            chooser_folder_taken = "There is a folder named { $name } in { $folder }: choose another folder to save in",
+                            name = taken
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                            folder = folder.display().to_string(),
+                            note = "Said where another program saves several files in a folder holding a folder of the name of one of them, which no file can replace: name: that folder's name; folder: where it is."
+                        ),
+                        true,
+                        cx,
+                    );
                     return;
                 }
                 if taken == 0 {
@@ -1153,6 +1185,33 @@ mod tests {
                 save_name("r\u{fffd}sum\u{fffd}2.txt", Some(&latin)),
                 Some(OsString::from("r\u{fffd}sum\u{fffd}2.txt")),
                 "another name typed"
+            );
+        }
+    }
+
+    /// What is taken is counted, and a folder of a name, followed through
+    /// a link, is told: no file is saved over it.
+    #[test]
+    fn a_folder_of_a_name_is_told() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("notes.txt"), "a").unwrap();
+        std::fs::create_dir(root.join("taken.txt")).unwrap();
+        let names =
+            |names: &[&str]| -> Vec<PathBuf> { names.iter().map(|n| root.join(n)).collect() };
+        assert_eq!(taken(&names(&["new.txt", "other.txt"])), (0, None));
+        assert_eq!(taken(&names(&["notes.txt", "new.txt"])), (1, None));
+        assert_eq!(
+            taken(&names(&["notes.txt", "taken.txt"])),
+            (2, Some(root.join("taken.txt")))
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("taken.txt"), root.join("link.txt")).unwrap();
+            assert_eq!(
+                taken(&names(&["link.txt"])),
+                (1, Some(root.join("link.txt"))),
+                "a link to a folder is a folder"
             );
         }
     }

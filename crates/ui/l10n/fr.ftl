@@ -739,6 +739,9 @@ chooser_choose_folder = Choisissez d’abord un dossier
 chooser_filter = Fichiers affichés
 
 # draft
+chooser_folder_taken = Il y a un dossier nommé { $name } dans { $folder } : choisissez un autre dossier où enregistrer
+
+# draft
 chooser_name = Nom
 
 # draft

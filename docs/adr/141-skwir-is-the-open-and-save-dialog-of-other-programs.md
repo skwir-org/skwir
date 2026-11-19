@@ -107,10 +107,11 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    field still says them (a name not UTF-8 is shown in its lossy form);
    a file chosen (Enter, a double click) is the answer at its own path,
    asked Replace? on it. `SaveFiles`: a folder chosen, each name of
-   `files` in it, names taken asked Replace? once for all. Only local
-   files, as `file://` URIs, said writable (as KDE's
-   back end says them: the interface's default is read access alone,
-   which a sandboxed program would be given); the choices as set; the
+   `files` in it, names taken asked Replace? once for all; a name a
+   folder takes there is said, and nothing answered. Only local files,
+   as `file://` URIs, said writable (as KDE's back end says them: the
+   interface's default is read access alone, which a sandboxed program
+   would be given); the choices as set; the
    filter in use. A name the program gives (`current_name`, each of
    `files`) is one name, or the request is answered 2 without a window:
    a `/`, `.`, `..` or nothing would put the file elsewhere than in the

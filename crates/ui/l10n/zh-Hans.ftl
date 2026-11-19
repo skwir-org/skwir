@@ -718,6 +718,9 @@ chooser_choose_folder = 请先选择一个文件夹
 chooser_filter = 显示的文件
 
 # draft
+chooser_folder_taken = { $folder } 中已有名为 { $name } 的文件夹：请选择另一个文件夹来保存
+
+# draft
 chooser_name = 名称
 
 # draft

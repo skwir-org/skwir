@@ -684,6 +684,9 @@ chooser_choose_folder = Choose a folder first
 # What the filter dropdown of the bar answering another program's dialog is called, for a screen reader.
 chooser_filter = Files shown
 
+# Said where another program saves several files in a folder holding a folder of the name of one of them, which no file can replace: name: that folder's name; folder: where it is.
+chooser_folder_taken = There is a folder named { $name } in { $folder }: choose another folder to save in
+
 # Before the name field of the bar answering another program's Save dialog.
 chooser_name = Name
 
