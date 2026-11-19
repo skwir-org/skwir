@@ -711,11 +711,8 @@ impl Shell {
                     this.set_status(
                         words!(
                             chooser_folder_taken = "There is a folder named { $name } in { $folder }: choose another folder to save in",
-                            name = taken
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                            folder = folder.display().to_string(),
+                            name = skwir_core::words::Name::of(&taken),
+                            folder = folder.as_path(),
                             note = "Said where another program saves several files in a folder holding a folder of the name of one of them, which no file can replace: name: that folder's name; folder: where it is."
                         ),
                         true,
