@@ -20943,3 +20943,102 @@ the views'), every key changeable on the Keyboard page.
   code), a touchscreen, a screen reader on the button, macOS (compiled
   only with the rest of skwir-ui where `check-macos` builds it, which
   leaves the UI out).
+
+## 2026-11-20: the review of ADR-142, the thumbnails and ADR-143, fixed; where the next review starts
+
+Asked by the user the evening of 2026-11-19: review "as usual" (bugs,
+performance and complexity, inconsistencies) the commits since the last
+review, and fix what it finds.
+
+- **How**: five readers over cd67ad0c..30a71ecd (15 commits: ADR-142's
+  updates plugin, its platform and core pieces, its packaging; the
+  thumbnail cache written after showing and the vendored jpeg-decoder;
+  the labels column and the toast's buttons; ADR-143's drag), each a
+  part, read only: 57 findings, none high, six medium. `cargo deny`
+  failed besides: eight advisories against Wasmtime 48.0.8 published
+  since the last round (RUSTSEC-2026-0566 to 0573). Then five fixers,
+  each owning its files, in the one tree, builds one at a time in a
+  capped scope, every step committed apart (c48538bf..b829ba68, 31
+  commits; the catalogs counted again in 4db833d3).
+- **The mediums**: a question that stays was closed by its link that
+  answers nothing (`NotifyAction::answers`, c314902d); "Check for a new
+  version" said nothing unless it told a version for the first time (it
+  answers every time now, the only check made on a metered connection,
+  aa3ce19a); once an important release was told every later one skipped
+  the 14 days (f09a7d9d); `apt remove skwir-repository` left a source
+  whose key was gone, so every `apt update` failed (a plain file now);
+  the documented change of key would have locked out every system (one
+  key signs at a time, the coming one carried first: Fedora 44's dnf
+  refuses a signature of two keys, tried) (c48538bf); Wasmtime moved to
+  48.0.10 (34cf1b0d).
+- **The rest, by area**: the question stays beneath a toast said over it
+  and comes back, goes with its plugin turned off, and is asked only in
+  a window of the user's own, never another program's dialog (210c235f,
+  bcd43843, 694c3774); a plugin turned off can no longer declare a
+  setting from a worker (`Settings::gated`, ff3e8cc1); News unchanged
+  wakes no window (69b07dcb); About reads it as it draws (5629d136); a
+  toast keeps its buttons beside a short sentence that fits (b829ba68).
+  The updates plugin: never asks a copy whose settings hold the answer
+  (`Settings::stored`), follows a repository added or removed at each
+  look, keeps nothing of a run turned off, merges what two copies keep on
+  one state file (`Settings::kept_on_disk`), reads a day kept ahead as
+  today, names the site asked, sends no ETag back (54c4f822, 418072a5,
+  c98c5554, 8b3ce54a, 9dde9ff5); the HTTP client's deadline bounds the
+  whole request (1c6ab3cd); what a package carries is found from the
+  program, links followed (b5c9537b). Packaging: the repositories made
+  whole before either is published, refused when the bundle is not its
+  manifest's, `skwir-repository` the same file until its version moves,
+  a stranger's signature shown refused; CI's and Nix's packages checked
+  for how they came; recipes quoted; the repositories published before
+  the first release that carries the plugin (c48538bf, ff1396af,
+  754628d1). Thumbnails: what landed is served to a second asker while
+  the cache writes it (e5378816); a progressive JPEG at an eighth keeps
+  only its DC (a 5464 x 8192 photo: 44-68 ms and 133 MB became 16-28 ms
+  and 7 MB), the DC bits its first scan leaves out drawn halfway
+  (quality 30: at most 10 levels and 4 darker on average became 6 and
+  none), a small decode on its caller's thread (15-20 % less processor
+  time), a half's and a whole's with the crate's threads, kept as fast
+  (489f11a1, c30f2762); the cache keeps the smaller of two quick PNG
+  encodings (a page's thumbnail 58 KB became 30) (193c8495); `just deny`
+  now holds the crates vendored by path to the advisories, which
+  cargo-deny never matched (shown with a made-up advisory) (e3a4d8fa).
+  The drag: two quick drags are no double click (3d39704a); a page's
+  margins and pictures move the pages, a stale press clicks no link, the
+  layer draws only when something moves (5484d071); the setting has
+  words of its own (bc7ec938).
+- **Decided along the way** (the conservative reading, the user may
+  revisit): no ETag sent back (a server's tag could tell copies apart);
+  a check asked for now that finds a version counts as a notice, the
+  next one 14 days after it; the Yes says nothing until the request
+  ends, then one toast; the channel word stays in Cargo's package
+  metadata (cargo-deb refuses an asset that matches nothing), packagers
+  told to leave it out; a JPEG decode the user waits for (a half, whole)
+  keeps its threads; `Beside::fit` for the toast alone (applied to every
+  row, it moved Settings › Plugins' switches under their notes at
+  700 px); the drag's switch stays where pages have no text (a saved
+  choice). Not changed, for the user to decide: signing the `.rpm`
+  files, so that GNOME Software and Discover take Skwir's updates as
+  trusted (in PLAN). No proxy is honoured (recorded in ADR-142, PORTING
+  and the guide).
+- **Checks**: each step by its fixer (rustfmt, clippy `-D warnings` on
+  the crates touched, their tests; Windows' clippy where its code was
+  touched; `just repository-check` in fresh Debian 13, Ubuntu 24.04 and
+  Fedora 44 roots: keys refused, a stranger refused, upgrades 1 to 3,
+  removal; the jpeg-decoder series making the vendored copy from the
+  published crate; windows on Xvfb for the toasts, Settings and the drag,
+  frames counted). Then on the tree: `just lint`; the tests of
+  skwir-core, skwir-platform, skwir-ui and the updates plugin (2323
+  passed, 20 skipped), of open-with, places, query and map-tiles (204),
+  and the binary's plugins_toggle, settings, fallback_thumbnails,
+  tags_everywhere, remote_configs and cli (45); `just check-windows`,
+  `just check-macos`, `just deny` (the vendored crates included);
+  `just a11y-check` on a debug build (passed). Not run: every test of
+  the default members at once and `just bench-check`'s thumbnail
+  budgets (the disk had 7 to 19 GB free: a release build needs about
+  25), the native workers' tests, Wine, the packages workflow, a real
+  key's `just repositories`, PackageKit, a screen reader, a cursor
+  (Xvfb draws none).
+- **Where the next review starts**: every commit from cd67ad0c to
+  30a71ecd was read by a reviewer other than its author; the fixes
+  (c48538bf..4db833d3) had no second review. What they left is in
+  PLAN's "What is left" (ADR-142, ADR-143, Thumbnails).

@@ -1212,7 +1212,14 @@ seen (Xvfb's captures draw no cursor); a touchscreen's drag (gpui says
 its scrolling, not a drag) and a screen reader on the bar's button not
 tried; a press that moves the pages on another page than the selection's
 drops the selection (the reader reads a release and a link on the
-selection's page: a page of the press of its own would keep it).
+selection's page: a page of the press of its own would keep it); a
+picture's double click asks only its second click's press and release,
+so a drag followed at once by a click near where it began can still be
+one (rare). From the review of 2026-11-20: a toast's sentence starts at
+the narrower of its share and its own line (`Beside::fit`), Settings'
+rows and About not (taffy measures a row kept to one line at its whole
+length, so their texts would start wider than the share): that needs
+the texts measured whole.
 
 **A new version told** (ADR-142, built 2026-11-19). Left: the
 repositories' key (the user's to make, `docs/RELEASING.md`), then the
@@ -1226,7 +1233,30 @@ information and the zsync file were checked by the AppImage's check
 against an image of a stand-in, not by an updater); a check's notice
 seen in a window (What's new, the same toast, was); the connection's
 cost on Windows and `isExpensive` on macOS, not read (the check runs
-there); a release's copy older than 0.6 never checks.
+there); a release's copy older than 0.6 never checks. From the review
+of 2026-11-20: the client honours no proxy (hyper-util's `client-proxy`
+and `client-proxy-system` would add `ipnet`, `windows-registry` and
+`system-configuration`, and still not read GNOME's or KDE's settings),
+so behind a network that lets requests out only through one a copy is
+never told; two copies on one state file merge what they keep, but
+without a lock on the file a write by the other between a read and a
+save is lost to that save; the user's choice whether the `.rpm` files
+are signed (GNOME Software and Discover, through PackageKit, may take an
+unsigned package's update for untrusted: signing would be `rpmsign` in
+`release-build` before the checks and the digests, the key there, then
+`gpgcheck=1`), and an update through either tried; `skwir` installed
+from the release before and upgraded through the repositories (only
+downloaded there now); the indexes compared with GitHub's stored files
+rather than the bundle's manifest; apt's by-hash.
+
+**Thumbnails** (from the review of 2026-11-20). A progressive JPEG
+decoded at a quarter or a half (the preview of a large photo) still
+holds 64 coefficients a block for the whole picture (384 MiB for 64
+megapixels in 4:4:4): its AC refinement scans need every coefficient of
+their band, so only an eighth drops them. The thumbnail budgets
+(`thumbs_cold_*`, `thumbs_warm_*`) not measured since the cache is
+written after showing; no test of a CMYK JPEG going straight to the
+whole decode (no such fixture).
 
 **Show in folder for other programs** (ADR-140, 2026-11-18): built on
 Linux and checked against a private dbus-daemon on Xvfb. Left: a real
