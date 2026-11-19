@@ -20630,3 +20630,131 @@ checked: a real asking program on the
 session, the session's dbus-broker, KWin, Mutter and Hyprland keeping
 the dialog over its asker, a portal before 1.22, several files from the
 shelf, a screen reader on the bar (PLAN's "What is left").
+
+## 2026-11-19: the review since 0.5.1 and ADR-141's, fixed; where the next review starts
+
+On the night of 2026-11-18 the user asked for a review "as usual" (bugs,
+performance and complexity, inconsistencies) of every commit since
+v0.5.1, and its findings fixed, while another session built ADR-141
+(other programs' Open and Save dialogs) in the same tree: the review
+alongside it, read only, and nothing changed or built until it was done.
+
+- **How**: eight readers over v0.5.1..dd8a9439 (ADR-139's words, gpui's
+  right-to-left and line-breaking patches 0069 to 0084, printing right to
+  left, ADR-140), each a part (the words engine, collation and formats,
+  gpui, the window's settings and keys, the rest of the window, the
+  plugins naming things, printing and plugins from outside, core and the
+  platform), read only beside the other session; 62 findings and two
+  nits, three high. Once it ended (59398dd7), two more read ADR-141's
+  commits (1ae5a3bb..59398dd7: the bus's side and gpui 0085, the
+  window's side and the Settings row): 20 findings (one found by both),
+  none high on the user's portal. Then eight fixers, each owning its
+  files, in the one tree, builds one at a time in a capped scope, every
+  step committed apart (d0c013da..90efb6b8, 83 commits). The ADR-141
+  session joined as a ninth track for the three follow-ups the user
+  decided that morning and a fourth the user asked (four of those
+  commits).
+- **The highs**:
+  - A locale's script was dropped where the system names its languages
+    as BCP 47 tags (macOS, Windows): `zh-Hant-TW` became `zh`, so a
+    Traditional Chinese reader got the Simplified catalog, `sr-Latn-RS`
+    Cyrillic (4a0dedcd; C as numbers' or dates' locale now English
+    formats).
+  - A plugin from outside's catalog could pass the bound on how deep its
+    placeables nest (a `"` in a variant's text, a literal open at a
+    line's end) and overflow the stack at every start: the count never
+    falls short of Fluent's own now, tested against Fluent's parse of
+    random texts (cc076d48).
+  - A name drawn on its own (rows, tiles, columns, cards, tabs, the trail,
+    the title, bookmarks, the rename field and every text field, an
+    archive's members, Rename Several's preview, group headings) obeyed
+    its bidirectional overrides, so `Hello_` + U+202E + `gnp.js` read as
+    a picture: `DrawnName`, `Words::name_alone` and `input::Drawn` show
+    each control as a tag, one character to the caret and to Backspace,
+    the name's bytes unchanged (4f0b1592, c98f6f11, 03f1b46b, e75a6fa3;
+    seen on Xvfb, the saved name's bytes read back).
+- **ADR-141's**: a name another program gives (`files`, `current_name`)
+  is one name or the request fails (d9e23e46); what was chosen is said
+  writable (bfcdf67a: 1.22.1 reads its absence so, the interface's
+  default would not); agents and scripts never reach the dialog's
+  window, and what waits for an answer waits for a window of the user's
+  own (19e2e823); every way the window goes answers cancelled and takes
+  it from the core, the user's last window counted alone (9960a6f5);
+  where a program chose kept when a bus-started skwir ends (00f11f71); a
+  Wayland handle taken only short and printable (946b9719: a long one
+  took the display connection down); a name saved as its bytes, a file
+  picked answered at its own path (cd5a24ec); a folder of a name refused
+  for SaveFiles (52a7a32d, 07a413ee); the Settings row keeps a file it
+  cannot read and Undo names a serial, never a path and its text
+  (0c92cf73); a name the bus handed back let go through the bus itself,
+  CP-1's FileManager1 too (ed314a22); patch 0085 exported as the tree
+  has it (d0c013da). Then the user's: a linked portal configuration left
+  to its keeper, the copy of the configuration only for a portal before
+  1.22, its version asked (f9494d83); Escape ends a typed name before
+  the dialog (0d1c0d03); the running portal's own folders read from
+  /proc (31300597: nixpkgs' portal reads no `NIX_XDG_DESKTOP_PORTAL_DIR`);
+  Home Manager's `programs.skwir.fileChooser` and `defaultFileManager`
+  (ac3e525b).
+- **The rest, by kind**: words answered to agents as data, English
+  (e549e8b0, fc8a339a, 61149404, 4d31392f); lists joined, counts chosen
+  and sentences kept in one language as the reader's language has them
+  (31805c6e, 4cc8bac8, d3ca9c3c, c8b5baf4, 6adc8f4a, 0324104e, 8539db82);
+  keys found by the names the window says (8616e1f1); what is kept said
+  again once the words move (1e8c5d7f, cd442a7a, 583c023d, 3f198092,
+  0a1adb3b, acf4bead, 598325b9); lists ordered as names are
+  (89cd96d1, ea09654a); a catalog's message ending where Fluent's does
+  (6dda6938); a step's error kept as data, never compared as text, and
+  macOS's trash errors as words (5d36a481); a mount's tool read for
+  what it wrote, never Skwir's words (a67b252f); sizes rounded before
+  their unit (8e7450c1), a volume's in whole units (be4730ca); dates
+  before 1970 said again (b97f9d27, 45f02066: a regression of the words
+  conversion found after the review); a document's lines after a break
+  in their paragraph's direction (73236cb4), right-to-left rows in
+  paragraph order and their carets worked out once (03952ff2, gpui 0086
+  and 0087), the root saying a direction only when mirrored (2746620b);
+  printing's booklet pictures and its untold edge (b15786f2), its words
+  plain (7f5f3098); the quotes an English wrote around its arguments,
+  163 of them in 155 messages, given as names, paths or named words, the
+  check refusing any since (4b9cd3d1, f390aa77..ad58915c, with
+  `Arg::Named`, 2db493d5).
+- **Decided along the way** (the conservative reading, the user may
+  revisit): scripts are the user's own and may change the dialogs row
+  (commands.md), only answering a dialog is kept from them; a plugin's
+  catalog with an id twice is said by its first copy, not refused;
+  every text field shows the tags, not only the rename field; a mount's
+  tool past its patience is still told as a server that did not answer,
+  known by the time it took; an unlabelled volume's size in whole units;
+  paths bare in every language, the Chinese drafts to review where one
+  now meets a character; English joins a list with "and" and its comma
+  ("a, b, and c"), and what a screen reader hears after a name begins
+  in lower case ("tagged Paris and print", where 0.5.1 said "Tagged
+  Paris, print").
+- **Checks**: each step by its fixer (rustfmt, clippy `-D warnings` on the
+  crates touched, their tests; Windows or macOS where its code is theirs);
+  then on the whole tree, in a capped scope: the words check; `just
+  lint`; every test of the default members (3943 passed, 32 skipped);
+  `just check-windows` and `just check-macos`; `just a11y-check`
+  (passed); the tests of core, the platform and the remote plugin under
+  Wine (1184: 1180 passed). The first run found what the fixes had left
+  in three checks (Escape's test reading the file list's English words,
+  the tags sidebar's order, a row's description heard) and a test of the
+  save field failing under Wine since d5bf383d (a home not whole on
+  Windows), fixed in 277aa389 and 90efb6b8. The four that fail under
+  Wine are older than the round and untouched by it: their fixtures are
+  Unix's (`orders.rs`'s two, 57829cf7; `walks.rs`'s, 4ee9d885; the
+  remote plugin's uploads, a record folder named with a colon, 3fa206fb),
+  in PLAN. Seen in a window (Xvfb, private buses): a name's controls in
+  the views, tabs, trail, title and rename field, its bytes saved as
+  they were; the dialog's ways out, its save names, SaveFiles over a
+  folder, a bus-started skwir remembering where the program chose. Not
+  run: the native workers' tests, the bench, the idle share, the
+  release's smoke, a screen reader; Windows' and macOS's code beyond
+  that compiled. The disk went to 4 GB free during the checks: pruned
+  twice, and gpui's own check's cache (`target/gpui-check`, 23 GB,
+  rebuilt when next run) removed.
+- **Where the next review starts**: every commit from v0.5.1 to
+  59398dd7 was read by a reviewer other than its author (v0.5.1..dd8a9439
+  the first wave, 1ae5a3bb..59398dd7 the second); the fixes
+  (d0c013da..90efb6b8) and the user's follow-ups (f9494d83, 0d1c0d03,
+  31300597, ac3e525b) had no second review. What they left is in
+  PLAN's "What is left" ("From the review since 0.5.1").

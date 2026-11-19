@@ -1151,8 +1151,16 @@ Wayland xdg-foreign v2). General › "Open and save dialogs"
 (`dialogs_setting.rs`, `skwir_platform::portals`) chooses the back end
 in the user's portal configuration, applied at the portal's next start.
 The packages install `skwir.portal` and the bus's service file. Linux's
-by nature (`docs/PORTING.md`). Checks in `docs/STATUS-LOG.md`
-(2026-11-19).
+by nature (`docs/PORTING.md`). Then, the same day, on the user's
+decisions: a portal configuration that is a link (Home Manager's, a
+dotfiles one) is left to its keeper and said; the configuration in
+effect is copied only for a portal before 1.22, its version asked; the
+row reads the running portal's own folders (its environment and
+program, in /proc), which differ from skwir's on NixOS; in a dialog's
+window Escape lets go of a name typed to find a file before it cancels;
+Home Manager's `programs.skwir.fileChooser` and
+`programs.skwir.defaultFileManager`. Reviewed and fixed the same day
+(the review since 0.5.1). Checks in `docs/STATUS-LOG.md` (2026-11-19).
 
 ## What is left
 
@@ -1181,11 +1189,24 @@ several files chosen from the shelf were not tried (the shelf's
 selection is read as any pane's); a portal before 1.22 reading the copied
 configuration (only 1.22.1's source was read); the windows left are not
 restored when a launch comes to a skwir the bus started for a dialog
-(the start folder opens, as for `--file-manager`); type-to-find's text
-does not take Escape before the dialog does; a screen reader on the
-bar (`a11y-check` opens no dialog); a test keeping core-answered
+(the start folder opens, as for `--file-manager`); a screen reader on
+the bar (`a11y-check` opens no dialog); a test keeping core-answered
 commands out of `ui.*` (the row's Undo named one so first, found in a
-window).
+window). From the review of 2026-11-19: the request's `modal` is passed
+on, not followed (xdg-dialog-v1's `set_modal` on the window parented
+through xdg-foreign, a gpui patch); a request reaching the skwir that
+holds the dialogs between its gate closing and its name let go is
+answered 2 (the ending program would have to wait for its dialogs); the
+row reads the configuration as 1.22.1 does, so its "already" and
+"pending" may be wrong under an older portal; `ui.chooser_folders` grows
+by a row a program, never pruned; the row offers Skwir on its `.portal`
+file alone, and without the bus's service file a dialog fails whenever
+no skwir runs; the routing of what agents and scripts send
+(`finishing::deliver`) has no automated test, none driving a gpui
+window; finishing in the background with a dialog up was not run in a
+window; the Default file manager row writing through a writable
+dotfiles link to `mimeapps.list` was not looked at (a link into the
+store is refused).
 
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as
@@ -1489,6 +1510,61 @@ evening):
   and the view's in one frame.)
 - Not seen in a window: a window's edge dragged, the preview and
   terminal panels, a grid grouped under pinned headings, Wayland.
+
+**From the review since 0.5.1** (2026-11-19; what its fixes left):
+- Words: a list of facts (access entries, a row of bytes) is joined
+  with "and", where CLDR's unit pattern ("a, b, c") would read better
+  (a `List` style of its own, core's); lists still joined in code in
+  platform's `access.rs` (ACL entries), core's `op/access.rs` (`then`),
+  `exclusions/mod.rs` ("is not set", which also needs a count),
+  `settings_exclusions.rs` ("; "), `settings.rs`'s file types and the
+  model helper's scene names; counts said with `to_string` in plugins'
+  Properties values (the circuits' holes, slots and tools); percents
+  placed with no selector; core settings' `figures` still writes its
+  decimals as English; no check refuses a count placed without a
+  selector (several read as numbers, not nouns, and would need marking);
+  the Keyboard page's notes still take a place's name said as text, and
+  `views_entry_described`'s group heading too; Undo's held title is
+  cased by `heading` inside its quotes; three messages that are only a
+  quoted argument (`search_bar_typed`, `xmp_summary_comment`,
+  `remote_under_way_title`) could take it whole; `fs_size_kb`'s note
+  still says one digit, where a disk's size has none.
+- Names drawn alone: text as written (a place the user renamed, a
+  volume's or a mount's label, a tag's name, an inspector's table) obeys
+  its controls still, as ADR-139 5 speaks of names of files and folders:
+  whether it shows them too is open; `⟨ ⟩` read almost as round
+  brackets in the window's font, so a tag in a row is little told from
+  a name's own text there (a field mutes it).
+- Caches: the preview's header keeps a type's name in the language it
+  was read in until that type is asked again (its version has no words
+  revision); F1's filter and the Settings' keys and exclusions pages
+  fold each row's texts per frame (`keymap::finds`).
+- Dates before 1970: the timeline and some of core's paths keep times as
+  seconds since 1970 (`timeline.rs`'s `epoch`, `fields.rs`, `app.rs`,
+  `location.rs`), so a file from before then may not reach them; what
+  says a date (`Moment::of`) takes them since 45f02066.
+- The platform's process timeout has no kind of its own: the remote
+  plugin tells a tool past its patience by the time it took.
+- Print: the binding switch cannot say "left" where nothing told the
+  edge (on, then off, binds as the document reads): a switch of three
+  states if that is wanted.
+- gpui: a mirrored window still walks each element's styles up to its
+  root for its direction (a stack of the direction resolved would answer
+  at once); 0086's rule at a paragraph's start has no test of its own;
+  several paragraphs on one unwrapped line were not seen on DirectWrite
+  or Core Text; 0087's gain was not measured, nor WD-7's in a release
+  build (debug: `say` 16.0 → 13.5 µs, `Moment::said` 12.7 → 8.6 µs).
+- Not run: a window check of most fixes (names drawn alone, the dialog's
+  window and its save names were seen on Xvfb); a screen reader on the
+  tags drawn for controls; Windows' and macOS's trash paths and macOS's
+  languages (compiled only); the remote tests against real servers
+  (`remote_configs`, `remote_keys`).
+- Under Wine, four tests fail on fixtures that are Unix's, older than
+  the round: `orders.rs`'s `a_folder_moved_takes_along_…` and
+  `names_swapped_exchange_…` (paths such as `/files/c/b`), `walks.rs`'s
+  `names_are_left_out_anywhere_…` (`/srv/cache`), and the remote
+  plugin's `what_was_written_is_unsent_…` (a record folder named
+  `:webdav{…}`, which Windows refuses).
 
 **From the review since 0.5.0** (2026-11-14):
 - Not seen in a window: the pin's two words told in either order, another

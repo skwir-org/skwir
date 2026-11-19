@@ -16,6 +16,15 @@
   stay for good without its tags, rating and dates, read as the copy was
   asked but lost as its run began; a filter or a sort by them left it out
   of place until it landed.
+- **A size just under a unit is said in the next one**: 1,048,570 bytes
+  read "1024.0 KB"; rounded before its unit is chosen, it reads "1.0 MiB"
+  now (and 999,990 bytes "1.0 MB" in decimal units).
+- **Grouped by Type, a type the system does not name is headed as its
+  files are called** ("PNG file", "File"), where its MIME type headed it
+  (`image/png`, among the a's).
+- **Settings › Keyboard's new shortcut finds its command as the palette
+  does**: whatever its case, its accents and the order of its words
+  ("dossier créer" finds « Créer un dossier »).
 
 ## 0.5.1 (2026-11-16)
 
