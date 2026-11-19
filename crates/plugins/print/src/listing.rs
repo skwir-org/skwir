@@ -178,7 +178,10 @@ impl Columns {
                 note = "A column's header in a printed listing: when each file was last changed."
             ),
         ]);
-        names.iter().map(skwir_core::words::Words::say).collect()
+        names
+            .iter()
+            .map(skwir_core::words::Words::say_plain)
+            .collect()
     }
 }
 

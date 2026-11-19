@@ -269,10 +269,10 @@ pub fn parts(
             out.notice = notice;
         }
         // The job is the helper's: its words said as it is made, to be
-        // sent (ADR-139, 7).
+        // sent (ADR-139, 7), plainly: what is printed holds no mark.
         InspectionKind::Table if !inspection.rows.is_empty() || !inspection.columns.is_empty() => {
             out.parts.push(Part::Table {
-                columns: inspection.columns.iter().map(Words::say).collect(),
+                columns: inspection.columns.iter().map(Words::say_plain).collect(),
                 rows: inspection
                     .rows
                     .iter()
@@ -284,7 +284,12 @@ pub fn parts(
         // and the names at them.
         InspectionKind::History => {
             out.parts.push(Part::Table {
-                columns: inspection.columns.iter().take(4).map(Words::say).collect(),
+                columns: inspection
+                    .columns
+                    .iter()
+                    .take(4)
+                    .map(Words::say_plain)
+                    .collect(),
                 rows: inspection
                     .rows
                     .iter()
@@ -320,7 +325,7 @@ pub fn parts(
                     path,
                     width: image.width,
                     height: image.height,
-                    alt: inspection.title.say(),
+                    alt: inspection.title.say_plain(),
                     caption: None,
                     orientation: 0,
                 }],
@@ -1100,6 +1105,21 @@ mod tests {
         };
         assert_eq!(columns, &["a", "b"]);
         assert_eq!(rows[2], ["2", "4"]);
+        // A header holding a name is written plainly (PB-7): no mark the
+        // window isolates it with reaches the page.
+        let named = Inspection {
+            kind: InspectionKind::Table,
+            columns: vec![skwir_core::words!(
+                test_column_of = "Tags of { $name }",
+                name = skwir_core::words::Name("שלום 2".into())
+            )],
+            ..Inspection::default()
+        };
+        let printed = parts(&named, &palette(), &mut none, &CancelToken::new()).unwrap();
+        let [Part::Table { columns, .. }] = printed.parts.as_slice() else {
+            panic!("{:?}", printed.parts);
+        };
+        assert_eq!(columns, &["Tags of “שלום 2”"]);
         for kind in [
             InspectionKind::Hex,
             InspectionKind::Archive,
