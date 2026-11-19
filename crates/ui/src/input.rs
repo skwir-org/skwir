@@ -112,12 +112,13 @@ const BULLET: char = '•';
 /// (`words::shown_controls`: `⟨RLO⟩`), never obeyed (ADR-139, 5); a
 /// secret's a bullet a character. Offsets of the text stay the text's: a
 /// control is one character of it, its tag a stretch of what is drawn that
-/// no place of the text falls inside.
-struct Drawn {
+/// no place of the text falls inside. A name drawn alone with marks on it
+/// is moved through it too (`DrawnName::marked`).
+pub(crate) struct Drawn {
     /// The text as it is.
     content: SharedString,
     /// What is drawn.
-    text: SharedString,
+    pub(crate) text: SharedString,
     /// Each control's bytes in the text and its tag's in `text`, in order.
     tags: Vec<(Range<usize>, Range<usize>)>,
     /// Bullets, a character each.
@@ -125,7 +126,7 @@ struct Drawn {
 }
 
 impl Drawn {
-    fn of(content: &SharedString, masked: bool) -> Self {
+    pub(crate) fn of(content: &SharedString, masked: bool) -> Self {
         let drawn = |text: SharedString, tags| Drawn {
             content: content.clone(),
             text,
@@ -157,7 +158,7 @@ impl Drawn {
     }
 
     /// Where `offset`, a place of the text, is in what is drawn.
-    fn shown(&self, offset: usize) -> usize {
+    pub(crate) fn shown(&self, offset: usize) -> usize {
         if self.masked {
             return self.content[..offset.min(self.content.len())]
                 .chars()

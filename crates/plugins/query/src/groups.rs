@@ -111,7 +111,10 @@ fn by_folder() -> Keyer {
         Some(folder) => made.get(folder.to_path_buf(), || Group {
             rank: 1,
             key: Arc::from(skwir_core::collate::sort_key(folder.as_os_str())),
-            label: Arc::from(skwir_core::exclusions::tilde(folder)),
+            // Its heading drawn alone, its controls shown (ADR-139, 5).
+            label: Arc::from(
+                skwir_core::words::shown_controls(&skwir_core::exclusions::tilde(folder)).as_ref(),
+            ),
             folders: false,
             term: None,
         }),
@@ -415,7 +418,14 @@ fn by_extension() -> Keyer {
         };
         let ext = ext.to_lowercase();
         made.get(ext.clone(), || {
-            Group::new(2, &format!(".{ext}")).with_term(format!("ext:{ext}"))
+            let named = format!(".{ext}");
+            // Its heading drawn alone, its controls shown (ADR-139, 5),
+            // ordered by the extension as it is.
+            Group {
+                label: Arc::from(skwir_core::words::shown_controls(&named).as_ref()),
+                ..Group::new(2, &named)
+            }
+            .with_term(format!("ext:{ext}"))
         })
     })
 }
@@ -1605,6 +1615,11 @@ mod tests {
         );
         assert_eq!(&*of("README", EntryKind::File).label, "No extension");
         assert!(of("v1.2", EntryKind::Directory).folders);
+        // A heading drawn alone shows a control, never obeys it (ADR-139,
+        // 5); what filters it is the extension as it is.
+        let spoof = of("a.\u{202e}gnp", EntryKind::File);
+        assert_eq!(&*spoof.label, ".⟨RLO⟩gnp");
+        assert_eq!(spoof.term.as_deref(), Some("ext:\u{202e}gnp"));
     }
 
     /// By folder, one group a folder, in their paths' order, called by its
@@ -1638,6 +1653,9 @@ mod tests {
         assert_eq!(of(Some(&notes)).term, None, "a filter cannot say where");
         assert_eq!(&*of(None).label, "No folder");
         assert!(of(None).standing(&of(Some(&notes))).is_lt());
+        // A folder's heading shows its controls, never obeys them.
+        let spoof = home.join("a\u{202e}b");
+        assert_eq!(&*of(Some(&spoof)).label, "~/a⟨RLO⟩b");
     }
 
     /// A sort by name, by size or by a date needs no keys of its own; by

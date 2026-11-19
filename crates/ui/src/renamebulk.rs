@@ -809,6 +809,10 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             matched,
             put,
         } = renamed;
+        // Each name drawn alone, its controls shown, the marks on what is
+        // drawn.
+        let (from_drawn, matched) = crate::views::entry::DrawnName::marked(from, matched);
+        let (to_drawn, put) = crate::views::entry::DrawnName::marked(to, put);
         list = list.child(
             div()
                 .flex()
@@ -820,8 +824,8 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .min_w_0()
                         .truncate()
                         .text_color(theme.text_muted),
-                    from.clone(),
-                    matched,
+                    from_drawn,
+                    &matched,
                     mark,
                 ))
                 .child(div().flex_none().child(crate::sides::becomes()))
@@ -833,8 +837,8 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .flex_1()
                         .min_w_0()
                         .truncate(),
-                    to.clone(),
-                    put,
+                    to_drawn,
+                    &put,
                     mark,
                 )),
         );

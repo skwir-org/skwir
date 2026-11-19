@@ -107,7 +107,9 @@ pub fn row(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis_middle(),
-            row.cells.first().cloned().unwrap_or_default(),
+            // A member's name drawn alone, its controls shown.
+            crate::views::entry::DrawnName::of_str(row.cells.first().map_or("", String::as_str))
+                .shared(),
         ));
     if let Some(status) = row.cells.get(2).filter(|s| !s.is_empty()) {
         name = name.child(

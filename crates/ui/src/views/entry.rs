@@ -56,6 +56,21 @@ impl DrawnName {
         ))
     }
 
+    /// `name` as it is drawn, with `marks` (byte ranges of it: what a
+    /// pattern matched) moved to where they fall in what is drawn: a mark
+    /// on a control covers its tag.
+    pub fn marked(
+        name: &str,
+        marks: &[std::ops::Range<usize>],
+    ) -> (Self, Vec<std::ops::Range<usize>>) {
+        let drawn = crate::input::Drawn::of(&SharedString::from(name.to_owned()), false);
+        let marks = marks
+            .iter()
+            .map(|mark| drawn.shown(mark.start)..drawn.shown(mark.end))
+            .collect();
+        (DrawnName(drawn.text), marks)
+    }
+
     /// What is drawn, to hand to an element.
     pub fn shared(&self) -> SharedString {
         self.0.clone()
@@ -557,5 +572,20 @@ mod tests {
         };
         assert_eq!(&*spoof.name, "Hello_⟨RLO⟩gnp.js");
         assert_eq!(spoof.name.shared(), "Hello_⟨RLO⟩gnp.js");
+    }
+
+    /// Marks on a name (what a pattern matched in the bulk rename's
+    /// preview) fall on what is drawn: past a tag, moved by it; on a
+    /// control, over its tag.
+    #[test]
+    fn marks_on_a_name_fall_where_it_is_drawn() {
+        use super::DrawnName;
+        let (drawn, marks) = DrawnName::marked("Hello_\u{202e}gnp.js", &[0..5, 6..9, 9..12]);
+        assert_eq!(&*drawn, "Hello_⟨RLO⟩gnp.js");
+        let tag = "⟨RLO⟩".len();
+        assert_eq!(marks, [0..5, 6..6 + tag, 6 + tag..9 + tag]);
+        assert_eq!(&drawn[marks[2].clone()], "gnp");
+        let (plain, marks) = DrawnName::marked("a.txt", &[0..1, 2..5]);
+        assert_eq!((&*plain, marks), ("a.txt", vec![0..1, 2..5]));
     }
 }

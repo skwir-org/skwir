@@ -14,8 +14,10 @@ around the views is in [shell.md](shell.md).
   selection and `Seat`; [accessibility.md](accessibility.md)).
 - **A name is drawn as a `DrawnName`** (`views/entry.rs`), wherever it
   is drawn on its own: a row, a tile, a card, a column, the Folder
-  column, the preview's header, a drag's label, a map's, a menu's folder,
-  a dialog's row. Its bidirectional controls are shown as tags, never
+  column, the preview's header, an archive's member, a drag's label, a
+  map's, a menu's folder, a dialog's row, the bulk rename's preview (its
+  marks moved with it, `DrawnName::marked`), a group's heading by folder
+  or extension. Its bidirectional controls are shown as tags, never
   obeyed (ADR-139, 5; [words.md](words.md)): `Hello_` + U+202E +
   `gnp.js` reads `Hello_⟨RLO⟩gnp.js`, never as a picture. `Look::name` is
   one, made from the entry's name alone, so no view draws a name raw; a
