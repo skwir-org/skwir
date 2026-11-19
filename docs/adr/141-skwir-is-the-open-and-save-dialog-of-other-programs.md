@@ -4,7 +4,10 @@ Status: accepted 2026-11-19, on the user's answers (step 2 after ADR-140:
 the user chose a whole skwir window, a Settings row writing the
 portal's configuration, attaching to the asking window, and a commit per
 step, before an autonomous night). Built on Linux; Linux's by nature
-(decision 10).
+(decision 11). Built 2026-11-19: the back end (1ae5a3bb), the window
+(e85e415e), attached to the asking window (a4299e63, gpui patch 0085),
+the Settings row (eaac889f), the packages; amended as built (decisions
+4, 6 and 10, and the Context's reading of the configuration).
 
 ## Context
 
@@ -31,14 +34,17 @@ step, before an autonomous night). Built on Linux; Linux's by nature
   own; and the bus name it names, answering at
   `/org/freedesktop/portal/desktop`. The user's portal finds KDE's in
   their Nix profile.
-- **Which back end answers** is the first folder's configuration, read
-  once when the portal starts: `$XDG_CONFIG_HOME/xdg-desktop-portal`,
-  `$XDG_CONFIG_DIRS`', `/etc`'s, then the data folders', each by
+- **Which back end answers** is read from the configuration once, when
+  the portal starts: in `$XDG_CONFIG_HOME/xdg-desktop-portal`,
+  `$XDG_CONFIG_DIRS`', `/etc`'s, then the data folders', a file a folder,
   `<desktop>-portals.conf` (`XDG_CURRENT_DESKTOP`, lower case) before
-  `portals.conf`, the first file found taken whole: `[preferred]`,
+  `portals.conf`, one without a `[preferred]` group passed over:
   `default=` and one key per interface
-  (`org.freedesktop.impl.portal.FileChooser=kde`). The user's
-  `hyprland-portals.conf` names KDE's for the file chooser.
+  (`org.freedesktop.impl.portal.FileChooser=kde`). Since 1.22 (#1867)
+  the files cascade: an interface goes to the first file naming a back
+  end installed for it, its own key before its `default`; before 1.22
+  the first file found was taken whole (read in 1.22.1's source). The
+  user's `hyprland-portals.conf` names KDE's for the file chooser.
 - **The window identifier** says where the dialog belongs:
   `x11:<XID>`, or `wayland:<handle>` exported by the asking program
   through `xdg-foreign` (unstable v2), which the dialog imports to be
@@ -77,7 +83,16 @@ step, before an autonomous night). Built on Linux; Linux's by nature
    program's filters, its choices (a dropdown each, a switch for a
    boolean), Cancel and the accept button (`accept_label`, else Open,
    Save, Select). Its title is the request's. Enter accepts, Escape
-   cancels, and closing the window cancels.
+   cancels, and closing the window cancels. As built: a dialog's
+   size at most (1000 × 680 at 100 %), never maximized, its shape never
+   the next window's; a core window marked a dialog's
+   (`WindowTabs::chooses`), never recorded for the next start nor
+   reopened; the windows asleep stay asleep while dialogs' windows
+   alone are up, a launch going to a window of the user's own; nothing
+   recorded in a run until a window of the user's own opened, so a
+   skwir the bus started never replaces the windows the user left. A
+   folder typed in the name is gone into; Replace? is read on a worker,
+   in the folder's lane. A second request opens a second window.
 5. **What is chosen.** Opening: the file under the cursor or the
    selection; several only with `multiple`, which the shelf gathers
    across folders; `directory` chooses folders only, the one selected or
@@ -91,8 +106,10 @@ step, before an autonomous night). Built on Linux; Linux's by nature
    filter in use.
 6. **The program's filters are a lens** (ADR-107): the one in use
    (`current_filter`, else the first) shows what it admits, globs by
-   name and MIME types (a `*` subtype included) through the type
-   database (`mime::Types`); folders always show; the filter's dropdown
+   name (case ignored: a camera's `.JPG` is the program's `*.jpg`) and
+   MIME types (a `*` subtype included, a type's descendants too) through
+   the type database; folders always show; apart from the filter the
+   user types (core's `Admits`, both holding); the filter's dropdown
    offers the others and all files. Filters only help: a name typed is
    taken as typed.
 7. **Where it starts**: the request's folder (`current_folder`,
@@ -116,11 +133,18 @@ step, before an autonomous night). Built on Linux; Linux's by nature
     one the portal's configuration names now, else Automatic. Choosing
     writes `org.freedesktop.impl.portal.FileChooser=` in the user's
     `<desktop>-portals.conf` (`portals.conf` where no desktop is named),
-    its other lines kept; where the user has none, the configuration in
-    effect is copied into it first, as the first file found is taken
-    whole and a new one would drop the system's other choices. It says
-    the change applies when the portal starts again (the next login);
-    skwir never restarts it. Undo as the default file manager's.
+    its other lines kept; where the user has none, the file the portal
+    reads first is copied into it first: a portal before 1.22 takes that
+    file whole, and a new one would drop the system's other choices
+    (1.22 reads the same values; the copy freezes them where the system
+    later changes its own). It says the change applies when the portal
+    starts again (the next login); skwir never restarts it. Undo as the
+    default file manager's: the file put back as it was, or none, then
+    Redo. As built, an essential of General beside the default file
+    manager, which it is for the same reason (it decides what other
+    programs see; ADR-072); its commands `dialogs.list`, `dialogs.choose`
+    (the user's) and `dialogs.put_back`, never `ui.*`, which the window
+    carries out itself (a notice's Undo would reach nothing).
 11. **Linux's by nature**: nothing to install, turn on or show on macOS
     and Windows, where no application can be the system's dialog
     (Context); PORTING.md lists it so.

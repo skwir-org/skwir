@@ -1131,6 +1131,29 @@ startup is A chosen folder (`SettingSpec::under_choice`). The system's
 lists are asked again as a window comes to the front. Checks in
 `docs/STATUS-LOG.md` (2026-11-18, 2026-11-19).
 
+## Other programs' Open and Save dialogs (ADR-141, 2026-11-19)
+
+Step 2 after ADR-140, planned with the user and built over a night on
+their four answers (a whole skwir window, a Settings row writing the
+portal's configuration, attached to the asking window, a commit per
+step). Skwir is an xdg-desktop-portal FileChooser back end
+(`skwir_platform::chooser`): `OpenFile`, `SaveFile`, `SaveFiles` and
+the request's `Close`, answered by the program that takes launches
+over, started by the bus when none runs (`--portal`, windowless; one
+that finds another skwir hands it the request, `Finishing.Choose`). A
+request is a window of its own (`crates/ui/src/chooser.rs`): where the
+request asks, else where that program last chose, else home; a bar
+with the name, the program's filters (core's `Admits`), its choices,
+Cancel and its answer; Enter and a double click choose a file, Replace?
+asked in skwir; only the user answers (`ui.chooser_*`). The window is
+the asking window's child (gpui patch 0085: X11 `WM_TRANSIENT_FOR`,
+Wayland xdg-foreign v2). General › "Open and save dialogs"
+(`dialogs_setting.rs`, `skwir_platform::portals`) chooses the back end
+in the user's portal configuration, applied at the portal's next start.
+The packages install `skwir.portal` and the bus's service file. Linux's
+by nature (`docs/PORTING.md`). Checks in `docs/STATUS-LOG.md`
+(2026-11-19).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -1145,8 +1168,24 @@ program it starts that ends with 3 fails the request at once, as
 dbus-daemon does); a real asker (Firefox's downloads, Chromium, the
 portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
 holding the name, seen to keep it until it ends (a test's holder, not
-Dolphin); the startup id on Wayland; the portal's FileChooser (the
-user's step 2).
+Dolphin); the startup id on Wayland.
+
+**Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
+on Linux; checked on a private dbus-daemon with Xvfb, headless sway and
+the system's xdg-desktop-portal 1.22.1 run apart from the session's.
+Left: a real asker (Firefox, Chromium, a Flatpak through the document
+portal, Zed), on the user's session; the session's dbus-broker; KWin,
+Mutter and Hyprland keeping the dialog over its asker (only sway was
+seen to float it; X11 had no window manager, the hint alone was read);
+several files chosen from the shelf were not tried (the shelf's
+selection is read as any pane's); a portal before 1.22 reading the copied
+configuration (only 1.22.1's source was read); the windows left are not
+restored when a launch comes to a skwir the bus started for a dialog
+(the start folder opens, as for `--file-manager`); type-to-find's text
+does not take Escape before the dialog does; a screen reader on the
+bar (`a11y-check` opens no dialog); a test keeping core-answered
+commands out of `ui.*` (the row's Undo named one so first, found in a
+window).
 
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as

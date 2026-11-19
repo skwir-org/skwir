@@ -20544,3 +20544,86 @@ follower's thread gone after. Skwir named in the system's list only, the
 user's naming none: nothing until the window came to the front, then the
 name taken and the service file written; the system's list emptied, at
 the next coming to the front the name let go and the file removed.
+
+## 2026-11-19: other programs' Open and Save dialogs (ADR-141)
+
+Planned with the user before a night of autonomous work, on their four
+answers (a whole skwir window, a Settings row writing the portal's
+configuration, attached to the asking window, a commit per step), and
+built as commits on main: the ADR (dd8a9439), the back end (1ae5a3bb),
+the window (e85e415e), attaching (a4299e63), the Settings row
+(eaac889f), the packages and these notes.
+
+- **The back end** (`skwir_platform::chooser`): `OpenFile`, `SaveFile`,
+  `SaveFiles` read as the portal writes them, each answered once (a
+  `Request` object at the handle taking `Close`). The program that takes
+  launches over serves `org.freedesktop.impl.portal.desktop.skwir`, its
+  name asked in the queue with no flag (zbus's `request_name` asks
+  `AllowReplacement | ReplaceExisting | DoNotQueue`, which let a second
+  skwir take the name from the one the bus started: found by a test on
+  a private dbus-daemon); one started by the bus (`--portal`) that finds
+  another skwir hands it the request (`Finishing.Choose`) and lets the
+  name go once everything is answered, asking the bus itself to release
+  it (zbus forgets a name it was told it lost; the review session's
+  CP-1, the same for FileManager1, is theirs to fix).
+- **The window** (`ui/chooser.rs`): checked on Xvfb with a private
+  dbus-daemon starting `skwir --portal` from a service file, asked with
+  busctl (gdbus wrote the wrong bytes into an `ay` inside a variant once
+  it could introspect skwir: its parser, not skwir's reading; a relative
+  folder it so sent is now passed over rather than failing the dialog).
+  Seen: one picture opened (the program's filter `image/*` shown, its
+  switch and list as set, both in the answer), four files opened with
+  `multiple`, a name typed over the stem saved, a name taken saved after
+  Replace?, two files saved with `SaveFiles` (Replace? once for the one
+  taken), a folder chosen by Select, Escape and Cancel cancelling, a
+  request closed by its program taking its window away, a second request
+  opening a second window, the next dialog starting where the program
+  last chose. Found and fixed in the window: the name field lost the
+  keyboard to the pane as the window opened.
+- **Attached** (gpui patch 0085): on Xvfb, a dialog asked with `x11:` and
+  another window's id had `WM_TRANSIENT_FOR` naming it (xprop), one with
+  no window or a malformed one had none; on a headless sway 1.12, a dialog
+  asked by a toplevel that exported itself through xdg-foreign v2 (a small
+  client in `~/.cache/skwir-tests/tools/exporter`) floated over it, the
+  asker tiled, and one asked with no window tiled. sway's runtime folder
+  was its own, its X1 socket gone with it.
+- **The Settings row** (`dialogs_setting.rs`, `skwir_platform::portals`):
+  the portal's configuration read as 1.22.1's source reads it (files
+  cascade since 1.22; before, the first was taken whole, hence the copy).
+  In a window on Xvfb with a fixture of portals: KDE named by the
+  system's file, Skwir chosen wrote the user's file (the system's lines
+  copied, its file untouched) with Undo; Undo from the notice first ran
+  nothing: the commands were named `ui.*`, which the window carries out
+  itself; renamed `dialogs.*` (commands.md now says so), Undo put KDE back
+  and offered Redo. Made an essential of General beside the default file
+  manager, as ADR-141 placed it.
+- **The real portal**: the system's xdg-desktop-portal 1.22.1 run on the
+  private bus with `XDG_DESKTOP_PORTAL_DIR` (skwir's `.portal` file and a
+  `portals.conf` naming it), never the session's; a client that stays
+  connected (`~/.cache/skwir-tests/tools/portal-client`, zbus) asked it:
+  OpenFile got the picture chosen in the window (response 0, its
+  `file://` URI), SaveFile the name saved (response 0), Cancel response 1
+  with no URIs. Two runs first failed with the bus-started skwir unable
+  to reach X: Xvfb resets as its last client leaves, and the next skwir
+  started in that moment; with `-noreset` all passed (a harness's, not
+  skwir's: a desktop always has other clients).
+- **The packages**: `skwir.portal` in
+  `share/xdg-desktop-portal/portals`, the bus's service file in
+  `share/dbus-1/services` (`Exec=/usr/bin/skwir --portal`, Nix's own
+  path in its build) in the deb, the rpm, the three AUR packages, the
+  bundle (`stage.py`) and Nix; the packages' checks look for both.
+
+**Checked:** rustfmt; clippy `-D warnings` for Linux, Windows and macOS
+on the crates touched (macOS without the window, as `check-macos`); the
+tests of core, platform, the window and the binary (2214, then 1516
+after the row); the words check, French and Simplified Chinese drafted;
+each commit built alone (e85e415e in a worktree of its own);
+`just release-tools-check`; `just a11y-check` (passed, 88 checks: none
+opens a dialog's window); the Nix package built from the git tree,
+its output holding both files, the service file naming its own
+`bin/skwir` (the Nix check script, which builds the minimal variant
+too, and the deb, rpm, AUR and AppImage builds were not run). Not
+checked: a real asking program on the
+session, the session's dbus-broker, KWin, Mutter and Hyprland keeping
+the dialog over its asker, a portal before 1.22, several files from the
+shelf, a screen reader on the bar (PLAN's "What is left").

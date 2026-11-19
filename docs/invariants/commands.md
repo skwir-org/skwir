@@ -67,7 +67,11 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   command instead (`toggle_hidden`, `sort`, `tab.open`): a pane's button
   names its pane, a key acts on the active one.
 - A `ui.*` command dispatched from elsewhere (an agent, a script) waits
-  for the window (`App::request_front`).
+  for the window (`App::request_front`), and from the window it is
+  carried out by the shell itself (`Shell::run_ui`): a command the core
+  answers (a list, a choice written on a worker, what a notice's Undo
+  runs) is never named `ui.*`, which the window would refuse as not
+  carried out (the dialogs row's `dialogs.choose`, ADR-141).
 - Mutating commands return a `Plan` ([operations.md](operations.md)). No
   command applies a plan it makes or is given (`apply_plan` hands it
   back): the caller decides. A plugin that must know when a plan it
@@ -79,7 +83,11 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   nothing acts, and an agent's call of it asks the user first. A window
   command (`ui.*`) is the user's alone unless `commands.rs` lists it among
   those that show or act: one that answers a dialog or presses for the
-  user must never be an agent's. The player's `player.request` (play,
+  user must never be an agent's. Another program's Open or Save dialog
+  is answered by the user alone (`ui.chooser_*`, ADR-141, 8), and what
+  answers those dialogs is chosen by the user alone (`dialogs.choose`,
+  `.user_only()`): an agent can neither choose for another program nor
+  see what it asks. The player's `player.request` (play,
   pause, seek, the volume) shows: sound from the window is the window's,
   so an agent plays and sets the volume unasked, as the media keys do
   (decided 2026-10-24).

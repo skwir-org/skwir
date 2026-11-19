@@ -337,6 +337,15 @@ Left:
   "not available on \<system\> yet" **(n)**; `file_manager::follow`
   follows nothing **(u)**. The pipe's message carries what to select
   (its second version), its tests under Wine.
+- Other programs' Open and Save dialogs (ADR-141,
+  `platform/chooser.rs`, `platform/portals.rs`, `ui/chooser.rs`,
+  `ui/dialogs_setting.rs`): Linux's alone, by nature (macOS's
+  `NSOpenPanel` and Windows' common item dialog cannot be replaced by
+  another application). `--portal` errors "not available on \<system\>
+  yet" **(n)**; nothing serves the back end and the Settings row is not
+  declared **(n)**; the window's code compiles everywhere (`Choosing`,
+  core's `Admits`), unused there. gpui's `WindowOptions::foreign_parent`
+  is read on X11 and Wayland alone (patch 0085).
 - Owners: Windows entries carry none (SIDs not read). macOS's are uids named
   through `/etc/passwd` **(c)**, which misses Directory Services' users.
 

@@ -2126,6 +2126,34 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   nothing ends with a status that is not 0 (`ended_unasked`), which
   dbus-daemon would wait for. Nothing here names another program's
   service, nor takes a name its holder does not let go.
+- **Other programs' Open and Save dialogs are windows of skwir's own**
+  (ADR-141, Linux): the program that takes launches over answers the
+  portal's FileChooser back end, its requests (`chooser::Choosing`)
+  handed in through the same gate (`handover::take_over_choosing`), a
+  window each (`finishing::open_chooser`), started where the request
+  asks, else where its program last chose (`ui.chooser_folders`, by app
+  id), else home. The window chooses until it answers (`Shell::chooser`,
+  `chooser.rs`): a bar at its foot (the name typed, its stem selected;
+  the program's filters, shown as the pane admits them,
+  `Pane::set_admits`, apart from the filter the user types; its choices;
+  Cancel and the program's accept label), its title the request's. While
+  it chooses, `open` (Enter, a double click) answers with a file (a
+  folder still opens), Escape (`pane choosing`, the bar's `chooser`) and
+  the close button cancel, a name taken is asked Replace? in skwir
+  (`Confirmed::Replace`, read on a worker in the folder's lane), and a
+  request its program closes takes its window away at the next wake.
+  Only the user answers: `ui.chooser_*` are the user's alone. A dialog's
+  window is a core window marked so (`WindowTabs::chooses`): never
+  recorded for the next start nor reopened, its shape never the next
+  window's, a dialog's size at most and never maximized, the asking
+  window's child where its identifier names one (`chooser::foreign_parent`,
+  gpui's `WindowOptions::foreign_parent`). While dialogs' windows alone
+  are up, the windows asleep stay asleep (`Finishing::asleep`) and a
+  launch goes to a window of the user's own (`ordinary_handle`); nothing
+  is recorded for the next start until one opened in the run
+  (`Opened::Own`), so a skwir the bus started (`--portal`) never
+  replaces the windows the user left. The window answers once, and goes
+  with its core window, the last one too (`chooser_let_go`).
 - **A wake draws the windows it concerns** (`finishing::woken`): the
   listings are pumped once for all the windows, then a window syncs and
   draws if the wake was for all (`App::wake`, an
