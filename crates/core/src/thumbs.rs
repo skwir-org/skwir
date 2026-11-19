@@ -108,7 +108,9 @@ pub trait ThumbnailProvider: Send + Sync {
     fn accepts(&self, req: &ThumbRequest) -> bool;
     /// Find or make the thumbnail. `Ok(None)` means "not from me, try the next".
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>>;
-    /// Persist a thumbnail another provider produced (cache writers).
+    /// Persist a thumbnail another provider produced (cache writers),
+    /// called on the worker once it is shown: a cache's file appears a
+    /// moment after its thumbnail is `Ready`.
     fn store(&self, _req: &ThumbRequest, _image: &Image) {}
     /// Whether it remembers that no provider could make a thumbnail of
     /// `req`'s file as it is now, with the tools there are now (a cache's
@@ -873,24 +875,17 @@ impl Thumbnails {
             }));
             return true;
         }
-        if let Some((i, img)) = &produced
-            && !cancelled
-        {
-            for p in &providers[..*i] {
-                p.store(&req, img);
-            }
-        }
+        let produced = produced.map(|(i, img)| (i, Arc::new(img)));
         let mut askers = Vec::new();
         let evicted = {
             let mut s = self.state.lock();
             if let Some(flight) = s.in_flight.remove(&key) {
                 askers = flight.askers();
             }
-            match produced {
+            match &produced {
                 Some((_, img)) => {
                     s.decoded += 1;
-                    let bytes = img.bytes();
-                    s.lru.insert(key, Arc::new(img), bytes)
+                    s.lru.insert(key, Arc::clone(img), img.bytes())
                 }
                 // A cancelled request says nothing about the file: the next
                 // ask queues it again.
@@ -915,6 +910,17 @@ impl Thumbnails {
         };
         drop(evicted);
         self.wake_for(&askers);
+        // Shown, then kept: the caches tried before the provider that drew
+        // it keep it once the window has it, so what is written for the
+        // next look (a PNG other applications read too) never holds the
+        // picture back.
+        if let Some((i, img)) = &produced
+            && !cancelled
+        {
+            for p in &providers[..*i] {
+                p.store(&req, img);
+            }
+        }
         true
     }
 
@@ -1061,6 +1067,16 @@ mod tests {
             mtime: None,
             size: ThumbSize::Normal,
         }
+    }
+
+    /// How many thumbnails `cache` was given to keep, once it was given
+    /// one: the worker stores after the thumbnail is shown.
+    fn kept(cache: &Fake) -> usize {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while cache.stored.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        cache.stored.load(Ordering::Relaxed)
     }
 
     fn wait_ready(t: &Arc<Thumbnails>, r: &ThumbRequest) -> ThumbState {
@@ -1267,7 +1283,7 @@ mod tests {
         assert_eq!(cache.calls.load(Ordering::Relaxed), 1);
         assert_eq!(decoder.calls.load(Ordering::Relaxed), 1);
         assert_eq!(
-            cache.stored.load(Ordering::Relaxed),
+            kept(&cache),
             1,
             "the cache provider stores what the decoder made"
         );
@@ -1536,11 +1552,7 @@ mod tests {
         t.register("desktop", cache.clone());
         assert_eq!(t.provider_ids()[0], "cache");
         assert!(matches!(wait_ready(&t, &req(3)), ThumbState::Ready(_)));
-        assert_eq!(
-            cache.stored.load(Ordering::Relaxed),
-            1,
-            "the cache stores what the fallback made"
-        );
+        assert_eq!(kept(&cache), 1, "the cache stores what the fallback made");
     }
 
     #[test]

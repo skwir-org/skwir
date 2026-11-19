@@ -492,6 +492,17 @@ mod tests {
         }
     }
 
+    /// Whether the cache's file `cached` is written: a worker writes it
+    /// once the thumbnail is shown, a moment after it is `Ready`.
+    #[cfg(target_os = "linux")]
+    fn written(cached: &std::path::Path) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !cached.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        cached.exists()
+    }
+
     // Types from the free desktops' database (step E, ADR-035).
     #[cfg(target_os = "linux")]
     #[test]
@@ -528,7 +539,7 @@ mod tests {
             .join("thumbnails/normal")
             .join(format!("{}.png", skwir_platform::thumbnails::key(&src)));
         assert!(
-            cached.exists(),
+            written(&cached),
             "generated thumbnail was written back to the cache"
         );
         assert_eq!(
@@ -572,7 +583,7 @@ mod tests {
             .path()
             .join("thumbnails/normal")
             .join(format!("{}.png", skwir_platform::thumbnails::key(&src)));
-        assert!(cached.exists(), "drawn once, for every application");
+        assert!(written(&cached), "drawn once, for every application");
     }
 
     /// A provider slow enough that ordering is observable, logging completions.

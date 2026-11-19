@@ -254,11 +254,20 @@ fn a_new_pdf_gets_a_thumbnail_that_other_applications_reuse() {
     assert_eq!(img.width, 128, "the page is wider than tall");
     assert_eq!(middle(&img), [255, 0, 0, 255]);
 
-    // Written back where every other application looks, for this version.
+    // Written back where every other application looks, for this version,
+    // once it is shown.
     let cache = skwir_platform::thumbnails::ThumbCache::desktop().unwrap();
-    let cached = cache
-        .lookup(&path, skwir_platform::thumbnails::ThumbSize::Normal)
-        .expect("the thumbnail was shared through the desktop's cache");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let cached = loop {
+        if let Some(cached) = cache.lookup(&path, skwir_platform::thumbnails::ThumbSize::Normal) {
+            break cached;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the thumbnail was shared through the desktop's cache"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
     assert_eq!(
         skwir_platform::thumbnails::png_text_chunk(&cached, "Software").as_deref(),
         Some("skwir")

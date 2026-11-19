@@ -533,7 +533,21 @@ fn thumbs_pass(paths: &[std::path::PathBuf], mime: &str, cache: &Path, scratch: 
             std::thread::sleep(Duration::from_micros(200));
         }
     }
-    t.elapsed() / u32::try_from(paths.len()).unwrap_or(1)
+    let elapsed = t.elapsed();
+    // Each is kept once it is shown: the warm pass that follows reads every
+    // one from the cache, none drawn again.
+    let kept = ThumbCache::at(cache);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    for p in paths {
+        while kept
+            .lookup(p, skwir_platform::thumbnails::ThumbSize::Normal)
+            .is_none()
+        {
+            assert!(Instant::now() < deadline, "not kept: {}", p.display());
+            std::thread::sleep(Duration::from_micros(200));
+        }
+    }
+    elapsed / u32::try_from(paths.len()).unwrap_or(1)
 }
 
 /// Cold and warm thumbnail timings over the first 200 images of `dir`.
