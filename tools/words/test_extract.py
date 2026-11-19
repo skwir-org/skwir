@@ -78,6 +78,34 @@ class Messages(unittest.TestCase):
             },
         )
 
+    def test_an_id_written_twice_is_its_first(self):
+        self.assertEqual(extract.messages_of("a = un\n# draft\na = autre\n"), {"a": False})
+        self.assertEqual(extract.messages_of("# draft\na = un\na = autre\n"), {"a": True})
+
+    def test_a_message_left_open_ends_where_fluent_begins_anew(self):
+        source = "\n".join(
+            [
+                "a = { $n",
+                "# draft",
+                "b = ok",
+                'c = { $n ->',
+                '   *[other] say "x',
+                "}",
+                "d = fine",
+                "e = { $n ->",
+                "[one] un",
+                "*[other] plus",
+                "}",
+                "    .gender = masculine",
+                "-term = { $n",
+                "f = last",
+            ]
+        )
+        self.assertEqual(
+            extract.messages_of(source),
+            {"a": False, "b": True, "c": False, "d": False, "e": False, "f": False},
+        )
+
     def test_the_program_s_own_catalogs_are_read_whole(self):
         # Every message begins a line of its own: each is found, and every
         # draft, marked on the line above it.

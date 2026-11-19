@@ -81,7 +81,16 @@ impl Catalogs {
             }
             languages += 1;
             let source = match read(&path) {
-                Ok(source) => source,
+                Ok(Checked { text, twice }) => {
+                    for message in twice {
+                        tracing::warn!(
+                            plugin = id,
+                            "{}: `{message}` is written more than once: its first is said",
+                            path.display()
+                        );
+                    }
+                    text
+                }
                 Err(why) => {
                     tracing::warn!(plugin = id, "{}: left out: {why}", path.display());
                     continue;
@@ -221,10 +230,18 @@ impl std::fmt::Display for Refused {
     }
 }
 
+/// A catalog read, and the ids it writes more than once: each is said as
+/// its first copy (`Catalog`), as Fluent's bundles keep it; the log says so
+/// to its author.
+pub(crate) struct Checked {
+    pub text: String,
+    pub twice: Vec<String>,
+}
+
 /// The catalog at `path`, read whole if it is a regular file within
 /// [`CATALOG_LIMIT`], in UTF-8 (a byte-order mark dropped), nesting no
 /// deeper than [`DEPTH`], and read by Fluent's parser without failing.
-pub(crate) fn read(path: &Path) -> Result<String, Refused> {
+pub(crate) fn read(path: &Path) -> Result<Checked, Refused> {
     let bytes = skwir_core::fs::file::read_regular(path, CATALOG_LIMIT).map_err(Refused::Unread)?;
     let text = String::from_utf8(bytes).map_err(|_| Refused::NotText)?;
     let text = match text.strip_prefix('\u{feff}') {
@@ -237,17 +254,30 @@ pub(crate) fn read(path: &Path) -> Result<String, Refused> {
 /// `text`, a catalog, where it nests no deeper than [`DEPTH`] and Fluent's
 /// parser reads it whole without failing: a message it cannot read is said
 /// in English, but a parser that stopped would stop the window.
-pub(crate) fn checked(text: String) -> Result<String, Refused> {
+pub(crate) fn checked(text: String) -> Result<Checked, Refused> {
     if depth(&text) > DEPTH {
         return Err(Refused::TooDeep);
     }
     // Errors are messages it cannot read: they are said in English. Only a
     // parser that gives up on the whole is refused.
     let parsed = std::panic::catch_unwind(|| {
-        let _ = fluent_syntax::parser::parse_runtime(text.as_str());
+        let resource = match fluent_syntax::parser::parse_runtime(text.as_str()) {
+            Ok(resource) | Err((resource, _)) => resource,
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut twice: Vec<String> = Vec::new();
+        for entry in &resource.body {
+            if let fluent_syntax::ast::Entry::Message(message) = entry
+                && !seen.insert(message.id.name)
+                && !twice.iter().any(|id| id == message.id.name)
+            {
+                twice.push(message.id.name.to_owned());
+            }
+        }
+        twice
     });
     match parsed {
-        Ok(()) => Ok(text),
+        Ok(twice) => Ok(Checked { text, twice }),
         Err(_) => Err(Refused::Unparsed),
     }
 }
@@ -439,6 +469,21 @@ mod tests {
         // What Fluent cannot read is no refusal: its messages are said in
         // English.
         assert!(checked("a = { $n -> }\nb = ok\n".to_owned()).is_ok());
+    }
+
+    /// An id written twice is no refusal: its first is said, and the log
+    /// names it to the plugin's author.
+    #[test]
+    fn an_id_written_twice_is_named() {
+        let read = checked("a = un\nb = deux\na = autre\nb = encore\na = trois\n".to_owned())
+            .unwrap_or_else(|why| panic!("{why}"));
+        assert_eq!(read.twice, ["a", "b"]);
+        assert!(
+            checked("a = un\nb = deux\n".to_owned())
+                .unwrap()
+                .twice
+                .is_empty()
+        );
     }
 
     /// What a string literal or a line's end could hide from the count

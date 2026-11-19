@@ -70,10 +70,7 @@ impl Catalog {
             return said.clone();
         }
         let index = self.index.get_or_init(|| index(&self.source));
-        let at = index
-            .binary_search_by(|entry| self.source[entry.id.clone()].cmp(id))
-            .ok()?;
-        let said = self.said_of(&index[at]);
+        let said = self.said_of(first(index, &self.source, id)?);
         self.said.lock().insert(id.into(), said.clone());
         said
     }
@@ -113,11 +110,9 @@ impl Catalog {
             return said.clone();
         }
         let index = self.index.get_or_init(|| index(&self.source));
-        let at = index
-            .binary_search_by(|entry| self.source[entry.id.clone()].cmp(id))
-            .ok()?;
+        let entry = first(index, &self.source, id)?;
         let said: Option<Said> =
-            parse_attribute(&self.source[index[at].whole.clone()], name).map(Arc::from);
+            parse_attribute(&self.source[entry.whole.clone()], name).map(Arc::from);
         self.said.lock().insert(key.into(), said.clone());
         said
     }
@@ -132,7 +127,19 @@ impl Catalog {
     }
 }
 
-/// Where each message of `source` lies, sorted by id.
+/// The first message `id` of `source` written, in its `index`: an id
+/// written twice (the catalogs' test refuses it in Skwir's own) is said as
+/// its first copy, as a catalog read alone says it (`entry_of`) and as
+/// Fluent's bundles keep it.
+fn first<'a>(index: &'a [Entry], source: &str, id: &str) -> Option<&'a Entry> {
+    let at = index.partition_point(|entry| source[entry.id.clone()] < *id);
+    index
+        .get(at)
+        .filter(|entry| source[entry.id.clone()] == *id)
+}
+
+/// Where each message of `source` lies, sorted by id, those of one id in
+/// the order written.
 fn index(source: &str) -> Vec<Entry> {
     let mut entries: Vec<Entry> = Vec::new();
     walk(source, |entry| {
@@ -159,8 +166,13 @@ fn entry_of(source: &str, id: &str) -> Option<Entry> {
 /// Each message of `source` where it lies, in the order written, until
 /// `each` has what it wants (answers `true`). A message begins at the start
 /// of a line with its id and `=`; it goes on over the indented and blank
-/// lines after it, and over every line while a placeable it opened is open
-/// (a selector's `}` may stand at a line's start).
+/// lines after it, those a variant, an attribute or a selector's end begins
+/// (`[`, `*`, `.`, `}`: Fluent reads them at a line's start too), and over
+/// every line while a placeable it opened is open. It ends, open or not, at
+/// a line where Fluent's parser begins anew whatever came before: one that
+/// begins a message or a term (an id and `=`), or a comment (`#`). So one
+/// message Fluent cannot read is said in English, never the rest of its
+/// catalog with it.
 fn walk(source: &str, mut each: impl FnMut(Entry) -> bool) {
     let mut at = 0;
     let mut open: Option<Entry> = None;
@@ -169,7 +181,10 @@ fn walk(source: &str, mut each: impl FnMut(Entry) -> bool) {
         let start = at;
         at += line.len();
         let continues = open.is_some()
-            && (braces.depth > 0 || line.starts_with([' ', '\t']) || line.trim().is_empty());
+            && !begins_anew(line)
+            && (braces.depth > 0
+                || line.starts_with([' ', '\t', '[', '*', '.', '}'])
+                || line.trim().is_empty());
         if continues {
             braces.read(line);
             if let Some(entry) = open.as_mut() {
@@ -215,8 +230,24 @@ fn walk(source: &str, mut each: impl FnMut(Entry) -> bool) {
     }
 }
 
+/// Whether Fluent's parser begins anew at `line`, whatever came before: a
+/// line that begins a message or a term (an id, `-` before a term's, then
+/// `=`), which no placeable can hold, or a comment.
+fn begins_anew(line: &str) -> bool {
+    if line.starts_with('#') {
+        return true;
+    }
+    let named = line.strip_prefix('-').unwrap_or(line);
+    named.starts_with(|c: char| c.is_ascii_alphabetic())
+        && named
+            .trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            .trim_start_matches([' ', '\t'])
+            .starts_with('=')
+}
+
 /// How deep in placeables a message's text stands, as its lines are read:
-/// braces counted outside a placeable's string literals (`{"{"}`).
+/// braces counted outside a placeable's string literals (`{"{"}`), which
+/// end at their line's end, as Fluent's do.
 #[derive(Default)]
 struct Braces {
     depth: usize,
@@ -227,6 +258,11 @@ struct Braces {
 impl Braces {
     fn read(&mut self, text: &str) {
         for c in text.chars() {
+            if c == '\n' {
+                self.in_string = false;
+                self.escaped = false;
+                continue;
+            }
             if self.in_string {
                 match (self.escaped, c) {
                     (true, _) => self.escaped = false,
@@ -845,6 +881,75 @@ mod tests {
             // Asked again, as it was kept.
             assert_eq!(alone.message_alone(id), indexed.message(id), "{id}");
         }
+    }
+
+    /// A message Fluent cannot read ends where Fluent begins anew (the next
+    /// message, a comment): only it is missing, never the rest.
+    #[test]
+    fn a_message_left_open_takes_no_other_with_it() {
+        let source = "a = { $n\nb = ok\nc = { $n ->\n   *[other] say \"x\n}\nd = { \"{\" } fine\n# draft\ne = { $n\n# A comment.\nf = last\n";
+        let catalog = Catalog::new("fr", source);
+        for (id, text) in [("b", "ok"), ("f", "last")] {
+            assert_eq!(
+                catalog.message(id).as_deref(),
+                Some(&[Element::Text(text.into())][..]),
+                "{id}"
+            );
+            assert_eq!(
+                Catalog::new("fr", source).message_alone(id),
+                catalog.message(id),
+                "{id} read alone"
+            );
+        }
+        assert_eq!(
+            catalog.message("d").as_deref(),
+            Some(&[Element::Text("{".into()), Element::Text(" fine".into())][..])
+        );
+        // What Fluent cannot read is missing, said in English.
+        assert!(catalog.message("a").is_none());
+        assert!(catalog.message("e").is_none());
+        // Variants, attributes and a selector's end at a line's start are the
+        // message's.
+        let column = Catalog::new(
+            "fr",
+            "g = { $n ->\n[one] un\n*[other] plus\n}\nh = mot\n.gender = masculine\n",
+        );
+        assert!(matches!(
+            column.message("g").as_deref(),
+            Some([Element::Select { .. }])
+        ));
+        assert_eq!(
+            column.attribute("h", "gender").as_deref(),
+            Some(&[Element::Text("masculine".into())][..])
+        );
+    }
+
+    /// An id written twice is said as its first copy, indexed or read
+    /// alone, whether the plugin it is of is on or off.
+    #[test]
+    fn an_id_written_twice_is_its_first() {
+        let source = "a = un\nb = deux\na = autre\n    .gender = feminine\nc = { $n ->\n   *[other] trois\n}\nc = quatre\n";
+        let indexed = Catalog::new("fr", source);
+        for (id, text) in [("a", "un"), ("b", "deux")] {
+            let first = Some(vec![Element::Text(text.into())]);
+            assert_eq!(indexed.message(id).map(|said| said.to_vec()), first, "{id}");
+            assert_eq!(
+                Catalog::new("fr", source)
+                    .message_alone(id)
+                    .map(|said| said.to_vec()),
+                first,
+                "{id} read alone"
+            );
+        }
+        assert!(indexed.attribute("a", "gender").is_none(), "the first's");
+        assert!(matches!(
+            indexed.message("c").as_deref(),
+            Some([Element::Select { .. }])
+        ));
+        assert_eq!(
+            Catalog::new("fr", source).message_alone("c"),
+            indexed.message("c")
+        );
     }
 
     #[test]

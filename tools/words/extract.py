@@ -77,6 +77,9 @@ DEFAULT_SAID = re.compile(r"\bfn\s+enabled_by_default\b")
 DEFAULT_ANSWER = re.compile(r"fn\s+enabled_by_default\s*\(\s*&\s*self\s*\)\s*->\s*bool\s*\{\s*(true|false)\s*\}")
 # A message's first line in a catalog: its id at the line's start, then `=`.
 MESSAGE = re.compile(r"([a-zA-Z][a-zA-Z0-9_-]*) *=")
+# A line where Fluent's parser begins anew, whatever came before: a comment,
+# or a message's or a term's first line, which no placeable can hold.
+BEGINS_ANEW = re.compile(r"#|-?[a-zA-Z][a-zA-Z0-9_-]*[ \t]*=")
 # The flag that marks a noun, alone among a call's arguments, and the comment
 # line that says so in the English catalog.
 NOUN = re.compile(r",\s*noun\s*(?=[,)])")
@@ -277,14 +280,18 @@ def messages_of(source):
     """Each message of a catalog's `source`, by its id: whether it is a
     draft, a line of the `#` comment just above it (attached, as Fluent
     attaches it: no blank line between) saying `draft`. A message goes on
-    over its indented and blank lines, and over every line while a
-    placeable it opened is open, as the program's own index reads it
+    over its indented and blank lines, those a variant, an attribute or a
+    selector's end begins, and over every line while a placeable it opened
+    is open, until a line where Fluent begins anew (a comment, a message's
+    or a term's first line), as the program's own index reads it
     (`crates/core/src/words/catalog.rs`)."""
     found, comment = {}, []
     open_message, depth, in_string, escaped = False, 0, False, False
 
     def braces(text):
         nonlocal depth, in_string, escaped
+        # A string literal ends at its line's end.
+        in_string, escaped = False, False
         for c in text:
             if in_string:
                 if escaped:
@@ -301,7 +308,11 @@ def messages_of(source):
                 in_string = True
 
     for line in source.splitlines():
-        if open_message and (depth or line.startswith((" ", "\t")) or not line.strip()):
+        if (
+            open_message
+            and not BEGINS_ANEW.match(line)
+            and (depth or line.startswith((" ", "\t", "[", "*", ".", "}")) or not line.strip())
+        ):
             braces(line)
             continue
         open_message, depth, in_string, escaped = False, 0, False, False
@@ -312,7 +323,9 @@ def messages_of(source):
             continue
         message = MESSAGE.match(line)
         if message:
-            found[message.group(1)] = "draft" in comment
+            # An id written twice is said as its first copy (the catalogs'
+            # test refuses it): its draft mark is the first's.
+            found.setdefault(message.group(1), "draft" in comment)
             open_message = True
             braces(line[message.end() :])
         comment = []

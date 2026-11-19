@@ -840,11 +840,17 @@ mod reading {
         };
         let mut found = BTreeMap::new();
         let mut problems = Vec::new();
+        let mut seen = BTreeSet::new();
         for entry in resource.body {
             let fluent_syntax::ast::Entry::Message(message) = entry else {
                 continue;
             };
             let id = message.id.name.to_owned();
+            if !seen.insert(id.clone()) {
+                // Said as its first copy: the second would be lost unseen.
+                problems.push(format!("{id}: written twice"));
+                continue;
+            }
             let said = |word: &str| {
                 message
                     .comment
@@ -1633,6 +1639,17 @@ fn a_sentence_takes_its_noun_s_gender_and_forms() {
     );
     withdraw("words-test");
     assert_eq!(opening(bin()).say_in(&fr), "Opening Trash…");
+}
+
+/// The catalogs' test refuses an id a catalog writes twice: the program
+/// says its first copy, and the second would be lost unseen.
+#[test]
+fn the_catalogs_test_refuses_an_id_written_twice() {
+    assert_eq!(
+        reading::messages("a = un\nb = deux\na = autre\n").err(),
+        Some(vec!["a: written twice".to_owned()])
+    );
+    assert!(reading::messages("a = un\nb = deux\n").is_ok());
 }
 
 /// The catalogs' test holds a translation's grammar to its language's
