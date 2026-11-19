@@ -1363,17 +1363,17 @@ fn row_key(place: &Place) -> u64 {
     crate::elements::key_of((&place.group, &place.location, &place.key, &title))
 }
 
-/// A place as a sentence names it: a tag's by the tag it stands for (data),
-/// any other by its title as the sidebar says it.
 /// A place as a sentence names it: Skwir's own words for it (Home,
-/// Trash) as the noun they are, whose gender and forms a translation
-/// reads (« la Corbeille masquée », ADR-139, 5); anything else (a tag, a
-/// volume's label, a name the user gave) as a name, quoted and isolated.
+/// Trash), or a plugin's, as the noun they are, whose gender and forms a
+/// translation reads (« la Corbeille masquée », ADR-139, 5); a tag's by
+/// the tag it stands for (data); anything else (a volume's label, a name
+/// the user gave) as a name, said plainly, quoted and isolated by the
+/// sentence.
 fn named(place: &Place) -> words::Arg {
     match &place.tag {
         Some(tag) => words::Name(tag.clone()).into(),
-        None if place.title.message_of().is_some() => place.title.clone().into(),
-        None => words::Name(place.title.say()).into(),
+        None if place.title.is_message() => place.title.clone().into(),
+        None => words::Name(place.title.say_plain()).into(),
     }
 }
 
@@ -2446,6 +2446,29 @@ mod tests {
             "",
             Location::parse(location),
         )
+    }
+
+    /// A place's title is named in a sentence as the words it is where it
+    /// is a message, one come back from its data too (a plugin's, a place
+    /// across the window's JSON), else as a name said plainly (UB-7).
+    #[test]
+    fn a_place_is_named_as_its_words_or_as_a_name() {
+        use skwir_core::words::Arg;
+        let home = skwir_core::words!(test_sidebar_home = "Home", noun);
+        let mut named = place("places", "/x");
+        named.title = home.clone();
+        assert!(matches!(super::named(&named), Arg::Words(_)));
+        named.title = serde_json::from_value(home.to_data()).unwrap();
+        assert!(
+            matches!(super::named(&named), Arg::Words(_)),
+            "a message carried as data is still one"
+        );
+        let label = place("devices", "/Holiday photos");
+        assert_eq!(
+            super::named(&label),
+            Arg::Name("Holiday photos".into()),
+            "said plainly, no isolation of its own"
+        );
     }
 
     fn titles(arranged: &[super::Arranged]) -> Vec<String> {

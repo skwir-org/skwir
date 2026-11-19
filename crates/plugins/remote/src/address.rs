@@ -572,7 +572,7 @@ pub(crate) fn device_words(scheme: Scheme, device: String) -> Option<Words> {
 /// user's, a login and its server), else its words (`photos on nas`),
 /// said in the reader's language as they are, never said here first.
 pub(crate) fn named(label: &Words) -> skwir_core::words::Arg {
-    if label.message_of().is_some() {
+    if label.is_message() {
         skwir_core::words::Arg::Words(Box::new(label.clone()))
     } else {
         // As written: its text is the user's or the system's, in no

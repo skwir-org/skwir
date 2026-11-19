@@ -2546,7 +2546,7 @@ fn on_frame(
 /// ADR-139, 5); a name (a folder, a tag, a server, a search's words)
 /// isolated, as a folder is named.
 fn in_sentence(label: &Words) -> words::Arg {
-    if label.message_of().is_some() {
+    if label.is_message() {
         label.clone().into()
     } else {
         Folder(label.say_plain()).into()

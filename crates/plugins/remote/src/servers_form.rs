@@ -415,8 +415,8 @@ pub fn edit(
     let path = String::from_utf8_lossy(&old.path);
     // The name the user gave it, as written: none where it goes by its
     // address's, whose words are no name to edit.
-    let named = (server.label != old.label() && server.label.message_of().is_none())
-        .then(|| server.label.english());
+    let named =
+        (server.label != old.label() && !server.label.is_message()).then(|| server.label.english());
     for (key, value) in [
         ("host", Some(old.host.clone())),
         ("path", Some(path.trim_start_matches('/').to_owned())),
