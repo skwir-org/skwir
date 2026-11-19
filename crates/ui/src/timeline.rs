@@ -270,9 +270,14 @@ pub struct TimelineState {
     dates: PopoverAnchor,
     /// What it keeps of the pane's visit to the place it shows.
     visit: Option<Visit>,
-    /// The histogram's bars as the chart draws them, made once for each
-    /// and each measure: the chart lays out again only for new ones.
+    /// The histogram's bars as the chart draws them, made once for each,
+    /// each measure and the words they are said in (`chart_said`): the
+    /// chart lays out again only for new ones.
     chart: Option<Rc<Vec<bars::Bar>>>,
+    /// The words' revision (`words::revision`: the language, the dates'
+    /// shape, the units sizes are said in) the chart's labels and tallies
+    /// were said at: said again once it moves.
+    chart_said: u64,
     computed_for: Option<(u64, Option<usize>, Option<Anchor>, bool, usize)>,
     /// Which files it counted: the listing, its names, and what the pane
     /// shows of them (hidden files, the filter and the narrowing, the
@@ -305,6 +310,20 @@ impl TimelineState {
             measure: self.measure,
             date: self.date,
             ..Self::default()
+        }
+    }
+
+    /// Make the chart again from the histogram and the measure, in the
+    /// words said now.
+    fn chart_again(&mut self) {
+        self.chart_said = words::revision();
+        self.chart = self.histogram.as_ref().map(|h| chart_of(h, self.measure));
+    }
+
+    /// Say the chart again if the words moved since it was said.
+    fn chart_in_words_said(&mut self) {
+        if self.chart_said != words::revision() {
+            self.chart_again();
         }
     }
 }
@@ -605,7 +624,7 @@ impl Shell {
         let t = self.timeline_mut();
         if measure != t.measure {
             t.measure = measure;
-            t.chart = t.histogram.as_ref().map(|h| chart_of(h, measure));
+            t.chart_again();
             self.remember_session();
             cx.notify();
         }
@@ -799,6 +818,8 @@ impl Shell {
         if let Some((asked, answer)) = self.timeline_mut().asked.take() {
             self.take_histogram(asked, answer, cx);
         }
+        // Its labels and tallies in the language and the shapes chosen now.
+        self.timeline_mut().chart_in_words_said();
         // What the bars count: the files' dates and names and which are
         // selected, never every batch of other metadata.
         let Some((version, shown, lifetime)) = ({
@@ -981,13 +1002,13 @@ impl Shell {
         if h == t.histogram {
             return;
         }
-        t.chart = h.as_ref().map(|h| chart_of(h, t.measure));
         if h.as_ref()
             .is_none_or(|h| t.hover.is_some_and(|i| i >= h.bars.len()))
         {
             t.hover = None;
         }
         t.histogram = h;
+        t.chart_again();
     }
 }
 
@@ -1788,5 +1809,32 @@ mod tests {
         let size = chart_of(&h, Measure::Size);
         assert_eq!((size[0].value, size[0].marked), (3_000, 1_000));
         assert_eq!(&*size[0].tally, format::size(3_000));
+    }
+
+    /// The chart is said again once the words move (a language chosen),
+    /// and kept while they stand.
+    #[test]
+    fn the_chart_is_said_again_in_the_words_said_now() {
+        let mut t = TimelineState {
+            histogram: Some(Histogram {
+                bucket: Some("year".into()),
+                bars: vec![Bar {
+                    count: 1_234,
+                    ..bar(1_767_225_600, 1_798_761_600)
+                }],
+                ..Histogram::default()
+            }),
+            ..TimelineState::default()
+        };
+        t.chart_again();
+        let english = Rc::clone(t.chart.as_ref().unwrap());
+        t.chart_in_words_said();
+        assert!(Rc::ptr_eq(&english, t.chart.as_ref().unwrap()), "kept");
+        skwir_core::locale::set_chosen(Some(skwir_core::words::PSEUDO.into()));
+        t.chart_in_words_said();
+        let pseudo = Rc::clone(t.chart.as_ref().unwrap());
+        skwir_core::locale::set_chosen(None);
+        assert!(!Rc::ptr_eq(&english, &pseudo), "said again");
+        assert_eq!(pseudo[0].value, 1_234);
     }
 }
