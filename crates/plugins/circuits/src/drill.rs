@@ -291,8 +291,8 @@ pub fn draw(text: &str, cancel: &skwir_core::CancelToken) -> anyhow::Result<Draw
             } else {
                 words!(
                     circuits_millimetres_range = "{ $smallest } to { $largest }\u{a0}mm",
-                    smallest = round(smallest).to_string(),
-                    largest = round(largest).to_string(),
+                    smallest = crate::number(round(smallest)),
+                    largest = crate::number(round(largest)),
                     note = "Beside Sizes in a drill file's Properties: its smallest and largest drill bits. smallest, largest: numbers of millimetres."
                 )
                 .say()

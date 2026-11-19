@@ -257,7 +257,7 @@ fn title_block() -> [(&'static str, Words); 4] {
 fn millimetres(value: f64) -> String {
     words!(
         circuits_millimetres = "{ $mm }\u{a0}mm",
-        mm = value.to_string(),
+        mm = number(value),
         note = "A length in Properties (a board's thickness, a drill's size). mm: the number of millimetres."
     )
     .say()
@@ -267,11 +267,24 @@ fn millimetres(value: f64) -> String {
 fn millimetres_by(width: f64, height: f64) -> String {
     words!(
         circuits_millimetres_by = "{ $width }\u{a0}×\u{a0}{ $height }\u{a0}mm",
-        width = width.to_string(),
-        height = height.to_string(),
+        width = number(width),
+        height = number(height),
         note = "A size in Properties: a board's or a layer's width by its height. width, height: numbers of millimetres."
     )
     .say()
+}
+
+/// `value`, rounded by the caller to thousandths at most, as a number the
+/// reader's language writes (« 1,6 »): with the digits after the point it
+/// has, as a length is written on a drawing (1.6, 0.25, 2).
+pub(crate) fn number(value: f64) -> words::Decimal {
+    let digits = (0..3u8)
+        .find(|&digits| {
+            let scaled = value * 10f64.powi(i32::from(digits));
+            (scaled - scaled.round()).abs() < 1e-6
+        })
+        .unwrap_or(3);
+    words::Decimal::of(value, digits)
 }
 
 /// What a file holds: its drawing, and facts in the order shown.
@@ -411,6 +424,25 @@ impl ThumbnailProvider for Pictures {
 mod tests {
     use super::*;
     use skwir_core::op::EntryRef;
+
+    /// A length is a number the reader's language writes, its digits after
+    /// the point those it has (PB-5), never one written by `to_string`.
+    #[test]
+    fn a_length_is_written_as_a_decimal() {
+        let digits = |value: f64| {
+            let number = number(value);
+            (number.value, number.digits)
+        };
+        assert_eq!(digits(1.6), (16, 1));
+        assert_eq!(digits(0.25), (25, 2));
+        assert_eq!(digits(2.0), (2, 0));
+        assert_eq!(digits(0.127), (127, 3));
+        assert_eq!(millimetres(1.6), "1.6\u{a0}mm");
+        assert_eq!(millimetres_by(53.59, 2.0), "53.59\u{a0}×\u{a0}2\u{a0}mm");
+        let pseudo = words!(test_length = "{ $mm }", mm = number(1_234.5))
+            .say_in(&[words::PSEUDO.to_owned()]);
+        assert!(pseudo.contains("1,234.5"), "grouped as a number: {pseudo}");
+    }
 
     fn request(path: &Path) -> PreviewRequest {
         PreviewRequest {
