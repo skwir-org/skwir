@@ -863,7 +863,10 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let more = (b.renamed > b.preview.len()).then(|| {
         div().text_small().text_color(theme.text_muted).child(
             words!(
-                renamebulk_more = "… { $count } more",
+                renamebulk_more = "{ $count ->
+                    [one] … { $count } more
+                   *[other] … { $count } more
+                }",
                 count = b.renamed - b.preview.len(),
                 note = "Under the renames the bulk rename lists: how many more it makes."
             )

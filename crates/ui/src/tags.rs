@@ -1309,7 +1309,10 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 let index = *i;
                 let detail = match (tag.mark, tag.was(e.items)) {
                     (Mark::Some, _) => words!(
-                        tag_editor_on_some = "on { $count } of { $items }",
+                        tag_editor_on_some = "{ $count ->
+                            [one] on { $count } of { $items }
+                           *[other] on { $count } of { $items }
+                        }",
                         count = tag.count,
                         items = e.items,
                         note = "After a tag in the tag editor: how many of the files edited have it, of all (on 2 of 5)."

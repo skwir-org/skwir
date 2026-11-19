@@ -151,7 +151,10 @@ activity_getting_ready = getting ready…
 activity_getting_ready_opening = Getting ready…
 
 # How what runs goes (42% · about 3 min left), then how many actions wait their turn.
-activity_how_waiting = { $how } · { $count } waiting
+activity_how_waiting = { $how } · { $count ->
+        [one] { $count } waiting
+       *[other] { $count } waiting
+    }
 
 # Where an action goes, as its card says it when pointed at: the paths of the folders it brings something into, joined, the last item perhaps how many others.
 activity_into = Into { $folders }
@@ -163,7 +166,10 @@ activity_into_more = { $count ->
     }
 
 # Over Activity's cards: how long what runs has left (about 3 min left), then how many actions wait their turn.
-activity_left_waiting = { $left } · { $count } waiting
+activity_left_waiting = { $left } · { $count ->
+        [one] { $count } waiting
+       *[other] { $count } waiting
+    }
 
 # The name of the panel of what runs, opened above the footer.
 activity_name = Activity
@@ -241,7 +247,10 @@ activity_stopping_opening = Stopping…
 activity_strip_label = Activity: { $said }
 
 # How many actions wait their turn (3 waiting).
-activity_waiting_count = { $count } waiting
+activity_waiting_count = { $count ->
+        [one] { $count } waiting
+       *[other] { $count } waiting
+    }
 
 # A heading of Activity, over the actions waiting their turn.
 activity_waiting_heading = Waiting
@@ -5952,7 +5961,10 @@ renamebulk_keys_case_reference = Tab switches fields · { $case } changes case �
 renamebulk_keys_reference = Tab switches fields · { $reference } says what one takes · Enter renames (undoable) · Escape cancels
 
 # Under the renames the bulk rename lists: how many more it makes.
-renamebulk_more = … { $count } more
+renamebulk_more = { $count ->
+        [one] … { $count } more
+       *[other] … { $count } more
+    }
 
 # Where the bulk rename lists its renames, when it would rename nothing.
 renamebulk_no_changes = No name changes
@@ -7462,7 +7474,10 @@ status_selected_weigh = { $count ->
     } · { $size }
 
 # A filtered pane's footer: how many items are shown, of how many there are.
-status_shown_of = { $count } of { $total ->
+status_shown_of = { $count ->
+        [one] { $count }
+       *[other] { $count }
+    } of { $total ->
         [one] { $total } item
        *[other] { $total } items
     }
@@ -7548,7 +7563,10 @@ tag_editor_no_tags = no tags
 tag_editor_none_yet = No tags yet: type one and press Enter
 
 # After a tag in the tag editor: how many of the files edited have it, of all (on 2 of 5).
-tag_editor_on_some = on { $count } of { $items }
+tag_editor_on_some = { $count ->
+        [one] on { $count } of { $items }
+       *[other] on { $count } of { $items }
+    }
 
 # The tag editor's empty field: typing filters the tags listed, or names a new one.
 tag_editor_placeholder = Filter, or type a new tag
@@ -7779,7 +7797,10 @@ timeline_subtree_tip = Count the files of the folders inside too
 timeline_title = Timeline
 
 # Beside the timeline's buttons: how many files have not the date its bars count.
-timeline_undated = { $count } without a date
+timeline_undated = { $count ->
+        [one] { $count } without a date
+       *[other] { $count } without a date
+    }
 
 # What a screen reader calls a bar of the timeline counting a week: the day it begins (3 March 2025).
 timeline_week_of = Week of { $date }
@@ -8169,10 +8190,16 @@ toast_waits_for_everything = Waits for what was asked before it
 toast_waits_for_everything_after = waits for what was asked before it
 
 # count: how many actions run at once (4).
-toast_waits_for_room = Waits for one of the { $count } running to end
+toast_waits_for_room = { $count ->
+        [one] Waits for the { $count } running to end
+       *[other] Waits for one of the { $count } running to end
+    }
 
 # Said after the title of an action waiting its turn (Rename to b.txt · …). count: how many actions run at once (4).
-toast_waits_for_room_after = waits for one of the { $count } running to end
+toast_waits_for_room_after = { $count ->
+        [one] waits for the { $count } running to end
+       *[other] waits for one of the { $count } running to end
+    }
 
 toast_waits_for_server = Waits for the server
 

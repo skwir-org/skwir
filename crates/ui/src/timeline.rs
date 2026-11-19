@@ -1081,7 +1081,10 @@ fn info(t: &TimelineState, focused_bar: Option<usize>, friendly: bool) -> String
     if h.unknown > 0 {
         parts.push(
             words!(
-                timeline_undated = "{ $count } without a date",
+                timeline_undated = "{ $count ->
+                    [one] { $count } without a date
+                   *[other] { $count } without a date
+                }",
                 count = h.unknown,
                 note = "Beside the timeline's buttons: how many files have not the date its bars count."
             )

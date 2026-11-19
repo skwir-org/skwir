@@ -243,7 +243,10 @@ pub(crate) fn render(
         (false, false) if error.is_none() && loading => loading_items(count),
         (false, _) => match total {
             Some(total) => words!(
-                status_shown_of = "{ $count } of { $total ->
+                status_shown_of = "{ $count ->
+                    [one] { $count }
+                   *[other] { $count }
+                } of { $total ->
                     [one] { $total } item
                    *[other] { $total } items
                 }",

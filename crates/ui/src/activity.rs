@@ -488,7 +488,10 @@ pub(crate) fn percent_words(fraction: f32) -> Words {
 /// say it: "3 waiting".
 fn waiting_count(count: usize) -> Words {
     words!(
-        activity_waiting_count = "{ $count } waiting",
+        activity_waiting_count = "{ $count ->
+            [one] { $count } waiting
+           *[other] { $count } waiting
+        }",
         count = count,
         note = "How many actions wait their turn (3 waiting)."
     )
@@ -564,7 +567,10 @@ fn how(summary: &Summary, sending_files: Option<usize>, opening: bool) -> Words 
     match (said, summary.waiting) {
         (Some(said), 0) => said,
         (Some(said), waiting) => words!(
-            activity_how_waiting = "{ $how } · { $count } waiting",
+            activity_how_waiting = "{ $how } · { $count ->
+                [one] { $count } waiting
+               *[other] { $count } waiting
+            }",
             how = said,
             count = waiting,
             note = "How what runs goes (42% · about 3 min left), then how many actions wait \
@@ -1031,7 +1037,10 @@ fn spell_header(
     let waiting = (started && summary.waiting > 0).then_some(summary.waiting);
     let after = match (summary.left, waiting) {
         (Some(left), Some(waiting)) => Some(words!(
-            activity_left_waiting = "{ $left } · { $count } waiting",
+            activity_left_waiting = "{ $left } · { $count ->
+                [one] { $count } waiting
+               *[other] { $count } waiting
+            }",
             left = format::time_left_words(left),
             count = waiting,
             note = "Over Activity's cards: how long what runs has left (about 3 min left), \

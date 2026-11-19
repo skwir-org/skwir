@@ -1403,12 +1403,18 @@ pub(crate) fn waits_for(waits_for: &skwir_core::op::WaitsFor, after: bool) -> Wo
             note = "Said after the title of an action waiting its turn (Rename to b.txt · …)."
         ),
         (WaitsFor::Room, false) => words!(
-            toast_waits_for_room = "Waits for one of the { $count } running to end",
+            toast_waits_for_room = "{ $count ->
+                [one] Waits for the { $count } running to end
+               *[other] Waits for one of the { $count } running to end
+            }",
             count = skwir_core::op::ACTIONS_AT_ONCE,
             note = "count: how many actions run at once (4)."
         ),
         (WaitsFor::Room, true) => words!(
-            toast_waits_for_room_after = "waits for one of the { $count } running to end",
+            toast_waits_for_room_after = "{ $count ->
+                [one] waits for the { $count } running to end
+               *[other] waits for one of the { $count } running to end
+            }",
             count = skwir_core::op::ACTIONS_AT_ONCE,
             note = "Said after the title of an action waiting its turn (Rename to b.txt · …). \
                     count: how many actions run at once (4)."
