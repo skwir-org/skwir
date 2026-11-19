@@ -542,6 +542,9 @@ places_udisks_no_mount_point = udisksctl n’a pas indiqué où il a monté le v
 places_udisks_unrun = udisksctl n’a pas pu être lancé : { $error }
 
 # draft
+portals_no_config_folder = Il n’y a aucun dossier de configuration où écrire ce choix
+
+# draft
 preview_changed = le fichier a changé pendant l’aperçu
 
 # draft

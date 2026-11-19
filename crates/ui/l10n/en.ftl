@@ -1077,6 +1077,18 @@ commands_field_reference = What the field takes
 # Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's arguments and the values they take.
 commands_field_reference_description = Show under the field being typed in what it takes: its placeholders, terms or signs, each with what it means and gives here, a row taken written where the caret is (ADR-137); shown, F1 shows the keys of the place. The address field says it in its card; `field` (its `?`) turns that on and off
 
+commands_file_chooser_list = What answers open and save dialogs
+
+commands_file_chooser_list_description = What answers other programs' Open and Save dialogs, as Settings lists it: the desktop portal's back ends installed for them, each with the `dialogs.choose` that chooses it, and the one its configuration names. Answers from memory
+
+commands_file_chooser_put_back = Put back what answered open and save dialogs
+
+commands_file_chooser_put_back_description = Put the user's portal configuration `file` back as it was (`text`, none for no file): what Undo of `dialogs.choose` runs, `portal` being what it chose
+
+commands_file_chooser_set = Choose what answers open and save dialogs
+
+commands_file_chooser_set_description = Name `portal` (a back end of the desktop portal, by its .portal file's name; empty for none) for other programs' Open and Save dialogs in the user's portal configuration, its other lines kept; it applies when the portal starts again. The notification offers Undo
+
 commands_filter = Filter…
 
 # Read by agents and in F1's list of actions. What is in backquotes is written as it is: the command's argument.
@@ -6346,6 +6358,39 @@ settings_file = Settings file
 
 # Where the settings file is, from ~ where it is under the home folder.
 settings_file_at = { $path }. It lists only what differs from the defaults.
+
+# A setting's title on the General page: what answers other programs' Open and Save dialogs.
+settings_file_chooser = Open and save dialogs
+
+# Said once what answers other programs' dialogs is chosen and the configuration said so already: chooser is the choice (Skwir, KDE, As the desktop chooses).
+settings_file_chooser_already = Other programs' Open and Save dialogs are already { $chooser }
+
+# Said under the Open and save dialogs setting: the desktop portal reads its configuration as it starts.
+settings_file_chooser_applies = Applies when the desktop portal starts again, at the next login
+
+# Said once what answers other programs' dialogs is chosen, with Undo: chooser is the choice (Skwir, KDE, As the desktop chooses); it applies when the portal starts again, at the next login.
+settings_file_chooser_chosen = Other programs' Open and Save dialogs: { $chooser }, from the desktop portal's next start
+
+# Open and Save are what programs call their dialogs for choosing a file.
+settings_file_chooser_description = What answers other programs' Open and Save dialogs, those that ask the desktop for one: Skwir's windows, or another program's dialogs.
+
+# What a setting's description says after its first sentence, in its tooltip. The desktop portal is the desktop's service programs ask for dialogs.
+settings_file_chooser_description_more = The desktop portal reads this as it starts: a change applies at the next login. Programs that draw their own dialogs keep them.
+
+# Said when the portal's configuration cannot be written: error is why.
+settings_file_chooser_failed = What answers Open and Save dialogs is unchanged: { $error }
+
+# Said under the Open and save dialogs setting where Skwir's package did not install the file that offers it to the desktop portal (a build run from its folder).
+settings_file_chooser_not_installed = Skwir cannot be chosen here: its portal file is not installed
+
+# Said once a choice of what answers other programs' dialogs is undone, with Redo.
+settings_file_chooser_put_back = What answered other programs' Open and Save dialogs is back, from the desktop portal's next start
+
+# Said under the Open and save dialogs setting while it is read.
+settings_file_chooser_reading = Reading the desktop portal's configuration…
+
+# The Open and save dialogs setting's choice when the portal's configuration names nothing for them: the desktop's own way of choosing.
+settings_file_chooser_unnamed = As the desktop chooses
 
 settings_files_opacity = Files background opacity
 

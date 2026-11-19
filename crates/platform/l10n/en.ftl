@@ -538,6 +538,9 @@ places_udisks_no_mount_point = udisksctl did not say where it mounted the volume
 # udisksctl is the program that mounts and unlocks volumes (a name). error: why it could not be run.
 places_udisks_unrun = udisksctl could not be run: { $error }
 
+# An error choosing what answers other programs' Open and Save dialogs: the user has no configuration folder (no XDG_CONFIG_HOME, no home).
+portals_no_config_folder = There is no configuration folder to write the choice in
+
 # Why a picture of a file is not shown: the file was written to while it was drawn.
 preview_changed = file changed during preview
 

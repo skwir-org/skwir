@@ -77,6 +77,8 @@ pub mod open;
 pub mod package;
 pub mod picture;
 pub mod places;
+#[cfg(target_os = "linux")]
+pub mod portals;
 pub mod preview;
 pub mod print;
 pub mod print_job;

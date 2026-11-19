@@ -33,6 +33,8 @@ mod complete;
 pub mod controls;
 mod deleting;
 mod desktop_style;
+#[cfg(target_os = "linux")]
+mod dialogs_setting;
 pub mod dnd;
 pub mod dock;
 mod drafted;
@@ -224,6 +226,10 @@ pub fn run_from(
     }
     // The shell's own commands, known to every surface as the others are.
     commands::declare_all(&app);
+    // What answers other programs' Open and Save dialogs, in Settings
+    // (ADR-141, 10).
+    #[cfg(target_os = "linux")]
+    dialogs_setting::register(&app);
     // What the shell offers the address field (ADR-098).
     suggestions::register(&app);
     // What the desktop said when skwir last ran, then what it says

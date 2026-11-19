@@ -1179,6 +1179,24 @@ commands_field_reference = Ce qu’accepte le champ
 commands_field_reference_description = Afficher sous le champ en cours de saisie ce qu’il accepte : ses variables, ses termes ou ses signes, chacun avec ce qu’il signifie et ce qu’il donne ici, une ligne choisie s’écrivant au point d’insertion (ADR-137) ; tant que c’est affiché, F1 montre les touches de cet endroit. Le champ d’adresse le dit dans sa fiche ; `field` (son `?`) l’active et le désactive
 
 # draft
+commands_file_chooser_list = Ce qui répond aux boîtes de dialogue d’ouverture et d’enregistrement
+
+# draft
+commands_file_chooser_list_description = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, comme les Paramètres le présentent : les services du portail du bureau installés pour elles, chacun avec le `dialogs.choose` qui le choisit, et celui que sa configuration nomme. Répond de mémoire
+
+# draft
+commands_file_chooser_put_back = Rétablir ce qui répondait aux boîtes de dialogue d’ouverture et d’enregistrement
+
+# draft
+commands_file_chooser_put_back_description = Remettre le fichier de configuration du portail de l’utilisateur `file` tel qu’il était (`text`, rien pour aucun fichier) : ce qu’exécute l’annulation de `dialogs.choose`, `portal` étant ce qu’il avait choisi
+
+# draft
+commands_file_chooser_set = Choisir ce qui répond aux boîtes de dialogue d’ouverture et d’enregistrement
+
+# draft
+commands_file_chooser_set_description = Nommer `portal` (un service du portail du bureau, du nom de son fichier .portal ; vide pour aucun) pour les boîtes de dialogue Ouvrir et Enregistrer des autres programmes dans la configuration du portail de l’utilisateur, ses autres lignes conservées ; cela s’applique au prochain démarrage du portail. La notification propose Annuler
+
+# draft
 commands_filter = Filtrer…
 
 # draft
@@ -7103,6 +7121,39 @@ settings_file = Fichier de paramètres
 
 # draft
 settings_file_at = { $path }. Il ne liste que ce qui diffère des valeurs par défaut.
+
+# draft
+settings_file_chooser = Boîtes de dialogue d’ouverture et d’enregistrement
+
+# draft
+settings_file_chooser_already = Les boîtes de dialogue Ouvrir et Enregistrer des autres programmes sont déjà { $chooser }
+
+# draft
+settings_file_chooser_applies = S’applique au prochain démarrage du portail du bureau, à la prochaine connexion
+
+# draft
+settings_file_chooser_chosen = Boîtes de dialogue Ouvrir et Enregistrer des autres programmes : { $chooser }, dès le prochain démarrage du portail du bureau
+
+# draft
+settings_file_chooser_description = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, ceux qui en demandent une au bureau : les fenêtres de Skwir, ou les boîtes de dialogue d’un autre programme.
+
+# draft
+settings_file_chooser_description_more = Le portail du bureau lit ce réglage à son démarrage : un changement s’applique à la prochaine connexion. Les programmes qui dessinent leurs propres boîtes de dialogue les gardent.
+
+# draft
+settings_file_chooser_failed = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer n’a pas changé : { $error }
+
+# draft
+settings_file_chooser_not_installed = Skwir ne peut pas être choisi ici : son fichier de portail n’est pas installé
+
+# draft
+settings_file_chooser_put_back = Ce qui répondait aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes est rétabli, dès le prochain démarrage du portail du bureau
+
+# draft
+settings_file_chooser_reading = Lecture de la configuration du portail du bureau…
+
+# draft
+settings_file_chooser_unnamed = Comme le bureau le choisit
 
 # draft
 settings_files_opacity = Opacité du fond des fichiers

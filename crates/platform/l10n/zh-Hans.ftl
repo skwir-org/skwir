@@ -532,6 +532,9 @@ places_udisks_no_mount_point = udisksctl 未说明将卷挂载到了何处
 places_udisks_unrun = 无法运行 udisksctl：{ $error }
 
 # draft
+portals_no_config_folder = 没有可写入此选择的配置文件夹
+
+# draft
 preview_changed = 预览期间文件已更改
 
 # draft

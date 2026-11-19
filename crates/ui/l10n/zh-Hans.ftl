@@ -1137,6 +1137,24 @@ commands_field_reference = 输入框可接受的内容
 commands_field_reference_description = 在正在输入的输入框下方显示它可接受的内容：其占位符、条件或符号，各自附有含义及在此处给出的结果，采用的行写入插入点处（ADR-137）；显示时，F1 显示此处的按键。地址栏在其卡片中显示这些内容；`field`（即其 `?`）用于开关此显示
 
 # draft
+commands_file_chooser_list = 应答打开和保存对话框的程序
+
+# draft
+commands_file_chooser_list_description = 应答其他程序“打开”和“保存”对话框的程序，与“设置”中所列相同：为它们安装的桌面门户后端，每个附有选择它的 `dialogs.choose`，以及其配置所指定的那个。从内存中应答
+
+# draft
+commands_file_chooser_put_back = 恢复原先应答打开和保存对话框的程序
+
+# draft
+commands_file_chooser_put_back_description = 将用户的门户配置文件 `file` 恢复原样（`text`，无文件时为空）：即撤销 `dialogs.choose` 时所运行的命令，`portal` 为其所选
+
+# draft
+commands_file_chooser_set = 选择应答打开和保存对话框的程序
+
+# draft
+commands_file_chooser_set_description = 在用户的门户配置中，为其他程序的“打开”和“保存”对话框指定 `portal`（桌面门户的一个后端，以其 .portal 文件名表示；为空则不指定），保留其他各行；门户下次启动时生效。通知中提供“撤销”
+
+# draft
 commands_filter = 筛选…
 
 # draft
@@ -6848,6 +6866,39 @@ settings_file = 设置文件
 
 # draft
 settings_file_at = { $path }。其中只列出与默认值不同的设置。
+
+# draft
+settings_file_chooser = 打开和保存对话框
+
+# draft
+settings_file_chooser_already = 其他程序的“打开”和“保存”对话框已经是 { $chooser }
+
+# draft
+settings_file_chooser_applies = 桌面门户下次启动时（即下次登录时）生效
+
+# draft
+settings_file_chooser_chosen = 其他程序的“打开”和“保存”对话框：{ $chooser }，自桌面门户下次启动起
+
+# draft
+settings_file_chooser_description = 应答其他程序（向桌面请求对话框的程序）“打开”和“保存”对话框的程序：Skwir 的窗口，或另一个程序的对话框。
+
+# draft
+settings_file_chooser_description_more = 桌面门户在启动时读取此设置：更改将在下次登录时生效。自行绘制对话框的程序仍使用自己的对话框。
+
+# draft
+settings_file_chooser_failed = 应答“打开”和“保存”对话框的程序未更改：{ $error }
+
+# draft
+settings_file_chooser_not_installed = 此处无法选择 Skwir：其门户文件未安装
+
+# draft
+settings_file_chooser_put_back = 已恢复原先应答其他程序“打开”和“保存”对话框的程序，自桌面门户下次启动起
+
+# draft
+settings_file_chooser_reading = 正在读取桌面门户的配置…
+
+# draft
+settings_file_chooser_unnamed = 由桌面选择
 
 # draft
 settings_files_opacity = 文件区背景不透明度
