@@ -90,7 +90,11 @@ working in an area, also read that area's rules (see
   widest word. A popup's text starts anew (`popover::column`), whatever
   the bar it hangs from says. Texts beside the controls that act on them, in a row that
   can grow narrow, are an `elements::beside`: the controls go under the
-  texts rather than cut a word or run off the row.
+  texts rather than cut a word or run off the row. Labels in a column
+  beside their values (Properties, About, a dialog's fields) are as wide
+  as their widest word (`labels::column`), never a length written for
+  them: a word wider than its column, in another language or at a larger
+  size, is broken between its letters.
 - **Tokens.** Colors, radii, shadows and fonts come from `theme.rs` (its
   header lists the scales). State colors are tokens too (`hover`,
   `selection_*`, `success`/`warning`/`error`, `scrim`); never derive one

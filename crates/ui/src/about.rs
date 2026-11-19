@@ -51,6 +51,11 @@ const SOURCE: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/source");
 const WIDTH: f32 = 520.;
 const PADDING: f32 = 20.;
 
+/// The details' labels at their narrowest and at their widest, at 100 %
+/// (`labels::column`): the values keep the most of the dialog's width.
+const LABEL: f32 = 64.;
+const LABEL_MOST: f32 = 160.;
+
 /// The version as `skwir --version` says it, with the commit a build that
 /// is not a release was made from (`skwir_platform::process::build`), and
 /// whether it is a build for development, slower than a release.
@@ -416,17 +421,28 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .p_3()
         .rounded_md()
         .bg(theme.code_bg);
-    for (row, (label, value)) in about.facts.iter().enumerate() {
+    // The labels are as wide as their widest word ("Language", "Graphismes"),
+    // the values beside them in one column.
+    let labels: Vec<String> = about.facts.iter().map(|(label, _)| label.say()).collect();
+    let column = crate::labels::column(
+        labels.iter().map(String::as_str),
+        crate::sizes::Text::Body,
+        LABEL,
+        LABEL_MOST,
+        &theme,
+        cx,
+    );
+    for (row, (label, (_, value))) in labels.into_iter().zip(&about.facts).enumerate() {
         facts = facts.child(
             div()
                 .flex()
                 .gap_3()
                 .child(
                     div()
-                        .w(sized(64.))
+                        .w(column)
                         .flex_none()
                         .text_color(theme.text_muted)
-                        .child(label.say()),
+                        .child(label),
                 )
                 .child(crate::elements::clip::clipped(
                     div().id(("about-fact", row)).flex_1().min_w_0().truncate(),

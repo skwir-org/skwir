@@ -2594,27 +2594,20 @@ const LABEL_MOST: f32 = 2. * LABEL;
 
 /// The width all the labels of the panel share, in the rem in force:
 /// `LABEL`, or the widest word of a label where one is wider (« Commentaire »),
-/// so a label wraps between its words and never inside one, and the values
-/// stand in one column. A text's width follows from its words and its font,
-/// known before layout (no bounds read, no frame late, as `nav_menu`
-/// sizes a popup by its widest label): each word measured as gpui's line
-/// wrapper measures it (`name_lines::width`), at the body size the labels
-/// are drawn at. That size and the width are both in rems, so the text size
-/// chosen leaves their ratio as it is.
+/// at the body size they are drawn at (`labels::column`).
 fn label_width<'a>(
     labels: impl Iterator<Item = &'a SharedString>,
     theme: &Theme,
     cx: &gpui::App,
 ) -> gpui::Rems {
-    let font = gpui::font(theme.font.clone());
-    let size = gpui::px(crate::sizes::Text::Body.rems() * crate::sizes::REM);
-    let widest = labels
-        .flat_map(|label| label.split_whitespace())
-        .map(|word| f32::from(crate::name_lines::width(word, &font, size, cx)))
-        .fold(0., f32::max);
-    // A pixel of slack: the line wrapper's widths summed, against the
-    // shaped line's.
-    sized((widest + 1.).ceil().clamp(LABEL, LABEL_MOST))
+    crate::labels::column(
+        labels.map(SharedString::as_ref),
+        crate::sizes::Text::Body,
+        LABEL,
+        LABEL_MOST,
+        theme,
+        cx,
+    )
 }
 
 /// The section: right under the header's card (`preview::under_card` puts

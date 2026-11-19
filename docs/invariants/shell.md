@@ -1690,6 +1690,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   picker's rows are its buttons.
   A press outside cancels too, but is never the only way: what is only
   read (About, F1's overview) closes from its ✕, as Settings does.
+- **Labels beside their values share the width of their widest word**
+  (`labels::column`, measured before layout at the size they are drawn
+  at, between a least and a most the place chooses): Properties' rows,
+  About's details, the bulk rename's fields. A label wraps between its
+  words, never inside one, and the values stand in one column whatever
+  the language and the text size. Never a width written for labels.
 - **A dialog keeps the keyboard.** Tab walks its field, Cancel and its
   answer, round their ends (`Shell::walk_dialog`, `modal::tab_among`),
   never the window behind it; a list one picks from keeps it in its

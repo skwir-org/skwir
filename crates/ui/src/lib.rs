@@ -58,6 +58,7 @@ mod inspector_pictures;
 mod inspector_rows;
 mod inspector_text;
 pub mod keymap;
+mod labels;
 mod latest;
 pub mod layout;
 mod links;

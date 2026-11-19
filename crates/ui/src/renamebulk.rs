@@ -723,12 +723,29 @@ fn case_dropdown(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
 const CASE_LIST_WIDTH: f32 = 180.;
 const CASE_LIST_PRIORITY: usize = 5;
 
+/// The labels of the fields and of the case at their narrowest and at
+/// their widest, at 100 % (`labels::column`): the fields keep the most of
+/// the dialog's width.
+const LABEL: f32 = 100.;
+const LABEL_MOST: f32 = 200.;
+
 pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let b = shell.bulk.as_ref()?;
     let theme = cx.global::<Theme>().clone();
+    // The fields' labels and the case's are as wide as their widest word,
+    // the fields beside them in one column.
+    let fields: Vec<String> = (0..FIELDS.len()).map(|i| field_words(i).0.say()).collect();
+    let case = case_title().say();
+    let column = crate::labels::column(
+        fields.iter().chain([&case]).map(String::as_str),
+        crate::sizes::Text::Body,
+        LABEL,
+        LABEL_MOST,
+        &theme,
+        cx,
+    );
     let mut form = div().flex().flex_col().gap_2();
-    for i in 0..FIELDS.len() {
-        let (label, _) = field_words(i);
+    for (i, label) in fields.into_iter().enumerate() {
         // Where the keyboard is, whether Tab or a click put it there.
         let focused = b.inputs[i].read(cx).is_focused(window);
         let frame = div()
@@ -763,10 +780,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .gap_2()
                 .child(
                     div()
-                        .w(sized(100.))
+                        .flex_none()
+                        .w(column)
                         .text_body()
                         .text_color(theme.text_muted)
-                        .child(label.say()),
+                        .child(label),
                 )
                 .child(frame),
         );
@@ -779,10 +797,10 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             .child(
                 div()
                     .flex_none()
-                    .w(sized(100.))
+                    .w(column)
                     .text_body()
                     .text_color(theme.text_muted)
-                    .child(case_title().say()),
+                    .child(case),
             )
             .child(case_control(b, &theme, cx)),
     );
