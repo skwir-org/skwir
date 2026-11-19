@@ -211,6 +211,9 @@ exif_software = 软件
 exif_taken = 拍摄时间
 
 # draft
+file_manager_not_yet = { $system } 暂不支持响应其他程序
+
+# draft
 file_no_folder = { $path } 没有上级文件夹
 
 # draft

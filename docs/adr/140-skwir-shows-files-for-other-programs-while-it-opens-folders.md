@@ -115,7 +115,9 @@ row in Settings: decision 8.
    Windows Explorer can be bypassed for folders by a verb of the user's,
    not for the shell's own "Open file location", and a handler that
    fails breaks opening folders everywhere. Neither is attempted, and
-   `--file-manager` there says so (`system::not_yet`).
+   `--file-manager` there says so (`file_manager::not_yet`, words for
+   what is not written for a system yet, as `system::not_yet_words`'
+   are).
 8. **Settings says it** (amended 2026-11-19): General › Startup holds
    "Default file manager", beside "Open folders from other programs in",
    a choice its owner keeps (`SettingSpec::choice_kept_by`, drawn as any

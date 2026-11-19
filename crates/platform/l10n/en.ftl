@@ -210,6 +210,9 @@ exif_software = Software
 # A label in Properties: when a photo was taken, as its camera wrote.
 exif_taken = Taken
 
+# Why skwir, started to show files for other programs or to answer their dialogs, ends at once on a system where neither is written yet. system: its name (macOS, Windows).
+file_manager_not_yet = Answering other programs is not available on { $system } yet
+
 # Why a file of the desktop's (its bookmarks, its default applications) was not changed: its path names no folder. path: the file's path.
 file_no_folder = { $path } has no folder
 

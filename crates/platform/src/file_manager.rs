@@ -20,6 +20,18 @@ pub const FOLDERS: &str = "inode/directory";
 /// window and opens one for the request (ADR-140, 5).
 pub const STARTED_BY_BUS: &str = "--file-manager";
 
+/// Why a program started to answer other programs (with
+/// [`STARTED_BY_BUS`], or by the portal for their dialogs, ADR-141) ends
+/// at once off Linux, where neither is written (ADR-140, 7): what is not
+/// written for a system yet, said as `system::not_yet_words` says it.
+pub fn not_yet() -> skwir_core::words::Words {
+    skwir_core::words!(
+        file_manager_not_yet = "Answering other programs is not available on { $system } yet",
+        system = skwir_core::system::named(),
+        note = "Why skwir, started to show files for other programs or to answer their dialogs, ends at once on a system where neither is written yet. system: its name (macOS, Windows)."
+    )
+}
+
 /// What a request asks shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shown {

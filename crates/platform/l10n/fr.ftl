@@ -211,6 +211,9 @@ exif_software = Logiciel
 exif_taken = Prise de vue
 
 # draft
+file_manager_not_yet = Répondre aux autres programmes n’est pas encore disponible sous { $system }
+
+# draft
 file_no_folder = { $path } n’est dans aucun dossier
 
 # draft

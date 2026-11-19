@@ -91,9 +91,11 @@ fn main() -> anyhow::Result<()> {
         windowless = Some(skwir_ui::Windowless::Portal);
     }
     if windowless.is_some() && !cfg!(target_os = "linux") {
+        // What is not written for this system yet (ADR-140, 7), in
+        // English, as what the command line says is.
         eprintln!(
-            "skwir: answering other programs is not available on {} yet",
-            skwir_core::system::NAME
+            "skwir: {}",
+            skwir_platform::file_manager::not_yet().english()
         );
         std::process::exit(2);
     }
