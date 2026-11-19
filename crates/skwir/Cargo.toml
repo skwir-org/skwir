@@ -62,6 +62,7 @@ skwir-plugin-mpris.workspace = true
 skwir-plugin-checksums.workspace = true
 skwir-plugin-print.workspace = true
 skwir-plugin-shrink.workspace = true
+skwir-plugin-updates.workspace = true
 skwir-plugin-control.workspace = true
 skwir-extend.workspace = true
 skwir-plugin-structured-data.workspace = true

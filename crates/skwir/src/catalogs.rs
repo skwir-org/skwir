@@ -435,6 +435,16 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         source: include_str!("../../plugins/trash/l10n/zh-Hans.ftl"),
     },
     skwir_core::words::Shipped {
+        domain: "skwir-plugin-updates",
+        language: "fr",
+        source: include_str!("../../plugins/updates/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-updates",
+        language: "zh-Hans",
+        source: include_str!("../../plugins/updates/l10n/zh-Hans.ftl"),
+    },
+    skwir_core::words::Shipped {
         domain: "skwir-plugin-usage",
         language: "fr",
         source: include_str!("../../plugins/usage/l10n/fr.ftl"),
@@ -483,16 +493,16 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
 pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "fr",
-        messages: 6_903,
-        translated: 6_903,
+        messages: 6_933,
+        translated: 6_933,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "Français",
     },
     skwir_core::words::Share {
         language: "zh-Hans",
-        messages: 6_903,
-        translated: 6_903,
+        messages: 6_933,
+        translated: 6_933,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "简体中文",

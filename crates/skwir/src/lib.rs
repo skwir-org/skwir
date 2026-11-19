@@ -70,6 +70,9 @@ fn built_in() -> Vec<Arc<dyn Plugin>> {
         Arc::new(skwir_plugin_checksums::ChecksumsPlugin::default()),
         Arc::new(skwir_plugin_print::PrintPlugin::default()),
         Arc::new(skwir_plugin_shrink::ShrinkPlugin::default()),
+        // Says when a new version is out, for a copy nothing else updates
+        // (ADR-142).
+        Arc::new(skwir_plugin_updates::UpdatesPlugin::default()),
         // A key scheme: off until the user turns it on.
         Arc::new(skwir_plugin_vim::VimPlugin::default()),
     ]

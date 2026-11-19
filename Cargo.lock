@@ -9175,6 +9175,7 @@ dependencies = [
  "skwir-plugin-thumbnails",
  "skwir-plugin-timeline",
  "skwir-plugin-trash",
+ "skwir-plugin-updates",
  "skwir-plugin-usage",
  "skwir-plugin-vim",
  "skwir-plugin-xmp",
@@ -10143,6 +10144,23 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-updates"
+version = "0.5.1"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tokio",
+ "toml 1.1.8+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]

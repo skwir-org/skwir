@@ -1,0 +1,31 @@
+[package]
+name = "skwir-plugin-updates"
+description = "skwir plugin: says when a new version is out, where no package manager updates the copy, and what is new after an update (ADR-142)"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+# The client (`http`, ADR-020 and ADR-142), the channel a package wrote,
+# whether the connection is metered, the user's calendar.
+skwir-platform = { workspace = true, features = ["http"] }
+anyhow.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+toml.workspace = true
+tracing.workspace = true
+# The check's own runtime, for the platform's client: one request a day.
+tokio = { version = "1", features = ["rt", "time", "net"] }
+
+[dev-dependencies]
+skwir-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
