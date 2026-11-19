@@ -272,8 +272,9 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   `actions`, each saying whether it answers, and whether it `stays`).
   Only Yes, No or the setting answer it (`updates.answer`, a person's
   alone, `Effect::UserOnly`); the link leaves it up
-  (`NotifyAction::answers` false): closed, or
-  replaced by another toast, it is asked again another day, on three days
+  (`NotifyAction::answers` false). A toast said meanwhile is drawn over
+  it, and it comes back once that one goes (What's new said on the same
+  look included): closed, it is asked again another day, on three days
   at most. Skwir asks nothing while the user has not seen it. A
   downloaded copy alone declares `updates.tell`.
 - **The commands** (6): `updates.check` asks the site at once, an action

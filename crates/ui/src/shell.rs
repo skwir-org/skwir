@@ -4365,7 +4365,7 @@ impl Shell {
                     .collect(),
             );
             if n.stays {
-                self.notice(toast, cx);
+                self.stand(toast, cx);
             } else {
                 self.toast(toast, cx);
             }

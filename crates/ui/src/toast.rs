@@ -3,7 +3,9 @@
 //! strip (`activity.rs`, ADR-114), or over the preview on the whole screen.
 //! What runs is not a toast: Activity shows it, docked at the window's foot.
 //! A plan's answer is built here as it ends ("Moved 3 items to Trash",
-//! Undo), and kept in Activity's `Earlier` too.
+//! Undo), and kept in Activity's `Earlier` too. A question that stays
+//! (`App::ask_quietly`) stands beneath: what is said meanwhile is drawn
+//! over it, and it comes back once that goes.
 //!
 //! The only animation is a short entrance that ends by itself; nothing here
 //! keeps the UI awake.
@@ -228,7 +230,16 @@ impl Running {
 
 #[derive(Default)]
 pub struct ToastState {
+    /// The one said last, drawn over what stands.
     pub current: Option<Toast>,
+    /// A question that stays (`App::ask_quietly`, ADR-142 5), beneath
+    /// what is said over it: drawn while nothing else is and again once
+    /// that goes, ended only by its own answers or its Close.
+    standing: Option<Standing>,
+    /// Counts the questions that stood, which a button drawn on one names.
+    stood: u64,
+    /// Moves whenever what is drawn changes: each is drawn anew, its
+    /// entrance played and its live region heard.
     generation: u64,
     /// Whether the time of the current one runs: from when it is said, or,
     /// held back while the History is open, from when it is first drawn.
@@ -236,6 +247,23 @@ pub struct ToastState {
     close: Option<gpui::FocusHandle>,
     /// Kept across frames, so Tab can reach the toast's buttons.
     action_focus: Vec<gpui::FocusHandle>,
+}
+
+/// A question that stays, beneath what is said over it.
+struct Standing {
+    toast: Toast,
+    /// Which one it is (`ToastState::stood`).
+    id: u64,
+}
+
+/// The toast a frame drew, which the buttons drawn on it and its Close
+/// end, though another was said over it since.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Drawn {
+    /// One said over what stands, by its generation.
+    Said(u64),
+    /// What stands, by its count (`Standing::id`).
+    Standing(u64),
 }
 
 impl ToastState {
@@ -274,31 +302,79 @@ impl ToastState {
         Some((self.generation, seconds))
     }
 
-    /// The current one goes (its Close, its caller done with it).
-    fn dismiss(&mut self) {
-        self.current = None;
-        self.generation += 1;
+    /// `toast`, a question that stays, stands beneath what is said, in
+    /// place of the one that stood: drawn now where nothing is said over
+    /// it.
+    fn stand(&mut self, toast: Toast) {
+        self.stood += 1;
+        self.standing = Some(Standing {
+            toast,
+            id: self.stood,
+        });
+        if self.current.is_none() {
+            self.generation += 1;
+        }
     }
 
-    /// One of the current one's buttons is pressed: it goes where the
+    /// What is drawn: the one said last, else what stands.
+    fn shown(&self) -> Option<(&Toast, Drawn)> {
+        match (&self.current, &self.standing) {
+            (Some(toast), _) => Some((toast, Drawn::Said(self.generation))),
+            (None, Some(standing)) => Some((&standing.toast, Drawn::Standing(standing.id))),
+            (None, None) => None,
+        }
+    }
+
+    /// The one said over what stands goes (its caller done with it, its
+    /// time over), and what stands is drawn again.
+    fn dismiss(&mut self) {
+        if self.current.take().is_some() {
+            self.generation += 1;
+        }
+    }
+
+    /// The toast a frame drew goes (its Close, an answer pressed on it),
+    /// while it is there still: one said over a question ends that one,
+    /// never the question, and a question's answer ends the question,
+    /// though a toast was said over it since. Whether it went.
+    fn close(&mut self, drawn: Drawn) -> bool {
+        match drawn {
+            Drawn::Said(generation) => {
+                if generation != self.generation || self.current.is_none() {
+                    return false;
+                }
+                self.dismiss();
+            }
+            Drawn::Standing(id) => {
+                if self
+                    .standing
+                    .as_ref()
+                    .is_none_or(|standing| standing.id != id)
+                {
+                    return false;
+                }
+                self.standing = None;
+                if self.current.is_none() {
+                    self.generation += 1;
+                }
+            }
+        }
+        true
+    }
+
+    /// One of the buttons drawn on `drawn` is pressed: it goes where the
     /// button answers it, and a link that answers nothing leaves it up, a
     /// question to be answered once the page is read (ADR-142 5). Whether
     /// it went.
-    fn pressed(&mut self, action: &Action) -> bool {
-        if action.answers {
-            self.dismiss();
-        }
-        action.answers
+    fn pressed(&mut self, drawn: Drawn, action: &Action) -> bool {
+        action.answers && self.close(drawn)
     }
 
     /// The time of the one said at `generation` is over: it goes, unless
-    /// another replaced it since. Whether it went.
+    /// another replaced it since, and what stands is drawn again. Whether
+    /// it went.
     fn over(&mut self, generation: u64) -> bool {
-        if self.generation != generation {
-            return false;
-        }
-        self.current = None;
-        true
+        self.close(Drawn::Said(generation))
     }
 }
 
@@ -803,6 +879,15 @@ impl Shell {
         self.show_toast(toast, cx);
     }
 
+    /// Show `toast`, a question that stays (`App::ask_quietly`), beneath
+    /// what is said (`ToastState::stand`): a toast said meanwhile is drawn
+    /// over it, and it comes back once that one goes. Only its answers and
+    /// its Close end it; not kept in Earlier, and not timed.
+    pub(crate) fn stand(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        self.toasts.stand(toast);
+        cx.notify();
+    }
+
     /// Show `toast` for as long as what it says lasts (a plan being worked
     /// out, `shell/planning.rs`): not kept in Earlier, and not timed. It
     /// goes when its caller dismisses it, or another toast replaces it.
@@ -871,6 +956,8 @@ impl Shell {
         }
     }
 
+    /// The toast said last goes (its caller done with it), and a question
+    /// standing beneath is drawn again.
     pub fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
         self.toasts.dismiss();
         cx.notify();
@@ -1592,7 +1679,10 @@ pub fn render_answer(
     if shell.undo_history_open() || shell.answer_at() != at {
         return None;
     }
-    let toast = shell.toasts.current.clone()?;
+    let (toast, drawn) = shell
+        .toasts
+        .shown()
+        .map(|(toast, drawn)| (toast.clone(), drawn))?;
     // Said as it is drawn, in the window's language.
     let text: SharedString = toast.said().say().into();
     // Held back while the History was open, its time begins now.
@@ -1710,7 +1800,7 @@ pub fn render_answer(
             .aria_live(gpui::Live::Off)
             .text_color(theme.accent_text)
             .on_click(cx.listener(move |this, _, window, cx| {
-                if this.toasts.pressed(&action) {
+                if this.toasts.pressed(drawn, &action) {
                     cx.notify();
                 }
                 this.run(&action.command, action.args.clone(), window, cx);
@@ -1739,7 +1829,11 @@ pub fn render_answer(
                 &theme,
             )
             .aria_live(gpui::Live::Off)
-            .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.toasts.close(drawn) {
+                    cx.notify();
+                }
+            })),
         );
     Some(
         card.with_animation(
@@ -2774,10 +2868,69 @@ mod tests {
             ),
             false,
         );
-        assert!(!toasts.pressed(&link));
+        let (_, drawn) = toasts.shown().expect("the question");
+        assert!(!toasts.pressed(drawn, &link));
         assert!(toasts.current.is_some(), "the question stays up");
-        assert!(toasts.pressed(&yes));
+        assert!(toasts.pressed(drawn, &yes));
         assert!(toasts.current.is_none(), "answered, it goes");
+    }
+
+    /// A question that stays stands beneath what is said: a toast said
+    /// meanwhile is drawn over it, and it comes back once that one's time
+    /// is over or it is closed. Only its own answers or its Close end it,
+    /// pressed on a frame drawn before a toast came over it too.
+    #[test]
+    fn a_question_stands_beneath_what_is_said() {
+        let said =
+            |text: &str| Toast::new(Words::as_written(text.to_owned()), Tone::Info, Vec::new());
+        let button = |label: &str, answers: bool| Action {
+            label: Words::as_written(label.to_owned()),
+            command: "updates.answer".into(),
+            args: serde_json::json!({}),
+            answers,
+        };
+        let (yes, link) = (
+            button("Yes", true),
+            button("Update with your system…", false),
+        );
+        let asking = "Tell you when a new version is out?";
+        let question = Toast::new(
+            Words::as_written(asking.to_owned()),
+            Tone::Info,
+            vec![yes.clone(), link.clone()],
+        );
+        let drawn = |toasts: &ToastState| toasts.shown().map(|(toast, _)| toast.text.english());
+        let mut toasts = ToastState::default();
+        // What's new and the question on one look: neither takes the
+        // other's place.
+        let (whats_new, _) = toasts.say(said("Skwir was updated to 0.6.2"), false);
+        toasts.stand(question);
+        assert_eq!(
+            drawn(&toasts).as_deref(),
+            Some("Skwir was updated to 0.6.2")
+        );
+        assert!(toasts.over(whats_new));
+        assert_eq!(drawn(&toasts).as_deref(), Some(asking));
+        let (_, asked) = toasts.shown().expect("the question");
+        // A plan's answer over it, closed: the question is back.
+        toasts.say(said("Copied “l'été.txt” to Docs"), false);
+        let (_, over) = toasts.shown().expect("the answer");
+        assert!(toasts.close(over));
+        assert_eq!(
+            toasts.shown().map(|(_, drawn)| drawn),
+            Some(asked),
+            "the same question, its buttons as they were"
+        );
+        // Its link leaves it up.
+        assert!(!toasts.pressed(asked, &link));
+        assert_eq!(drawn(&toasts).as_deref(), Some(asking));
+        // Its Yes, pressed on a frame drawn before a toast came over it,
+        // ends the question, not the toast.
+        let (moved, _) = toasts.say(said("Moved “a b.txt” to Trash"), false);
+        assert!(toasts.pressed(asked, &yes));
+        assert_eq!(drawn(&toasts).as_deref(), Some("Moved “a b.txt” to Trash"));
+        assert!(toasts.over(moved));
+        assert!(toasts.shown().is_none(), "answered, it is gone");
     }
 
     /// What a reveal says joins the answer still shown, its Undo kept, and

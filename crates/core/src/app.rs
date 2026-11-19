@@ -3134,9 +3134,10 @@ impl App {
     /// Ask something that may wait for the user (ADR-142: whether to be
     /// told of new versions) in a toast that stays until one of `answers`
     /// that answers it is pressed (a link, `NotifyAction::answers` false,
-    /// leaves it up) or it is closed: never a dialog, nothing timed. Closed
-    /// or replaced unanswered, nothing ran: its owner may ask again
-    /// another time.
+    /// leaves it up) or it is closed: never a dialog, nothing timed. What
+    /// is said meanwhile is drawn over it, and it comes back once that
+    /// goes. Closed unanswered, or asked again in its place, nothing ran:
+    /// its owner may ask again another time.
     pub fn ask_quietly(&self, text: impl Into<Words>, answers: Vec<NotifyAction>) {
         self.notifications.lock().push(Notification {
             level: NotifyLevel::Info,
