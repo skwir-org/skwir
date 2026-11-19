@@ -3691,6 +3691,12 @@ pub struct SettingsView {
     flash_generation: u64,
     settings_revision: u64,
     plugins_revision: u64,
+    /// Moved whenever `rows` are built again or `plugins` listed again:
+    /// what is kept of them (`search_found`) is kept for it.
+    pub(crate) listed: u64,
+    /// What the search found, kept for what it was found for
+    /// (`settings_view::SearchFound`), never found again each frame.
+    pub(crate) search_found: crate::settings_view::SearchFound,
     /// The records each setting's owner keeps elsewhere (`RecordSource`),
     /// as last listed, by key: the owner's revision and the words'
     /// (`words::revision`) listed at, and the records' JSON, their words
@@ -3890,6 +3896,8 @@ impl SettingsView {
             plugins: app.plugins.list(),
             settings_revision: app.settings.revision(),
             plugins_revision: app.plugins.revision(),
+            listed: 0,
+            search_found: crate::settings_view::SearchFound::default(),
             sourced: HashMap::new(),
             read_only: app.settings.read_only(),
             keys,
@@ -4088,6 +4096,7 @@ impl SettingsView {
     /// Reconcile rows with the schema: plugins declare and withdraw settings
     /// as they are toggled, and another surface may have changed a value.
     fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.listed += 1;
         let mut previous: HashMap<String, Row> = std::mem::take(&mut self.rows)
             .into_iter()
             .map(|row| (row.spec.key.clone(), row))
@@ -4246,6 +4255,7 @@ impl SettingsView {
         if plugins != self.plugins_revision {
             self.plugins_revision = plugins;
             self.plugins = self.app.plugins.list();
+            self.listed += 1;
             let plugins = &self.plugins;
             self.toggling.retain(|id, wanted| {
                 plugins

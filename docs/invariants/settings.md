@@ -398,7 +398,10 @@ The key is the owner's; the page is the subject's (ADR-072).
   typed in one of a thing's texts, case and Latin accents folded as names
   are ordered ("ecole" finds "École"). The search, each page's filter, a
   long dropdown's field and a long list of records' ask it; the Keyboard
-  page's keys are matched as keys (`keymap::finds`).
+  page's keys are matched as keys (`keymap::finds`). What a search found
+  is kept for its query, the words said (`words::revision`) and the rows
+  and plugins as listed (`settings_view::SearchFound`): found again once
+  one moves, never each frame.
 - **A page that lists many has its own filter** above the list: the
   Keyboard page's (an action's words or its keys), the Exclusions
   page's and the Plugins page's (every word typed in what a row says, a

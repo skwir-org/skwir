@@ -4,6 +4,9 @@
 //! keyboard stop can be brought into view by its child index. Cards are drawn
 //! by giving the first and last row of a group their rounded corners.
 
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use crate::sides::Sides;
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
@@ -399,6 +402,50 @@ fn whole_description(spec: &SettingSpec) -> String {
     match &spec.more {
         Some(more) => format!("{first}\n\n{}", more.say()),
         None => first,
+    }
+}
+
+/// What the dialog's search found, kept for what it was found for
+/// (`SearchAsked`): the query, the words said (`words::revision`: a row is
+/// found by its words as the dialog says them, a plugin by its title), and
+/// the rows and plugins as listed (`SettingsView::listed`). Found again
+/// once any of them moves, never each frame.
+#[derive(Default)]
+pub(crate) struct SearchFound {
+    kept: Option<(SearchAsked, Rc<[usize]>, Rc<[PluginInfo]>)>,
+}
+
+/// What a search is found for.
+#[derive(Debug, PartialEq, Eq)]
+struct SearchAsked {
+    query: String,
+    said: u64,
+    listed: u64,
+}
+
+impl SearchAsked {
+    /// `query` asked now, in the words said now, of the rows and plugins
+    /// as `listed`.
+    fn now(query: &str, listed: u64) -> Self {
+        SearchAsked {
+            query: query.to_owned(),
+            said: words::revision(),
+            listed,
+        }
+    }
+}
+
+impl SearchFound {
+    /// What was found for `asked`, if it is what was kept.
+    fn kept_for(&self, asked: &SearchAsked) -> Option<(Rc<[usize]>, Rc<[PluginInfo]>)> {
+        self.kept
+            .as_ref()
+            .filter(|(kept, _, _)| kept == asked)
+            .map(|(_, rows, plugins)| (Rc::clone(rows), Rc::clone(plugins)))
+    }
+
+    fn keep(&mut self, asked: SearchAsked, rows: Rc<[usize]>, plugins: Rc<[PluginInfo]>) {
+        self.kept = Some((asked, rows, plugins));
     }
 }
 
@@ -2462,6 +2509,52 @@ impl SettingsView {
         self.page_rows(&Page::Plugin(id.to_owned()), items, theme, window, cx);
     }
 
+    /// What the search finds for `query`: the rows, by their place among
+    /// `rows`, and the plugins in the order shown. Found once for each
+    /// query, words said and listing (`SearchFound`).
+    fn search_found(&mut self, query: &str) -> (Rc<[usize]>, Rc<[PluginInfo]>) {
+        let asked = SearchAsked::now(query, self.listed);
+        if let Some(found) = self.search_found.kept_for(&asked) {
+            return found;
+        }
+        let words = collate::Words::new(query);
+        // Each plugin's title said once, not once a row.
+        let titles: HashMap<&str, String> = self
+            .plugins
+            .iter()
+            .map(|plugin| (plugin.id, plugin.title.say()))
+            .collect();
+        let plugin_title = |id: &str| titles.get(id).cloned().unwrap_or_else(|| id.to_owned());
+        // Every setting, folded or not, under its page and section.
+        let rows: Rc<[usize]> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                let page = row.page();
+                let page_title = match (page.builtin(), &page) {
+                    (Some(builtin), _) => builtin.title().say(),
+                    (None, Page::Plugin(id)) => plugin_title(id),
+                    (None, _) => String::new(),
+                };
+                let owner = plugin_title(row.spec.owner());
+                spec_matches(&words, &row.spec, [&page_title, &owner])
+            })
+            .map(|(at, _)| at)
+            .collect();
+        let mut plugins: Vec<PluginInfo> = self
+            .plugins
+            .iter()
+            .filter(|plugin| plugin_found(plugin, &words))
+            .cloned()
+            .collect();
+        by_name(&mut plugins);
+        let plugins: Rc<[PluginInfo]> = plugins.into();
+        self.search_found
+            .keep(asked, Rc::clone(&rows), Rc::clone(&plugins));
+        (rows, plugins)
+    }
+
     fn search_results(
         &mut self,
         query: &str,
@@ -2470,29 +2563,15 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        let words = collate::Words::new(query);
-        // Every setting, folded or not, under its page and section.
-        let rows: Vec<Snapshot> = self
-            .rows
+        let (rows, plugins) = self.search_found(query);
+        // Their values as they are now: found once, drawn each frame.
+        let rows: Vec<Snapshot> = rows
             .iter()
-            .filter(|row| {
-                let titles = [
-                    self.page_title(&row.page()),
-                    self.plugin_title(row.spec.owner()),
-                ];
-                spec_matches(&words, &row.spec, [&titles[0], &titles[1]])
-            })
+            .filter_map(|at| self.rows.get(*at))
             .map(|row| Snapshot::of(row, self))
             .collect();
         let mut found = rows.len();
         self.grouped_rows(rows, items, theme, window, cx);
-        let mut plugins: Vec<PluginInfo> = self
-            .plugins
-            .iter()
-            .filter(|plugin| plugin_found(plugin, &words))
-            .cloned()
-            .collect();
-        by_name(&mut plugins);
         if !plugins.is_empty() {
             found += plugins.len();
             Self::caption(items, plugins_caption().say(), theme);
@@ -2878,6 +2957,25 @@ mod tests {
         super::by_name(&mut plugins);
         let names: Vec<String> = plugins.iter().map(|p| p.title.english()).collect();
         assert_eq!(names, ["Audio 9", "Audio 10", "éditeur", "Zip"]);
+    }
+
+    /// What the search found is kept for its query, the words said and the
+    /// rows listed: found again once any moves, a language chosen too.
+    #[test]
+    fn what_the_search_found_is_kept_while_its_words_are_said() {
+        use super::{SearchAsked, SearchFound};
+        use std::rc::Rc;
+        let mut found = SearchFound::default();
+        let asked = || SearchAsked::now("trash", 1);
+        assert!(found.kept_for(&asked()).is_none());
+        found.keep(asked(), Rc::from([3, 5]), Rc::from([]));
+        assert_eq!(found.kept_for(&asked()).unwrap().0[..], [3, 5], "kept");
+        assert!(found.kept_for(&SearchAsked::now("tras", 1)).is_none());
+        assert!(found.kept_for(&SearchAsked::now("trash", 2)).is_none());
+        skwir_core::locale::set_chosen(Some(skwir_core::words::PSEUDO.into()));
+        let in_other_words = found.kept_for(&asked());
+        skwir_core::locale::set_chosen(None);
+        assert!(in_other_words.is_none(), "found again in the words said");
     }
 
     /// The Plugins page's filter keeps a plugin whose name, words, id,

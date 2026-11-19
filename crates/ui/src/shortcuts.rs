@@ -87,11 +87,11 @@ struct Row {
 }
 
 impl Row {
-    /// Whether what was typed finds it (`keymap::finds`).
-    fn found(&self, query: &str) -> bool {
-        // Its topic as its heading says it.
-        let topic = self.topic.title().say();
-        let mut words: Vec<&str> = vec![&self.title, &topic];
+    /// Whether what was typed finds it (`keymap::finds`), under `heading`,
+    /// its topic as its heading says it (said once for its group, not once
+    /// a row).
+    fn found(&self, query: &str, heading: &str) -> bool {
+        let mut words: Vec<&str> = vec![&self.title, heading];
         words.extend(self.words.iter().map(String::as_str));
         words.extend(self.actions.iter().map(|(title, _)| title.as_str()));
         let keys: Vec<&str> = self
@@ -499,7 +499,11 @@ fn found<'a>(groups: &'a [Group], query: &str) -> Vec<(&'a str, Vec<&'a Row>)> {
     groups
         .iter()
         .filter_map(|group| {
-            let rows: Vec<&Row> = group.rows.iter().filter(|row| row.found(query)).collect();
+            let rows: Vec<&Row> = group
+                .rows
+                .iter()
+                .filter(|row| row.found(query, &group.heading))
+                .collect();
             (!rows.is_empty()).then_some((group.heading.as_str(), rows))
         })
         .collect()
@@ -959,11 +963,11 @@ mod tests {
         );
         let going: Vec<&str> = groups[0].rows.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(going, ["Open", "Back"]);
-        let row = &groups[2].rows[0];
-        assert!(row.found("tabs"));
-        assert!(row.found("ctrl t"));
-        assert!(row.found("new"));
-        assert!(!row.found("quit"));
+        let (heading, row) = (&groups[2].heading, &groups[2].rows[0]);
+        assert!(row.found("tabs", heading));
+        assert!(row.found("ctrl t", heading));
+        assert!(row.found("new", heading));
+        assert!(!row.found("quit", heading));
     }
 
     #[test]
