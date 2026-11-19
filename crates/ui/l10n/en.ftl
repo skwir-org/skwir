@@ -6416,6 +6416,9 @@ settings_file_chooser_description_more = The desktop portal reads this as it sta
 # Said when the portal's configuration cannot be read, written or put back: error is why.
 settings_file_chooser_failed = What answers Open and Save dialogs is unchanged: { $error }
 
+# Said under the Open and save dialogs setting where the user's portal configuration (its file or its folder) is a link, kept by a program such as home-manager or a dotfiles folder: nothing can be chosen here; target is where the link leads.
+settings_file_chooser_linked = Kept by another program: your portal configuration is a link to { $target }, which Skwir leaves as it is. Choose there
+
 # Said under the Open and save dialogs setting where Skwir's package did not install the file that offers it to the desktop portal (a build run from its folder).
 settings_file_chooser_not_installed = Skwir cannot be chosen here: its portal file is not installed
 

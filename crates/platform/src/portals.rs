@@ -20,7 +20,12 @@
 //! once, at its start: a choice applies when it starts again, which skwir
 //! never does (the session's service); what changed since the portal that
 //! runs started is said pending (its process's start, from the bus and
-//! `/proc`).
+//! `/proc`). A configuration of the user's that is a link (its file or its
+//! folder: home-manager's, a dotfiles folder's) is another program's to
+//! keep: never written, where it leads said instead (the user's choice,
+//! 2026-11-19). Where the user has no file, a choice copies the one the
+//! portal reads first only for a portal before 1.22, which takes it whole:
+//! the version of the one its next start runs, asked of its program.
 //!
 //! Linux's: elsewhere the system's dialogs cannot be replaced (ADR-141, 11).
 
@@ -75,6 +80,9 @@ pub struct Portals {
     /// file or a folder of it written after the portal started): what
     /// it names applies at the portal's next start.
     pub pending: bool,
+    /// The user's configuration is a link (its file or its folder), kept
+    /// by another program: where it leads. Nothing is written there.
+    pub linked: Option<PathBuf>,
 }
 
 /// Where the portal looks, as read from the environment: kept apart so
@@ -92,6 +100,10 @@ pub struct Places {
     /// When the portal that runs started, and read its configuration
     /// (`None`: none runs, or it is not known).
     pub started: Option<SystemTime>,
+    /// The portal's program its next start runs (its bus service file's
+    /// `Exec`), whose version decides whether a choice copies the
+    /// configuration in effect (`None`: not found, so it does).
+    pub program: Option<PathBuf>,
 }
 
 impl Places {
@@ -104,6 +116,8 @@ impl Places {
             .map(|desktop| desktop.to_ascii_lowercase())
             .collect();
         let started = portal_started();
+        let data = skwir_core::xdg::data_search();
+        let program = installed_portal(&data);
         if let Some(dir) = std::env::var_os("XDG_DESKTOP_PORTAL_DIR").filter(|d| !d.is_empty()) {
             // The portal's tests' setting: that folder alone, for both.
             let dir = PathBuf::from(dir);
@@ -113,9 +127,9 @@ impl Places {
                 user_dir: Some(dir),
                 desktops,
                 started,
+                program,
             };
         }
-        let data = skwir_core::xdg::data_search();
         let mut portal_dirs: Vec<PathBuf> = data
             .iter()
             .map(|d| d.join(SUBDIR).join("portals"))
@@ -142,6 +156,7 @@ impl Places {
             user_dir,
             desktops,
             started,
+            program,
         }
     }
 
@@ -158,6 +173,29 @@ impl Places {
                 let path = dir.join(name);
                 Config::read(&path).map(|config| (path, config))
             })
+    }
+
+    /// Where the user's configuration leads when its folder or its file is
+    /// a link (home-manager's, a dotfiles folder's): another program keeps
+    /// it, and skwir leaves it as it is (the user's choice, 2026-11-19).
+    fn linked(&self) -> Option<PathBuf> {
+        let dir = self.user_dir.as_ref()?;
+        [Some(dir.clone()), self.user_file()]
+            .into_iter()
+            .flatten()
+            .find_map(|path| link_target(&path))
+    }
+
+    /// Whether the portal its next start runs reads its files in a cascade
+    /// (1.22 and after), so that a choice of the user's needs only its own
+    /// line; a version not known is taken for one before. Runs the
+    /// portal's program (`--version`): on a worker, as a choice is written.
+    fn cascades(&self) -> bool {
+        self.program
+            .as_deref()
+            .and_then(|program| crate::desktop_settings::printed(program, &["--version"]))
+            .and_then(|printed| version_of(&printed))
+            .is_some_and(|version| version >= (1, 22))
     }
 
     /// The file a choice is written in: the user's own the portal reads,
@@ -211,7 +249,60 @@ pub fn read(places: &Places) -> Portals {
         chooser,
         user_file,
         pending,
+        linked: places.linked(),
     }
+}
+
+/// Where `path` leads, when it is a link: its target, read against its
+/// folder where it is relative.
+fn link_target(path: &Path) -> Option<PathBuf> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_symlink() {
+        return None;
+    }
+    let target = std::fs::read_link(path).ok()?;
+    Some(match path.parent() {
+        Some(dir) if target.is_relative() => dir.join(target),
+        _ => target,
+    })
+}
+
+/// The program the portal's next start runs: its bus service file's
+/// `Exec` (`org.freedesktop.portal.Desktop.service`), the first the bus
+/// finds in the data folders (the user's first), then `/usr/share`'s.
+fn installed_portal(data: &[PathBuf]) -> Option<PathBuf> {
+    data.iter()
+        .cloned()
+        .chain(std::iter::once(PathBuf::from("/usr/share")))
+        .find_map(|dir| {
+            let text =
+                read_text(&dir.join("dbus-1/services/org.freedesktop.portal.Desktop.service"))?;
+            let exec = keys_of(&text, "D-BUS Service")
+                .into_iter()
+                .rev()
+                .find(|(key, _)| key == "Exec")?
+                .1;
+            let (program, _) = crate::keyfile::exec_words(&exec).into_iter().next()?;
+            Some(PathBuf::from(program))
+        })
+}
+
+/// A portal's version as it prints it (`xdg-desktop-portal 1.22.1`): its
+/// major and minor numbers.
+fn version_of(printed: &str) -> Option<(u32, u32)> {
+    let version = printed.split_whitespace().last()?;
+    let mut numbers = version.split('.');
+    Some((numbers.next()?.parse().ok()?, numbers.next()?.parse().ok()?))
+}
+
+/// Why a choice is not written: the user's configuration is a link, which
+/// another program keeps.
+fn linked_error(target: &Path) -> std::io::Error {
+    std::io::Error::other(skwir_core::words!(
+        portals_linked = "it is a link to { $target }, which another program keeps: choose there",
+        target = target,
+        note = "Why a choice of what answers other programs' Open and Save dialogs was not written: the user's portal configuration (its file or its folder) is a link, kept by a program such as home-manager or a dotfiles folder; target: where the link leads. Begins in lower case: said after other words."
+    ))
 }
 
 /// Whether any of `paths` (the configuration's folders, which a file made,
@@ -367,9 +458,8 @@ fn installed(places: &Places) -> Vec<BackEnd> {
     found
 }
 
-/// What a choice changed, for Undo: the user's file (the end of its links,
-/// where it is one: what was written), as it was (`None`: there was none),
-/// and what skwir wrote in it.
+/// What a choice changed, for Undo: the user's file, as it was (`None`:
+/// there was none), and what skwir wrote in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Before {
     file: PathBuf,
@@ -380,16 +470,19 @@ pub struct Before {
 /// Name `chooser` for the file chooser in the user's configuration (empty:
 /// none, its key taken out), its other lines kept. Where the user has no
 /// file, nothing is written for one already in effect, nor for the
-/// desktop's choice (nothing of the user's to take out); for another, the
-/// file the portal reads first is copied in before: a portal before 1.22
-/// takes that file whole, and a lone key would drop the system's other
-/// choices (ADR-141, 10). What it was, for Undo; `None` when it already
-/// said so. A file that is there and cannot be read is left alone, the
-/// error said; a link is written through, its target's mode kept. Writes
-/// the disk: on a worker.
+/// desktop's choice (nothing of the user's to take out); for another, a
+/// portal from 1.22 on is given that line alone, and for one before, or
+/// one whose version is not known, the file the portal reads first is
+/// copied in before: it takes that file whole, and a lone key would drop
+/// the system's other choices (ADR-141, 10). What it was, for Undo; `None`
+/// when it already said so. A file that is there and cannot be read is
+/// left alone, the error said; a configuration that is a link (its file
+/// or its folder) is never written: another program keeps it. Writes the
+/// disk: on a worker.
 ///
 /// # Errors
-/// When the file cannot be read, or the folder or the file written.
+/// When the configuration is a link, the file cannot be read, or the
+/// folder or the file written.
 pub fn choose(places: &Places, chooser: &str) -> std::io::Result<Option<Before>> {
     let Some(file) = places.user_file() else {
         return Err(std::io::Error::other(skwir_core::words!(
@@ -397,7 +490,9 @@ pub fn choose(places: &Places, chooser: &str) -> std::io::Result<Option<Before>>
             note = "An error choosing what answers other programs' Open and Save dialogs: the user has no configuration folder (no XDG_CONFIG_HOME, no home)."
         )));
     };
-    let file = through_links(&file)?;
+    if let Some(target) = places.linked() {
+        return Err(linked_error(&target));
+    }
     let before = text_at(&file)?;
     let named = Some(chooser).filter(|c| !c.is_empty());
     let text = match (&before, named) {
@@ -407,6 +502,8 @@ pub fn choose(places: &Places, chooser: &str) -> std::io::Result<Option<Before>>
         (None, Some(name)) if read(places).chooser == Named::BackEnd(name.to_owned()) => {
             return Ok(None);
         }
+        // A portal that cascades reads the system's files after this one.
+        (None, Some(_)) if places.cascades() => with_key("", PREFERRED, FILE_CHOOSER, named),
         (None, Some(_)) => {
             let base = places
                 .config_dirs
@@ -436,6 +533,11 @@ pub fn choose(places: &Places, chooser: &str) -> std::io::Result<Option<Before>>
 /// When the file was changed since, cannot be read, written or taken
 /// away.
 pub fn put_back(before: &Before) -> std::io::Result<()> {
+    // Made a link since: another program keeps it now.
+    let dir = before.file.parent().unwrap_or(Path::new("."));
+    if let Some(target) = link_target(&before.file).or_else(|| link_target(dir)) {
+        return Err(linked_error(&target));
+    }
     if text_at(&before.file)?.as_deref() != Some(before.written.as_str()) {
         return Err(std::io::Error::other(skwir_core::words!(
             portals_changed_since =
@@ -450,27 +552,6 @@ pub fn put_back(before: &Before) -> std::io::Result<()> {
             _ => Ok(()),
         },
     }
-}
-
-/// Where `path` leads: the file at the end of its links (one not there yet
-/// included), read and written in its place so that the links stay.
-fn through_links(path: &Path) -> std::io::Result<PathBuf> {
-    let mut at = path.to_path_buf();
-    // As many as the system follows.
-    for _ in 0..40 {
-        match std::fs::symlink_metadata(&at) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                let target = std::fs::read_link(&at)?;
-                at = match at.parent() {
-                    Some(dir) => dir.join(target),
-                    None => target,
-                };
-            }
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
-            _ => return Ok(at),
-        }
-    }
-    Err(rustix::io::Errno::LOOP.into())
 }
 
 /// What `file` holds: `None` when nothing is there, an error when what is
@@ -637,6 +718,7 @@ mod tests {
             user_dir: Some(root.join("config")),
             desktops: desktops.iter().map(|d| (*d).to_owned()).collect(),
             started: None,
+            program: None,
         }
     }
 
@@ -840,10 +922,11 @@ mod tests {
     }
 
     /// A file there that cannot be read as the configuration is left as it
-    /// is and why said; a link is written through to its target, which
-    /// keeps its mode, and put back there, the link staying a link.
+    /// is and why said; one that is a link (its file, or its folder),
+    /// another program's, is never written, where it leads said, even a
+    /// link that leads nowhere yet.
     #[test]
-    fn what_is_there_is_kept_or_written_through() {
+    fn what_is_there_is_kept_and_a_link_left_to_its_keeper() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         portal(&root.join("sys/portals"), "kde", FILE_CHOOSER);
@@ -865,37 +948,101 @@ mod tests {
         assert!(user.is_dir());
         std::fs::remove_dir(&user).unwrap();
 
-        // A link into the user's own files, as a dotfiles folder makes.
+        // A link, as home-manager or a dotfiles folder makes: its target
+        // left as it was, the link a link, where it leads said.
         let dotfiles = root.join("dotfiles");
         std::fs::create_dir_all(&dotfiles).unwrap();
         let target = dotfiles.join("portals.conf");
         std::fs::write(&target, "[preferred]\ndefault=kde\n").unwrap();
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
         std::os::unix::fs::symlink("../dotfiles/portals.conf", &user).unwrap();
-        let undo = choose(&p, "skwir").unwrap().expect("changed");
-        assert!(user.symlink_metadata().unwrap().file_type().is_symlink());
-        assert_eq!(
-            std::fs::read_to_string(&target).unwrap(),
-            format!("[preferred]\ndefault=kde\n{FILE_CHOOSER}=skwir\n")
-        );
-        assert_eq!(
-            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-            0o640
-        );
-        put_back(&undo).unwrap();
+        let refused = choose(&p, "skwir").expect_err("a link");
+        assert!(refused.to_string().contains("a link to"), "{refused}");
+        assert!(refused.to_string().contains("dotfiles"), "{refused}");
         assert!(user.symlink_metadata().unwrap().file_type().is_symlink());
         assert_eq!(
             std::fs::read_to_string(&target).unwrap(),
             "[preferred]\ndefault=kde\n"
         );
+        assert_eq!(
+            read(&p).linked,
+            Some(root.join("config/../dotfiles/portals.conf"))
+        );
+        assert_eq!(
+            read(&p).chooser,
+            named("kde"),
+            "read through it all the same"
+        );
 
-        // One leading nowhere yet: its target is made, and taken away by
-        // Undo, the link left as it was.
+        // One leading nowhere yet: nothing made.
         std::fs::remove_file(&target).unwrap();
-        let undo = choose(&p, "skwir").unwrap().expect("made");
-        assert!(target.is_file() && user.symlink_metadata().unwrap().file_type().is_symlink());
-        put_back(&undo).unwrap();
-        assert!(!target.exists() && user.symlink_metadata().is_ok());
+        choose(&p, "skwir").expect_err("a link that leads nowhere");
+        assert!(!target.exists());
+        std::fs::remove_file(&user).unwrap();
+
+        // The folder a link: nothing written in it either.
+        std::fs::remove_dir(root.join("config")).unwrap();
+        std::os::unix::fs::symlink("dotfiles", root.join("config")).unwrap();
+        choose(&p, "skwir").expect_err("its folder a link");
+        assert!(!dotfiles.join("hyprland-portals.conf").exists());
+        assert_eq!(read(&p).linked, Some(root.join("dotfiles")));
+    }
+
+    /// Where the user has no file, a portal from 1.22 on (asked its
+    /// version) is given the file chooser's line alone; one before, or one
+    /// whose version is not known, a copy of the configuration in effect.
+    #[test]
+    fn a_portal_that_cascades_gets_one_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        portal(&root.join("sys/portals"), "kde", FILE_CHOOSER);
+        portal(&root.join("sys/portals"), "skwir", FILE_CHOOSER);
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        std::fs::write(
+            root.join("etc/hyprland-portals.conf"),
+            format!("[preferred]\ndefault=hyprland;kde\n{FILE_CHOOSER}=kde\n"),
+        )
+        .unwrap();
+        // The portal's program, standing in: it answers its version.
+        let program = |version: &str| {
+            let path = root.join(format!("xdg-desktop-portal-{version}"));
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\necho 'xdg-desktop-portal {version}'\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let user = root.join("config/hyprland-portals.conf");
+        let mut p = places(root, &["hyprland"]);
+        for (version, written) in [
+            ("1.22.1", format!("[preferred]\n{FILE_CHOOSER}=skwir\n")),
+            (
+                "1.20.3",
+                format!("[preferred]\ndefault=hyprland;kde\n{FILE_CHOOSER}=skwir\n"),
+            ),
+        ] {
+            p.program = Some(program(version));
+            let undo = choose(&p, "skwir").unwrap().expect("written");
+            assert_eq!(
+                std::fs::read_to_string(&user).unwrap(),
+                written,
+                "{version}"
+            );
+            put_back(&undo).unwrap();
+        }
+        p.program = Some(root.join("missing"));
+        choose(&p, "skwir").unwrap().expect("written");
+        assert!(
+            std::fs::read_to_string(&user)
+                .unwrap()
+                .contains("default=hyprland;kde"),
+            "not known: copied"
+        );
+        assert_eq!(version_of("xdg-desktop-portal 1.22.1\n"), Some((1, 22)));
+        assert_eq!(version_of("1.18.4"), Some((1, 18)));
+        assert_eq!(version_of("Unknown option --version"), None);
     }
 
     /// A configuration written after the portal started is pending: its

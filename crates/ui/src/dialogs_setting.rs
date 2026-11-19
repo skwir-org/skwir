@@ -262,7 +262,23 @@ fn answer(read: Option<&Portals>) -> serde_json::Value {
             ),
         ),
     };
-    let detail = if !read.choosers.iter().any(|name| name == OWN) {
+    // Kept by another program (a home-manager or dotfiles link): shown as
+    // it is, nothing else offered, where to choose said (the user's
+    // choice, 2026-11-19).
+    if read.linked.is_some() {
+        for choice in &mut choices {
+            if choice["value"] != value {
+                choice["disabled"] = true.into();
+            }
+        }
+    }
+    let detail = if let Some(target) = &read.linked {
+        words!(
+            settings_file_chooser_linked = "Kept by another program: your portal configuration is a link to { $target }, which Skwir leaves as it is. Choose there",
+            target = target.as_path(),
+            note = "Said under the Open and save dialogs setting where the user's portal configuration (its file or its folder) is a link, kept by a program such as home-manager or a dotfiles folder: nothing can be chosen here; target is where the link leads."
+        )
+    } else if !read.choosers.iter().any(|name| name == OWN) {
         words!(
             settings_file_chooser_not_installed =
                 "Skwir cannot be chosen here: its portal file is not installed",
@@ -416,6 +432,7 @@ mod tests {
             user_dir: Some(root.join("config")),
             desktops: vec!["hyprland".into()],
             started: None,
+            program: None,
         }
     }
 
@@ -546,6 +563,51 @@ mod tests {
         assert_eq!(
             list()["label"]["english"],
             "None: the desktop portal shows no dialog"
+        );
+    }
+
+    /// A configuration that is a link is shown as it is: its choice kept,
+    /// the others offered dimmed, where it leads said.
+    #[test]
+    fn a_linked_configuration_is_chosen_where_it_is_kept() {
+        let read = Portals {
+            choosers: vec!["kde".into(), OWN.into()],
+            chooser: Named::BackEnd("kde".into()),
+            user_file: None,
+            pending: false,
+            linked: Some(std::path::PathBuf::from(
+                "/srv/dotfiles/hyprland-portals.conf",
+            )),
+        };
+        let said = answer(Some(&read));
+        assert_eq!(said["value"], "kde");
+        let disabled: Vec<(String, bool)> = said["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                (
+                    c["value"].as_str().unwrap().to_owned(),
+                    c["disabled"].as_bool().unwrap_or(false),
+                )
+            })
+            .collect();
+        assert_eq!(
+            disabled,
+            [
+                (String::new(), true),
+                ("kde".into(), false),
+                ("skwir".into(), true)
+            ]
+        );
+        let detail = said["detail"]["english"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(detail.contains("a link to"), "{detail}");
+        assert!(
+            detail.contains("/srv/dotfiles/hyprland-portals.conf"),
+            "{detail}"
         );
     }
 }

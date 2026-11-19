@@ -535,6 +535,9 @@ places_udisks_unrun = 无法运行 udisksctl：{ $error }
 portals_changed_since = 自 Skwir 写入后该文件已被修改，因此保持原样
 
 # draft
+portals_linked = 它是指向 { $target } 的链接，由另一个程序维护：请在那里选择
+
+# draft
 portals_no_config_folder = 没有可写入此选择的配置文件夹
 
 # draft

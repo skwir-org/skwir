@@ -148,19 +148,25 @@ the Settings row (eaac889f), the packages; amended as built (decisions
     none, `*` the first installed, a key written twice its last), else
     Automatic. Choosing writes `org.freedesktop.impl.portal.FileChooser=`
     in the user's `<desktop>-portals.conf` (`portals.conf` where no
-    desktop is named), its other lines kept, through a link to its target
-    (its mode kept); a file there that cannot be read is left alone, and
-    why said. Automatic takes out only a key the user's file holds; where
-    the user has no file, it and a back end already in effect write
-    nothing ("already"). For another, where the user has none, the file
-    the portal reads first is copied into it first. Since 1.22 a file
-    holding the key alone would do (the cascade takes the rest from the
-    system's files), but skwir cannot tell which portal reads it, and one
-    before 1.22 (Ubuntu 24.04 ships 1.18) takes the first file whole,
-    where a lone key would drop the system's other choices: the copy works
-    for both, at the cost of freezing the system's lines where it later
-    changes its own. It says the change applies when the portal starts
-    again (the next login); skwir never restarts it. Undo as the default
+    desktop is named), its other lines kept; a file there that cannot be
+    read is left alone, and why said. A configuration that is a link (its
+    file or its folder: home-manager's, a dotfiles folder's) is another
+    program's to keep: never written, the row shows its choice with no
+    other offered and says where it leads, to be chosen there (the user's
+    choice, 2026-11-19). Automatic takes out only a key the user's file
+    holds; where the user has no file, it and a back end already in
+    effect write nothing ("already"). For another, where the user has
+    none, a portal from 1.22 on is given the key alone (the cascade takes
+    the rest from the system's files); one before 1.22 (Ubuntu 24.04 ships
+    1.18) takes the first file whole, where a lone key would drop the
+    system's other choices, so the file the portal reads first is copied
+    into it first. The version is that of the portal the next start runs,
+    its bus service file's program asked `--version` as the choice is
+    written; one not known is taken for one before, the copy being right
+    for both (at the cost of freezing the system's lines where it later
+    changes its own; the user's choice, 2026-11-19). It says the change
+    applies when the portal starts again (the next login); skwir never
+    restarts it. Undo as the default
     file manager's: the file put back as it was, or none, only while it
     holds what skwir wrote (an edit since is kept, and said), then Redo;
     its command names the choice by a serial the row keeps, never a file

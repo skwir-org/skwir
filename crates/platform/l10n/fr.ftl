@@ -545,6 +545,9 @@ places_udisks_unrun = udisksctl n’a pas pu être lancé : { $error }
 portals_changed_since = le fichier a été modifié depuis que Skwir l’a écrit, et il est gardé tel quel
 
 # draft
+portals_linked = c’est un lien vers { $target }, qu’un autre programme tient : faites le choix là
+
+# draft
 portals_no_config_folder = Il n’y a aucun dossier de configuration où écrire ce choix
 
 # draft

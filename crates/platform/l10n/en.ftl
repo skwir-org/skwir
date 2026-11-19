@@ -541,6 +541,9 @@ places_udisks_unrun = udisksctl could not be run: { $error }
 # Why Undo of a choice of what answers other programs' Open and Save dialogs did nothing: the portal's configuration file was edited after the choice. Begins in lower case: said after other words.
 portals_changed_since = the file was changed since Skwir wrote it, and is kept as it is
 
+# Why a choice of what answers other programs' Open and Save dialogs was not written: the user's portal configuration (its file or its folder) is a link, kept by a program such as home-manager or a dotfiles folder; target: where the link leads. Begins in lower case: said after other words.
+portals_linked = it is a link to { $target }, which another program keeps: choose there
+
 # An error choosing what answers other programs' Open and Save dialogs: the user has no configuration folder (no XDG_CONFIG_HOME, no home).
 portals_no_config_folder = There is no configuration folder to write the choice in
 

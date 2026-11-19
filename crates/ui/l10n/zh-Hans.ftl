@@ -6926,6 +6926,9 @@ settings_file_chooser_description_more = 桌面门户在启动时读取此设置
 settings_file_chooser_failed = 应答“打开”和“保存”对话框的程序未更改：{ $error }
 
 # draft
+settings_file_chooser_linked = 由另一个程序维护：你的门户配置是指向 { $target } 的链接，Skwir 不会改动它。请在那里选择
+
+# draft
 settings_file_chooser_not_installed = 此处无法选择 Skwir：其门户文件未安装
 
 # draft

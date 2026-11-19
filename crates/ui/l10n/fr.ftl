@@ -7180,6 +7180,9 @@ settings_file_chooser_description_more = Le portail du bureau lit ce réglage à
 settings_file_chooser_failed = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer n’a pas changé : { $error }
 
 # draft
+settings_file_chooser_linked = Tenue par un autre programme : votre configuration du portail est un lien vers { $target }, que Skwir laisse tel quel. Faites le choix là
+
+# draft
 settings_file_chooser_not_installed = Skwir ne peut pas être choisi ici : son fichier de portail n’est pas installé
 
 # draft
