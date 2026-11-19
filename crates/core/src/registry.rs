@@ -109,6 +109,30 @@ impl<T: Clone> Contributions<T> {
         true
     }
 
+    /// `replace_owner` where what `owner` contributed differs from `new`:
+    /// the same list again moves nothing, so a consumer comparing the
+    /// revision (each window, for what About and More say) does nothing for
+    /// it. Whether it changed: false too while `owner` is disabled.
+    pub fn replace_owner_if_changed(&self, owner: &str, new: Vec<T>) -> bool
+    where
+        T: PartialEq,
+    {
+        let owner: Arc<str> = owner.into();
+        let mut items = self.items.write();
+        if !self.gate.is_open(&owner) {
+            return false;
+        }
+        let had = items.iter().filter(|(o, _)| *o == owner).map(|(_, t)| t);
+        if had.eq(new.iter()) {
+            return false;
+        }
+        items.retain(|(o, _)| *o != owner);
+        items.extend(new.into_iter().map(|t| (Arc::clone(&owner), t)));
+        drop(items);
+        self.bump();
+        true
+    }
+
     pub fn remove_owner(&self, owner: &str) {
         let mut items = self.items.write();
         let before = items.len();
@@ -1152,7 +1176,7 @@ pub type LeadsBelow = Arc<
 /// (ADR-142: a newer version is out): About says each under the version,
 /// with its button, and More has a row for each beside About. The window
 /// draws what it is given and names no plugin.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct News {
     /// What it says ("Skwir 0.6.2 is out").
     pub text: Words,
@@ -1298,6 +1322,32 @@ mod tests {
         assert_eq!(c.revision(), r1);
         c.remove_owner("a");
         assert_ne!(c.revision(), r1);
+    }
+
+    /// What is said of Skwir told again unchanged moves nothing: no
+    /// revision, so no window does anything for it; a change, or none
+    /// after some, moves it.
+    #[test]
+    fn news_told_again_unchanged_moves_nothing() {
+        let registry = Registry::default();
+        let news = |text: &str| News {
+            text: Words::as_written(text.to_owned()),
+            label: Words::as_written("What's new".to_owned()),
+            command: Invocation::new("ui.open_url"),
+        };
+        let c = &registry.news;
+        assert!(c.replace_owner_if_changed("updates", vec![news("Skwir 0.6.2 is out")]));
+        let r = c.revision();
+        assert!(!c.replace_owner_if_changed("updates", vec![news("Skwir 0.6.2 is out")]));
+        assert_eq!(c.revision(), r, "the same again");
+        assert!(c.replace_owner_if_changed("updates", vec![news("Skwir 0.6.3 is out")]));
+        assert!(c.replace_owner_if_changed("updates", Vec::new()));
+        let r = c.revision();
+        assert!(!c.replace_owner_if_changed("updates", Vec::new()));
+        assert_eq!(c.revision(), r, "none, and none again");
+        registry.set_owner_enabled("updates", false);
+        assert!(!c.replace_owner_if_changed("updates", vec![news("late")]));
+        assert!(c.all().is_empty());
     }
 
     #[test]

@@ -878,7 +878,8 @@ impl Inner {
             })
             .into_iter()
             .collect();
-        if app.registry.news.replace_owner(ID, news) {
+        // The same said again wakes nothing.
+        if app.registry.news.replace_owner_if_changed(ID, news) {
             app.wake();
         }
     }
