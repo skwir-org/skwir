@@ -41,7 +41,8 @@ fn escape_runs(bound: &[Bound], flags: &[&str]) -> String {
     bound
         .iter()
         .filter(|b| b.keys == "escape" && b.hidden_by.is_none())
-        .filter(|b| keymap::place_of(&b.context).place == "File list")
+        // The file list by its id, never by its words.
+        .filter(|b| keymap::place_of(&b.context).id == "pane")
         .rfind(|b| keymap::predicate_holds(&b.context, &holds))
         .and_then(|b| b.command.as_ref())
         .map(|(command, _)| command.clone())

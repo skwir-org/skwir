@@ -254,11 +254,12 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
         assert_eq!(read_tags(&root.join(name)), t);
     }
 
+    // Suggestions are ordered as names are (Été among the e's), pins as put.
     let until_sidebar = |want: &[(&str, bool)]| {
         let want: Vec<(String, bool)> = want.iter().map(|(t, p)| ((*t).to_owned(), *p)).collect();
         until(&app, "the sidebar", || (pins(&app) == want).then_some(()));
     };
-    until_sidebar(&[("Work", false), ("x", false), ("Été", false)]);
+    until_sidebar(&[("Été", false), ("Work", false), ("x", false)]);
     // Then every tag: the home folder's tags, browsed as folders.
     let all = app
         .registry
@@ -309,7 +310,7 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
     app.dispatch(&forget).unwrap();
     until_sidebar(&[("x", true)]);
     dispatch("tags.unpin", serde_json::json!({ "tag": "X" })).unwrap();
-    until_sidebar(&[("Work", false), ("x", false), ("Été", false)]);
+    until_sidebar(&[("Été", false), ("Work", false), ("x", false)]);
     assert!(dispatch("tags.pin", serde_json::json!({ "tag": " " })).is_err());
 }
 

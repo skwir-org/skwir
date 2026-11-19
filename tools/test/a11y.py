@@ -581,7 +581,7 @@ def run(w):
     check("the cursor goes to the file after it, selected, as in Dolphin and Nautilus",
           hears(w, f"list item {fourth!r} 3 of 3 selected focused"))
     check("its tags as its description, by the names its chips show",
-          until(lambda: (w.focused().get_description() or "") == "Tagged Paris, print")
+          until(lambda: (w.focused().get_description() or "") == "tagged Paris and print")
           or print("  description:", w.focused().get_description()))
     w.keys("ctrl+z")
     check("an undoing is announced too", announced.hears("Undid: move to trash")
