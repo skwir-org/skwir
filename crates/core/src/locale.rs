@@ -98,6 +98,13 @@ pub fn set_iso_dates(iso: bool) {
     }
 }
 
+/// What words say moved, beside the languages and their formats (the size
+/// setting's units, `fs::set_size_units`): what keeps words it said keyed
+/// by the revision says them again.
+pub(crate) fn said_moved() {
+    LANGUAGES.write().revision += 1;
+}
+
 /// Whether the window writes dates as ISO 8601 writes them.
 pub fn iso_dates() -> bool {
     LANGUAGES.read().iso_dates

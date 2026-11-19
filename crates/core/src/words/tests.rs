@@ -1343,6 +1343,22 @@ fn numbers_are_written_as_the_language_writes_them() {
     assert_eq!(moved.say_in(&langs(&["fr", "en"])), "Moved 12,345 files");
 }
 
+/// Sizes counted in other units are said again where words are kept by
+/// their revision: it moves with the units, and only with a change.
+#[test]
+fn the_size_units_move_what_is_said() {
+    use crate::fs::{SizeUnits, set_size_units, size_words};
+    set_size_units(SizeUnits::Decimal);
+    let before = super::revision();
+    set_size_units(SizeUnits::Decimal);
+    assert_eq!(super::revision(), before, "no change, no move");
+    set_size_units(SizeUnits::Binary);
+    assert_ne!(super::revision(), before);
+    assert_eq!(size_words(1_536).english(), "1.5\u{a0}KiB");
+    set_size_units(SizeUnits::Decimal);
+    assert_eq!(size_words(1_536).english(), "1.5\u{a0}kB");
+}
+
 /// Moments are written as the dates' locale writes them; numbers and dates
 /// follow the system's locales in the window, English's for agents.
 #[test]

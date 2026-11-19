@@ -89,12 +89,13 @@ pub fn size_units() -> SizeUnits {
     }
 }
 
-/// Count sizes as `units` from now on (the setting, applied).
+/// Count sizes as `units` from now on (the setting, applied): what keeps
+/// words already said says its sizes again (`words::revision` moves).
 pub fn set_size_units(units: SizeUnits) {
-    BINARY.store(
-        units == SizeUnits::Binary,
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    let binary = units == SizeUnits::Binary;
+    if BINARY.swap(binary, std::sync::atomic::Ordering::Relaxed) != binary {
+        crate::locale::said_moved();
+    }
 }
 
 /// A size the way the file list shows one, counted as the setting says
