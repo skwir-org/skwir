@@ -606,7 +606,11 @@ asks the direction.
   heading or a list item of Markdown, HTML's reading mode, a book or a
   mail in Hebrew or Arabic is laid out right to left: its lines start at
   its right, its marker, its quotation's bar and its indent are on that
-  side, and its alignment (`Align::Start`, `End`) is its own. A table's
+  side, and its alignment (`Align::Start`, `End`) is its own. Every line
+  of it reads in that direction (gpui's `TextDirection`), as each line of
+  a `dir="auto"` paragraph does: one after a hard break (`<br>`, a
+  Markdown one) that starts with a letter of the other way is no
+  paragraph of its own. A table's
   columns run as the document says it reads (`Inspection::direction`:
   HTML's `dir`, a book's page progression; from the right where it says
   right to left, as printed), left to right where it says nothing; each

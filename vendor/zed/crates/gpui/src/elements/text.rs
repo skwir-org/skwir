@@ -1612,6 +1612,40 @@ mod tests {
         assert!(start(&auto_layout) > Some(px(0.)));
     }
 
+    /// Every line of a text reads in the direction it inherits, those after
+    /// a hard break included: a line that starts with a letter of the other
+    /// way is no paragraph of its own, as each line of a paragraph a page
+    /// marks `dir="auto"` reads in the paragraph's direction. Said left to
+    /// right, a second line "אב x" reads its Hebrew word from the right
+    /// and then `x` at its right; where nothing is said, it reads right to
+    /// left by its first letter, its start at the line's right end.
+    #[crate::test]
+    fn a_text_reads_in_the_direction_it_inherits_on_every_line(cx: &mut crate::TestAppContext) {
+        use crate::{AvailableSpace, ParentElement as _, Styled as _, div, point, px};
+        let cx = cx.add_empty_window();
+        let text = "Hello\n\u{5d0}\u{5d1} x";
+        let auto = StyledText::new(text);
+        let said = StyledText::new(text);
+        let (auto_layout, said_layout) = (auto.layout().clone(), said.layout().clone());
+        cx.draw(
+            point(px(0.), px(0.)),
+            AvailableSpace::max_size(),
+            move |_, _| {
+                div().w(px(400.)).child(div().child(auto)).child(
+                    div()
+                        .text_direction(TextDirection::LeftToRight)
+                        .child(div().child(said)),
+                )
+            },
+        );
+        let second = "Hello\n".len();
+        let start = |layout: &TextLayout| layout.position_for_index(second).map(|at| at.x);
+        let width = |layout: &TextLayout| layout.line_layout_for_index(second).map(|l| l.width());
+        assert_eq!(start(&auto_layout), width(&auto_layout));
+        assert!(start(&said_layout) > Some(px(0.)));
+        assert!(start(&said_layout) < width(&said_layout));
+    }
+
     /// A text aligned right or centered answers where its rows are drawn:
     /// `position_for_index` and `index_for_position` count each row from
     /// where it stands as it is painted, wrapped or read right to left.

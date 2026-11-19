@@ -2060,7 +2060,10 @@ direction a text's paragraphs read in can now be said:
 
 Skwir says it on its code views' lines (`code_preview::reads_as_code`: the
 code view's rows where a grammar colors the text, a document's code blocks,
-the byte view's rows); a plain text's rows keep each line's own direction.
+the byte view's rows), and on a document's other blocks, each in its own
+direction (`markdown::Reads`), so the lines after a paragraph's hard breaks
+read in the paragraph's; a plain text's rows keep each line's own
+direction.
 
 Not done: what Zed's editor would say (its lines stay `Auto` here); a
 paragraph read right to left is still drawn from its element's left, as
@@ -2071,7 +2074,10 @@ The tests are `text_system::bidi::tests::levels_are_those_of_the_direction_said`
 `a_mark_reads_a_paragraph_as_its_direction_says` (the levels a mark gives,
 against those said), `a_line_laid_out_with_marks_is_the_line_said` (the
 glyphs, their places and indices, the runs handed),
-`elements::text::tests::a_text_reads_in_the_direction_it_inherits`, gpui_wgpu's
+`elements::text::tests::a_text_reads_in_the_direction_it_inherits` and
+`…_on_every_line` (a line after a hard break that starts with a Hebrew
+letter, said left to right, reads so, as each line of a paragraph marked
+`dir="auto"` reads in the paragraph's direction), gpui_wgpu's
 `cosmic_text_system::tests::a_line_reads_in_the_direction_it_is_said_to`
 (shaped by cosmic-text: a Hebrew comment after `//` left to right, Latin
 before Hebrew right to left, English as it was) and

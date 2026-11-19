@@ -362,26 +362,32 @@ impl Reads {
 
     /// `element` laid out in this direction: right to left, a row from its
     /// right and its texts at their start there (gpui's `TextAlign::Start`),
-    /// as the document's root lays a block out left to right.
+    /// as the document's root lays a block out left to right. Every line
+    /// of what it holds reads in it too (gpui's `TextDirection`, UAX #9's
+    /// HL1), as a page's `dir="auto"` gives each line of a paragraph the
+    /// paragraph's direction: a line after a hard break (`<br>`, a
+    /// Markdown one) that starts with a letter of the other way keeps the
+    /// block's order, never one of its own; the print helper's parley lays
+    /// a block out with one base direction alike. A list's marker so, as a
+    /// browser lays out a marker (`::marker`, the item's own direction):
+    /// "1." beside Hebrew is drawn with its full stop on the left, the
+    /// number read first from the right, where a marker read alone (digits
+    /// and a stop, no strong letter) would read left to right.
     fn lay_out<E: Styled>(self, element: E) -> E {
+        let (layout, text) = match self {
+            Self::LeftToRight => (
+                gpui::LayoutDirection::LeftToRight,
+                gpui::TextDirection::LeftToRight,
+            ),
+            Self::RightToLeft => (
+                gpui::LayoutDirection::RightToLeft,
+                gpui::TextDirection::RightToLeft,
+            ),
+        };
         element
-            .layout_direction(match self {
-                Self::LeftToRight => gpui::LayoutDirection::LeftToRight,
-                Self::RightToLeft => gpui::LayoutDirection::RightToLeft,
-            })
+            .layout_direction(layout)
+            .text_direction(text)
             .text_align(gpui::TextAlign::Start)
-    }
-
-    /// A list's marker read in its item's direction, as a browser lays out
-    /// a marker (`::marker`, the item's own direction): "1." beside Hebrew
-    /// is drawn with its full stop on the left, the number read first from
-    /// the right, where a marker read alone (digits and a stop, no strong
-    /// letter) would read left to right. The print helper draws it so.
-    fn marker<E: Styled>(self, element: E) -> E {
-        element.text_direction(match self {
-            Self::LeftToRight => gpui::TextDirection::LeftToRight,
-            Self::RightToLeft => gpui::TextDirection::RightToLeft,
-        })
     }
 
     /// The padding on the block's start: the document's own margin, a
@@ -506,14 +512,13 @@ pub fn block(
     if block.list_depth > 0 {
         // The marker column is reserved for every block of the item, not only
         // the one that shows the bullet, so an item's later paragraphs, its
-        // code and its pictures line up under its first line.
-        let marker = reads.marker(
-            div()
-                .flex_none()
-                .min_w(px(style.list_indent))
-                .text_color(style.marker_color)
-                .child(block.marker.clone().unwrap_or_default()),
-        );
+        // code and its pictures line up under its first line. It reads in
+        // the item's direction, which `line` says (`Reads::lay_out`).
+        let marker = div()
+            .flex_none()
+            .min_w(px(style.list_indent))
+            .text_color(style.marker_color)
+            .child(block.marker.clone().unwrap_or_default());
         line = reads
             .pad_start(
                 line,
@@ -943,5 +948,40 @@ mod reads_tests {
         };
         assert_eq!(Reads::of(&row), Reads::LeftToRight);
         assert_eq!(Reads::of_text(&row.text[0..8]), Reads::RightToLeft);
+    }
+
+    /// Every line of a block reads in the block's direction, as each line
+    /// of a paragraph marked `dir="auto"` does: one after a hard break that
+    /// starts with a letter of the other way is not a paragraph of its
+    /// own, which gpui would read in that letter's direction.
+    #[test]
+    fn every_line_of_a_block_reads_in_its_direction() {
+        let text = |text: &str| Block {
+            text: text.into(),
+            ..Block::default()
+        };
+        let hebrew_then_latin = text("שלום עולם\nHello, and more");
+        let latin_then_hebrew = text("Hello world\nשלום עולם, and more");
+        assert_eq!(Reads::of(&hebrew_then_latin), Reads::RightToLeft);
+        assert_eq!(Reads::of(&latin_then_hebrew), Reads::LeftToRight);
+        let said = |reads: Reads| {
+            let mut laid = reads.lay_out(div());
+            let style = laid.style();
+            (style.text.layout_direction, style.text.text_direction)
+        };
+        assert_eq!(
+            said(Reads::RightToLeft),
+            (
+                Some(gpui::LayoutDirection::RightToLeft),
+                Some(gpui::TextDirection::RightToLeft)
+            )
+        );
+        assert_eq!(
+            said(Reads::LeftToRight),
+            (
+                Some(gpui::LayoutDirection::LeftToRight),
+                Some(gpui::TextDirection::LeftToRight)
+            )
+        );
     }
 }
