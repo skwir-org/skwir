@@ -516,6 +516,81 @@ fn words_written_beside_their_id_are_messages() {
     );
 }
 
+/// A path is said as a folder is: bare, its controls shown, isolated where
+/// the window draws it, plain elsewhere; as data, the path as it is.
+#[test]
+fn a_path_is_said_as_a_folder_is() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let path = std::path::PathBuf::from("/a/Hello_\u{202e}gnp.js/מסמכים");
+    assert_eq!(
+        Arg::from(path.as_path()),
+        Arg::Path("/a/Hello_\u{202e}gnp.js/מסמכים".into())
+    );
+    assert_eq!(Arg::from(&path), Arg::from(path.as_path()));
+    let not_made = |path: &std::path::Path| {
+        crate::words!(
+            test_path_not_made = "the folder { $path } could not be made",
+            path = path
+        )
+    };
+    assert_eq!(
+        not_made(&path).say(),
+        format!("the folder {FSI}/a/Hello_⟨RLO⟩gnp.js/מסמכים{PDI} could not be made")
+    );
+    for plain in [not_made(&path).english(), not_made(&path).say_plain()] {
+        assert_eq!(
+            plain,
+            "the folder /a/Hello_⟨RLO⟩gnp.js/מסמכים could not be made"
+        );
+    }
+    let data = not_made(&path).to_data();
+    assert_eq!(
+        data["args"]["path"],
+        serde_json::json!({ "path": "/a/Hello_\u{202e}gnp.js/מסמכים" })
+    );
+    let back: Words = serde_json::from_value(data).unwrap();
+    assert_eq!(back.say(), not_made(&path).say());
+}
+
+/// A name drawn alone (a row, a tile, a tab, the trail, a title): its
+/// controls shown in every saying, isolated where the window draws it,
+/// nothing else added; as data, the name as it is; in a sentence, isolated
+/// once.
+#[test]
+fn a_name_alone_shows_its_controls_and_nothing_else() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let spoof = Words::name_alone("hello_\u{202e}gnp.js");
+    assert_eq!(spoof.say(), format!("{FSI}hello_⟨RLO⟩gnp.js{PDI}"));
+    for plain in [
+        spoof.say_plain(),
+        spoof.english(),
+        spoof.say_in(&langs(&["fr", "en"])),
+        spoof.to_string(),
+        spoof.heading().say_plain(),
+    ] {
+        assert_eq!(plain, "hello_⟨RLO⟩gnp.js");
+    }
+    assert_eq!(spoof.heading(), spoof, "a name is never cased");
+    assert_eq!(Words::name_alone("שלום").say(), format!("{FSI}שלום{PDI}"));
+    assert!(Words::name_alone("").say().is_empty());
+    assert!(Words::name_alone("").is_empty());
+    let data = spoof.to_data();
+    assert_eq!(data, serde_json::json!({ "alone": "hello_\u{202e}gnp.js" }));
+    let back: Words = serde_json::from_value(data).unwrap();
+    assert_eq!(back, spoof);
+    let in_sentence = crate::words!(
+        test_alone_in_sentence = "Opened { $place }",
+        place = spoof.clone()
+    );
+    assert_eq!(
+        in_sentence.say(),
+        format!("Opened {FSI}hello_⟨RLO⟩gnp.js{PDI}")
+    );
+    assert_eq!(in_sentence.english(), "Opened hello_⟨RLO⟩gnp.js");
+}
+
 #[test]
 fn a_folder_is_named_bare_its_controls_shown() {
     use super::Folder;

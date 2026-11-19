@@ -218,10 +218,14 @@ says it is a draft (13).
        variant other than `*[other]`, which says what a name takes.
      - Nothing of it is code: a language's grammar is its catalogs' and
        its line in `tools/words/grammar`.
+   - **A path** (`Path`) is made of names: said as a folder is, unquoted,
+     its controls shown, isolated from the sentence where a window draws
+     it.
    - **A name's bidirectional controls are shown, never obeyed** (the
      user's choice). The overrides, embeddings and isolates (U+202A to
      U+202E, U+2066 to U+2069) are each drawn as a small muted tag
-     naming it (RLO), wherever a name is drawn:
+     naming it (RLO), wherever a name is drawn, in a sentence or alone
+     (`Words::name_alone`: a tab's, a crumb's, a title's):
      - so `Hello_` + U+202E + `gnp.js` reads in its real order, not as
        `Hello_sj.png`;
      - in the rename field the tag is one character the caret passes

@@ -82,6 +82,9 @@ sentence, never a sentence assembled from pieces.
 
 - **A folder named as where something goes** ("to Docs") is a `Folder`:
   unquoted, its controls shown as a `Name`'s are.
+- **A path is a `Path`** (`Arg::Path`, from a `&Path`), never text: it is
+  made of names, so it is said as a `Folder` is, unquoted, its controls
+  shown, isolated where the window draws it.
 - **A file's, a folder's, a place's or a tag's name is a `Name`**,
   never a string placed in the message: it carries the quotes and the
   isolation from the sentence (ADR-139, 5). The quotes are its
@@ -95,7 +98,11 @@ sentence, never a sentence assembled from pieces.
   the gender and forms a language takes it in.
 - **A name's bidirectional controls are drawn as tags, never obeyed**,
   wherever a name is drawn, in a sentence or alone (a row, a tile, the
-  trail, a title, the rename field). The overrides, embeddings and
+  trail, a title, the rename field). A name drawn alone is
+  `Words::name_alone` (a tab's, a crumb's, a title's), or, where it is
+  drawn as a string, `words::shown_controls`: its controls shown in every
+  saying, isolated where the window draws it, nothing else added (no
+  quotes, no case); as data, the name as it is. The overrides, embeddings and
   isolates (U+202A to U+202E, U+2066 to U+2069) are each a muted tag
   naming it; the marks (U+200E, U+200F, U+061C) are left as they are.
   What is drawn never changes the name: a search, a copy and an
@@ -170,10 +177,10 @@ sentence, never a sentence assembled from pieces.
 - **Words in words are a `Words` argument** (a plan's title in a
   toast). A message never receives another message already said as a
   string.
-- **What is not Skwir's to translate** (a path, a command line, a
-  regular expression, a query, an identifier, what the system or an
-  agent wrote) is `Words::as_written`, or an argument of that kind:
-  shown as it is in every language.
+- **What is not Skwir's to translate** (a command line, a regular
+  expression, a query, an identifier, what the system or an agent wrote)
+  is `Words::as_written`, or an argument of that kind: shown as it is in
+  every language. A path is a `Path` (above).
 
 ## Nouns
 

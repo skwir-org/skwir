@@ -8,10 +8,12 @@
 //! As data that leaves the process (JSON for agents, scripts and the CLI),
 //! `Words` is its English text: agents read English (ADR-139, 7).
 //!
-//! Where the window draws them (`Words::say`), a name and a folder named in
-//! a sentence are isolated from it (`isolated`): between FSI and PDI, inside
-//! the quotes. Nothing else carries those marks: not English, not words said
-//! in given languages, not text that leaves the window (`Words::say_plain`).
+//! Where the window draws them (`Words::say`), a name, a folder and a path
+//! named in a sentence are isolated from it (`isolated`): between FSI and
+//! PDI, inside a name's quotes; and so is a name drawn alone
+//! (`Words::name_alone`). Nothing else carries those marks: not English, not
+//! words said in given languages, not text that leaves the window
+//! (`Words::say_plain`).
 //!
 //! What a language needs to say is its catalogs' data, never code: the
 //! quotes around a name are two of core's messages (`quotes`), and a noun
@@ -71,6 +73,8 @@ pub struct Words(Inner);
 enum Inner {
     Message(&'static Message, Arc<[(&'static str, Arg)]>),
     Written(Cow<'static, str>),
+    /// A name drawn on its own (`Words::name_alone`).
+    Name(String),
     /// An error, each link of its chain said in the reader's language
     /// where it is words (`Words::of_error`).
     Error(Failure),
@@ -136,6 +140,10 @@ pub enum Arg {
     /// its bidirectional controls shown, never obeyed, isolated from the
     /// sentence where the window draws it.
     Folder(String),
+    /// A path (`/a/Docs/b.txt`), made of names: said as a folder is,
+    /// unquoted, its bidirectional controls shown, never obeyed, isolated
+    /// from the sentence where the window draws it. From a `&Path`.
+    Path(String),
     /// Keys a shortcut is pressed with ("Ctrl+Shift+C"), as they are named
     /// where they are drawn (`Keys`): left to right in every language,
     /// isolated from the sentence where the window draws it (LRI, PDI), so a
@@ -445,6 +453,18 @@ impl From<Folder> for Arg {
     }
 }
 
+impl From<&std::path::Path> for Arg {
+    fn from(path: &std::path::Path) -> Self {
+        Arg::Path(path.display().to_string())
+    }
+}
+
+impl From<&std::path::PathBuf> for Arg {
+    fn from(path: &std::path::PathBuf) -> Self {
+        Arg::Path(path.display().to_string())
+    }
+}
+
 impl From<Keys> for Arg {
     fn from(keys: Keys) -> Self {
         Arg::Keys(keys.0)
@@ -503,6 +523,18 @@ impl Words {
         Words(Inner::Written(text.into()))
     }
 
+    /// A name drawn on its own, as rows, tiles, tabs, the trail and a
+    /// window's title draw a file's or a folder's (ADR-139, 5): its
+    /// bidirectional controls shown as tags, never obeyed, in every
+    /// language and to every reader, and isolated where the window draws it
+    /// (`say`: FSI before it, PDI after), nothing else added: no quotes, no
+    /// case. As data it is the name as it is (`to_data`), which a search, a
+    /// copy or an operation would see. In a sentence (as `Arg::Words`), it
+    /// is isolated once, as a `Folder` is.
+    pub fn name_alone(name: impl Into<String>) -> Self {
+        Words(Inner::Name(name.into()))
+    }
+
     /// Message `id` of `domain`, known as the program runs rather than
     /// written in its code: what a plugin from outside says (protocol 2,
     /// ADR-139, 14), whose catalogs it brings. Said in the reader's
@@ -555,6 +587,7 @@ impl Words {
     pub fn is_empty(&self) -> bool {
         match &self.0 {
             Inner::Written(text) => text.is_empty(),
+            Inner::Name(name) => name.is_empty(),
             Inner::Describing(words) => words.is_empty(),
             _ => false,
         }
@@ -568,7 +601,7 @@ impl Words {
             Inner::Message(message, _) => Some((message.domain, message.id)),
             Inner::Heading(words) | Inner::Describing(words) => words.said_message(),
             Inner::Carried(carried) => Some((&carried.domain, &carried.id)),
-            Inner::Written(_) | Inner::Error(_) => None,
+            Inner::Written(_) | Inner::Name(_) | Inner::Error(_) => None,
         }
     }
 
@@ -577,8 +610,17 @@ impl Words {
         match &self.0 {
             Inner::Message(message, _) => Some(message),
             Inner::Heading(words) | Inner::Describing(words) => words.message_of(),
-            Inner::Written(_) | Inner::Error(_) | Inner::Carried(_) => None,
+            Inner::Written(_) | Inner::Name(_) | Inner::Error(_) | Inner::Carried(_) => None,
         }
+    }
+
+    /// Whether these words are a message: one written in the code, one a
+    /// plugin from outside says (`of_catalog`), or one come back from its
+    /// data; not text as written, a name or an error. What a sentence is
+    /// given as words, keeping a noun's grammar, where anything else is
+    /// named (`Name`, `Folder`, said plainly).
+    pub fn is_message(&self) -> bool {
+        self.said_message().is_some()
     }
 
     /// These words where they describe a plugin (its title, what it does,
@@ -627,7 +669,11 @@ impl Words {
     /// its dot, a script without case is left as it is).
     #[must_use]
     pub fn heading(&self) -> Words {
-        Words(Inner::Heading(Box::new(self.clone())))
+        match &self.0 {
+            // A name is no sentence: never cased.
+            Inner::Name(_) => self.clone(),
+            _ => Words(Inner::Heading(Box::new(self.clone()))),
+        }
     }
 
     /// Said in the reader's languages, cut around its arguments `names`:
@@ -760,6 +806,7 @@ impl Words {
     fn say_found(&self, out: &mut String, languages: &[String], find: Finder) {
         let (message, args) = match &self.0 {
             Inner::Written(text) => return out.push_str(text),
+            Inner::Name(name) => return isolated(&shown_controls(name), out),
             Inner::Error(failure) => return say_error(failure, languages, out),
             Inner::Describing(words) => {
                 return words.say_found(out, languages, catalog::find_describing);
@@ -952,7 +999,7 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
     match arg {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
-        Arg::Folder(name) => isolated(&shown_controls(name), out),
+        Arg::Folder(name) | Arg::Path(name) => isolated(&shown_controls(name), out),
         Arg::Keys(keys) => left_to_right(keys, out),
         Arg::Count(n) => out.push_str(&numbers::grouped(&formats::numbers(), *n)),
         Arg::Decimal(value, digits) => {
@@ -1686,6 +1733,7 @@ pub mod data {
             // nothing that comes back from data is said from the catalogs of
             // a plugin that is off.
             Inner::Describing(inner) => of(inner),
+            Inner::Name(name) => json!({ "alone": name }),
             Inner::Written(_) | Inner::Error(_) => Value::String(words.english()),
         }
     }
@@ -1757,6 +1805,7 @@ pub mod data {
             Arg::Text(text) => json!({ "text": text }),
             Arg::Name(name) => json!({ "name": name }),
             Arg::Folder(folder) => json!({ "folder": folder }),
+            Arg::Path(path) => json!({ "path": path }),
             Arg::Keys(keys) => json!({ "keys": keys }),
             Arg::Count(n) => json!({ "count": n }),
             Arg::Decimal(value, digits) => json!({ "decimal": [value, digits] }),
@@ -1791,6 +1840,10 @@ pub mod data {
         Text(String),
         Heading {
             heading: Box<Data>,
+        },
+        /// A name drawn alone.
+        Alone {
+            alone: String,
         },
         Message {
             domain: String,
@@ -1899,6 +1952,7 @@ pub mod data {
         Text(String),
         Name(String),
         Folder(String),
+        Path(String),
         Keys(String),
         Count(i64),
         Decimal((i64, u8)),
@@ -1915,6 +1969,7 @@ pub mod data {
             match self {
                 Data::Text(text) => Words::as_written(text),
                 Data::Heading { heading } => heading.into_words().heading(),
+                Data::Alone { alone } => Words::name_alone(alone),
                 Data::Message {
                     domain,
                     id,
@@ -1940,6 +1995,7 @@ pub mod data {
                 ArgData::Text(text) => Arg::Text(text.into()),
                 ArgData::Name(name) => Arg::Name(name),
                 ArgData::Folder(folder) => Arg::Folder(folder),
+                ArgData::Path(path) => Arg::Path(path),
                 ArgData::Keys(keys) => Arg::Keys(keys),
                 ArgData::Count(n) => Arg::Count(n),
                 ArgData::Decimal((value, digits)) => Arg::Decimal(value, digits),
