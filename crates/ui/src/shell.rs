@@ -3537,18 +3537,18 @@ impl Shell {
                                 shell_rename_title = "Rename",
                                 note = "The title of the dialog renaming a file."
                             )
-                            .say(),
+                            .to_data(),
                             "accept": words!(
                                 shell_rename_accept = "Rename",
                                 note = "The button of the dialog renaming a file that renames it."
                             )
-                            .say(),
+                            .to_data(),
                             "placeholder": words!(
                                 shell_rename_placeholder = "New name",
                                 note = "What the field of the dialog renaming a file shows while \
                                         empty."
                             )
-                            .say(),
+                            .to_data(),
                             "text": name,
                             "select": [0, stem],
                             "command": "rename",
@@ -3574,18 +3574,18 @@ impl Shell {
                         shell_new_file_title = "New file",
                         note = "The title of the dialog making a new file."
                     )
-                    .say(),
+                    .to_data(),
                     "accept": words!(
                         shell_new_file_accept = "Create",
                         note = "The button of the dialog making a new file that makes it."
                     )
-                    .say(),
+                    .to_data(),
                     "placeholder": words!(
                         shell_new_file_placeholder = "File name, or a folder name ending in /",
                         note = "What the field of the dialog making a new file shows while empty: \
                                 a name ending in / makes a folder."
                     )
-                    .say(),
+                    .to_data(),
                     "command": "new_file",
                     "args": { "pane": pane },
                     "field": "name",
@@ -3662,18 +3662,18 @@ impl Shell {
                         shell_new_folder_title = "New folder",
                         note = "The title of the dialog making a new folder."
                     )
-                    .say(),
+                    .to_data(),
                     "accept": words!(
                         shell_new_folder_accept = "Create",
                         note = "The button of the dialog making a new folder that makes it."
                     )
-                    .say(),
+                    .to_data(),
                     "placeholder": words!(
                         shell_new_folder_placeholder = "Folder name",
                         note = "What the field of the dialog making a new folder shows while \
                                 empty."
                     )
-                    .say(),
+                    .to_data(),
                     "command": "mkdir",
                     "args": { "pane": pane },
                     "field": "name",

@@ -7573,10 +7573,8 @@ fn facts_words(
 /// The header's facts as the segments of their line, each a fact with
 /// what its language writes after it up to the next (" · "), in the order
 /// the language places them: the line wraps between the facts, never
-/// inside one (the date). The message is said with a mark in each fact's
-/// place, cut at the marks and each mark replaced by its fact, as
-/// `Words::say_around` cuts a sentence around one argument (core has no
-/// cut for several yet).
+/// inside one (the date). The message is said cut around its facts
+/// (`Words::say_apart`), each fact placed where its language places it.
 fn fact_segments(facts: &Facts) -> Vec<(Fact, String)> {
     const ORDER: [Fact; 3] = [Fact::Type, Fact::Size, Fact::Date];
     let there = facts.there();
