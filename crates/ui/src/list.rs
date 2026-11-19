@@ -1394,6 +1394,10 @@ impl Shell {
         if sweeping {
             kc.add("sweep");
         }
+        // Escape cancels another program's dialog (ADR-141).
+        if self.chooser.is_some() {
+            kc.add("choosing");
+        }
         kc
     }
 

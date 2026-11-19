@@ -80,6 +80,8 @@ pub const MAP: &str = "MapPreview";
 pub const MODEL: &str = "ModelPreview";
 /// The pinned player's dock.
 pub const PLAYER: &str = "Player";
+/// The bar answering another program's dialog (`chooser.rs`, ADR-141).
+pub const CHOOSER: &str = "Chooser";
 /// Activity open above the footer, once `ui.activity` gave it the
 /// keyboard (`activity::panel`): Escape gives the keyboard back, and
 /// Activity stays open.
@@ -645,6 +647,10 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("up", "ui.cursor", r#"{"to":"previous"}"#, Some("peek")),
     ("right", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
     ("down", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
+    // Answering another program's dialog, Escape cancels it, as a
+    // dialog's does, once the pane shows everything again (below).
+    ("escape", "ui.chooser_cancel", "{}", Some("pane choosing")),
+    ("escape", "ui.chooser_cancel", "{}", Some("chooser")),
     // A pane filtered by name shows everything again before Escape
     // deselects (`select_none`, the plugins' binding).
     ("escape", "filter", "{}", Some("pane filtered")),
@@ -1557,6 +1563,10 @@ fn group_words(group: &str) -> Option<Words> {
             keymap_place_player = "Pinned player",
             note = "A place in the window: the player kept playing while one browses."
         ),
+        "chooser" => words!(
+            keymap_place_chooser = "Another program's dialog",
+            note = "A place in the window: the bar at its foot while it answers another program's Open or Save dialog."
+        ),
         "activity" => words!(
             keymap_place_activity = "Activity",
             note = "A place in the window: the panel of the copies, moves and other work going on."
@@ -1619,6 +1629,7 @@ pub(crate) const PLACES: &[Place] = &[
     place("fullscreen", FULLSCREEN),
     place("slideshow", SLIDESHOW),
     place("player", PLAYER),
+    place("chooser", CHOOSER),
     place("activity", ACTIVITY),
     place("terminal", TERMINAL),
     place("timeline", TIMELINE),
@@ -1748,6 +1759,10 @@ pub(crate) fn condition_words(flag: &str) -> Words {
         "lists" => words!(keymap_flag_lists = "while a field's list shows"),
         "offers" => words!(keymap_flag_offers = "while a field offers a row to take"),
         "planning" => words!(keymap_flag_planning = "while a plan is worked out"),
+        "choosing" => words!(
+            keymap_flag_choosing = "while the window answers another program's dialog",
+            note = "Where keys work: while the window is another program's Open or Save dialog."
+        ),
         other => Words::as_written(other.to_owned()),
     }
 }

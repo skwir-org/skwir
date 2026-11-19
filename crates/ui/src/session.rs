@@ -368,7 +368,13 @@ impl Shell {
         // Nothing is written before the window's shape was read: the
         // tabs are put in place (and present themselves) before the shape
         // is restored, and writing then would replace it with defaults.
-        let Some(stored) = &self.stored_session else {
+        // Another program's dialog's window is shaped as a dialog: never
+        // the shape the next window takes (ADR-141).
+        let Some(stored) = self
+            .stored_session
+            .as_ref()
+            .filter(|_| self.chooser.is_none())
+        else {
             return;
         };
         let session = self.session();

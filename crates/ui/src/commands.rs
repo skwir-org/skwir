@@ -41,6 +41,22 @@ mod args {
     #[serde(transparent)]
     pub(super) struct Object(serde_json::Map<String, serde_json::Value>);
 
+    /// The filter another program's dialog shows by: one of its own, by
+    /// its place in the request's (from 0), or all files (none).
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct ChooserFilter {
+        #[serde(default)]
+        index: Option<u64>,
+    }
+
+    /// One of the choices another program's dialog offers, set: `true` or
+    /// `false` for a switch, an option's id for a list.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct ChooserChoice {
+        id: String,
+        value: serde_json::Value,
+    }
+
     /// How long a slideshow shows each picture, in seconds.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Pace {
@@ -650,11 +666,12 @@ mod args {
 }
 
 use args::{
-    Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir,
-    FieldComplete, FieldReference, Find, Fold, FolderItem, Folders, History, Key, Layout,
-    ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player, Pointer, Popup,
-    PreviewScroll, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt, TerminalPaste,
-    Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
+    Adjust, Amount, Ask, Bucket, ChooserChoice, ChooserFilter, Close, Continue, CopyText, Count,
+    Cursor, Delta, Dir, FieldComplete, FieldReference, Find, Fold, FolderItem, Folders, History,
+    Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player, Pointer,
+    Popup, PreviewScroll, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt,
+    TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode,
+    View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -2185,6 +2202,42 @@ pub fn declare_all(app: &App) {
             note = "A window command's title: answer no to the question a dialog asks."
         ),
         words!(commands_dismiss_description = "Answer no to the question asked"),
+    );
+    // Another program's Open or Save dialog, answered by the user alone
+    // (ADR-141, 8): none of these is an agent's.
+    none(
+        Topic::Window,
+        "ui.chooser_accept",
+        words!(commands_chooser_accept = "Answer the dialog"),
+        words!(
+            commands_chooser_accept_description = "In a window answering another program's Open or Save dialog: choose what is selected, or the name typed in the folder shown, as the program asked"
+        ),
+    );
+    none(
+        Topic::Window,
+        "ui.chooser_cancel",
+        words!(commands_chooser_cancel = "Cancel the dialog"),
+        words!(
+            commands_chooser_cancel_description = "In a window answering another program's Open or Save dialog: choose nothing, and close the window"
+        ),
+    );
+    declare::<ChooserFilter>(
+        app,
+        Topic::Window,
+        "ui.chooser_filter",
+        words!(commands_chooser_filter = "Show the files of a filter"),
+        words!(
+            commands_chooser_filter_description = "In a window answering another program's dialog: show the files of the program's filter `index` (from 0), or all files without it"
+        ),
+    );
+    declare::<ChooserChoice>(
+        app,
+        Topic::Window,
+        "ui.chooser_choice",
+        words!(commands_chooser_choice = "Set a choice of the dialog"),
+        words!(
+            commands_chooser_choice_description = "In a window answering another program's dialog: set its choice `id` to `value`, true or false for a switch, an option's id for a list"
+        ),
     );
     none(
         Topic::Files,

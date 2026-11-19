@@ -375,6 +375,9 @@ pub enum Confirmed {
     /// without the window, then quits; the second answer stops them and
     /// quits now.
     Quit,
+    /// Another program saves over these files (ADR-141, 5): yes answers
+    /// its dialog with them.
+    Replace(Vec<std::path::PathBuf>),
 }
 
 impl Shell {
@@ -954,6 +957,7 @@ impl Shell {
                 Confirmed::Apply(plan) => self.app.apply_whole(plan),
                 // Finished without the window (`finishing.rs`).
                 Confirmed::Quit => self.close_every_window(window, cx),
+                Confirmed::Replace(paths) => self.chooser_replace(paths, window, cx),
             }
             cx.notify();
         }
@@ -1206,9 +1210,18 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
             None,
             ButtonStyle::Plain,
         ),
+        Confirmed::Replace(_) => (
+            words!(
+                prompt_replace = "Replace",
+                note = "The button that answers the question before another program saves over \
+                        a file: save over it."
+            ),
+            None,
+            ButtonStyle::Danger,
+        ),
     };
     let (no, other) = match c.then {
-        Confirmed::Apply(_) => (cancel(), None),
+        Confirmed::Apply(_) | Confirmed::Replace(_) => (cancel(), None),
         Confirmed::Quit => (
             words!(
                 prompt_keep_window = "Keep the window",
@@ -1238,7 +1251,7 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         )
         .child(modal::footer(
             match c.then {
-                Confirmed::Apply(_) => confirm_keys(),
+                Confirmed::Apply(_) | Confirmed::Replace(_) => confirm_keys(),
                 Confirmed::Quit => words!(
                     prompt_quit_keys = "Enter to finish in the background",
                     note = "The keys of what Quit asks while actions run."

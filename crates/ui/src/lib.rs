@@ -22,6 +22,7 @@ mod archive_preview;
 mod backdrop;
 pub mod bytes_view;
 pub mod choose;
+mod chooser;
 pub mod clashes;
 mod clipboard;
 mod code_preview;
@@ -180,25 +181,25 @@ mod dev_thumbs {
     }
 }
 
-pub use finishing::ended_unasked;
+pub use finishing::{Windowless, ended_unasked};
 
 /// Run the UI until the window closes. `initial` is opened in the active pane.
 pub fn run(app: Arc<App>, initial: Option<Location>) -> anyhow::Result<()> {
-    run_from(app, initial, Instant::now(), None, false)
+    run_from(app, initial, Instant::now(), None, None)
 }
 
 /// Like [`run`], with the instant the process started, for first-frame
 /// timing, and what this launch asked (`launch`), handed to another Skwir
 /// of this instance if it proves to hold later launches
 /// (`finishing::take_over`). `windowless`: started by the session bus to
-/// show files for another program (`--file-manager`, ADR-140), no window
-/// opens until it is asked.
+/// show files for another program (`--file-manager`, ADR-140) or answer
+/// its dialog (`--portal`, ADR-141), no window opens until it is asked.
 pub fn run_from(
     app: Arc<App>,
     initial: Option<Location>,
     started: Instant,
     launch: Option<skwir_platform::handover::Opening>,
-    windowless: bool,
+    windowless: Option<Windowless>,
 ) -> anyhow::Result<()> {
     // Commands that may wait move their waiting off this thread.
     skwir_core::scheduler::mark_window_thread(&app.scheduler);

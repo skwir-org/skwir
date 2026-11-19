@@ -24,6 +24,7 @@ imagesize = "0.15"
 jpeg-decoder.workspace = true
 png.workspace = true
 parking_lot.workspace = true
+globset.workspace = true
 # Tree-sitter grammars found: their descriptions and first-line patterns
 # (ADR-110).
 regex.workspace = true

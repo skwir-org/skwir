@@ -763,6 +763,8 @@ pub struct Shell {
     /// The window's title as last set, said: its active pane's location's
     /// title, then skwir's name (`title_bar::window_title`).
     pub(crate) title: gpui::SharedString,
+    /// Another program's Open or Save dialog this window answers (ADR-141).
+    pub(crate) chooser: Option<crate::chooser::Chooser>,
     /// What of Skwir's the system's clipboard may hold (ADR-062).
     pub(crate) clipboard_holds: crate::clipboard::Held,
     _subscriptions: Vec<Subscription>,
@@ -1045,6 +1047,7 @@ impl Shell {
             a11y: false,
             draws_meshes: turns_models(window),
             title: gpui::SharedString::default(),
+            chooser: None,
             clipboard_holds: crate::clipboard::Held::Nothing,
             _subscriptions: subs,
         };
@@ -3071,6 +3074,11 @@ impl Shell {
             window.remove_window();
             return;
         }
+        // Answering another program's dialog, Enter on a file and a double
+        // click choose it (ADR-141, 5).
+        if name == "open" && self.chooser_open(window, cx) {
+            return;
+        }
         if name == "open" && self.app.commands.get("open").is_none() {
             self.open_fallback(window, cx);
             return;
@@ -3277,6 +3285,12 @@ impl Shell {
     /// (ADR-122); the last one leaves as ADR-115 says, what runs going on
     /// without it.
     pub(crate) fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Another program's dialog is cancelled, its window gone with it,
+        // the last one too (ADR-141).
+        if self.chooser_closing() {
+            self.leave(window, cx);
+            return;
+        }
         if crate::finishing::window_count(cx) > 1
             && let Err(error) = self.app.close_window(self.window_id)
         {
@@ -3372,6 +3386,9 @@ impl Shell {
     ) {
         let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         match name {
+            "chooser_accept" | "chooser_cancel" | "chooser_filter" | "chooser_choice" => {
+                self.run_chooser(name, args, window, cx);
+            }
             "focus_address" => {
                 self.omnibox_begin(crate::omnibox::Begin::Path, None, window, cx);
             }
@@ -4295,6 +4312,12 @@ impl Shell {
         if self.left {
             return;
         }
+        // Another program's dialog the program gave up goes, its window
+        // with it.
+        self.chooser_sync(window, cx);
+        if self.left {
+            return;
+        }
         let t0 = Instant::now();
         self.sync_views();
         self.sync_place_views();
@@ -4679,10 +4702,14 @@ impl Shell {
     /// pane's location. Set when that changed, after the panes read it.
     fn sync_title(&mut self, window: &mut Window) {
         crate::a11y_language::apply(window);
-        // Said now, so that a language chosen since shows too.
-        let title: gpui::SharedString = crate::title_bar::window_title(&self.ui().place.title)
-            .say()
-            .into();
+        // Said now, so that a language chosen since shows too; another
+        // program's dialog by its own title (ADR-141, 4).
+        let title: gpui::SharedString = match &self.chooser {
+            Some(chooser) => crate::chooser::title(chooser.choosing.asked()).say().into(),
+            None => crate::title_bar::window_title(&self.ui().place.title)
+                .say()
+                .into(),
+        };
         if title == self.title {
             return;
         }
@@ -5161,6 +5188,8 @@ impl Render for Shell {
         };
         let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, window, cx);
+        // Answering another program's dialog: its bar at the window's foot.
+        let chooser_bar = crate::chooser::render(self, window, cx);
         let about = crate::about::render(self, cx);
         let overlays = [
             address::more_popup(self, cx),
@@ -5278,6 +5307,7 @@ impl Render for Shell {
                         ),
                 ),
             )
+            .children(chooser_bar)
             .children(about)
             .children(sequence)
             .children(overlays.into_iter().flatten())

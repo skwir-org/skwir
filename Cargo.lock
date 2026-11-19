@@ -9473,6 +9473,7 @@ dependencies = [
  "event-listener",
  "flate2",
  "futures-lite",
+ "globset",
  "image",
  "imagesize 0.15.0",
  "jiff",

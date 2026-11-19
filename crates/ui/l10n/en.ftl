@@ -660,6 +660,63 @@ choose_placeholder = Type to filter
 # What a list to choose from says when the choices a plugin gave cannot be read; the reason follows.
 choose_unreadable = unreadable choices
 
+# A button of the bar answering another program's dialog: choose the folder.
+chooser_accept_folder = Select
+
+# A button of the bar answering another program's dialog: open the files chosen.
+chooser_accept_open = Open
+
+# A button of the bar answering another program's dialog: save there.
+chooser_accept_save = Save
+
+# In the filter dropdown of the bar answering another program's dialog: show every file.
+chooser_all_files = All files
+
+# A button of the bar answering another program's dialog: choose nothing.
+chooser_cancel = Cancel
+
+# Said where the bar answering another program's Open dialog was pressed with no file selected.
+chooser_choose_file = Choose a file first
+
+# Said where the bar answering another program's dialog for a folder was pressed with none selected or shown.
+chooser_choose_folder = Choose a folder first
+
+# What the filter dropdown of the bar answering another program's dialog is called, for a screen reader.
+chooser_filter = Files shown
+
+# Before the name field of the bar answering another program's Save dialog.
+chooser_name = Name
+
+# In the empty name field of the bar answering another program's Save dialog.
+chooser_name_placeholder = Name of the file
+
+# Said where a name typed in another program's Save dialog names a folder that does not exist.
+chooser_no_folder = There is no folder { $folder }
+
+# Asked before another program saves over a file: name: the file's name; folder: where it is.
+chooser_replace = Replace { $name }? A file of that name is already in { $folder }.
+
+# Asked before another program saves several files over files already there: count: how many are there; folder: where.
+chooser_replace_several = { $count ->
+        [one] Replace the file of the same name already in { $folder }?
+       *[other] Replace the { $count } files of the same names already in { $folder }?
+    }
+
+# Said where the bar answering another program's Save dialog was pressed while the pane shows a search or a tag, not a folder.
+chooser_save_in_folder = Go to a folder to save in
+
+# The title of the window another program opened to choose a folder, where it gave none.
+chooser_title_folder = Choose a folder
+
+# The title of the window another program opened to choose files to open, where it gave none.
+chooser_title_open = Open
+
+# The title of the window another program opened to choose where to save, where it gave none.
+chooser_title_save = Save
+
+# Said where the bar answering another program's Save dialog was pressed with its name field empty.
+chooser_type_name = Type a name to save under
+
 # The button giving up what was asked, rather than answer the names taken.
 clashes_cancel = Cancel
 
@@ -832,6 +889,22 @@ commands_choose_description = Ask the user to choose among choices, given or lis
 commands_choose_option = Switch the option
 
 commands_choose_option_description = Switch the choice's option (Always use for…)
+
+commands_chooser_accept = Answer the dialog
+
+commands_chooser_accept_description = In a window answering another program's Open or Save dialog: choose what is selected, or the name typed in the folder shown, as the program asked
+
+commands_chooser_cancel = Cancel the dialog
+
+commands_chooser_cancel_description = In a window answering another program's Open or Save dialog: choose nothing, and close the window
+
+commands_chooser_choice = Set a choice of the dialog
+
+commands_chooser_choice_description = In a window answering another program's dialog: set its choice `id` to `value`, true or false for a switch, an option's id for a list
+
+commands_chooser_filter = Show the files of a filter
+
+commands_chooser_filter_description = In a window answering another program's dialog: show the files of the program's filter `index` (from 0), or all files without it
 
 commands_close_window = Close window
 
@@ -3199,6 +3272,9 @@ keymap_anywhere = Anywhere
 # A key that offers a list to choose from; title: what the list is for, as the binding names it. The ellipsis says it asks more.
 keymap_choose = { $title }…
 
+# Where keys work: while the window is another program's Open or Save dialog.
+keymap_flag_choosing = while the window answers another program's dialog
+
 keymap_flag_completes = while what is typed can be completed
 
 keymap_flag_creates = where new places can be made
@@ -3321,6 +3397,9 @@ keymap_place_bulk = Bulk rename
 keymap_place_bulk_case = Bulk rename's case
 
 keymap_place_choose = Choosing from a list
+
+# A place in the window: the bar at its foot while it answers another program's Open or Save dialog.
+keymap_place_chooser = Another program's dialog
 
 keymap_place_confirm = Confirmation dialogs
 
@@ -5043,6 +5122,9 @@ prompt_quit_keys = Enter to finish in the background
 # A switch under a password's field: keep the password in the desktop's keyring.
 prompt_remember = Remember in the keyring
 
+# The button that answers the question before another program saves over a file: save over it.
+prompt_replace = Replace
+
 # A button of what Quit asks while actions run: stop them now, then quit.
 prompt_stop_and_quit = Stop and quit
 
@@ -6123,6 +6205,9 @@ settings_choices = Choices
 
 # Said in a setting's list of choices when what is typed in its field keeps none.
 settings_choices_none = None holds what is typed
+
+# What the window keeps, for agents and scripts.
+settings_chooser_folders_state = The folder each program last chose in, through the window answering its Open or Save dialog, by the program's id ("" for one with none)
 
 # The button closing the settings.
 settings_close = Close

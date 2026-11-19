@@ -694,6 +694,60 @@ choose_placeholder = 输入以筛选
 choose_unreadable = 无法读取选项
 
 # draft
+chooser_accept_folder = 选择
+
+# draft
+chooser_accept_open = 打开
+
+# draft
+chooser_accept_save = 保存
+
+# draft
+chooser_all_files = 所有文件
+
+# draft
+chooser_cancel = 取消
+
+# draft
+chooser_choose_file = 请先选择一个文件
+
+# draft
+chooser_choose_folder = 请先选择一个文件夹
+
+# draft
+chooser_filter = 显示的文件
+
+# draft
+chooser_name = 名称
+
+# draft
+chooser_name_placeholder = 文件名
+
+# draft
+chooser_no_folder = 文件夹 { $folder } 不存在
+
+# draft
+chooser_replace = 替换 { $name }？{ $folder } 中已有同名文件。
+
+# draft
+chooser_replace_several = 替换 { $folder } 中已有的 { $count } 个同名文件？
+
+# draft
+chooser_save_in_folder = 请进入一个文件夹以保存
+
+# draft
+chooser_title_folder = 选择文件夹
+
+# draft
+chooser_title_open = 打开
+
+# draft
+chooser_title_save = 保存
+
+# draft
+chooser_type_name = 请输入要保存的名称
+
+# draft
 clashes_cancel = 取消
 
 # draft
@@ -863,6 +917,30 @@ commands_choose_option = 切换选项
 
 # draft
 commands_choose_option_description = 切换选择框的选项（“始终用于…”）
+
+# draft
+commands_chooser_accept = 应答对话框
+
+# draft
+commands_chooser_accept_description = 在应答其他程序“打开”或“保存”对话框的窗口中：按程序的要求，选择所选内容，或所显示文件夹中输入的名称
+
+# draft
+commands_chooser_cancel = 取消对话框
+
+# draft
+commands_chooser_cancel_description = 在应答其他程序“打开”或“保存”对话框的窗口中：不选择任何内容，并关闭窗口
+
+# draft
+commands_chooser_choice = 设置对话框的选项
+
+# draft
+commands_chooser_choice_description = 在应答其他程序对话框的窗口中：将其选项 `id` 设为 `value`，开关为 true 或 false，列表为某个选项的 id
+
+# draft
+commands_chooser_filter = 显示某个筛选器的文件
+
+# draft
+commands_chooser_filter_description = 在应答其他程序对话框的窗口中：显示程序第 `index` 个筛选器（从 0 开始）的文件，不带它则显示所有文件
 
 # draft
 commands_close_window = 关闭窗口
@@ -3571,6 +3649,9 @@ keymap_anywhere = 任意位置
 keymap_choose = { $title }…
 
 # draft
+keymap_flag_choosing = 窗口正在应答其他程序的对话框时
+
+# draft
 keymap_flag_completes = 输入内容可补全时
 
 # draft
@@ -3713,6 +3794,9 @@ keymap_place_bulk_case = 批量重命名的大小写
 
 # draft
 keymap_place_choose = 从列表中选择
+
+# draft
+keymap_place_chooser = 其他程序的对话框
 
 # draft
 keymap_place_confirm = 确认对话框
@@ -5563,6 +5647,9 @@ prompt_quit_keys = 按 Enter 在后台完成
 prompt_remember = 保存到密钥环
 
 # draft
+prompt_replace = 替换
+
+# draft
 prompt_stop_and_quit = 停止并退出
 
 # draft
@@ -6605,6 +6692,9 @@ settings_choices = 选项
 
 # draft
 settings_choices_none = 没有与输入内容匹配的选项
+
+# draft
+settings_chooser_folders_state = 每个程序上次通过应答其“打开”或“保存”对话框的窗口所选的文件夹，按程序的 id 记录（没有 id 的程序为 ""）
 
 # draft
 settings_close = 关闭

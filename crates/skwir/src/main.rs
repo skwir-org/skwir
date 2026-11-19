@@ -80,12 +80,19 @@ fn main() -> anyhow::Result<()> {
     // a launch would be, which would only bring a window forward: the
     // program takes the request, and hands it on if another takes
     // launches over.
+    // Started by the bus for another program's dialog: the same, the
+    // request opening a window answering it (ADR-141, 3).
     let before = args.len();
     args.retain(|arg| arg != skwir_platform::file_manager::STARTED_BY_BUS);
-    let windowless = args.len() != before;
-    if windowless && !cfg!(target_os = "linux") {
+    let mut windowless = (args.len() != before).then_some(skwir_ui::Windowless::FileManager);
+    let before = args.len();
+    args.retain(|arg| arg != skwir_platform::chooser::STARTED_BY_PORTAL);
+    if args.len() != before {
+        windowless = Some(skwir_ui::Windowless::Portal);
+    }
+    if windowless.is_some() && !cfg!(target_os = "linux") {
         eprintln!(
-            "skwir: showing files for other programs is not available on {} yet",
+            "skwir: answering other programs is not available on {} yet",
             skwir_core::system::NAME
         );
         std::process::exit(2);
@@ -101,7 +108,7 @@ fn main() -> anyhow::Result<()> {
         token: skwir_platform::handover::launch_token(),
         ..skwir_platform::handover::Opening::default()
     };
-    if !windowless && skwir_platform::handover::hand_over(&opening) {
+    if windowless.is_none() && skwir_platform::handover::hand_over(&opening) {
         return Ok(());
     }
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
@@ -163,7 +170,7 @@ fn main() -> anyhow::Result<()> {
         |path: std::path::PathBuf| Location::from_path(std::path::absolute(&path).unwrap_or(path));
     let initial = match args.first() {
         Some(arg) => Some(skwir_ui::location_of(&app, arg, &cwd)),
-        None if windowless => None,
+        None if windowless.is_some() => None,
         None => match skwir_core::tabs::last_windows(&app.settings) {
             Some(saved) if app.restore_windows(&saved) => None,
             _ => {
@@ -179,9 +186,9 @@ fn main() -> anyhow::Result<()> {
     // The folder is not logged: it can come from a preference, and paths
     // are private.
     tracing::info!("starting");
-    let launch = (!windowless).then_some(opening);
+    let launch = windowless.is_none().then_some(opening);
     let ran = skwir_ui::run_from(app, initial, started, launch, windowless);
-    if windowless && skwir_ui::ended_unasked() {
+    if windowless.is_some() && skwir_ui::ended_unasked() {
         // Started by the bus and ended asked nothing: not 0, which
         // dbus-daemon reads as a program gone to the background and
         // waits for, the asking program with it (ADR-140, 5).

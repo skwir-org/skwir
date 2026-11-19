@@ -715,6 +715,63 @@ choose_placeholder = Tapez pour filtrer
 choose_unreadable = choix illisibles
 
 # draft
+chooser_accept_folder = Sélectionner
+
+# draft
+chooser_accept_open = Ouvrir
+
+# draft
+chooser_accept_save = Enregistrer
+
+# draft
+chooser_all_files = Tous les fichiers
+
+# draft
+chooser_cancel = Annuler
+
+# draft
+chooser_choose_file = Choisissez d’abord un fichier
+
+# draft
+chooser_choose_folder = Choisissez d’abord un dossier
+
+# draft
+chooser_filter = Fichiers affichés
+
+# draft
+chooser_name = Nom
+
+# draft
+chooser_name_placeholder = Nom du fichier
+
+# draft
+chooser_no_folder = Le dossier { $folder } n’existe pas
+
+# draft
+chooser_replace = Remplacer { $name } ? Un fichier de ce nom se trouve déjà dans { $folder }.
+
+# draft
+chooser_replace_several = { $count ->
+        [one] Remplacer le fichier du même nom qui se trouve déjà dans { $folder } ?
+       *[other] Remplacer les { $count } fichiers des mêmes noms qui se trouvent déjà dans { $folder } ?
+    }
+
+# draft
+chooser_save_in_folder = Allez dans un dossier où enregistrer
+
+# draft
+chooser_title_folder = Choisir un dossier
+
+# draft
+chooser_title_open = Ouvrir
+
+# draft
+chooser_title_save = Enregistrer
+
+# draft
+chooser_type_name = Saisissez le nom sous lequel enregistrer
+
+# draft
 clashes_cancel = Annuler
 
 # draft
@@ -902,6 +959,30 @@ commands_choose_option = Cocher ou décocher l’option
 
 # draft
 commands_choose_option_description = Cocher ou décocher l’option du choix (Toujours utiliser pour…)
+
+# draft
+commands_chooser_accept = Répondre à la boîte de dialogue
+
+# draft
+commands_chooser_accept_description = Dans une fenêtre qui répond à la boîte de dialogue Ouvrir ou Enregistrer d’un autre programme : choisir ce qui est sélectionné, ou le nom saisi dans le dossier affiché, comme le programme l’a demandé
+
+# draft
+commands_chooser_cancel = Annuler la boîte de dialogue
+
+# draft
+commands_chooser_cancel_description = Dans une fenêtre qui répond à la boîte de dialogue Ouvrir ou Enregistrer d’un autre programme : ne rien choisir, et fermer la fenêtre
+
+# draft
+commands_chooser_choice = Régler un choix de la boîte de dialogue
+
+# draft
+commands_chooser_choice_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : régler son choix `id` sur `value`, true ou false pour un interrupteur, l’id d’une option pour une liste
+
+# draft
+commands_chooser_filter = Afficher les fichiers d’un filtre
+
+# draft
+commands_chooser_filter_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : afficher les fichiers du filtre `index` du programme (à partir de 0), ou tous les fichiers sans lui
 
 # draft
 commands_close_window = Fermer la fenêtre
@@ -3715,6 +3796,9 @@ keymap_anywhere = Partout
 keymap_choose = { $title }…
 
 # draft
+keymap_flag_choosing = pendant que la fenêtre répond à la boîte de dialogue d’un autre programme
+
+# draft
 keymap_flag_completes = quand la saisie peut être complétée
 
 # draft
@@ -3857,6 +3941,9 @@ keymap_place_bulk_case = Casse du renommage en lot
 
 # draft
 keymap_place_choose = Choix dans une liste
+
+# draft
+keymap_place_chooser = Boîte de dialogue d’un autre programme
 
 # draft
 keymap_place_confirm = Dialogues de confirmation
@@ -5759,6 +5846,9 @@ prompt_quit_keys = Entrée pour terminer en arrière-plan
 prompt_remember = Mémoriser dans le trousseau
 
 # draft
+prompt_replace = Remplacer
+
+# draft
 prompt_stop_and_quit = Arrêter et quitter
 
 # draft
@@ -6854,6 +6944,9 @@ settings_choices = Choix
 
 # draft
 settings_choices_none = Aucun choix ne correspond à la saisie
+
+# draft
+settings_chooser_folders_state = Le dossier où chaque programme a choisi en dernier, par la fenêtre qui répond à sa boîte de dialogue Ouvrir ou Enregistrer, selon l’id du programme ("" pour un programme qui n’en a pas)
 
 # draft
 settings_close = Fermer

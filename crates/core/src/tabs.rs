@@ -586,7 +586,8 @@ impl App {
         }
         drop(panes_by_id);
         drop(panes);
-        let item = (!tabs.is_empty()).then(|| ClosedItem::Window {
+        // A dialog's window is never reopened (ADR-141).
+        let item = (!tabs.is_empty() && !closed.chooses()).then(|| ClosedItem::Window {
             tabs,
             shown,
             shape: closed.shape().cloned(),
@@ -979,7 +980,8 @@ impl App {
         let ws = self.workspace.read();
         let active = ws.active_window_id();
         let mut saved = SavedWindows::default();
-        for window in ws.windows() {
+        // A dialog's window goes with its answer (ADR-141).
+        for window in ws.windows().iter().filter(|window| !window.chooses()) {
             let kept = self.saved_window(&ws, window);
             if kept.tabs.is_empty() {
                 continue;
@@ -1227,13 +1229,18 @@ pub fn record(app: &App) -> bool {
     }
     // A remote folder is kept by its tab's address, which connects
     // again (ADR-077); its mount's path may name nothing next time.
-    let folder = app
-        .workspace
-        .read()
-        .active()
-        .location()
-        .and_then(Location::path)
-        .filter(|folder| crate::fs::reach::of(folder).is_none());
+    // Nor where a dialog chose (ADR-141): another program's folders are
+    // not the user's last.
+    let folder = {
+        let ws = app.workspace.read();
+        let dialog = ws
+            .window(ws.active_window_id())
+            .is_some_and(crate::workspace::WindowTabs::chooses);
+        ws.active()
+            .location()
+            .and_then(Location::path)
+            .filter(|folder| !dialog && crate::fs::reach::of(folder).is_none())
+    };
     let mut changed =
         folder.is_some_and(|folder| crate::settings::remember_location(settings, &folder));
     let saved = app.saved_windows();

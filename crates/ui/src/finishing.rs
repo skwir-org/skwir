@@ -36,13 +36,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui::{App, AppContext, Global, WindowHandle};
 use parking_lot::Mutex;
 use skwir_core::Location;
 use skwir_core::op::PlanId;
 use skwir_core::workspace::{PaneId, WindowId};
+use skwir_platform::chooser::{Answer, Choosing};
 use skwir_platform::desktop::{Asked, Presence, Standing};
 use skwir_platform::handover::{NotTaken, Opening, TakingOver};
 
@@ -108,6 +109,12 @@ pub(crate) struct Finishing {
     windowless: Option<Arc<AtomicBool>>,
     /// The launches handed over, for the next wake.
     openings: Openings,
+    /// Other programs' dialogs handed in (ADR-141), for the next wake.
+    choosings: Arc<Mutex<Vec<Choosing>>>,
+    /// The windows asleep as a dialog's window opened with none of the
+    /// user's own up: they stay asleep until one is asked (`show`), as
+    /// while no window is up.
+    asleep: HashSet<WindowId>,
     /// What a window that closed held and no other has taken yet: the next
     /// `deliver` hands it on (`hand_on`).
     handed: Inbox,
@@ -115,9 +122,21 @@ pub(crate) struct Finishing {
     ending: Arc<AtomicBool>,
     /// The presence shown, while no window is up.
     shown: Option<Presence>,
-    /// A window was opened once: one that cannot open after is no reason
-    /// to end.
-    opened: bool,
+    /// What windows were opened in this run.
+    opened: Opened,
+}
+
+/// What windows were opened in a run: one was (one that cannot open
+/// after is no reason to end), and whether one of the user's own was:
+/// until then nothing is recorded for the next start, which a program
+/// started for another program's dialog would otherwise replace with its
+/// window asleep (ADR-141).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Opened {
+    Never,
+    /// Only windows answering other programs' dialogs.
+    Dialogs,
+    Own,
 }
 
 impl Global for Finishing {}
@@ -128,8 +147,18 @@ impl Global for Finishing {}
 pub(crate) struct Launch {
     pub(crate) initial: Option<Location>,
     pub(crate) asked: Option<Opening>,
-    /// Started by the session bus without a window (ADR-140, 5).
-    pub(crate) windowless: bool,
+    /// Started by the session bus without a window, and why.
+    pub(crate) windowless: Option<Windowless>,
+}
+
+/// Why the session bus started the program without a window: a request
+/// opens its window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Windowless {
+    /// To show files for another program (`--file-manager`, ADR-140, 5).
+    FileManager,
+    /// To answer another program's dialog (`--portal`, ADR-141, 3).
+    Portal,
 }
 
 /// Set as a program started without a window ends asked nothing
@@ -194,12 +223,14 @@ pub(crate) fn start(
         round: Arc::default(),
         handed_away: Arc::default(),
         following: Arc::default(),
-        windowless: windowless.then(Arc::default),
+        windowless: windowless.is_some().then(Arc::default),
         openings,
+        choosings: Arc::default(),
+        asleep: HashSet::new(),
         handed: Inbox::default(),
         ending,
         shown: None,
-        opened: false,
+        opened: Opened::Never,
     });
     // Later launches of this Skwir (ADR-122) come here, for its life. Asked
     // first: a launch that started with this one finds this one's marker
@@ -214,7 +245,7 @@ pub(crate) fn start(
     })
     .detach();
     listen(cx, wakes);
-    if windowless {
+    if windowless.is_some() {
         // The request opens the window (`woken`); one that does not come
         // ends the program.
         end_unless_asked(cx.global::<Finishing>());
@@ -310,17 +341,34 @@ fn show(
     token: Option<String>,
     activity: bool,
 ) -> Option<PaneId> {
-    let state = cx.global::<Finishing>();
+    let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
+    // What slept while dialogs' windows alone were up wakes now; those
+    // that are up stay as they are.
+    state.asleep.clear();
+    let up: HashSet<WindowId> = state.windows.iter().map(|(id, _)| *id).collect();
     let (windows, active) = {
         let ws = app.workspace.read();
-        let ids: Vec<WindowId> = ws.windows().iter().map(|w| w.id).collect();
-        (ids, ws.active_window_id())
+        let ids: Vec<WindowId> = ws
+            .windows()
+            .iter()
+            .filter(|w| !w.chooses() && !up.contains(&w.id))
+            .map(|w| w.id)
+            .collect();
+        let active = ws.active_window_id();
+        let active = if ids.contains(&active) {
+            active
+        } else {
+            ids.last().copied().unwrap_or(active)
+        };
+        (ids, active)
     };
     // A folder asked for is shown alone, as the window last left was split.
     let split = initial.is_some();
-    let mut order: Vec<WindowId> = windows.into_iter().filter(|w| *w != active).collect();
-    order.push(active);
+    let mut order: Vec<WindowId> = windows.iter().copied().filter(|w| *w != active).collect();
+    if windows.contains(&active) {
+        order.push(active);
+    }
     let mut any = false;
     for id in order {
         let mine = id == active;
@@ -330,12 +378,13 @@ fn show(
             split && mine,
             token.clone().filter(|_| mine),
             activity && mine,
+            None,
         );
     }
     if !any {
         // Still without one: the presence kept, the program ended if
         // nothing keeps it.
-        if cx.global::<Finishing>().opened {
+        if cx.global::<Finishing>().opened != Opened::Never {
             sync(cx);
         }
         return None;
@@ -346,7 +395,11 @@ fn show(
     app.hold_tabs(true);
     let mut shown = None;
     if let Some(location) = initial {
-        let pane = app.workspace.read().active_id();
+        let pane = {
+            let ws = app.workspace.read();
+            ws.window(active)
+                .map_or_else(|| ws.active_id(), |w| w.shown().active)
+        };
         match app.navigate(pane, &location) {
             Ok(()) => shown = Some(pane),
             Err(error) => say_in_active(cx, Words::of_error(error)),
@@ -456,13 +509,17 @@ fn woken(cx: &mut App) -> bool {
     let app = Arc::clone(&state.app);
     let woken = app.take_woken();
     let openings = std::mem::take(&mut *state.openings.lock());
+    let choosings = std::mem::take(&mut *state.choosings.lock());
     for opening in openings {
         reopen(cx, Some(opening), false);
+    }
+    for choosing in choosings {
+        open_chooser(cx, choosing);
     }
     let state = cx.global::<Finishing>();
     if state.windows.is_empty() {
         // No window since one was up: the program takes it in.
-        if state.opened {
+        if state.opened != Opened::Never {
             sync(cx);
         } else if state
             .windowless
@@ -567,10 +624,11 @@ fn follow_windows(cx: &mut App) {
         .filter(|(id, _)| !core.contains(id))
         .map(|(_, handle)| *handle)
         .collect();
+    // What sleeps while dialogs' windows alone are up stays asleep.
     let new: Vec<WindowId> = core
         .iter()
         .copied()
-        .filter(|id| !state.windows.iter().any(|(up, _)| up == id))
+        .filter(|id| !state.windows.iter().any(|(up, _)| up == id) && !state.asleep.contains(id))
         .collect();
     for window in gone {
         let _ = window.update(cx, |shell, window, cx| {
@@ -579,7 +637,7 @@ fn follow_windows(cx: &mut App) {
         });
     }
     for id in new {
-        open_window(cx, id, false, None, false);
+        open_window(cx, id, false, None, false, None);
     }
     let state = cx.global_mut::<Finishing>();
     if state.raised == Some(active) {
@@ -847,6 +905,9 @@ const RECORD_EVERY: Duration = Duration::from_secs(2);
 /// what changes with no wake (a window moved) asks too.
 pub(crate) fn record_windows(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
+    if state.opened != Opened::Own {
+        return;
+    }
     let now = Instant::now();
     if let Some(at) = state.recording.at
         && now.duration_since(at) < RECORD_EVERY
@@ -1049,7 +1110,9 @@ fn closed(cx: &mut App) {
         return;
     }
     let app = Arc::clone(&state.app);
-    crate::remember_location(&app);
+    if state.opened == Opened::Own {
+        crate::remember_location(&app);
+    }
     if state.stopping {
         quit(cx);
         return;
@@ -1075,26 +1138,40 @@ fn closed(cx: &mut App) {
 /// the session bus without a window (`windowless`), it takes the request
 /// that started it to the Skwir that holds launches, if one does; else,
 /// skwir proving no longer the default, nothing is to come
-/// (`Finishing::windowless`).
-fn take_over(state: &Finishing, launch: Option<Opening>, windowless: bool) {
+/// (`Finishing::windowless`). Other programs' dialogs come with launches
+/// (ADR-141, 2); started by the bus for one, that request is taken to the
+/// Skwir that holds launches the same way.
+fn take_over(state: &Finishing, launch: Option<Opening>, windowless: Option<Windowless>) {
     let round = state.round.fetch_add(1, Ordering::AcqRel) + 1;
     let (openings, wake) = (Arc::clone(&state.openings), state.app.waker_handle());
+    let (choosings, wake_chose) = (Arc::clone(&state.choosings), wake.clone());
     let (taking, rounds) = (Arc::clone(&state.taking), Arc::clone(&state.round));
     let (handed_away, wake_handed) = (Arc::clone(&state.handed_away), wake.clone());
     let following = Arc::clone(&state.following);
-    let over = state.windowless.clone().filter(|_| windowless);
+    let over = state.windowless.clone().filter(|_| windowless.is_some());
     let started = std::thread::Builder::new()
         .name("skwir-take-over".into())
         .spawn(move || {
-            let taken = skwir_platform::handover::take_over(move |opening| {
-                openings.lock().push(opening);
-                wake();
-            });
+            let taken = skwir_platform::handover::take_over_choosing(
+                move |opening| {
+                    openings.lock().push(opening);
+                    wake();
+                },
+                move |choosing| {
+                    choosings.lock().push(choosing);
+                    wake_chose();
+                },
+            );
             if matches!(taken, Err(NotTaken::Elsewhere)) {
-                let handed = match launch {
-                    Some(launch) => skwir_platform::handover::hand_over_to_holder(&launch),
-                    None if windowless => skwir_platform::handover::answer_for_holder(ASKED_WITHIN),
-                    None => false,
+                let handed = match (launch, windowless) {
+                    (Some(launch), _) => skwir_platform::handover::hand_over_to_holder(&launch),
+                    (None, Some(Windowless::FileManager)) => {
+                        skwir_platform::handover::answer_for_holder(ASKED_WITHIN)
+                    }
+                    (None, Some(Windowless::Portal)) => {
+                        skwir_platform::handover::answer_chooser_for_holder(ASKED_WITHIN)
+                    }
+                    (None, None) => false,
                 };
                 if handed {
                     handed_away.store(true, Ordering::Release);
@@ -1107,7 +1184,9 @@ fn take_over(state: &Finishing, launch: Option<Opening>, windowless: bool) {
                 .as_ref()
                 .ok()
                 .map(|taking| skwir_platform::file_manager::follow(&taking.answering()));
+            // Started for a dialog, only its wait ends it (`end_unless_asked`).
             if let Some(over) = over
+                && windowless == Some(Windowless::FileManager)
                 && !followed.as_ref().is_some_and(|(chosen, _)| *chosen)
             {
                 over.store(true, Ordering::Release);
@@ -1131,26 +1210,29 @@ fn take_over(state: &Finishing, launch: Option<Opening>, windowless: bool) {
 /// goes on, taking later launches over as it did (ADR-122, 5).
 fn end_unless_handed(cx: &mut App) {
     let state = cx.global::<Finishing>();
-    let openings = Arc::clone(&state.openings);
-    let goes_on = state
-        .taking
-        .lock()
-        .as_ref()
-        .is_some_and(|taking| !taking.close_unless(|| !openings.lock().is_empty()));
+    let (openings, choosings) = (Arc::clone(&state.openings), Arc::clone(&state.choosings));
+    let goes_on = state.taking.lock().as_ref().is_some_and(|taking| {
+        !taking.close_unless(|| !openings.lock().is_empty() || !choosings.lock().is_empty())
+    });
     if !goes_on {
         stop_taking_over(state);
     }
     let handed = openings.lock().pop();
-    match handed {
-        Some(opening) => {
-            reopen(cx, Some(opening), false);
-            if !goes_on {
-                // Stopped before this one was seen (no gate to ask yet, or
-                // a launch the last moment before): taken over anew.
-                take_over(cx.global::<Finishing>(), None, false);
-            }
-        }
-        None => quit(cx),
+    let chose = std::mem::take(&mut *choosings.lock());
+    if handed.is_none() && chose.is_empty() {
+        quit(cx);
+        return;
+    }
+    if let Some(opening) = handed {
+        reopen(cx, Some(opening), false);
+    }
+    for choosing in chose {
+        open_chooser(cx, choosing);
+    }
+    if !goes_on {
+        // Stopped before this one was seen (no gate to ask yet, or a
+        // launch the last moment before): taken over anew.
+        take_over(cx.global::<Finishing>(), None, None);
     }
 }
 
@@ -1406,13 +1488,40 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         ),
         None => (None, None, false, ToSelect::default()),
     };
-    let Some(window) = active_handle(cx) else {
+    // A launch goes to a window of the user's own, never to another
+    // program's dialog (ADR-141); with none up, those asleep wake, else
+    // one opens.
+    let window = ordinary_handle(cx);
+    if window.is_none() && asleep_windows(cx) {
         if let Some(pane) = show(cx, initial, token, activity) {
-            let window = active_handle(cx);
+            let window = ordinary_handle(cx);
             to_select.shown_in(cx, &app, window, pane);
         }
         return;
-    };
+    }
+    if let Some(window) = window {
+        reopen_in(cx, &app, window, initial, token, launched, to_select);
+        return;
+    }
+    let location = initial.unwrap_or_else(|| {
+        let home = skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
+        Location::from_path(skwir_core::settings::startup_folder(&app.settings, &home))
+    });
+    open_new(cx, &app, location, token, to_select);
+}
+
+/// A launch shown in `window`, the user's own up: brought forward, its
+/// location opened in a tab of it or a window of its own as the setting
+/// says.
+fn reopen_in(
+    cx: &mut App,
+    app: &Arc<skwir_core::App>,
+    window: WindowHandle<Shell>,
+    initial: Option<Location>,
+    token: Option<String>,
+    launched: bool,
+    to_select: ToSelect,
+) {
     let in_tab = app
         .settings
         .get::<String>(crate::settings::LAUNCH_OPENS_KEY)
@@ -1444,9 +1553,20 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         let home = skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
         Location::from_path(skwir_core::settings::startup_folder(&app.settings, &home))
     });
+    open_new(cx, app, location, token, to_select);
+}
+
+/// A new window of the user's own, on `location`.
+fn open_new(
+    cx: &mut App,
+    app: &Arc<skwir_core::App>,
+    location: Location,
+    token: Option<String>,
+    to_select: ToSelect,
+) {
     match app.open_window(location) {
         Ok((id, _, pane)) => {
-            open_window(cx, id, false, token, false);
+            open_window(cx, id, false, token, false, None);
             cx.global_mut::<Finishing>().raised = Some(id);
             let window = cx
                 .global::<Finishing>()
@@ -1454,10 +1574,74 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
                 .iter()
                 .find(|(up, _)| *up == id)
                 .map(|(_, handle)| *handle);
-            to_select.shown_in(cx, &app, window, pane);
+            to_select.shown_in(cx, app, window, pane);
         }
         Err(error) => say_in_active(cx, Words::of_error(error)),
     }
+}
+
+/// Another program's dialog (ADR-141): a window of its own, on where it
+/// starts (`chooser::start_folder`). The windows asleep, with none of the
+/// user's own up, stay asleep. One already answered (closed meanwhile)
+/// opens nothing.
+fn open_chooser(cx: &mut App, choosing: Choosing) {
+    if choosing.is_settled() {
+        return;
+    }
+    let state = cx.global_mut::<Finishing>();
+    let app = Arc::clone(&state.app);
+    let up: HashSet<WindowId> = state.windows.iter().map(|(id, _)| *id).collect();
+    {
+        let ws = app.workspace.read();
+        let own_up = up
+            .iter()
+            .any(|id| ws.window(*id).is_some_and(|w| !w.chooses()));
+        if !own_up {
+            state.asleep.extend(
+                ws.windows()
+                    .iter()
+                    .map(|w| w.id)
+                    .filter(|id| !up.contains(id)),
+            );
+        }
+    }
+    let folder = crate::chooser::start_folder(&app, choosing.asked());
+    match app.open_window(Location::from_path(folder)) {
+        Ok((id, _, _)) => {
+            app.workspace.write().set_chooses(id, true);
+            if !open_window(cx, id, false, None, false, Some(choosing.clone())) {
+                choosing.answer(Answer::Failed);
+            }
+        }
+        Err(error) => {
+            tracing::warn!("another program's dialog has no window: {error:#}");
+            choosing.answer(Answer::Failed);
+        }
+    }
+}
+
+/// The front window up that is the user's own, not another program's
+/// dialog (`front_of`).
+fn ordinary_handle(cx: &App) -> Option<WindowHandle<Shell>> {
+    let state = cx.global::<Finishing>();
+    let ws = state.app.workspace.read();
+    let own: Vec<(WindowId, WindowHandle<Shell>)> = state
+        .windows
+        .iter()
+        .filter(|(id, _)| ws.window(*id).is_some_and(|w| !w.chooses()))
+        .copied()
+        .collect();
+    front_of(&own, ws.active_window_id()).map(|(_, handle)| *handle)
+}
+
+/// Whether windows of the user's own sleep, none being up: `show` wakes
+/// them.
+fn asleep_windows(cx: &App) -> bool {
+    let state = cx.global::<Finishing>();
+    let ws = state.app.workspace.read();
+    ws.windows()
+        .iter()
+        .any(|w| !w.chooses() && !state.windows.iter().any(|(up, _)| *up == w.id))
 }
 
 /// What a launch asks of its folder once shown: another program's files
@@ -1490,31 +1674,39 @@ impl ToSelect {
 /// system lets a window say where it goes.
 const CASCADE: f32 = 32.;
 
+/// The most a window answering another program's dialog takes at first,
+/// at 100 %: a dialog's, beside the program it answers.
+const DIALOG_WIDTH: f32 = 1000.;
+const DIALOG_HEIGHT: f32 = 680.;
+
 /// Open a window drawing the core's window `id`, shaped and placed as it
 /// was left (restored, reopened), else as the window it was made from,
 /// else as the window used last (`Placement::opening`); `split` splits it
 /// as that was. What runs is shared: the program finished it without a
-/// window. Whether it opened.
+/// window. Whether it opened. A window answering another program's dialog
+/// (`choosing`, ADR-141) is shaped as the last one, a dialog's size at
+/// most, never maximized, the compositor placing it.
 fn open_window(
     cx: &mut App,
     id: WindowId,
     split: bool,
     token: Option<String>,
     activity: bool,
+    choosing: Option<Choosing>,
 ) -> bool {
     let state = cx.global::<Finishing>();
     let (app, keymap) = (Arc::clone(&state.app), state.keymap.clone());
     // The first window is timed from the process's start, one opened again
     // from now: the program may have run for hours without one.
-    let first_frame = if state.opened {
-        crate::shell::FirstFrame {
-            from: Instant::now(),
-            after: "opening",
-        }
-    } else {
+    let first_frame = if state.opened == Opened::Never {
         crate::shell::FirstFrame {
             from: state.started,
             after: "start",
+        }
+    } else {
+        crate::shell::FirstFrame {
+            from: Instant::now(),
+            after: "opening",
         }
     };
     let work = Rc::clone(&state.work);
@@ -1551,7 +1743,7 @@ fn open_window(
             None => (crate::session::restore(&app), up),
         },
     };
-    let placement = shape
+    let mut placement = shape
         .as_ref()
         .and_then(|shape| shape.window.clone())
         .unwrap_or(crate::session::Placement {
@@ -1560,6 +1752,14 @@ fn open_window(
             maximized: false,
             at: None,
         });
+    if choosing.is_some() {
+        placement = crate::session::Placement {
+            width: placement.width.min(DIALOG_WIDTH),
+            height: placement.height.min(DIALOG_HEIGHT),
+            maximized: false,
+            at: None,
+        };
+    }
     let (displays, primary) = crate::session::Screen::all(cx);
     let opening = placement.opening(
         if cascade { CASCADE } else { 0. },
@@ -1602,6 +1802,9 @@ fn open_window(
                 // first sync, whose answer would wait on the first.
                 shell.prefs.title_bar = title_bar;
                 shell.title_bar.answered = title_bar;
+                if let Some(choosing) = choosing.clone() {
+                    shell.answer_dialog(choosing, window, cx);
+                }
                 shell
             })
         },
@@ -1609,7 +1812,9 @@ fn open_window(
     let window = match opened {
         Ok(window) => window,
         // At start, nothing can go on without it.
-        Err(error) if !cx.global::<Finishing>().opened => panic!("open window: {error:#}"),
+        Err(error) if cx.global::<Finishing>().opened == Opened::Never => {
+            panic!("open window: {error:#}")
+        }
         Err(error) => {
             tracing::error!("a window could not open: {error:#}");
             // Out of the core: it would stay the active window, and be
@@ -1628,7 +1833,11 @@ fn open_window(
     );
     let state = cx.global_mut::<Finishing>();
     state.windows.push((id, window));
-    state.opened = true;
+    state.opened = state.opened.max(if choosing.is_some() {
+        Opened::Dialogs
+    } else {
+        Opened::Own
+    });
     // A request that came as the program ended unasked opened this: it
     // was asked after all.
     ENDED_UNASKED.store(false, Ordering::Release);
@@ -1636,7 +1845,11 @@ fn open_window(
         state.work.borrow().present(None);
     }
     let _ = window.update(cx, |shell, window, cx| {
-        window.focus(&shell.ui().focus, cx);
+        // Saving for another program, the name it is saved under takes the
+        // keyboard; else the files.
+        if !shell.chooser_focus(window, cx) {
+            window.focus(&shell.ui().focus, cx);
+        }
         cx.activate(true);
         if token.is_some() {
             window.activate_window_with_token(token.as_deref());

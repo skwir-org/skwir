@@ -2730,6 +2730,14 @@ pub fn declare(app: &App) {
         toml::Value::Table(toml::Table::new()),
     ));
     app.settings.declare(SettingSpec::state(
+        crate::chooser::FOLDERS_KEY,
+        words!(
+            settings_chooser_folders_state = "The folder each program last chose in, through the window answering its Open or Save dialog, by the program's id (\"\" for one with none)",
+            note = "What the window keeps, for agents and scripts."
+        ),
+        toml::Value::Table(toml::Table::new()),
+    ));
+    app.settings.declare(SettingSpec::state(
         crate::drafted::TOLD_KEY,
         words!(
             settings_drafts_told_state = "The languages whose translation was said to be a draft",

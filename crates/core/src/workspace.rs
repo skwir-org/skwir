@@ -1208,6 +1208,9 @@ pub struct Pane {
     /// The pane's lens (ADR-107): its filter's, or the one the location
     /// holds in its own terms (a search's).
     lens: Option<Lens>,
+    /// What another program's dialog takes (ADR-141, 6), apart from the
+    /// filter the user types: both hold.
+    admits: Option<Admits>,
     /// The agent's call that put its location in a dormant pane (a tab
     /// opened behind, `tab.new`): opened later, on the window's thread, it
     /// is opened as that call (`permissions::as_agent`), so a location
@@ -1489,15 +1492,15 @@ impl Leading {
         &'a self,
         text: Option<&'a str>,
         read: Option<&'a ReadFilter>,
-    ) -> Option<TextFilter<'a>> {
+    ) -> Option<Test<'a>> {
         match &self.kept {
-            Some(kept) => TextFilter::of(
+            Some(kept) => Test::of(
                 kept.filter.as_deref(),
                 kept.read.as_deref(),
                 &kept.unproved,
                 None,
             ),
-            None => TextFilter::of(
+            None => Test::of(
                 text,
                 read,
                 &self.unproved,
@@ -2014,9 +2017,56 @@ fn lent_renamed(gone: impl Iterator<Item = EntryId>, came: &[EntryId]) -> Vec<(E
     renamed
 }
 
+/// What another program's dialog takes (ADR-141, 6): the files its
+/// filter in use admits; a folder always shows, the way to them. Set on
+/// the pane apart from its filter (`Pane::set_admits`), which the user
+/// types while choosing: both hold.
+#[derive(Clone)]
+pub struct Admits(pub Arc<dyn Fn(&Entry) -> bool + Send + Sync>);
+
+impl Admits {
+    fn admits(&self, entry: &Entry) -> bool {
+        entry.is_dir() || (self.0)(entry)
+    }
+}
+
+impl std::fmt::Debug for Admits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Admits")
+    }
+}
+
+/// The pane's filters as they are asked of each entry: the text's test,
+/// and what a dialog admits.
+struct TextFilter<'a> {
+    test: Option<Test<'a>>,
+    admits: Option<&'a Admits>,
+}
+
+impl<'a> TextFilter<'a> {
+    fn of(test: Option<Test<'a>>, admits: Option<&'a Admits>) -> Option<Self> {
+        (test.is_some() || admits.is_some()).then_some(TextFilter { test, admits })
+    }
+
+    fn keeps(&self, entry: &Entry) -> bool {
+        self.test.as_ref().is_none_or(|test| test.keeps(entry))
+            && self.admits.is_none_or(|admits| admits.admits(entry))
+    }
+}
+
+/// The pane's filters, of its fields: borrowed apart from the rest of it.
+fn filters<'a>(
+    leading: &'a Leading,
+    text: Option<&'a str>,
+    read: Option<&'a ReadFilter>,
+    admits: Option<&'a Admits>,
+) -> Option<TextFilter<'a>> {
+    TextFilter::of(leading.filter(text, read), admits)
+}
+
 /// The pane's filter as it is asked of each entry: its reader's test, or
 /// names that hold the text.
-enum TextFilter<'a> {
+enum Test<'a> {
     Names(NameFilter<'a>),
     /// Its reader's test, the folders not found to lead anywhere, and,
     /// while a first look over the rows takes more than a pump, those it
@@ -2028,7 +2078,7 @@ enum TextFilter<'a> {
     ),
 }
 
-impl<'a> TextFilter<'a> {
+impl<'a> Test<'a> {
     fn of(
         text: Option<&'a str>,
         read: Option<&'a ReadFilter>,
@@ -2036,16 +2086,16 @@ impl<'a> TextFilter<'a> {
         reached: Option<&'a crate::hashing::Map<EntryId, u64>>,
     ) -> Option<Self> {
         match (text, read) {
-            (Some(_), Some(read)) => Some(TextFilter::Read(read, unproved, reached)),
-            (Some(text), None) => Some(TextFilter::Names(NameFilter::new(text))),
+            (Some(_), Some(read)) => Some(Test::Read(read, unproved, reached)),
+            (Some(text), None) => Some(Test::Names(NameFilter::new(text))),
             (None, _) => None,
         }
     }
 
     fn keeps(&self, entry: &Entry) -> bool {
         match self {
-            TextFilter::Names(names) => names.holds(&entry.name),
-            TextFilter::Read(read, unproved, reached) => {
+            Test::Names(names) => names.holds(&entry.name),
+            Test::Read(read, unproved, reached) => {
                 let waits = unproved.contains(&entry.id)
                     || reached.is_some_and(|reached| {
                         entry.kind == crate::entry::EntryKind::Directory
@@ -2164,6 +2214,7 @@ impl Pane {
             filter_version: 0,
             filter_tested: 0,
             lens: None,
+            admits: None,
             asked_by: None,
             filter_cache: parking_lot::Mutex::new(None),
             leading: Leading::default(),
@@ -2544,8 +2595,33 @@ impl Pane {
 
     /// The filter as each entry is asked of it.
     fn text_filter(&self) -> Option<TextFilter<'_>> {
-        self.leading
-            .filter(self.filter.as_deref(), self.read.as_deref())
+        filters(
+            &self.leading,
+            self.filter.as_deref(),
+            self.read.as_deref(),
+            self.admits.as_ref(),
+        )
+    }
+
+    /// Show only what another program's dialog takes (ADR-141, 6), or all
+    /// again (`None`); what is selected and no longer shown is deselected,
+    /// as the filter does.
+    pub fn set_admits(&mut self, admits: Option<Admits>) {
+        let same = match (&self.admits, &admits) {
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.0, &b.0),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.admits = admits;
+        self.filter_changed();
+    }
+
+    /// What another program's dialog takes here, if one does.
+    pub fn admits(&self) -> Option<&Admits> {
+        self.admits.as_ref()
     }
 
     fn filter_changed(&mut self) {
@@ -3893,8 +3969,12 @@ impl Pane {
             &self.kept,
             &self.expanded,
             &self.lent,
-            self.leading
-                .filter(self.filter.as_deref(), self.read.as_deref()),
+            filters(
+                &self.leading,
+                self.filter.as_deref(),
+                self.read.as_deref(),
+                self.admits.as_ref(),
+            ),
             self.sort,
         );
         let hidden: crate::hashing::Set<EntryId> = ids
@@ -3942,8 +4022,12 @@ impl Pane {
             &self.kept,
             &self.expanded,
             &self.lent,
-            self.leading
-                .filter(self.filter.as_deref(), self.read.as_deref()),
+            filters(
+                &self.leading,
+                self.filter.as_deref(),
+                self.read.as_deref(),
+                self.admits.as_ref(),
+            ),
             self.sort,
         );
         let holds = move |id: EntryId| listed(id) && !folded.contains(&id);
@@ -5197,7 +5281,7 @@ impl Pane {
     /// The entries the filter keeps, in the order sorted.
     fn flat_order(&self) -> Arc<[EntryId]> {
         let all = self.unfiltered_order();
-        if !self.is_filtered() {
+        if !self.is_filtered() && self.admits.is_none() {
             return all;
         }
         let filter = self.text_filter();
@@ -5627,6 +5711,9 @@ pub struct WindowTabs {
     shape: Option<toml::Value>,
     /// The window this one was made from: a UI starts it as that one is.
     from: Option<WindowId>,
+    /// Opened for another program's Open or Save dialog (ADR-141): it goes
+    /// with its answer, never kept for the next start nor to be reopened.
+    chooses: bool,
 }
 
 impl WindowTabs {
@@ -5639,6 +5726,7 @@ impl WindowTabs {
             leaving: Vec::new(),
             shape: None,
             from,
+            chooses: false,
         }
     }
 
@@ -5665,6 +5753,11 @@ impl WindowTabs {
     /// The window it was made from, if it was.
     pub fn made_from(&self) -> Option<WindowId> {
         self.from
+    }
+
+    /// Whether it was opened for another program's dialog (ADR-141).
+    pub fn chooses(&self) -> bool {
+        self.chooses
     }
 
     fn tab_index(&self, id: TabId) -> Option<usize> {
@@ -6255,6 +6348,14 @@ impl Workspace {
     pub fn set_shape(&mut self, id: WindowId, shape: Option<toml::Value>) {
         if let Some(i) = self.window_index(id) {
             self.windows[i].shape = shape;
+        }
+    }
+
+    /// Window `id` is another program's dialog (ADR-141), or no longer:
+    /// one left as the last window stays as an ordinary one.
+    pub fn set_chooses(&mut self, id: WindowId, chooses: bool) {
+        if let Some(i) = self.window_index(id) {
+            self.windows[i].chooses = chooses;
         }
     }
 
@@ -7399,6 +7500,39 @@ mod tests {
             format!("f{ino}"),
             crate::entry::EntryKind::File,
         )
+    }
+
+    /// What a dialog admits holds beside the filter typed (ADR-141, 6): a
+    /// folder always shows, what is selected and left out is deselected,
+    /// and taken off, all shows again.
+    #[test]
+    fn a_dialog_admits_its_files_beside_the_filter() {
+        let folder = Entry::new(
+            EntryId {
+                file: crate::FileId::new(1, 9),
+                at: 0,
+            },
+            "d9",
+            crate::entry::EntryKind::Directory,
+        );
+        let folder_id = folder.id;
+        let (mut p, _events) = pane_with("q", vec![file(1), file(2), file(12), folder]);
+        let ids = |p: &mut Pane| {
+            let mut shown: Vec<EntryId> = p.order().to_vec();
+            shown.sort_by_key(|id| id.file);
+            shown
+        };
+        p.selection.set([file(1).id, file(2).id]);
+        p.set_admits(Some(Admits(Arc::new(|e: &Entry| {
+            e.name.as_encoded_bytes().ends_with(b"2")
+        }))));
+        assert_eq!(ids(&mut p), [file(2).id, folder_id, file(12).id]);
+        assert_eq!(items(&p.selection), [2], "what it leaves out is deselected");
+        p.set_filter(Some("1"), None);
+        assert_eq!(ids(&mut p), [file(12).id], "both hold");
+        p.set_filter(None, None);
+        p.set_admits(None);
+        assert_eq!(ids(&mut p).len(), 4);
     }
 
     fn sized(ino: u64, size: u64) -> Entry {

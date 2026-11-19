@@ -53,6 +53,69 @@ pub enum Pattern {
     Mime(String),
 }
 
+impl Filter {
+    /// Whether it admits `entry`, made once for the entries it is asked
+    /// about (every file of a listing): a name by the globs, case ignored
+    /// (a camera's `.JPG` is the program's `*.jpg`), a type by the types,
+    /// its kind (`image/*`) or what it descends from (ADR-141, 6), each
+    /// suffix typed once and each type matched once. A pattern that does
+    /// not compile admits nothing.
+    pub fn admits(&self) -> impl Fn(&skwir_core::Entry) -> bool + Send + Sync + 'static {
+        let mut globs = globset::GlobSetBuilder::new();
+        let mut types = Vec::new();
+        for pattern in &self.patterns {
+            match pattern {
+                Pattern::Glob(glob) => {
+                    if let Ok(glob) = globset::GlobBuilder::new(glob)
+                        .case_insensitive(true)
+                        .literal_separator(true)
+                        .build()
+                    {
+                        globs.add(glob);
+                    }
+                }
+                Pattern::Mime(mime) => types.push(mime.to_ascii_lowercase()),
+            }
+        }
+        let globs = globs.build().unwrap_or_else(|_| globset::GlobSet::empty());
+        let by_suffix = crate::mime::BySuffix::default();
+        let matched = parking_lot::Mutex::new(std::collections::HashMap::<String, bool>::new());
+        move |entry| {
+            if !globs.is_empty() && globs.is_match(std::path::Path::new(&entry.name)) {
+                return true;
+            }
+            if types.is_empty() {
+                return false;
+            }
+            let mime = match entry.inode_type() {
+                Some(mime) => Some(crate::mime::Mime(mime.to_owned())),
+                None => by_suffix.of(entry.type_name()),
+            };
+            let Some(mime) = mime else {
+                return false;
+            };
+            if let Some(known) = matched.lock().get(mime.as_str()) {
+                return *known;
+            }
+            let lineage = crate::mime::lineage(&mime);
+            let admitted = types.iter().any(|wanted| {
+                if let Some(top) = wanted.strip_suffix("/*") {
+                    return lineage.iter().any(|m| {
+                        m.as_str() != "application/octet-stream"
+                            && m.top_level().eq_ignore_ascii_case(top)
+                    });
+                }
+                let wanted = crate::mime::unalias(&crate::mime::Mime(wanted.clone()));
+                lineage
+                    .iter()
+                    .any(|m| m.as_str().eq_ignore_ascii_case(wanted.as_str()))
+            });
+            matched.lock().insert(mime.as_str().to_owned(), admitted);
+            admitted
+        }
+    }
+}
+
 /// One of the program's choices: a dropdown of `options` (id, label), or
 /// a switch where there are none (`true`, `false`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +150,34 @@ pub struct Asked {
     pub choices: Vec<Choice>,
     /// Where to start: the folder suggested, or the saved file's.
     pub folder: Option<PathBuf>,
+}
+
+impl Asked {
+    /// The name a save starts with: the file saved again's, else the one
+    /// suggested (ADR-141, 5).
+    pub fn save_name(&self) -> Option<String> {
+        match &self.kind {
+            Kind::Save { name, file } => file
+                .as_deref()
+                .and_then(std::path::Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned())
+                .or_else(|| name.clone()),
+            _ => None,
+        }
+    }
+
+    /// The filter shown at first: the one in use, else the first.
+    pub fn first_filter(&self) -> Option<usize> {
+        if self.filters.is_empty() {
+            return None;
+        }
+        let current = self.current_filter.as_ref();
+        Some(
+            current
+                .and_then(|current| self.filters.iter().position(|f| f == current))
+                .unwrap_or(0),
+        )
+    }
 }
 
 /// What the user decided.
@@ -160,9 +251,13 @@ impl Choosing {
         state.on_closed.push(Box::new(hook));
     }
 
-    /// A request asking `asked`, and what waits for its answer. For tests
-    /// and the platform; the portal makes them.
-    #[cfg(not(target_os = "linux"))]
+    /// What was answered, if it was: for who asked in a test.
+    pub fn answered(&self) -> Option<Answer> {
+        self.holder.reply.state.lock().answer.clone()
+    }
+
+    /// A request asking `asked`, answered to nobody: for tests. The
+    /// portal makes the others.
     #[must_use]
     pub fn new(asked: Asked) -> Choosing {
         Choosing::made(asked).0
@@ -368,15 +463,12 @@ pub(crate) mod linux {
                     .collect(),
             },
         };
-        let folder = options
-            .current_folder
+        // The file saved again first: its folder and its name (ADR-141, 5).
+        let folder = file
             .as_deref()
-            .and_then(path)
-            .or_else(|| {
-                file.as_deref()
-                    .and_then(|f| f.parent())
-                    .map(std::path::Path::to_path_buf)
-            });
+            .and_then(|f| f.parent())
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| options.current_folder.as_deref().and_then(path));
         Asked {
             app_id: raw.app_id.clone(),
             parent_window: raw.parent_window.clone(),
@@ -386,7 +478,13 @@ pub(crate) mod linux {
                 .clone()
                 .filter(|label| !label.is_empty()),
             kind,
-            filters: options.filters.iter().flatten().map(filter).collect(),
+            // A filter in use with no list is applied all the same: the
+            // list is that one (the portal's documentation).
+            filters: match (&options.filters, &options.current_filter) {
+                (Some(filters), _) if !filters.is_empty() => filters.iter().map(filter).collect(),
+                (_, Some(current)) => vec![filter(current)],
+                _ => Vec::new(),
+            },
             current_filter: options.current_filter.as_ref().map(filter),
             choices: options
                 .choices
@@ -642,8 +740,22 @@ pub(crate) mod linux {
 
     /// The name let go and the object taken down, on `bus`.
     pub(crate) fn let_go(bus: &zbus::blocking::Connection) {
-        let _ = bus.release_name(super::BACK_END);
+        release(bus);
         let _ = bus.object_server().remove::<Portal, _>(PATH);
+    }
+
+    /// Let go of the back end's name, asked of the bus itself too: zbus
+    /// forgets a name it was told it lost, and would then send nothing,
+    /// while the bus hands a name queued for back once its owner goes (a
+    /// skwir queued behind the one the bus started), which would hold it
+    /// serving nothing.
+    fn release(bus: &zbus::blocking::Connection) {
+        let _ = bus.release_name(super::BACK_END);
+        if let Ok(proxy) = zbus::blocking::fdo::DBusProxy::new(bus)
+            && let Ok(name) = zbus::names::WellKnownName::try_from(super::BACK_END)
+        {
+            let _ = proxy.release_name(name);
+        }
     }
 
     /// What a skwir the bus started answers while another of its instance
@@ -867,7 +979,7 @@ pub(crate) mod linux {
             }
             count.1
         };
-        let _ = bus.release_name(super::BACK_END);
+        release(bus);
         let _ = objects.remove::<Forward, _>(PATH);
         came
     }
@@ -892,6 +1004,84 @@ mod tests {
             choices: Vec::new(),
             folder: None,
         }
+    }
+
+    fn named(ino: u64, name: &str, kind: skwir_core::entry::EntryKind) -> skwir_core::Entry {
+        skwir_core::Entry::new(
+            skwir_core::EntryId {
+                file: skwir_core::FileId::new(1, ino),
+                at: 0,
+            },
+            name,
+            kind,
+        )
+    }
+
+    /// A filter admits by its globs, case ignored, and by its types, a
+    /// kind (`image/*`) and what a type descends from included; a glob
+    /// that does not compile admits nothing.
+    #[test]
+    fn a_filter_admits_by_name_and_type() {
+        use skwir_core::entry::EntryKind::File;
+        let filter = Filter {
+            name: "Pictures and text".into(),
+            patterns: vec![
+                Pattern::Glob("*.png".into()),
+                Pattern::Glob("[".into()),
+                Pattern::Mime("image/*".into()),
+                Pattern::Mime("text/plain".into()),
+            ],
+        };
+        let admits = filter.admits();
+        assert!(
+            admits(&named(1, "Été 2024.PNG", File)),
+            "a glob, case ignored"
+        );
+        assert!(
+            admits(&named(2, "dessin.svg", File)),
+            "image/svg+xml is image/*"
+        );
+        assert!(admits(&named(3, "notes.txt", File)));
+        assert!(
+            admits(&named(4, "script.sh", File)),
+            "a shell script is text/plain"
+        );
+        assert!(!admits(&named(5, "archive.zip", File)));
+        assert!(!admits(&named(6, "sans suffixe", File)));
+        let none = Filter {
+            name: "None".into(),
+            patterns: Vec::new(),
+        };
+        assert!(!none.admits()(&named(1, "a.png", File)));
+    }
+
+    /// The name a save starts with is the saved file's, else the one
+    /// suggested; the filter shown is the one in use, else the first.
+    #[test]
+    fn a_request_starts_where_it_asks() {
+        let mut save = asked();
+        save.kind = Kind::Save {
+            name: Some("Untitled.txt".into()),
+            file: Some(PathBuf::from("/srv/example/Lettre d'été.odt")),
+        };
+        assert_eq!(save.save_name().as_deref(), Some("Lettre d'été.odt"));
+        save.kind = Kind::Save {
+            name: Some("Untitled.txt".into()),
+            file: None,
+        };
+        assert_eq!(save.save_name().as_deref(), Some("Untitled.txt"));
+        let filter = |name: &str| Filter {
+            name: name.into(),
+            patterns: vec![Pattern::Glob(format!("*.{name}"))],
+        };
+        save.filters = vec![filter("odt"), filter("txt")];
+        assert_eq!(save.first_filter(), Some(0));
+        save.current_filter = Some(filter("txt"));
+        assert_eq!(save.first_filter(), Some(1));
+        save.current_filter = Some(filter("pdf"));
+        assert_eq!(save.first_filter(), Some(0));
+        save.filters.clear();
+        assert_eq!(save.first_filter(), None);
     }
 
     /// The first answer is the one sent; one closed is cancelled and told
