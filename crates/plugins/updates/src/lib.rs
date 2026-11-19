@@ -428,6 +428,7 @@ impl Inner {
             let _held = self.kept.lock();
             let mut kept = Kept::read(&app.settings);
             let before = kept.clone();
+            kept.as_of(today);
             if look_for_whats_new
                 && let Some(running) = self.setup.running
                 && let Some(updated) = kept.whats_new(running)
@@ -660,6 +661,7 @@ impl Inner {
         let kept = {
             let _held = self.kept.lock();
             let mut kept = Kept::read(&app.settings);
+            kept.as_of(today);
             if let check::Fetched::Read { answer, etag } = fetched {
                 kept.latest = Some(answer.latest.to_string());
                 kept.important_since = answer.important_since.map(|v| v.to_string());

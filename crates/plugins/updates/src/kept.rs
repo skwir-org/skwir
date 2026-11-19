@@ -7,7 +7,8 @@
 //!
 //! What is decided from it is decided here, from it alone and the day:
 //! whether to ask, whether to tell of a version, whether to say what is
-//! new.
+//! new. What was read is taken `as_of` the day first: no day kept is
+//! after it.
 
 use serde::{Deserialize, Serialize};
 
@@ -79,6 +80,25 @@ impl Kept {
         }
     }
 
+    /// What is kept as of `today`: a day kept after it (a clock once set
+    /// ahead, a dead battery's, a machine's started before its clock was
+    /// set) is read as today, so the question and the notices wait no
+    /// longer than they would have. Called on what was read, before it
+    /// decides anything, so the day is written back so.
+    pub fn as_of(&mut self, today: i64) {
+        for day in [
+            &mut self.first_seen,
+            &mut self.asked_on,
+            &mut self.checked_on,
+            &mut self.told_on,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *day = (*day).min(today);
+        }
+    }
+
     /// Whether the question is asked `today`: never answered, asked fewer
     /// than `ASKS` times and not yet today, `ASK_AFTER` days after the copy
     /// was first seen.
@@ -98,9 +118,11 @@ impl Kept {
     }
 
     /// Whether `running` is told of the last answer's newest version
-    /// `today`: newer than it and newer than what was told, at once when
-    /// `running` is older than the newest important release, else
-    /// `SPACING` days after the last notice.
+    /// `today`: newer than it and newer than what was told, `SPACING` days
+    /// after the last notice, or at once while `running` is older than the
+    /// newest important release and that release was not told yet. Once
+    /// it was, the releases after it wait as any do: told as important
+    /// still, as each brings the fix `running` lacks.
     pub fn tells(&self, running: Version, today: i64) -> Option<Telling> {
         let (latest, important_since) = self.answer();
         let latest = latest.filter(|latest| *latest > running)?;
@@ -108,13 +130,14 @@ impl Kept {
         if told.is_some_and(|told| told >= latest) {
             return None;
         }
-        let important = important_since.is_some_and(|important| running < important);
+        let important = important_since.filter(|important| running < *important);
+        let urgent = important.is_some_and(|important| told.is_none_or(|told| told < important));
         let spaced = self
             .told_on
             .is_none_or(|told_on| today - told_on >= SPACING);
-        (important || spaced).then_some(Telling {
+        (urgent || spaced).then_some(Telling {
             version: latest,
-            important,
+            important: important.is_some(),
         })
     }
 
@@ -229,6 +252,70 @@ mod tests {
             kept.standing(Version(0, 6, 1))
                 .is_some_and(|t| !t.important)
         );
+    }
+
+    /// The releases after an important one that was told wait the two
+    /// weeks as any does, said as important while the copy lacks the fix.
+    #[test]
+    fn the_release_after_an_important_one_told_waits_two_weeks() {
+        let running = Version(0, 5, 1);
+        let mut kept = Kept {
+            latest: Some("0.6.1".into()),
+            important_since: Some("0.6.1".into()),
+            ..Kept::default()
+        };
+        assert!(kept.tells(running, 10).is_some_and(|t| t.important));
+        kept.told = Some("0.6.1".into());
+        kept.told_on = Some(10);
+        for (day, latest) in [(11, "0.6.2"), (12, "0.6.3"), (10 + SPACING - 1, "0.6.4")] {
+            kept.latest = Some(latest.into());
+            assert_eq!(kept.tells(running, day), None, "{latest} on day {day}");
+        }
+        assert_eq!(
+            kept.tells(running, 10 + SPACING),
+            Some(Telling {
+                version: Version(0, 6, 4),
+                important: true
+            })
+        );
+        // A newer important release, not told yet, is told at once.
+        kept.important_since = Some("0.6.4".into());
+        assert!(kept.tells(running, 11).is_some_and(|t| t.important));
+    }
+
+    /// A day kept after today (a clock once set ahead) is read as today:
+    /// the question still comes two days on, a notice two weeks on.
+    #[test]
+    fn a_day_kept_after_today_is_read_as_today() {
+        let ahead = 30_000;
+        let mut kept = Kept {
+            first_seen: Some(ahead),
+            asked_on: Some(ahead),
+            checked_on: Some(ahead),
+            told: Some("0.6.0".into()),
+            told_on: Some(ahead),
+            latest: Some("0.6.1".into()),
+            ..Kept::default()
+        };
+        kept.as_of(100);
+        assert_eq!(
+            (
+                kept.first_seen,
+                kept.asked_on,
+                kept.checked_on,
+                kept.told_on
+            ),
+            (Some(100), Some(100), Some(100), Some(100))
+        );
+        assert!(!kept.asks(101));
+        assert!(kept.asks(102));
+        let running = Version(0, 5, 1);
+        assert_eq!(kept.tells(running, 100 + SPACING - 1), None);
+        assert!(kept.tells(running, 100 + SPACING).is_some());
+        // What is not ahead stays.
+        let mut earlier = kept.clone();
+        earlier.as_of(200);
+        assert_eq!(earlier, kept);
     }
 
     #[test]
