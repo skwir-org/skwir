@@ -423,6 +423,12 @@ pub(crate) mod linux {
         pub(crate) uris: Option<Vec<String>>,
         pub(crate) choices: Option<Vec<(String, String)>>,
         pub(crate) current_filter: Option<RawFilter>,
+        /// Whether the program may write what was chosen: always, said
+        /// where something is chosen. The portal's interface says a
+        /// back end that leaves it out gives read access alone (its
+        /// documented default), which a portal reading it so would give
+        /// a sandboxed editor; 1.22 reads its absence as yes.
+        pub(crate) writable: Option<bool>,
     }
 
     /// The request as the portal gave it.
@@ -579,6 +585,9 @@ pub(crate) mod linux {
                     ),
                     choices: (!choices.is_empty()).then_some(choices),
                     current_filter: filter.as_ref().map(raw_filter),
+                    // As KDE's back end answers: what the user chose is
+                    // the program's to write, saved over or opened.
+                    writable: Some(true),
                 },
             ),
             Answer::Cancelled => (1, Results::default()),
@@ -1211,6 +1220,26 @@ mod tests {
             said.uris.as_deref(),
             Some(&["file:///srv/Field%20Guide/it's%20a%20draft.txt".to_owned()][..])
         );
+        // The dict as the portal reads it: what was chosen is writable,
+        // said; nothing is said of what was not chosen.
+        let dict = |results: &linux::Results| {
+            let ctxt = zbus::zvariant::serialized::Context::new_dbus(zbus::zvariant::LE, 0);
+            let bytes = zbus::zvariant::to_bytes(ctxt, results).unwrap();
+            let (dict, _): (
+                std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+                _,
+            ) = bytes.deserialize().unwrap();
+            dict
+        };
+        let written = dict(&said);
+        assert_eq!(
+            written.get("writable").map(|v| bool::try_from(v).unwrap()),
+            Some(true)
+        );
+        assert!(written.contains_key("uris") && written.contains_key("choices"));
+        for unchosen in [Answer::Cancelled, Answer::Failed] {
+            assert!(dict(&results(unchosen).1).is_empty());
+        }
         assert_eq!(
             answer_of(code, said),
             Answer::Chosen {

@@ -2461,6 +2461,9 @@ mod linux_tests {
                 "file:///srv/Maps/it's%20north.png"
             ]
         );
+        // Given to the program to write (the portal registers a sandboxed
+        // program's documents by it).
+        assert_eq!(results.writable, Some(true));
 
         chosen.lock().clear();
         let address = bus.address.clone();
@@ -2474,7 +2477,7 @@ mod linux_tests {
         first(&chosen).answer(Answer::Cancelled);
         let (response, results) = asker.join().unwrap();
         assert_eq!(response, 1);
-        assert!(results.uris.is_none());
+        assert!(results.uris.is_none() && results.writable.is_none());
         drop(taking);
     }
 
