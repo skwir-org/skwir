@@ -165,6 +165,8 @@ assets = [
     ["../../target/pdfium/libpdfium.so", "usr/lib/skwir/", "644"],
     ["../../target/pdfium/licenses/pdfium/*", "usr/share/doc/skwir/pdfium/", "644"],
     ["../../target/fonts/fonts/*", "usr/share/skwir/fonts/", "644"],
+    # How the copy came (ADR-142): the release's word. A package built for
+    # a repository of its own leaves this line out (tools/package/channel).
     ["../../tools/package/channel/deb", "usr/share/skwir/channel", "644"],
     ["../../target/fonts/licenses/fonts/Inter/*", "usr/share/doc/skwir/fonts/Inter/", "644"],
     ["../../target/fonts/licenses/fonts/JetBrainsMono/*", "usr/share/doc/skwir/fonts/JetBrainsMono/", "644"],
@@ -277,6 +279,8 @@ assets = [
     { source = "../../target/pdfium/libpdfium.so", dest = "/usr/libexec/skwir/libpdfium.so", mode = "755" },
     { source = "../../target/pdfium/licenses/pdfium/*", dest = "/usr/share/licenses/skwir/pdfium/", mode = "644" },
     { source = "../../target/fonts/fonts/*", dest = "/usr/share/skwir/fonts/", mode = "644" },
+    # How the copy came (ADR-142): the release's word. A package built for
+    # a repository of its own leaves this line out (tools/package/channel).
     { source = "../../tools/package/channel/rpm", dest = "/usr/share/skwir/channel", mode = "644" },
     { source = "../../target/fonts/licenses/fonts/Inter/*", dest = "/usr/share/licenses/skwir/fonts/Inter/", mode = "644" },
     { source = "../../target/fonts/licenses/fonts/JetBrainsMono/*", dest = "/usr/share/licenses/skwir/fonts/JetBrainsMono/", mode = "644" },

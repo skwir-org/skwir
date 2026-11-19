@@ -279,6 +279,15 @@ dirty checkout is never overwritten.
 A copy of Skwir downloaded from the website asks it once a day for
 `/updates/1.json` (the `updates` plugin), once its user said yes; the
 tools that update a copy read what the release and the site give them.
+
+**Before the first release that carries the `updates` plugin**, once:
+make the repositories' key (below), publish the repositories from the
+bundle of the release before (`just repositories v0.5.1`), set
+`REPOSITORY_PUBLISHED` and deploy the site. A downloaded `.deb` or `.rpm`
+copy's question links to the download page's repository section
+(`/download#repository`), which the site shows only once that is set:
+released first, the plugin would send its users to a page without it.
+
 After the GitHub release is published:
 
 - **The site.** Its `src/lib/data/release-manifest.json` is the bundle's
@@ -288,7 +297,9 @@ After the GitHub release is published:
   `importantSince` in the site's `src/lib/data/site.ts` to its version: a
   copy older than it is told at once, not two weeks after the last
   notice. The next release that brings such a fix moves it; it is never
-  taken back.
+  taken back. `/updates/1.json` stays a file the site serves itself,
+  never one `_redirects` sends on: a copy follows no redirect and takes
+  one for a failed check, so it would never be told.
 - **The AppImage.** Nothing to do: the bundle's
   `skwir-x86_64.AppImage.zsync`, uploaded with the release, is what the
   image's update information names through `skwir.org/latest/`, and
@@ -314,7 +325,8 @@ gpg --armor --export <its fingerprint> > tools/package/repository/skwir.asc
 ```
 
 Commit the public key, publish the first repositories, then set
-`REPOSITORY_PUBLISHED` in the site's `src/lib/data/downloads.ts`: its
+`REPOSITORY_PUBLISHED` in the site's `src/lib/data/downloads.ts`, all
+before the first release that carries the `updates` plugin (above): its
 download page then shows how to add them. What `skwir-repository` holds
 changing raises `tools/package/repository/version`, and its update
 brings the change to every system that has the repositories; another
@@ -362,7 +374,11 @@ there is one; each file holds one key.
 **Packagers.** A package manager that repackages a release (as the AUR's
 `skwir-bin` repackages the tarball) removes `share/skwir/channel`: what it
 updates is then never told of new versions by Skwir
-(`tools/package/channel/README.md`).
+(`tools/package/channel/README.md`). A `.deb` or an `.rpm` built from the
+source by `deb.sh` or `rpm.sh` carries the word as the release's do (it is
+`crates/skwir/Cargo.toml`'s asset): one built for a repository of its own
+(a PPA, a Copr) leaves that asset's line out, or its copies ask about new
+versions while that repository updates them.
 
 ## GitHub fallback
 

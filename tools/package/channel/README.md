@@ -21,5 +21,13 @@ installs the tarball as it is, removes the tarball's. A package manager
 that repackages a release (as `skwir-bin` does) removes it too: what it
 updates is never told of a new version by skwir.
 
+A `.deb` or an `.rpm` built from the source by `deb.sh` or `rpm.sh` (or
+by cargo-deb or cargo-generate-rpm, from `crates/skwir/Cargo.toml`'s
+assets) carries the word as the release's do: cargo-deb refuses an asset
+no file matches, and neither tool takes one from its command line, so the
+word is the metadata's, not the release script's alone. One built for a
+repository of its own (a PPA, a Copr) leaves the asset's line out, or its
+copies ask about new versions while that repository updates them.
+
 Each file is the word and a line's end, nothing else: skwir reads the
 word and refuses any other.
