@@ -313,7 +313,9 @@ impl UpdatesPlugin {
                 "updates.answer",
                 words!(updates_answer = "Answer whether to be told of new versions"),
                 words!(
-                    updates_answer_description = "The answer to the question a downloaded copy asks once: whether to ask skwir.org once a day"
+                    updates_answer_description = "The answer to the question a downloaded copy asks once: whether to ask { $site } once a day",
+                    site = host(&self.inner.setup.site),
+                    note = "site: Skwir's website, as written (skwir.org)."
                 ),
                 move |args, app| {
                     inner.answer(app, args.tell);
@@ -471,7 +473,9 @@ impl Inner {
             "updates.check",
             words!(updates_check = "Check for a new version"),
             words!(
-                updates_check_description = "Ask skwir.org now whether a newer version of Skwir is out, for a copy that is told of them, on a metered connection too: a toast says what it found, that Skwir is up to date, or why it could not tell"
+                updates_check_description = "Ask { $site } now whether a newer version of Skwir is out, for a copy that is told of them, on a metered connection too: a toast says what it found, that Skwir is up to date, or why it could not tell",
+                site = host(&self.setup.site),
+                note = "site: Skwir's website, as written (skwir.org)."
             ),
             move |_, app| inner.check_now(app),
         );
@@ -691,12 +695,7 @@ impl Inner {
             let _held = self.kept.lock();
             Kept::read(&app.settings)
         };
-        let day = |day: Option<i64>| {
-            day.map(|day| {
-                let (y, m, d) = skwir_platform::calendar::civil_from_days(day);
-                format!("{y:04}-{m:02}-{d:02}")
-            })
-        };
+        let day = |day: Option<i64>| day.map(skwir_platform::calendar::date_string);
         serde_json::json!({
             "running": self.setup.running.map(|v| v.to_string()),
             "channel": here.and_then(|here| here.channel).map(Channel::word),

@@ -5,7 +5,7 @@
 updates_answer = 回答是否在有新版本时收到通知
 
 # draft
-updates_answer_description = 下载的副本只问一次的问题的答案：是否每天询问一次 skwir.org
+updates_answer_description = 下载的副本只问一次的问题的答案：是否每天询问一次 { $site }
 
 # draft
 updates_ask = 在 Skwir 发布新版本时通知你吗？Skwir 每天会询问一次 { $site }；为其提供服务的 Cloudflare 会看到你的 IP 地址。
@@ -23,7 +23,7 @@ updates_ask_yes = 是
 updates_check = 检查新版本
 
 # draft
-updates_check_description = 现在询问 skwir.org 是否发布了更新的 Skwir 版本，适用于会收到通知的副本，按流量计费的连接也会询问：一条消息会说明找到的版本、Skwir 已是最新，或无法得知的原因
+updates_check_description = 现在询问 { $site } 是否发布了更新的 Skwir 版本，适用于会收到通知的副本，按流量计费的连接也会询问：一条消息会说明找到的版本、Skwir 已是最新，或无法得知的原因
 
 # draft
 updates_check_failed = Skwir 无法检查新版本
@@ -47,7 +47,7 @@ updates_not_ready = Skwir 仍在读取它的安装方式：请重试
 updates_not_started = 无法开始检查
 
 # draft
-updates_not_understood = 无法理解 skwir.org 的应答
+updates_not_understood = 无法理解 { $site } 的应答
 
 # draft
 updates_off = 此副本不会收到新版本通知：请在 设置 › 常规 中开启
@@ -68,7 +68,7 @@ updates_plugin_title = 更新
 updates_section = 更新
 
 # draft
-updates_status = skwir.org 应答 { $status }
+updates_status = { $site } 应答 { $status }
 
 # draft
 updates_tell_setting = 有新版本时通知我

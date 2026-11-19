@@ -2,7 +2,8 @@
 
 updates_answer = Answer whether to be told of new versions
 
-updates_answer_description = The answer to the question a downloaded copy asks once: whether to ask skwir.org once a day
+# site: Skwir's website, as written (skwir.org).
+updates_answer_description = The answer to the question a downloaded copy asks once: whether to ask { $site } once a day
 
 # Asked once, in a message that stays, of a copy downloaded from the website. site: the website, as written (skwir.org).
 updates_ask = Tell you when a new version of Skwir is out? Skwir would ask { $site } once a day; Cloudflare, which serves it, sees your IP address.
@@ -18,7 +19,8 @@ updates_ask_yes = Yes
 
 updates_check = Check for a new version
 
-updates_check_description = Ask skwir.org now whether a newer version of Skwir is out, for a copy that is told of them, on a metered connection too: a toast says what it found, that Skwir is up to date, or why it could not tell
+# site: Skwir's website, as written (skwir.org).
+updates_check_description = Ask { $site } now whether a newer version of Skwir is out, for a copy that is told of them, on a metered connection too: a toast says what it found, that Skwir is up to date, or why it could not tell
 
 # Said when a check for a new version asked for now got no answer it reads; why follows (the website's answer, no connection).
 updates_check_failed = Skwir could not check for a new version
@@ -38,8 +40,8 @@ updates_not_ready = Skwir is still reading how it was installed: try again
 # Why a check for a new version was not made: the system refused a thread for it.
 updates_not_started = The check could not be started
 
-# Why the check for a new version failed: the website's file holds no version Skwir reads.
-updates_not_understood = skwir.org's answer was not understood
+# Why the check for a new version failed: the website's file holds no version Skwir reads. site: the website, as written (skwir.org).
+updates_not_understood = { $site }'s answer was not understood
 
 # Why a check for a new version was not made: the setting Tell me when a new version is out is off.
 updates_off = This copy is not told of new versions: turn it on in Settings › General
@@ -57,8 +59,8 @@ updates_plugin_title = Updates
 # A heading of a section of the settings: being told of new versions of Skwir.
 updates_section = Updates
 
-# Why the check for a new version failed: the website's answer, an HTTP status (404).
-updates_status = skwir.org answered { $status }
+# Why the check for a new version failed: the website's answer, an HTTP status (404). site: the website, as written (skwir.org).
+updates_status = { $site } answered { $status }
 
 updates_tell_setting = Tell me when a new version is out
 

@@ -41,21 +41,14 @@ impl Answer {
     /// The file's text read: refused whole where a version is not one
     /// (`Version::parse`). Fields it does not know are let be, for a later
     /// file of the same format.
-    pub fn read(body: &[u8]) -> anyhow::Result<Answer> {
-        let not_understood = || {
-            anyhow::anyhow!(words!(
-                updates_not_understood = "skwir.org's answer was not understood",
-                note = "Why the check for a new version failed: the website's file holds no version Skwir reads."
-            ))
-        };
-        let file: File = serde_json::from_slice(body).map_err(|_| not_understood())?;
-        let latest = Version::parse(&file.latest).ok_or_else(not_understood)?;
+    pub fn read(body: &[u8]) -> Option<Answer> {
+        let file: File = serde_json::from_slice(body).ok()?;
         let important_since = match file.important_since {
             None => None,
-            Some(text) => Some(Version::parse(&text).ok_or_else(not_understood)?),
+            Some(text) => Some(Version::parse(&text)?),
         };
-        Ok(Answer {
-            latest,
+        Some(Answer {
+            latest: Version::parse(&file.latest)?,
             important_since,
         })
     }
@@ -75,12 +68,20 @@ pub fn fetch(site: &str) -> anyhow::Result<Answer> {
     let answer = runtime.block_on(http.get(&url, &[]));
     runtime.shutdown_background();
     let answer = answer?;
+    let site = crate::host(site);
     match answer.status {
-        200 => Answer::read(&answer.body),
+        200 => Answer::read(&answer.body).ok_or_else(|| {
+            anyhow::anyhow!(words!(
+                updates_not_understood = "{ $site }'s answer was not understood",
+                site = site,
+                note = "Why the check for a new version failed: the website's file holds no version Skwir reads. site: the website, as written (skwir.org)."
+            ))
+        }),
         status => Err(anyhow::anyhow!(words!(
-            updates_status = "skwir.org answered { $status }",
+            updates_status = "{ $site } answered { $status }",
+            site = site,
             status = status.to_string(),
-            note = "Why the check for a new version failed: the website's answer, an HTTP status (404)."
+            note = "Why the check for a new version failed: the website's answer, an HTTP status (404). site: the website, as written (skwir.org)."
         ))),
     }
 }
@@ -115,7 +116,7 @@ mod tests {
             r#"{"latest": "0.6.2", "important_since": "soon"}"#,
             r#"{"latest": "0.6.2", "important_since": 1}"#,
         ] {
-            assert!(read(wrong).is_err(), "{wrong:?}");
+            assert!(read(wrong).is_none(), "{wrong:?}");
         }
     }
 }

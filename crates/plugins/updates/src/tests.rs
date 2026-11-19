@@ -432,6 +432,11 @@ fn a_check_asked_for_now_always_answers() {
         failed[0].starts_with("Skwir could not check for a new version"),
         "{failed:?}"
     );
+    let host = site.address.trim_start_matches("http://");
+    assert!(
+        failed[0].contains(&format!("{host}'s answer was not understood")),
+        "the site asked is named: {failed:?}"
+    );
     assert_eq!(site.heads().len(), 6);
     // The daily check still waits the two weeks after what was told.
     site.serve(&file("0.6.4"), "\"e\"");

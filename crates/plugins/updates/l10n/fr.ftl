@@ -5,7 +5,7 @@
 updates_answer = Répondre s’il faut être prévenu des nouvelles versions
 
 # draft
-updates_answer_description = La réponse à la question qu’une copie téléchargée pose une fois : faut-il interroger skwir.org une fois par jour
+updates_answer_description = La réponse à la question qu’une copie téléchargée pose une fois : faut-il interroger { $site } une fois par jour
 
 # draft
 updates_ask = Être prévenu quand une nouvelle version de Skwir paraît ? Skwir interrogerait { $site } une fois par jour ; Cloudflare, qui le sert, voit votre adresse IP.
@@ -23,7 +23,7 @@ updates_ask_yes = Oui
 updates_check = Chercher une nouvelle version
 
 # draft
-updates_check_description = Demander maintenant à skwir.org si une version plus récente de Skwir est parue, pour une copie qui en est prévenue, même sur une connexion limitée : un message dit ce qui a été trouvé, que Skwir est à jour, ou pourquoi il n’a pu le savoir
+updates_check_description = Demander maintenant à { $site } si une version plus récente de Skwir est parue, pour une copie qui en est prévenue, même sur une connexion limitée : un message dit ce qui a été trouvé, que Skwir est à jour, ou pourquoi il n’a pu le savoir
 
 # draft
 updates_check_failed = Skwir n’a pas pu chercher de nouvelle version
@@ -47,7 +47,7 @@ updates_not_ready = Skwir lit encore comment il a été installé : réessayez
 updates_not_started = La vérification n’a pas pu démarrer
 
 # draft
-updates_not_understood = la réponse de skwir.org n’a pas été comprise
+updates_not_understood = la réponse de { $site } n’a pas été comprise
 
 # draft
 updates_off = Cette copie n’est pas prévenue des nouvelles versions : activez-le dans Réglages › Général
@@ -68,7 +68,7 @@ updates_plugin_title = Mises à jour
 updates_section = Mises à jour
 
 # draft
-updates_status = skwir.org a répondu { $status }
+updates_status = { $site } a répondu { $status }
 
 # draft
 updates_tell_setting = Me prévenir quand une nouvelle version paraît
