@@ -19,10 +19,54 @@ pub(crate) fn beside(bin: &Path, name: &str, found: fn(&Path) -> bool) -> Option
     .find(|path| found(path))
 }
 
-/// The folder holding the running program, as `beside` takes it.
+/// The folder holding the running program, as `beside` takes it, the
+/// one place what a package carries is looked for from. Its links
+/// followed: a Mac's `current_exe` is the path the program was started
+/// by, so an app started through a link in `PATH` finds its bundle's
+/// `Resources` only so (Linux's is already the program's own). The path as
+/// the system gave it where it cannot be followed, and on Windows, where
+/// a followed path is a verbatim one (`\\?\`) and the program's own
+/// already. Reads the disk: off the window's thread.
 pub(crate) fn program_folder() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()?
-        .parent()
-        .map(Path::to_path_buf)
+    folder_of(&std::env::current_exe().ok()?)
+}
+
+/// The folder holding `program`, as `program_folder` finds it.
+fn folder_of(program: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    if let Ok(followed) = std::fs::canonicalize(program) {
+        return followed.parent().map(Path::to_path_buf);
+    }
+    program.parent().map(Path::to_path_buf)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::path::Path;
+
+    /// A program started through a link finds what its package carries
+    /// beside the program itself, not beside the link.
+    #[test]
+    fn a_program_started_through_a_link_finds_its_own_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("skwir.app/Contents");
+        std::fs::create_dir_all(bundle.join("MacOS")).unwrap();
+        std::fs::create_dir_all(bundle.join("Resources/share/skwir")).unwrap();
+        std::fs::write(bundle.join("Resources/share/skwir/channel"), "macos").unwrap();
+        std::fs::write(bundle.join("MacOS/skwir"), "").unwrap();
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(bundle.join("MacOS/skwir"), bin.join("skwir")).unwrap();
+        let folder = super::folder_of(&bin.join("skwir")).unwrap();
+        assert!(super::beside(&folder, "channel", Path::is_file).is_some());
+        assert!(
+            super::beside(&bin, "channel", Path::is_file).is_none(),
+            "not beside the link"
+        );
+        // A path that cannot be followed is taken as given.
+        assert_eq!(
+            super::folder_of(&bin.join("gone/skwir")),
+            Some(bin.join("gone"))
+        );
+    }
 }
