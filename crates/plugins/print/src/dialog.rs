@@ -1199,7 +1199,6 @@ fn mirrored(picture: &Picture) -> Picture {
     }
 }
 
-/// The most sheets a fold's stack is drawn with, and folds drawn.
 /// A sheet of `per_side` pages a side bound on `bound`: its front, the
 /// first sheet's pages where they print, those printed upside down
 /// shaded.
@@ -1239,7 +1238,9 @@ fn per_side_picture(per_side: PerSide, bound: Bound) -> Picture {
     }
 }
 
+/// The most sheets a fold's stack is drawn with.
 const STACK: u16 = 6;
+/// The most folds drawn.
 const FOLDS: usize = 3;
 
 /// How a booklet of `count` pages (unknown: none) bound on `bound` folds
