@@ -20554,7 +20554,9 @@ built as commits on main: the ADR (dd8a9439), the back end (1ae5a3bb),
 the window (e85e415e), attaching (a4299e63), the Settings row
 (eaac889f), the packages and these notes.
 
-- **The back end** (`skwir_platform::chooser`): `OpenFile`, `SaveFile`,
+- **The back end** (`skwir_platform::chooser`; its tests on a private
+  dbus-daemon each: a dialog answered and one cancelled, one its program
+  closes, one a bus-started skwir hands to the one running): `OpenFile`, `SaveFile`,
   `SaveFiles` read as the portal writes them, each answered once (a
   `Request` object at the handle taking `Close`). The program that takes
   launches over serves `org.freedesktop.impl.portal.desktop.skwir`, its
@@ -20614,7 +20616,8 @@ the window (e85e415e), attaching (a4299e63), the Settings row
   bundle (`stage.py`) and Nix; the packages' checks look for both.
 
 **Checked:** rustfmt; clippy `-D warnings` for Linux, Windows and macOS
-on the crates touched (macOS without the window, as `check-macos`); the
+on the crates touched (macOS's window and binary, which `check-macos`
+leaves out, in `tools/package/macos.sh`'s environment with the SDK); the
 tests of core, platform, the window and the binary (2214, then 1516
 after the row); the words check, French and Simplified Chinese drafted;
 each commit built alone (e85e415e in a worktree of its own);
