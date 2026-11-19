@@ -7143,12 +7143,13 @@ pub(crate) fn content(
                 d.key_context(keymap::READER)
             })
             // A double click on a picture goes to the whole screen and
-            // back, as one on a film does (which answers it itself).
+            // back, as one on a film does (which answers it itself); the
+            // release of a drag that moved it is none (ADR-143).
             .when(
                 document.is_none() && interactive && !shell.shows_player(),
                 |d| {
                     d.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                        if event.click_count() == 2 {
+                        if crate::elements::pan::double_click(event) {
                             this.preview_fullscreen(window, cx);
                         }
                     }))

@@ -1574,7 +1574,9 @@ is still to come are in `docs/preview-frame.md`.
   of the preview (behind peek) has none (`picture`'s `grab`). A press is
   one `pan::Grab` for the window, each move taken once whatever shares
   it. A film's click is the player's: only the middle button drags it.
-  Nothing is thrown after the pointer stops.
+  Nothing is thrown after the pointer stops. gpui tells a click at a
+  drag's release too: what a click does over what moves asks whether
+  the pointer stayed (`pan::double_click`, the picture's whole screen).
 - What a zoom key does follows from what is shown, never from a
   per-format switch; the user asks for bigger or smaller and never
   chooses the mechanism. Text in reading mode changes size (the

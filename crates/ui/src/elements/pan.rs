@@ -24,6 +24,22 @@ use std::{cell::Cell, rc::Rc};
 /// A press that moved less than this is a click, not a drag.
 pub const CLICK_SLOP: f32 = 4.;
 
+/// Whether `event` is a double click, not the release of a drag: gpui
+/// tells a click at any release over what was pressed, however far the
+/// pointer went, and counts a second press near the first as a double one,
+/// so two quick drags from about the same place would be one. A key's or a
+/// tap's click has no drag to tell.
+pub fn double_click(event: &gpui::ClickEvent) -> bool {
+    let stayed = match event {
+        gpui::ClickEvent::Mouse(click) => {
+            let gone = click.up.position - click.down.position;
+            f32::from(gone.x).hypot(f32::from(gone.y)) <= CLICK_SLOP
+        }
+        gpui::ClickEvent::Keyboard(_) | gpui::ClickEvent::Touch(_) => true,
+    };
+    stayed && event.click_count() == 2
+}
+
 /// A press holding what a view shows, kept between frames by whoever shows
 /// it, shared with what is drawn over the layer.
 #[derive(Clone, Default)]
@@ -253,6 +269,39 @@ mod tests {
         grab.press(at(0., 0.), MouseButton::Middle);
         assert_eq!(grab.follow(at(0., 20.)), Some(at(0., 20.)));
         assert_eq!(grab.follow(at(0., 20.)), None, "the second layer's turn");
+    }
+
+    #[test]
+    fn a_drag_released_is_no_double_click() {
+        let click = |from: Point<Pixels>, to: Point<Pixels>| {
+            gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
+                down: MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: from,
+                    click_count: 2,
+                    ..MouseDownEvent::default()
+                },
+                up: MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: to,
+                    click_count: 2,
+                    ..MouseUpEvent::default()
+                },
+            })
+        };
+        assert!(double_click(&click(at(10., 10.), at(12., 13.))));
+        assert!(
+            !double_click(&click(at(10., 10.), at(40., 10.))),
+            "the second of two quick drags"
+        );
+        let once = gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
+            down: MouseDownEvent::default(),
+            up: MouseUpEvent {
+                click_count: 1,
+                ..MouseUpEvent::default()
+            },
+        });
+        assert!(!double_click(&once));
     }
 
     #[test]
