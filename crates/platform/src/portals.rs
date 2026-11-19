@@ -4,7 +4,10 @@
 //! another, its other lines kept.
 //!
 //! Found and read as xdg-desktop-portal 1.22.1 does (its
-//! `xdp-portal-config.c`). Its `.portal` files: in `XDG_DESKTOP_PORTAL_DIR`
+//! `xdp-portal-config.c`), in the folders the portal that runs reads: its
+//! own environment, read in `/proc` (a system that wraps it, NixOS, gives
+//! it data folders of its own), and its program's data folder; none
+//! running, skwir's. Its `.portal` files: in `XDG_DESKTOP_PORTAL_DIR`
 //! alone where that is set, else in the data folders'
 //! `xdg-desktop-portal/portals` (the user's first), a name's first file
 //! taken. Its configuration: a file a folder, `<desktop>-portals.conf` for
@@ -107,18 +110,59 @@ pub struct Places {
 }
 
 impl Places {
-    /// Where the portal of this session looks, and when it started (asked
-    /// of the bus, read in `/proc`): on a worker.
+    /// Where the portal of this session looks, as it looks: the one that
+    /// runs read in its own environment (`/proc/<pid>/environ`: its data
+    /// and configuration folders, its desktops, `XDG_DESKTOP_PORTAL_DIR`)
+    /// and its own data folder (its program's `share`), which differ from
+    /// skwir's where a system wraps the portal (NixOS); none running (or
+    /// none read), skwir's own. And when it started. On a worker.
     pub fn here() -> Places {
+        let running = running_portal();
+        let started = running.as_ref().and_then(|portal| started_at(portal.pid));
+        match running {
+            Some(portal) => {
+                let env = skwir_core::xdg::Elsewhere::new(portal.environ);
+                Places::of(
+                    &Seen {
+                        data: env.data_search(),
+                        config_home: env.config_home(),
+                        config_dirs: env.config_dirs(),
+                        desktops: env
+                            .var("XDG_CURRENT_DESKTOP")
+                            .map(|d| d.to_string_lossy().into_owned()),
+                        portal_dir: env.var("XDG_DESKTOP_PORTAL_DIR"),
+                        own: portal.share,
+                    },
+                    started,
+                )
+            }
+            None => Places::of(
+                &Seen {
+                    data: skwir_core::xdg::data_search(),
+                    config_home: skwir_core::xdg::config_home(),
+                    config_dirs: skwir_core::xdg::config_dirs(),
+                    desktops: Some(crate::apps::current_desktops().join(":")),
+                    portal_dir: std::env::var_os("XDG_DESKTOP_PORTAL_DIR"),
+                    own: None,
+                },
+                started,
+            ),
+        }
+    }
+
+    /// Where a portal that sees `seen` looks.
+    fn of(seen: &Seen, started: Option<SystemTime>) -> Places {
         const SUBDIR: &str = "xdg-desktop-portal";
-        let desktops: Vec<String> = crate::apps::current_desktops()
-            .iter()
-            .map(|desktop| desktop.to_ascii_lowercase())
+        let desktops: Vec<String> = seen
+            .desktops
+            .as_deref()
+            .unwrap_or_default()
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(str::to_ascii_lowercase)
             .collect();
-        let started = portal_started();
-        let data = skwir_core::xdg::data_search();
-        let program = installed_portal(&data);
-        if let Some(dir) = std::env::var_os("XDG_DESKTOP_PORTAL_DIR").filter(|d| !d.is_empty()) {
+        let program = installed_portal(&seen.data);
+        if let Some(dir) = seen.portal_dir.as_ref().filter(|d| !d.is_empty()) {
             // The portal's tests' setting: that folder alone, for both.
             let dir = PathBuf::from(dir);
             return Places {
@@ -130,25 +174,26 @@ impl Places {
                 program,
             };
         }
-        let mut portal_dirs: Vec<PathBuf> = data
+        let mut portal_dirs: Vec<PathBuf> = seen
+            .data
             .iter()
             .map(|d| d.join(SUBDIR).join("portals"))
             .collect();
-        let user_dir = skwir_core::xdg::config_home().map(|c| c.join(SUBDIR));
+        let user_dir = seen.config_home.as_ref().map(|c| c.join(SUBDIR));
         let mut config_dirs: Vec<PathBuf> = user_dir.iter().cloned().collect();
-        config_dirs.extend(
-            skwir_core::xdg::config_dirs()
-                .iter()
-                .map(|d| d.join(SUBDIR)),
-        );
+        config_dirs.extend(seen.config_dirs.iter().map(|d| d.join(SUBDIR)));
         config_dirs.push(PathBuf::from("/etc").join(SUBDIR));
-        config_dirs.extend(data.iter().map(|d| d.join(SUBDIR)));
-        // The portal's own data folder, where a distribution installs it
-        // outside the data folders named.
-        let usr = PathBuf::from("/usr/share").join(SUBDIR);
-        if !config_dirs.contains(&usr) {
-            portal_dirs.push(usr.join("portals"));
-            config_dirs.push(usr);
+        config_dirs.extend(seen.data.iter().map(|d| d.join(SUBDIR)));
+        // The portal's own data folder last: its program's `share` where
+        // it runs, else where a distribution installs it.
+        let own = seen
+            .own
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/usr/share"))
+            .join(SUBDIR);
+        if !config_dirs.contains(&own) {
+            portal_dirs.push(own.join("portals"));
+            config_dirs.push(own);
         }
         Places {
             portal_dirs,
@@ -316,13 +361,67 @@ fn changed_since<'a>(started: SystemTime, paths: impl Iterator<Item = &'a PathBu
         .any(|modified| modified > after)
 }
 
-/// When the desktop portal that runs started: its process's, asked of the
-/// bus and read in `/proc`. On a worker.
-fn portal_started() -> Option<SystemTime> {
+/// What a portal sees of where to look: its folders and variables, and
+/// its own data folder (`None`: not known).
+struct Seen {
+    data: Vec<PathBuf>,
+    config_home: Option<PathBuf>,
+    config_dirs: Vec<PathBuf>,
+    /// `XDG_CURRENT_DESKTOP`, as set.
+    desktops: Option<String>,
+    portal_dir: Option<std::ffi::OsString>,
+    own: Option<PathBuf>,
+}
+
+/// The desktop portal that runs: its process, as the bus names it, its
+/// environment and its program's data folder, read in `/proc`.
+struct Running {
+    pid: u32,
+    environ: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    share: Option<PathBuf>,
+}
+
+/// The portal that runs, where its process can be read (the user's own).
+/// On a worker.
+fn running_portal() -> Option<Running> {
     let bus = crate::bus::session().ok()?;
     let dbus = zbus::blocking::fdo::DBusProxy::new(&bus).ok()?;
     let name = zbus::names::BusName::try_from("org.freedesktop.portal.Desktop").ok()?;
-    started_at(dbus.get_connection_unix_process_id(name).ok()?)
+    let pid = dbus.get_connection_unix_process_id(name).ok()?;
+    Some(Running {
+        pid,
+        environ: environ_of(pid)?,
+        share: std::fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .as_deref()
+            .and_then(share_of),
+    })
+}
+
+/// The variables of process `pid`'s environment, as it started.
+fn environ_of(pid: u32) -> Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+    Some(
+        bytes
+            .split(|b| *b == 0)
+            .filter_map(|pair| {
+                let at = pair.iter().position(|b| *b == b'=')?;
+                Some((
+                    std::ffi::OsStr::from_bytes(&pair[..at]).to_owned(),
+                    std::ffi::OsStr::from_bytes(&pair[at + 1..]).to_owned(),
+                ))
+            })
+            .collect(),
+    )
+}
+
+/// The data folder of a program installed under `prefix/libexec` or
+/// `prefix/bin` (`prefix/share`), as the portal's own is (its `DATADIR`).
+fn share_of(program: &Path) -> Option<PathBuf> {
+    let folder = program.parent()?;
+    let named = folder.file_name()?;
+    (named == "libexec" || named == "bin").then(|| folder.parent().map(|p| p.join("share")))?
 }
 
 /// When the process `pid` started: its start in clock ticks after boot
@@ -1065,6 +1164,84 @@ mod tests {
         let now = SystemTime::now();
         let started = started_at(std::process::id()).expect("this process's start");
         assert!(started <= now && now.duration_since(started).unwrap() < Duration::from_secs(3600));
+    }
+
+    /// Where a running portal looks is what it sees, not skwir: its data
+    /// folders, its own data folder (its program's `share`), its
+    /// configuration folders and desktops; `XDG_DESKTOP_PORTAL_DIR` in its
+    /// environment, that folder alone. A process's environment and a
+    /// program's data folder are read as `/proc` gives them.
+    #[test]
+    fn the_portal_is_read_where_it_looks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // A profile the portal reads and its own package: what skwir's own
+        // environment would not name.
+        portal(
+            &root.join("profile/share/xdg-desktop-portal/portals"),
+            "kde",
+            FILE_CHOOSER,
+        );
+        portal(
+            &root.join("package/share/xdg-desktop-portal/portals"),
+            "gtk",
+            FILE_CHOOSER,
+        );
+        std::fs::create_dir_all(root.join("home/.config/xdg-desktop-portal")).unwrap();
+        std::fs::write(
+            root.join("home/.config/xdg-desktop-portal/hyprland-portals.conf"),
+            format!("[preferred]\n{FILE_CHOOSER}=gtk\n"),
+        )
+        .unwrap();
+        let env = skwir_core::xdg::Elsewhere::new([
+            ("HOME".into(), root.join("home").into_os_string()),
+            (
+                "XDG_DATA_DIRS".into(),
+                root.join("profile/share").into_os_string(),
+            ),
+            (
+                "XDG_CONFIG_DIRS".into(),
+                root.join("sysconfig").into_os_string(),
+            ),
+            ("XDG_CURRENT_DESKTOP".into(), "Hyprland".into()),
+        ]);
+        let seen = |portal_dir: Option<std::ffi::OsString>| Seen {
+            data: env.data_search(),
+            config_home: env.config_home(),
+            config_dirs: env.config_dirs(),
+            desktops: env
+                .var("XDG_CURRENT_DESKTOP")
+                .map(|d| d.to_string_lossy().into_owned()),
+            portal_dir,
+            own: share_of(&root.join("package/libexec/xdg-desktop-portal")),
+        };
+        let p = Places::of(&seen(None), None);
+        assert_eq!(p.desktops, ["hyprland"]);
+        assert_eq!(
+            p.user_dir,
+            Some(root.join("home/.config/xdg-desktop-portal"))
+        );
+        let read = read(&p);
+        assert_eq!(
+            read.choosers,
+            ["gtk", "kde"],
+            "its own package's and its profile's"
+        );
+        assert_eq!(read.chooser, named("gtk"), "its desktop's file in its home");
+
+        let alone = root.join("alone");
+        portal(&alone, "skwir", FILE_CHOOSER);
+        let p = Places::of(&seen(Some(alone.clone().into_os_string())), None);
+        assert_eq!(super::read(&p).choosers, ["skwir"], "that folder alone");
+
+        let own: Vec<(std::ffi::OsString, std::ffi::OsString)> =
+            environ_of(std::process::id()).expect("this process's environment");
+        assert!(own.iter().any(|(name, _)| name == "PATH" || name == "HOME"));
+        assert_eq!(
+            share_of(Path::new("/opt/portal/bin/xdg-desktop-portal")),
+            Some(PathBuf::from("/opt/portal/share"))
+        );
+        assert_eq!(share_of(Path::new("/opt/portal/xdg-desktop-portal")), None);
     }
 
     /// Taking the key out leaves the rest; a group without it gets it at

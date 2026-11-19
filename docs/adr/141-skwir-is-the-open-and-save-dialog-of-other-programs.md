@@ -145,7 +145,10 @@ the Settings row (eaac889f), the packages; amended as built (decisions
 10. **Turning it on: Settings › "Open and save dialogs"** (the user's
     choice), on General beside the default file manager: a choice its
     owner keeps (ADR-140, 8), the back ends installed that offer the file
-    chooser (their `.portal` files, as the portal finds them), the one the
+    chooser (their `.portal` files, as the portal finds them: in the
+    folders of the portal that runs, its environment read in `/proc` and
+    its program's data folder, which a system that wraps it, NixOS, makes
+    differ from skwir's; none running, skwir's own), the one the
     portal's configuration names now (read as 1.22.1 reads it: `none` is
     none, `*` the first installed, a key written twice its last), else
     Automatic. Choosing writes `org.freedesktop.impl.portal.FileChooser=`

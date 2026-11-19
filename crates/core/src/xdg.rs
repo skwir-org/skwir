@@ -105,10 +105,86 @@ pub fn config_dirs() -> Vec<PathBuf> {
     list("XDG_CONFIG_DIRS", "/etc/xdg")
 }
 
+/// The specification's folders as another program reads them, from its
+/// environment (the desktop portal's, read in `/proc`): by the rules
+/// above, its `HOME` for the defaults. For what decides as that program
+/// does (which configuration it reads), never for skwir's own folders.
+#[derive(Clone, Debug, Default)]
+pub struct Elsewhere {
+    vars: std::collections::HashMap<OsString, OsString>,
+}
+
+impl Elsewhere {
+    /// A program's environment, as its variables' names and values.
+    pub fn new(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Elsewhere {
+        Elsewhere {
+            vars: vars.into_iter().collect(),
+        }
+    }
+
+    /// Variable `name` there, if set.
+    pub fn var(&self, name: &str) -> Option<OsString> {
+        self.vars.get(std::ffi::OsStr::new(name)).cloned()
+    }
+
+    fn home(&self, name: &str, fallback: &str) -> Option<PathBuf> {
+        folder_of(self.var(name)).or_else(|| folder_of(self.var("HOME")).map(|h| h.join(fallback)))
+    }
+
+    /// Its data folders, its own first (`data_search`).
+    pub fn data_search(&self) -> Vec<PathBuf> {
+        self.home("XDG_DATA_HOME", ".local/share")
+            .into_iter()
+            .chain(split(
+                self.var("XDG_DATA_DIRS"),
+                "/usr/local/share:/usr/share",
+            ))
+            .collect()
+    }
+
+    /// Its configuration folder (`config_home`).
+    pub fn config_home(&self) -> Option<PathBuf> {
+        self.home("XDG_CONFIG_HOME", ".config")
+    }
+
+    /// The system's configuration folders, as it reads them (`config_dirs`).
+    pub fn config_dirs(&self) -> Vec<PathBuf> {
+        split(self.var("XDG_CONFIG_DIRS"), "/etc/xdg")
+    }
+}
+
 // Unix's path lists (`:`-separated, `/`-rooted).
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// Another program's folders are read by the same rules, its own home
+    /// giving the defaults.
+    #[test]
+    fn another_programs_folders_are_its_own() {
+        let elsewhere = Elsewhere::new([
+            ("HOME".into(), "/home/other".into()),
+            ("XDG_DATA_DIRS".into(), "relative:/opt/share".into()),
+            ("XDG_CONFIG_HOME".into(), "".into()),
+        ]);
+        assert_eq!(
+            elsewhere.data_search(),
+            [
+                PathBuf::from("/home/other/.local/share"),
+                PathBuf::from("/opt/share")
+            ]
+        );
+        assert_eq!(
+            elsewhere.config_home(),
+            Some(PathBuf::from("/home/other/.config"))
+        );
+        assert_eq!(elsewhere.config_dirs(), [PathBuf::from("/etc/xdg")]);
+        assert_eq!(
+            Elsewhere::default().config_home(),
+            None,
+            "no home, no default"
+        );
+    }
 
     // Unix's path lists (`:`-separated, `/`-rooted).
 
