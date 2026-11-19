@@ -40,9 +40,7 @@ use crate::elements::popover::PopoverAnchor;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toast::{
-    Action, Running, Toast, Tone, amount, pace, sending, share, waiting_words, written,
-};
+use crate::toast::{Action, Running, Toast, Tone, amount, pace, sending, waiting_words, written};
 
 /// What `Earlier` keeps: the answers of this session the History does not
 /// hold, newest first.
@@ -341,7 +339,7 @@ pub(crate) fn summary(under: &Under) -> Option<Summary> {
     let shares: Vec<Fill> = under
         .plans
         .iter()
-        .map(|(running, t)| Fill::of(running.total, t))
+        .map(|(running, t)| Fill::of(running, t))
         .chain(
             under
                 .tasks
@@ -426,7 +424,7 @@ pub(crate) fn announced(
                         after other words."
             )
         } else {
-            percent_words(share(running.total, t))
+            percent_words(running.said_share(t))
         };
         let sentence = words!(
             activity_announced = "{ $title } · { $doing }",
@@ -1240,12 +1238,13 @@ impl Fill {
         }
     }
 
-    /// A running plan's of `items` (`toast::share`, `toast::written`).
-    pub(crate) fn of(items: usize, t: &Transfer) -> Fill {
-        let share = share(items, t);
+    /// A running plan's (`toast::share`, `toast::written`), its share
+    /// never back from what it said before (`Running::said_share`).
+    pub(crate) fn of(running: &Running, t: &Transfer) -> Fill {
+        let share = running.said_share(t);
         Fill {
             share,
-            written: written(items, t).max(share),
+            written: written(running.total, t).max(share),
         }
     }
 }
@@ -2532,7 +2531,7 @@ fn progress_card(
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let (pause_focus, cancel_focus) = focus;
-    let fill = Fill::of(running.total, transfer);
+    let fill = Fill::of(running, transfer);
     let fraction = fill.share;
     let amount = amount(running.total, transfer);
     let plan = running.plan;

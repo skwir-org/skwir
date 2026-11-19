@@ -140,6 +140,10 @@ pub struct Running {
     /// What a plan its server stopped had left, going on by itself once
     /// the server answered again (ADR-080, 9).
     pub(crate) going_on: bool,
+    /// The share its bar said last (`f32` bits: in order as the shares
+    /// are, none being below 0), kept for every copy a frame reads
+    /// (`activity::Under`): what `said_share` never goes back from.
+    pub(crate) said: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl Running {
@@ -168,7 +172,20 @@ impl Running {
             paused: false,
             cancelling: false,
             going_on,
+            said: Arc::default(),
         }
+    }
+
+    /// How far its bar is (`share`), never back from what it said before:
+    /// into a mount that sends after, a plan not sized is as far as the
+    /// server has of what it wrote, counted by its items, which a large
+    /// item written to the mount's cache would take back.
+    pub(crate) fn said_share(&self, t: &Transfer) -> f32 {
+        let now = share(self.total, t);
+        let before = self
+            .said
+            .fetch_max(now.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        now.max(f32::from_bits(before))
     }
 
     /// A step made (`ExecEvent::Step`): the count, and the change that
@@ -1780,6 +1797,7 @@ mod tests {
             paused: false,
             cancelling: false,
             going_on: false,
+            said: std::sync::Arc::default(),
         };
         let copied = skwir_core::op::Items {
             first: Change::Copy {
@@ -2091,6 +2109,7 @@ mod tests {
             paused: false,
             cancelling: false,
             going_on: false,
+            said: std::sync::Arc::default(),
         };
         assert_eq!(
             ended(
@@ -2358,6 +2377,49 @@ mod tests {
         assert_eq!((share(4, &items), written(4, &items)), (0.25, 0.5));
     }
 
+    /// Not sized, into a mount that sends after, its share is an estimate
+    /// by its items of what the server has: a large item written to the
+    /// mount's cache after a small one the server has never takes its bar
+    /// back, which goes on once the server has more than it said (UB-4).
+    #[test]
+    fn a_bar_into_a_mount_that_sends_after_never_goes_back() {
+        let running = Running::for_test(
+            skwir_core::op::Plan::new(Words::as_written("copy")).id,
+            "copy",
+            RunKind::Apply,
+            2,
+        );
+        let first = Transfer {
+            done: 10,
+            total: 10,
+            ended: 1,
+            finished: 1,
+            on_server: Some(10),
+            ..Transfer::default()
+        };
+        assert!((running.said_share(&first) - 0.5).abs() < 1e-6);
+        let second = Transfer {
+            done: 1010,
+            total: 1010,
+            ended: 2,
+            finished: 2,
+            ..first
+        };
+        assert!(share(2, &second) < 0.02, "the estimate falls");
+        assert!(
+            (running.said_share(&second) - 0.5).abs() < 1e-6,
+            "the bar does not"
+        );
+        // A copy a frame reads keeps what it said.
+        let copy = running.clone();
+        let sent = Transfer {
+            on_server: Some(1010),
+            ..second
+        };
+        assert!((copy.said_share(&sent) - 1.).abs() < 1e-6);
+        assert!((running.said_share(&second) - 1.).abs() < 1e-6);
+    }
+
     /// How fast and how long, when that can be told: nothing before, a
     /// speed alone, both; writing into a mount that sends after, why no
     /// time is said.
@@ -2415,6 +2477,7 @@ mod tests {
             paused: false,
             cancelling: false,
             going_on: false,
+            said: std::sync::Arc::default(),
         };
         let long = End {
             applied: 1,
