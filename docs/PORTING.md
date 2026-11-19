@@ -556,6 +556,11 @@ Left:
 - **Bench**: the raw listing is the system's own (readdir and fstatat on
   macOS, `std::fs` on Windows), compiled, never run; its budgets are
   Linux's (step L).
+- **Metered connections** (ADR-142): `skwir_platform::network::metered`
+  asks Linux's portal (`NetworkMonitor.GetMetered`). Windows' connection
+  cost (`NetworkInformation`) and macOS's `NWPath.isExpensive` are not
+  read yet, so a downloaded copy's daily check for a new version runs
+  there on any connection.
 
 ## Tests that run on Linux alone
 

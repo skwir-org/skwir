@@ -250,10 +250,13 @@ control plugin's `run`:
   point nothing is mounted on, a Windows share by its server's name) is
   never read: private, and an agent's call naming one is refused before
   anything else (ADR-044, amended 2026-10-25).
-- Only `map-tiles` makes requests of its own (`AGENTS.md`, "Engineering
-  rules"); the `remote` plugin reaches servers through the tools it starts
-  (ADR-077), and connects an address an agent opens only once the user
-  allowed it (`Asker::Connection`): the server is told who the user is.
+- Only `map-tiles` and `updates` make requests of their own (`AGENTS.md`,
+  "Engineering rules"): `updates.check` asks the site at once, so an
+  agent's call asks the user first (`Effect::Acts`), and `updates.latest`
+  answers from memory; the `remote` plugin reaches servers through the
+  tools it starts (ADR-077), and connects an address an agent opens only
+  once the user allowed it (`Asker::Connection`): the server is told who
+  the user is.
 
 ## Plugins from outside (ADR-045, ADR-046, ADR-047)
 

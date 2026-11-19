@@ -1162,6 +1162,30 @@ Home Manager's `programs.skwir.fileChooser` and
 `programs.skwir.defaultFileManager`. Reviewed and fixed the same day
 (the review since 0.5.1). Checks in `docs/STATUS-LOG.md` (2026-11-19).
 
+## A new version told where nothing else tells it (ADR-142, 2026-11-19)
+
+Brainstormed and decided with the user the same day (ask once, a static
+file on the website, AppImage's update information and winget, apt and
+dnf repositories added from the website alone, no Copr or OBS, a daily
+check, a mark for an important release, What's new), then built. Each
+of Skwir's packages writes how it came in `share/skwir/channel`
+(`tools/package/channel`, read by `skwir_platform::channel`), and the
+`updates` plugin asks only a copy downloaded from the release, and only
+once its user said yes: asked once, in a toast that stays
+(`App::ask_quietly`), two days after the copy was first seen; then the
+first look of each calendar day reads `skwir.org/updates/1.json` on a
+thread of its own, through the HTTP client moved from `map-tiles` to the
+platform (`skwir_platform::http`). A newer version is told once, 14 days
+apart unless one is important, and kept said in About and More
+(`registry::News`) until updated; What's new is said once after an
+update, on every channel. The AppImage carries its update information
+and its zsync file; `just winget <tag>` writes the winget manifests;
+`just repositories <tag>` the signed apt and dnf repositories, tried by
+`just repository-check`. The site makes `/updates/1.json` from its
+release, sends what Skwir names to the release (its redirects), and shows
+the repositories once they are published. Checks in `docs/STATUS-LOG.md`
+(2026-11-19).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -1169,20 +1193,19 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**A new version told** (ADR-142, accepted 2026-11-19): designed, not
-built. Its steps, each tried before the next:
-1. The channel file (`share/skwir/channel`) and What's new.
-2. HTTP moved to `skwir-platform`, then the `updates` plugin: the
-   question asked once, the daily check, the toasts.
-3. The site's `updates/1.json` and redirects.
-4. AppImage's update information, tried with Gear Lever and
-   AppImageUpdate: whether they follow the site's redirect.
-5. A winget manifest.
-6. The signed apt and dnf repositories, `skwir-repository` and
-   `try.sh`'s upgrade.
-
-The repositories' key is the user's to make. A release's new steps go
-in `docs/RELEASING.md` as they are built.
+**A new version told** (ADR-142, built 2026-11-19). Left: the
+repositories' key (the user's to make, `docs/RELEASING.md`), then the
+first repositories published and `REPOSITORY_PUBLISHED` set on the site;
+the first winget manifest submitted; the site deployed with its
+redirects and `/updates/1.json` (whether Cloudflare Pages answers its
+`If-None-Match`, and serves `_redirects`' placeholders as their
+documentation says, was not tried); an AppImage built and updated by
+AppImageUpdate and Gear Lever through `skwir.org/latest/` (the update
+information and the zsync file were checked by the AppImage's check
+against an image of a stand-in, not by an updater); a check's notice
+seen in a window (What's new, the same toast, was); the connection's
+cost on Windows and `isExpensive` on macOS, not read (the check runs
+there); a release's copy older than 0.6 never checks.
 
 **Show in folder for other programs** (ADR-140, 2026-11-18): built on
 Linux and checked against a private dbus-daemon on Xvfb. Left: a real

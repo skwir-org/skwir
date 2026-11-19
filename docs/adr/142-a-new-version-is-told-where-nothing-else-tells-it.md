@@ -5,9 +5,11 @@ once; a static file on the website; AppImage's update information and
 winget; apt and dnf repositories added by a command from the website,
 never by a package or by Skwir; no Copr and no OBS; a check once a day;
 a mark for an important release; What's new after an update, with a
-setting that turns it off. Designed, not built. Amends ADR-020 (a second
-plugin makes requests, and HTTP moves to `skwir-platform`) and ADR-040
-(signed repositories for the `.deb` and the `.rpm`).
+setting that turns it off. Built 2026-11-19 on Linux (the plugin and the
+platform's parts compiled for Windows and macOS), amended as built
+(Amendments). Amends ADR-020 (a second plugin makes requests, and HTTP
+moves to `skwir-platform`) and ADR-040 (signed repositories for the
+`.deb` and the `.rpm`).
 
 ## Context
 
@@ -243,3 +245,61 @@ plugin makes requests, and HTTP moves to `skwir-platform`) and ADR-040
   (4) AppImage's update information, tried with Gear Lever and
   AppImageUpdate; (5) winget; (6) the repositories, `skwir-repository`
   and `try.sh`'s upgrade.
+
+## Amendments
+
+### 2026-11-19: as built
+
+- **What is kept is in the state file**, `updates.kept` (ADR-056), as
+  the drafts told are (`ui.drafts_told`), not the cache: the settings'
+  store reads and writes it, and a worker saves it. Lost, it costs what
+  decision 6 says.
+- **The question** (5) is a notification with several buttons that stays
+  until answered or closed (`App::ask_quietly`; a `Notification` holds
+  `actions` and whether it `stays`). Only Yes, No or the setting answer
+  it (`updates.answer`, a person's alone, `Effect::UserOnly`): closed, or
+  replaced by another toast, it is asked again another day, on three days
+  at most. Skwir asks nothing while the user has not seen it. A
+  downloaded copy alone declares `updates.tell`.
+- **The commands** (6): `updates.check` asks the site at once, an action
+  an agent asks the user first for (`Effect::Acts`); the palette offers
+  it, and no Check now button was added to Settings or About.
+  `updates.latest` answers from memory, how the copy came included.
+- **About and More** draw what a plugin keeps said about Skwir
+  (`registry::News`): the window names no plugin.
+- **Metered connections** (6) are read on Linux alone, from the portal.
+  Windows' connection cost and macOS's `isExpensive` are not read yet:
+  the check runs there.
+- **The AppImage** (3.1): the update information names
+  `skwir.org/latest/skwir-x86_64.AppImage.zsync` (`/download/` is the
+  site's download page). `zsyncmake` makes the zsync file, which names
+  the image at `skwir.org/files/v<version>/<name>`; appimagetool's own,
+  relative to wherever a redirect led, is removed. The release expects
+  the file (`tools/release/release.py`), and the AppImage's check reads
+  the update information and the zsync file back.
+- **The site** makes `/updates/1.json` from the release it describes
+  (`release-manifest.json`), the important release named by hand in its
+  `site.ts` (`importantSince`): it never names a release the site does
+  not offer. Its redirects: `/releases/:tag`, `/latest/:file`,
+  `/files/:tag/:file`, `/apt/pool/:tag/:file`,
+  `/rpm/fedora/pool/:tag/:file`. Its download page shows the
+  repositories once the first is published (`REPOSITORY_PUBLISHED`).
+- **The repositories** (3.3 to 3.6): apt's suites `trixie` (Debian 13)
+  and `noble` (Ubuntu 24.04), dnf's `fedora`; `skwir-repository` one
+  package a family (`apt/own/skwir-repository-debian.deb`, `-ubuntu.deb`,
+  `rpm/fedora/own/skwir-repository.rpm`), made by nfpm at the version
+  `tools/package/repository/version` says. dnf reads with
+  `repo_gpgcheck=1` and `gpgcheck=0`: the index is signed and names each
+  package's checksum, and a package signed after the release checked it
+  would no longer be the release's. `just repositories <tag>` makes them
+  (`tools/package/repository.py`); `just repository-check` tries them in
+  fresh roots with a throwaway key, against a stand-in for the site that
+  sends each package to another host's name, an upgrade of
+  `skwir-repository` included.
+- **winget**: `just winget <tag>` writes the manifests
+  (`tools/package/winget.py`, identifier `Skwir.Skwir`, schema 1.10.0),
+  the installer matched by its `UpgradeCode`. winget's own validation was
+  not run (no Windows here).
+- **HTTP** is `skwir_platform::http`, behind the platform's `http`
+  feature that only the two plugins enable, a client limited per use
+  (`Http::limited`: the check waits 10 s and reads 16 KiB at most).

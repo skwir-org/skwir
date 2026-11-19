@@ -274,6 +274,58 @@ fails, rerun `aur-publish` to push what is left. Concurrent AUR updates
 reject the push; reconcile them in the checkout before preparing again. A
 dirty checkout is never overwritten.
 
+## Tell copies of the release (ADR-142)
+
+A copy of Skwir downloaded from the website asks it once a day for
+`/updates/1.json` (the `updates` plugin), once its user said yes; the
+tools that update a copy read what the release and the site give them.
+After the GitHub release is published:
+
+- **The site.** Its `src/lib/data/release-manifest.json` is the bundle's
+  `manifest.json` (as for its download page): `/updates/1.json` is made
+  from it, so it names the release the site offers and no other. A
+  release that fixes a loss of data or a hole in security sets
+  `importantSince` in the site's `src/lib/data/site.ts` to its version: a
+  copy older than it is told at once, not two weeks after the last
+  notice. The next release that brings such a fix moves it; it is never
+  taken back.
+- **The AppImage.** Nothing to do: the bundle's
+  `skwir-x86_64.AppImage.zsync`, uploaded with the release, is what the
+  image's update information names through `skwir.org/latest/`, and
+  AppImageUpdate or Gear Lever reach it once the release is published.
+- **The repositories.** `just repositories v0.1.0` writes the apt and dnf
+  repositories' signed indexes and `skwir-repository` into the site's
+  `static/` (`../skwir-site` by default); gpg asks for the key's
+  passphrase. Review them (`git -C ../skwir-site status`), then commit and
+  deploy the site once, with the version file: an index never names a
+  package before the release that holds it is published.
+- **winget.** `just winget v0.1.0` writes the release's three manifest
+  files beside its bundle (`target/releases/v0.1.0-winget`). Submit them
+  as a pull request to `microsoft/winget-pkgs` (by hand, `wingetcreate
+  submit` or `komac submit`); its checks install the release's installer.
+
+**The repositories' key, once.** Make it where releases are made, with a
+passphrase, and keep its secret part off the site's host (a backup apart):
+every system that added the repositories trusts it with what it installs.
+
+```sh
+gpg --quick-generate-key 'Skwir repositories' ed25519 sign 5y
+gpg --armor --export <its fingerprint> > tools/package/repository/skwir.asc
+```
+
+Commit the public key, publish the first repositories, then set
+`REPOSITORY_PUBLISHED` in the site's `src/lib/data/downloads.ts`: its
+download page then shows how to add them. A new key, or another address,
+raises `tools/package/repository/version`: `skwir-repository`'s update
+brings it to every system that has the repositories. `just
+repository-check` tries the repositories in fresh Debian, Ubuntu and
+Fedora roots with a throwaway key, an upgrade included.
+
+**Packagers.** A package manager that repackages a release (as the AUR's
+`skwir-bin` repackages the tarball) removes `share/skwir/channel`: what it
+updates is then never told of new versions by Skwir
+(`tools/package/channel/README.md`).
+
 ## GitHub fallback
 
 `full checks` (`.github/workflows/full.yml`) runs the former full check matrix,

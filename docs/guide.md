@@ -865,7 +865,7 @@ Settings are grouped by subject, whichever plugin brings them:
 
 | Page | What it sets |
 | --- | --- |
-| General | The language Skwir speaks (Automatic, your system's, else English; French and Simplified Chinese are drafts so far, which the window says), what Skwir does at startup and with folders other programs open in it, with tabs, the split and the path above the files, and with what you drag and drop |
+| General | The language Skwir speaks (Automatic, your system's, else English; French and Simplified Chinese are drafts so far, which the window says), what Skwir does at startup and with folders other programs open in it, with tabs, the split and the path above the files, with what you drag and drop, and with new versions (Updates) |
 | Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
 | Folders and views | The order of folders and files, how sizes are counted (Decimal, a thousand bytes to a kilobyte as disks are sold; or Binary, 1024), the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
@@ -1040,6 +1040,31 @@ the window (its layout, saved searches, pinned tags, tags' colours) is
 kept in files of its own, so it is kept still.
 `skwir cmd settings.check '{"file": "/path/to/settings.toml"}'` says what
 in a file Skwir would not take.
+
+### New versions
+
+A copy of Skwir downloaded from its website (the AppImage, the tarball,
+the Windows installer or zip, the Mac app, a `.deb` or `.rpm` taken from
+the release) asks once, a couple of days after you first used it,
+whether to tell you when a new version is out. Say yes and it asks
+skwir.org once a day, the first time you look at a window that day; the
+request says nothing about your copy, and Cloudflare, which serves the
+site, sees your IP address. A new version is told once, in a message
+with **What's new**, and About and the More menu say it until you update;
+a version that fixes a loss of data or a hole in security is told at
+once, others two weeks after the last you were told of. Skwir never
+downloads or installs anything: the version's page has its files. Settings
+› General › Updates turns it on or off.
+
+A copy something else updates never asks: the AUR, Nix, your
+distribution, or Skwir's own apt and dnf repositories
+([skwir.org/download](https://skwir.org/download)) tell you
+themselves. An AppImage can update itself with AppImageUpdate or Gear
+Lever, and the Windows installer with `winget upgrade`, where winget
+lists Skwir.
+
+Every copy says once what is new after an update, with **What's new**;
+Settings › General › Updates turns that off too.
 
 ## What Skwir keeps, and where
 

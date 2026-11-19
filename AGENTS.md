@@ -187,9 +187,12 @@ working in an area, also read that area's rules (see
   carry it through commands and results. Never redirect a delayed action
   to whichever pane is active when it finishes. Layout callbacks that use
   shell state restore the intended pane with `Shell::with_pane`.
-- **Network.** Only the `map-tiles` plugin makes requests (ADR-020), and
-  only once the user chose a background that downloads; nothing a file
-  names is fetched. The core has no network layer, and Skwir speaks no
+- **Network.** Two plugins make requests, each only once the user chose
+  it: `map-tiles` (ADR-020), for a background that downloads, and
+  `updates` (ADR-142), once a day for a copy downloaded from the website
+  whose user said yes; nothing a file names is fetched. Their HTTP client
+  is the platform's (`skwir_platform::http`, its `http` feature, for them
+  alone). The core has no network layer, and Skwir speaks no
   file-system protocol: a remote folder is a mount an installed tool
   makes (sshfs, GVfs, KIO's kio-fuse, rclone, the system's), which the
   `remote` plugin starts when an address is opened, and Skwir holds no

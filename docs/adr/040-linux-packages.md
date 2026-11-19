@@ -10,7 +10,7 @@ Ubuntu root, including from a Nix host, supplements these formats; since
 Amended 2026-10-11 by ADR-053: local release builds and draft uploads;
 hosted package builds are a manual fallback. Decision 7, `skwir-bin` and
 `skwir-git` on the AUR, added 2026-10-17. Amended 2026-11-19 by ADR-142
-(designed, not built): signed apt and dnf repositories of these
+(built): signed apt and dnf repositories of these
 packages, added by a `skwir-repository` package from the site.
 
 ## Context
@@ -104,7 +104,7 @@ and the folders it manages unless all are granted, and bubblewrap
   naming where PDFium and the player's plugins are; its helpers chosen
   by flags, in three variants (`default`, `minimal`, `full`), checked by
   `just package-nix-check`.
-- 2026-11-19 (ADR-142, designed, not built): the `.deb` and `.rpm`
+- 2026-11-19 (ADR-142, built): the `.deb` and `.rpm`
   packages `release-build` made and `try.sh` tried are published in
   signed apt and dnf repositories on skwir.org. The indexes are the
   site's files, and the packages are the release's, reached through the

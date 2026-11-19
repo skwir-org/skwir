@@ -20812,3 +20812,90 @@ checks (the patch has no system's code), the bench's budgets, a window.
 Left: what the progressive decode still spends goes mostly to the
 coefficients jpeg-decoder sets aside for the whole picture, 64 a block
 where an eighth reads one.
+
+## 2026-11-19: a new version told where nothing else tells it (ADR-142)
+
+Brainstormed with the user in the afternoon, their answers recorded in
+the ADR (ask once; a static file on the website; AppImage's update
+information and winget; apt and dnf repositories added by a command from
+the website, never by a package or by Skwir; no Copr or OBS; checked once
+a day; an important mark; What's new, which a setting turns off), then
+built the same evening.
+
+**Built.**
+- *Core*: a notification holds several buttons and may stay until
+  answered (`Notification::actions`, `stays`, `App::ask_quietly`); what a
+  plugin keeps said about Skwir is a contribution (`registry::News`),
+  drawn by About under the version and by a row of More before About.
+- *Platform*: `channel` (the word a package wrote in `share/skwir`, found
+  as the fonts are, through `carried`), whether the system has Skwir's
+  repository; `network::metered` (Linux's portal); `http`, moved from
+  `map-tiles` behind the `http` feature, limited per client.
+- *The `updates` plugin*: the question two days after a downloaded copy
+  was first seen, on three days at most while closed unanswered; the
+  first look of each calendar day asks `skwir.org/updates/1.json` on a
+  thread of its own, conditionally, with `skwir` as its User-Agent and
+  nothing else about the copy, quietly when it fails and an hour before
+  it tries again; a newer version told once, 14 days apart unless
+  important, kept in About and More; What's new once after an update, on
+  every channel, by the highest version run. Kept in the state file
+  (`updates.kept`). French and Simplified Chinese drafted (`# draft`).
+- *Packages*: `tools/package/channel`, written by each package (the
+  `.deb` and `.rpm` by their assets, the AppImage and its tarball, the
+  zip and the installer, the Mac app), removed by `skwir-bin`, checked by
+  each package's check. The AppImage carries its update information
+  (`zsync|https://skwir.org/latest/skwir-x86_64.AppImage.zsync`) and
+  `zsyncmake` makes the zsync file, which the release now expects.
+  `just winget <tag>`, `just repositories <tag>`, `just repository-check`.
+- *The site* (`skwir-site`): `/updates/1.json` made from the release it
+  describes, `importantSince`, the redirects, a cache rule, and the
+  download page's repositories, hidden until published.
+
+**Checked.** rustfmt on the touched crates; `just lint` whole (fmt,
+the catalogs, clippy on the default members); nextest on core, the
+platform, the window, the updates, map-tiles, places, open-with and
+query plugins (2494 passed, 21 skipped) and skwir's `plugins_toggle`,
+`tags_everywhere`, `remote_configs` (31 passed); `just
+release-tools-check`; `just check-cross` (Windows and macOS). The
+plugin's tests run it against a plain HTTP server of their own with a
+calendar they move: nothing asked before two days, the question once a
+day, three days at most; a yes checks at once and tells once; the same
+day asks nothing, the next day asks with `If-None-Match` and a 304 tells
+nothing; 14 days between notices unless important; a no asks nothing
+until the setting is turned on; a copy without a channel, or a `.deb`
+with the repository, is never checked and declares no setting; a failed
+check says nothing and waits an hour; What's new once, never on a first
+run, not when off. The request's head holds no version and no cookie.
+The moved client's TLS, HTTP/2 and limit tests pass on the platform.
+`just repository-check` on 0.5.1's bundle, with a throwaway key and a
+stand-in for the site redirecting to another host's name: in fresh
+Debian 13, Ubuntu 24.04 and Fedora 44 roots, `skwir-repository`
+installed from the file the page names, the signed index read with the
+key it brought (Fedora imported it), skwir downloaded through the
+redirect, its checksum the index's, then `skwir-repository` 2 upgraded
+to on all three. The AppImage check's reader of the update information
+and the zsync file, run on a stand-in ELF file and a zsync file
+`zsyncmake` made. The site: `pnpm check` (every catalog true, svelte-check
+clean) and `pnpm build` (`/updates/1.json` is `{"latest":"0.5.1"}`).
+A window (Xvfb, the debug build hard-linked into a test prefix holding a
+`deb` channel word, HOME and XDG folders of its own, no session bus, the
+user's own skwir left running): the question, two days after the copy
+was first seen, first squeezed its sentence to a letter a line beside
+its three answers (French labels), fixed (18917a7b: a toast's words and
+buttons are an `elements::beside`), then whole with its answers under
+it; No said and kept (`answered`, `tell = false`, saved); What's new with
+its button beside it; More's row "Skwir 9.9.9 est paru" before About;
+About's line, which first left the dialog too short (`beside` held as a
+column's child), fixed the same way, and fitting at 480 px.
+
+**Not run.** An AppImage, Windows or Mac package built (the scripts'
+syntax checked; their checks read the channel word); an updater
+(AppImageUpdate, Gear Lever) against the site; a check's notice and
+the important one in a window (the same toast as What's new, driven by
+the plugin's tests); the site deployed (its
+redirects with placeholders, and whether Pages answers `If-None-Match`,
+are read in Cloudflare's documentation, not tried); winget's own
+validation; the bench's budgets and `idle-pss` (the plugin does nothing
+at startup but a job reading one small file); the full `just test` (it
+filled the disk to 3 GB free while linking and was stopped: the touched
+crates' tests were run instead).
