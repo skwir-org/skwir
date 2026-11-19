@@ -351,8 +351,8 @@ sentence, never a sentence assembled from pieces.
   - no id has two Englishes in one crate;
   - no English writes quotes around an argument (`“{ $path }”`): it is a
     `Name`, a `Named`, a `Folder` or a `Path`, or said unquoted (`just words
-    --check`; those written before the check are listed in
-    `tools/words/quoted`, which only shrinks);
+    --check`; `tools/words/quoted`, which listed those written before the
+    check, is empty, and only shrinks);
   - no catalog keeps an id the code no longer says;
   - the languages' shares counted and the record current; for a
     release, no language offered under 75% reviewed.

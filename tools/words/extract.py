@@ -49,8 +49,9 @@ English writes right after its number (`{ $n }%`); and an English that
 writes quotes around an argument itself (`“{ $path }”`): a name's quotes
 are its language's (ADR-139, 5), so the argument is a `Name`, `Named`
 words, a `Folder` or a `Path`, or is said unquoted. Those the English quoted when this check
-came are listed in `tools/words/quoted`, for a sweep to take out: the list
-never grows, and a line there that quotes nothing any more is refused too.
+came were listed in `tools/words/quoted`, and a sweep took them all out:
+the list never grows, and a line there that quotes nothing any more is
+refused too.
 Messages of tests (in a tests.rs or a tests/ folder, or whose id begins
 with `test_`) are not a crate's. Also refused: a plugin whose
 `enabled_by_default` answers anything but a literal, and a record naming a

@@ -1,5 +1,7 @@
 # The arguments an English quoted itself when `just words --check` came to
 # refuse it (ADR-139, 5; tools/words/extract.py): a name's quotes are its
-# language's, so each is given as a `Name` (a `Folder`, a `Path`) or said
-# unquoted, and its line taken out. Each line: a crate's folder, a
-# message's id, the argument. The list only shrinks: nothing is added.
+# language's, so each is given as a `Name` (`Named` words, a `Folder`, a
+# `Path`) or said unquoted, and its line taken out. Each line: a crate's
+# folder, a message's id, the argument. Empty since the sweep that took
+# them all out (2026-11-19): the check refuses every English that quotes
+# an argument itself. The list only shrinks: nothing is added.
