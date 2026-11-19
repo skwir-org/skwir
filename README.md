@@ -217,6 +217,23 @@ programs.skwir = {
 `mutableSettings` needs a recent Home Manager, one with mutable settings. On
 NixOS, the AppImage runs through `appimage-run`.
 
+The module can also make skwir other programs' Open and Save dialogs, and what
+opens folders for them, through Home Manager's own `xdg.portal` and
+`xdg.mimeApps`, which they need enabled. Name the desktops whose portal file
+you configure (a desktop's file is read before `portals.conf`), and remove a
+file chooser you named there yourself. Settings' "Open and save dialogs" then
+shows the choice as kept by Home Manager. Both apply at the next login:
+
+```nix
+programs.skwir = {
+  fileChooser = {
+    enable = true;
+    desktops = [ "hyprland" ];  # as in xdg.portal.config.hyprland
+  };
+  defaultFileManager = true;
+};
+```
+
 ### From source
 
 With Rust 1.97 or later and the libraries `flake.nix` lists (the Nix flake has

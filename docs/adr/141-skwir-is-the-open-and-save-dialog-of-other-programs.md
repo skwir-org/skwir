@@ -188,7 +188,13 @@ the Settings row (eaac889f), the packages; amended as built (decisions
 
 - Every program that asks through the portal gets skwir's places,
   search, tags, previews and shelf to choose with, chosen once in
-  Settings.
+  Settings, or in Home Manager: `programs.skwir.fileChooser` names skwir
+  in `xdg.portal.config` for the desktops given and links its `.portal`
+  and bus service files under `$XDG_DATA_HOME` (where the portal and the
+  bus look whatever profile they read), and
+  `programs.skwir.defaultFileManager` puts skwir first for folders in
+  `xdg.mimeApps` (ADR-140); the row then shows the choice as kept by
+  Home Manager (decision 10). Asked by the user, 2026-11-19.
 - A program that draws its own toolkit's dialog (GTK outside a sandbox,
   Qt without the portal theme) still does: the portal is the reach.
 - The portal reads its configuration once: a choice applies at its next

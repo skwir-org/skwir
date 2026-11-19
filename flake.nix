@@ -365,11 +365,13 @@
       # the merge of mutable settings run on a file as skwir writes it
       # (what is declared wins, the rest stays, a second activation changes
       # nothing, a new file is its owner's alone); read-only settings linked
-      # as the merger writes them; and the settings checked by the skwir
-      # installed, here one that refuses "sepia", failing the build.
+      # as the merger writes them; the settings checked by the skwir
+      # installed, here one that refuses "sepia", failing the build; and
+      # skwir as other programs' file chooser and default for folders
+      # (ADR-140, ADR-141), beside what the user declares there.
       checks = lib.optionalAttrs stdenv.hostPlatform.isLinux {
         home-manager = let
-          home = skwir:
+          homeWith = extra: skwir:
             (home-manager.lib.homeManagerConfiguration {
               inherit pkgs;
               modules = [
@@ -382,9 +384,40 @@
                   };
                   programs.skwir = {enable = true;} // skwir;
                 }
+                extra
               ];
             })
             .config;
+          home = homeWith {};
+          # A skwir standing in, holding what the packages install for the
+          # portal (ADR-141).
+          portalOnly = pkgs.runCommand "skwir-portal-files" {} ''
+            install -Dm644 ${./tools/package/linux/skwir.portal} $out/share/xdg-desktop-portal/portals/skwir.portal
+            install -Dm644 ${./tools/package/linux/org.freedesktop.impl.portal.desktop.skwir.service} $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service
+          '';
+          # Skwir the file chooser for Hyprland beside another portal named
+          # for the rest, and the default for folders before another.
+          desktop =
+            homeWith {
+              xdg.portal = {
+                enable = true;
+                extraPortals = [pkgs.xdg-desktop-portal-gtk];
+                config.hyprland.default = ["hyprland" "gtk"];
+              };
+              xdg.mimeApps = {
+                enable = true;
+                defaultApplications."inode/directory" = ["org.example.Files.desktop"];
+              };
+            } {
+              package = portalOnly;
+              fileChooser = {
+                enable = true;
+                desktops = ["hyprland"];
+              };
+              defaultFileManager = true;
+            };
+          portalsConf = desktop.xdg.configFile."xdg-desktop-portal/hyprland-portals.conf".text;
+          mimeApps = desktop.xdg.configFile."mimeapps.list".source;
           declared = {
             core.startup = "last";
             ui.theme = "dark";
@@ -458,6 +491,16 @@
             # Checked by the skwir installed: what it refuses fails the build.
             [ "$(jaq --from toml -c .ui.theme ${checked "light"})" = '"light"' ]
             grep -q "choose one of auto, light, dark" ${refused}/testBuildFailure.log
+
+            # Other programs' dialogs and folders (ADR-140, ADR-141): skwir
+            # named for the file chooser in the desktop's file, beside the
+            # rest declared; its back end linked where the portal and the
+            # bus look; skwir first for folders.
+            grep -qx 'org.freedesktop.impl.portal.FileChooser=skwir' ${pkgs.writeText "portals.conf" portalsConf}
+            grep -qx 'default=hyprland;gtk' ${pkgs.writeText "portals.conf" portalsConf}
+            [ -s ${desktop.xdg.dataFile."xdg-desktop-portal/portals/skwir.portal".source} ]
+            grep -q '^Exec=.*skwir --portal' ${desktop.xdg.dataFile."dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service".source}
+            grep -qx 'inode/directory=org.skwir.skwir.desktop;org.example.Files.desktop' ${mimeApps}
             touch $out
           '';
       };

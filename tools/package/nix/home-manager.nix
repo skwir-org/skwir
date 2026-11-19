@@ -5,7 +5,10 @@
 # activation. skwir keeps the window's state, and what the user makes in it
 # (saved searches, pinned tags), in files of their own, so a read-only
 # settings file costs only the dialog's changes, which it says are not
-# kept; it takes in a change of the file while it runs.
+# kept; it takes in a change of the file while it runs. On request, skwir
+# is other programs' Open and Save dialogs (`fileChooser`, ADR-141) and
+# what opens folders for them (`defaultFileManager`, ADR-140), through
+# Home Manager's own `xdg.portal` and `xdg.mimeApps`.
 self: {
   config,
   lib,
@@ -102,6 +105,47 @@ in {
         the file, where skwir reads what it can of it.
       '';
     };
+
+    fileChooser = {
+      enable = lib.mkEnableOption ''
+        skwir as other programs' Open and Save dialogs, those that ask the
+        desktop portal for one (ADR-141): the portal's configuration
+        ({option}`xdg.portal.config`) names skwir's back end for the file
+        chooser, and its `.portal` file and the session bus's service file
+        for it are linked under {file}`$XDG_DATA_HOME`, where the portal and
+        the bus look whatever profile they read. It applies when the portal
+        starts again, the next login. Needs {option}`xdg.portal.enable`; a
+        file chooser already named there for the same desktop is a
+        conflict to remove. skwir's Settings then show the choice as kept
+        by Home Manager'';
+
+      desktops = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = ["common"];
+        example = ["hyprland"];
+        description = ''
+          The desktops whose portal configuration names skwir for the file
+          chooser: `xdg.portal.config.<desktop>` (`common` is
+          {file}`portals.conf`). The portal reads a desktop's own file
+          ({file}`hyprland-portals.conf`) before {file}`portals.conf` in one
+          folder, so where {option}`xdg.portal.config` has a desktop's
+          entry, name that desktop here.
+        '';
+      };
+    };
+
+    defaultFileManager = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      example = true;
+      description = ''
+        Whether skwir opens folders for every program: the desktop's
+        default for `inode/directory` in {option}`xdg.mimeApps`, first
+        before any other declared. skwir then also shows the files other
+        programs show in their folder (their Show in Folder, ADR-140).
+        Needs {option}`xdg.mimeApps.enable`.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -110,7 +154,33 @@ in {
         assertion = !(declared && cfg.mutableSettings) || merges;
         message = "programs.skwir.mutableSettings needs a Home Manager with lib.hm.generators.mkImpureConfigMerger (its mutable settings), newer than this one.";
       }
+      {
+        assertion = !cfg.fileChooser.enable || (cfg.package != null && config.xdg.portal.enable);
+        message = "programs.skwir.fileChooser.enable needs skwir installed (programs.skwir.package) and the desktop portal (xdg.portal.enable).";
+      }
+      {
+        assertion = !cfg.defaultFileManager || config.xdg.mimeApps.enable;
+        message = "programs.skwir.defaultFileManager needs xdg.mimeApps.enable: it is the desktop's default for folders there.";
+      }
     ];
+
+    # Other programs' Open and Save dialogs (ADR-141): skwir named for the
+    # file chooser, its back end found where the portal and the bus look.
+    xdg.portal = lib.mkIf cfg.fileChooser.enable {
+      extraPortals = lib.optional (cfg.package != null) cfg.package;
+      config = lib.genAttrs cfg.fileChooser.desktops (_: {
+        "org.freedesktop.impl.portal.FileChooser" = "skwir";
+      });
+    };
+    xdg.dataFile = lib.mkIf (cfg.fileChooser.enable && cfg.package != null) {
+      "xdg-desktop-portal/portals/skwir.portal".source = "${cfg.package}/share/xdg-desktop-portal/portals/skwir.portal";
+      "dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service".source = "${cfg.package}/share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service";
+    };
+
+    # What opens folders for every program (ADR-140), skwir first.
+    xdg.mimeApps.defaultApplications = lib.mkIf cfg.defaultFileManager {
+      "inode/directory" = lib.mkBefore ["org.skwir.skwir.desktop"];
+    };
 
     home.packages = lib.mkIf (cfg.package != null) [cfg.package];
 
