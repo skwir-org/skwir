@@ -1,14 +1,25 @@
 # Vendored jpeg-decoder 0.3.2
 
 The `jpeg-decoder` 0.3.2 crate as published on crates.io (MIT OR
-Apache-2.0, `LICENSE-MIT`, `LICENSE-APACHE`), plus Skwir's patch, wired in
-through `[patch.crates-io]` in the root `Cargo.toml`. Remove both once the
-patch is upstream (image-rs/jpeg-decoder).
+Apache-2.0, `LICENSE-MIT`, `LICENSE-APACHE`), plus Skwir's patches, wired
+in through `[patch.crates-io]` in the root `Cargo.toml`.
 
 Skwir decodes a JPEG with it only where it asks for a smaller scale (a
 thumbnail, a preview smaller than the picture:
 `crates/platform/src/picture.rs`). Every other JPEG is `image`'s, through
 zune-jpeg.
+
+The crate is in maintenance mode: image-rs moves to zune-jpeg, and takes
+changes here only for lossless JPEGs, so the patches are likely to stay
+here. It is kept because zune-jpeg decodes a JPEG only at its full size:
+with zune-jpeg 0.5.15, the thumbnail of a synthetic 5464×8192 photo of
+3.1 MB took 173–185 ms (the whole decode, then a resize from 45
+megapixels), against 60–64 ms here, and held 134 MB of pixels against
+2 MB; a progressive one 353–369 ms against 55–65. Its `jpeg_set_max_scans`
+is a limit that fails the decode, not a stop. 0.5.16 (release candidates
+in 2026) adds an incremental mode and previews of a progressive file,
+still at full size. Remove this copy, and decode every JPEG through
+zune-jpeg, once it decodes at a reduced scale.
 
 Left out:
 - the registry's `.cargo-ok`;
