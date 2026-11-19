@@ -102,7 +102,10 @@ sentence, never a sentence assembled from pieces.
   `Words::name_alone` (a tab's, a crumb's, a title's), or, where it is
   drawn as a string, `words::shown_controls`: its controls shown in every
   saying, isolated where the window draws it, nothing else added (no
-  quotes, no case); as data, the name as it is. The overrides, embeddings and
+  quotes, no case); as data, the name as it is. Words that are a name of
+  someone else's making (a plugin from outside's title, as its manifest
+  or its catalogs write it) are `Words::shown`: said so too, alone or in
+  a sentence. The overrides, embeddings and
   isolates (U+202A to U+202E, U+2066 to U+2069) are each a muted tag
   naming it; the marks (U+200E, U+200F, U+061C) are left as they are.
   What is drawn never changes the name: a search, a copy and an

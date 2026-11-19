@@ -223,6 +223,41 @@ fn a_plugin_from_outside_that_is_off_is_described_in_the_reader_s_language() {
     assert_eq!(title.say_plain(), "Compte de mots (essai)");
 }
 
+/// A plugin's title is a name of its author's making, written in its
+/// manifest or translated in its catalogs: its bidirectional controls are
+/// shown, never obeyed, and it is isolated where the window draws it, alone
+/// or in a sentence (ADR-139, 5).
+#[test]
+fn a_plugin_s_title_shows_its_controls() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let tmp = common::home_tempdir();
+    let plugins = tmp.path().join("plugins");
+    plugin(
+        &plugins,
+        "spoof",
+        "id = \"spoof\"\ntitle = \"Hex\u{202e}tegdiw\"\napi = 1\n[run]\nmodule = \"x.wasm\"\n",
+        &[],
+    );
+    plugin(
+        &plugins,
+        "word-count",
+        &template(),
+        &[
+            ("en", template_english().as_bytes()),
+            ("fr", "plugin-title = Mots\u{202e}stom\n".as_bytes()),
+        ],
+    );
+    let app = app(&tmp.path().join("state"), &plugins);
+    skwir_core::locale::set_chosen(Some("fr".into()));
+    let (written, _) = listed(&app, "spoof");
+    assert_eq!(written.say(), format!("{FSI}Hex⟨RLO⟩tegdiw{PDI}"));
+    assert_eq!(written.say_plain(), "Hex⟨RLO⟩tegdiw");
+    let (translated, _) = listed(&app, "word-count");
+    assert_eq!(translated.say(), format!("{FSI}Mots⟨RLO⟩stom{PDI}"));
+    assert_eq!(translated.english(), "Word count", "an agent's");
+}
+
 #[test]
 fn a_catalog_past_its_bounds_is_left_out() {
     let tmp = common::home_tempdir();

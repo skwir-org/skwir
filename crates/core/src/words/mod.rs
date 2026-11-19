@@ -73,8 +73,9 @@ pub struct Words(Inner);
 enum Inner {
     Message(&'static Message, Arc<[(&'static str, Arg)]>),
     Written(Cow<'static, str>),
-    /// A name drawn on its own (`Words::name_alone`).
-    Name(String),
+    /// Words that are a name, of someone else's making (`Words::shown`,
+    /// `Words::name_alone`).
+    Shown(Box<Words>),
     /// An error, each link of its chain said in the reader's language
     /// where it is words (`Words::of_error`).
     Error(Failure),
@@ -532,7 +533,21 @@ impl Words {
     /// copy or an operation would see. In a sentence (as `Arg::Words`), it
     /// is isolated once, as a `Folder` is.
     pub fn name_alone(name: impl Into<String>) -> Self {
-        Words(Inner::Name(name.into()))
+        Words::shown(Words::as_written(name.into()))
+    }
+
+    /// `words` that are a name of someone else's making, whose text Skwir
+    /// does not choose: a plugin from outside's title, as its manifest or
+    /// its catalogs write it (ADR-139, 5 and 14). Said as a name alone is
+    /// ([`Words::name_alone`]): their bidirectional controls shown as tags,
+    /// never obeyed, isolated where the window draws them, never cased; in
+    /// a sentence, isolated once, so no control of theirs reorders the words
+    /// around them. As data, the words they are, said so again.
+    pub fn shown(words: Words) -> Self {
+        match words.0 {
+            Inner::Shown(_) => words,
+            _ => Words(Inner::Shown(Box::new(words))),
+        }
     }
 
     /// Message `id` of `domain`, known as the program runs rather than
@@ -587,8 +602,7 @@ impl Words {
     pub fn is_empty(&self) -> bool {
         match &self.0 {
             Inner::Written(text) => text.is_empty(),
-            Inner::Name(name) => name.is_empty(),
-            Inner::Describing(words) => words.is_empty(),
+            Inner::Shown(words) | Inner::Describing(words) => words.is_empty(),
             _ => false,
         }
     }
@@ -601,7 +615,7 @@ impl Words {
             Inner::Message(message, _) => Some((message.domain, message.id)),
             Inner::Heading(words) | Inner::Describing(words) => words.said_message(),
             Inner::Carried(carried) => Some((&carried.domain, &carried.id)),
-            Inner::Written(_) | Inner::Name(_) | Inner::Error(_) => None,
+            Inner::Written(_) | Inner::Shown(_) | Inner::Error(_) => None,
         }
     }
 
@@ -610,7 +624,7 @@ impl Words {
         match &self.0 {
             Inner::Message(message, _) => Some(message),
             Inner::Heading(words) | Inner::Describing(words) => words.message_of(),
-            Inner::Written(_) | Inner::Name(_) | Inner::Error(_) | Inner::Carried(_) => None,
+            Inner::Written(_) | Inner::Shown(_) | Inner::Error(_) | Inner::Carried(_) => None,
         }
     }
 
@@ -671,7 +685,7 @@ impl Words {
     pub fn heading(&self) -> Words {
         match &self.0 {
             // A name is no sentence: never cased.
-            Inner::Name(_) => self.clone(),
+            Inner::Shown(_) => self.clone(),
             _ => Words(Inner::Heading(Box::new(self.clone()))),
         }
     }
@@ -816,7 +830,16 @@ impl Words {
                 return out.push_str(&casing::heading(language, text));
             }
             Inner::Written(text) => return out.push_str(text),
-            Inner::Name(name) => return isolated(&shown_controls(name), out),
+            Inner::Shown(words) => {
+                // Said without the marks of what they hold, which their
+                // controls shown would show too: isolated once, whole.
+                let said = formats::unmarked(|| {
+                    let mut said = String::new();
+                    words.say_found(&mut said, languages, find, false);
+                    said
+                });
+                return isolated(&shown_controls(&said), out);
+            }
             Inner::Error(failure) if heading => {
                 let mut said = String::new();
                 say_error(failure, languages, &mut said);
@@ -1432,6 +1455,18 @@ mod formats {
     pub fn isolation() -> Isolation {
         NOW.with_borrow(|now| now.as_ref().map_or(Isolation::None, |f| f.isolation))
     }
+
+    /// `f`'s answer, words said within it as they are now but marking no
+    /// name (`Isolation::None`).
+    pub fn unmarked<T>(f: impl FnOnce() -> T) -> T {
+        match NOW.with_borrow(Clone::clone) {
+            Some(mut formats) => {
+                formats.isolation = Isolation::None;
+                within(formats, f)
+            }
+            None => f(),
+        }
+    }
 }
 
 /// Dates and times as each locale writes them (ICU4X, CLDR's data), in the
@@ -1851,7 +1886,7 @@ pub mod data {
             // nothing that comes back from data is said from the catalogs of
             // a plugin that is off.
             Inner::Describing(inner) => of(inner),
-            Inner::Name(name) => json!({ "alone": name }),
+            Inner::Shown(inner) => json!({ "alone": of(inner) }),
             Inner::Written(_) | Inner::Error(_) => Value::String(words.english()),
         }
     }
@@ -1959,9 +1994,9 @@ pub mod data {
         Heading {
             heading: Box<Data>,
         },
-        /// A name drawn alone.
+        /// Words that are a name (`Words::shown`): a name drawn alone.
         Alone {
-            alone: String,
+            alone: Box<Data>,
         },
         Message {
             domain: String,
@@ -2087,7 +2122,7 @@ pub mod data {
             match self {
                 Data::Text(text) => Words::as_written(text),
                 Data::Heading { heading } => heading.into_words().heading(),
-                Data::Alone { alone } => Words::name_alone(alone),
+                Data::Alone { alone } => Words::shown(alone.into_words()),
                 Data::Message {
                     domain,
                     id,

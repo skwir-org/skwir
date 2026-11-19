@@ -591,6 +591,34 @@ fn a_name_alone_shows_its_controls_and_nothing_else() {
     assert_eq!(in_sentence.english(), "Opened hello_⟨RLO⟩gnp.js");
 }
 
+/// Words of someone else's making that are a name (a plugin's title):
+/// said as a name alone, in a sentence isolated once, as a whole, the
+/// marks of what they hold never shown as tags.
+#[test]
+fn words_that_are_a_name_show_their_controls() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let title = Words::shown(Words::as_written("Hex\u{202e}"));
+    let off = crate::words!(
+        test_shown_off = "The plugin { $plugin } was turned off",
+        plugin = title.clone()
+    );
+    assert_eq!(
+        off.say(),
+        format!("The plugin {FSI}Hex⟨RLO⟩{PDI} was turned off")
+    );
+    assert_eq!(off.english(), "The plugin Hex⟨RLO⟩ was turned off");
+    // A message holding a name: isolated whole, the name's marks not shown.
+    let named = Words::shown(crate::words!(
+        test_shown_named = "Viewer of { $name }",
+        name = Name("a.txt".into())
+    ));
+    assert_eq!(named.say(), format!("{FSI}Viewer of “a.txt”{PDI}"));
+    assert_eq!(Words::shown(named.clone()), named, "shown once");
+    let back: Words = serde_json::from_value(named.to_data()).unwrap();
+    assert_eq!(back.say(), named.say());
+}
+
 #[test]
 fn a_folder_is_named_bare_its_controls_shown() {
     use super::Folder;

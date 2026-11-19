@@ -91,7 +91,9 @@ impl External {
             description: catalogs.said(&manifest.description),
             runner: Arc::new(Runner {
                 id,
-                title: catalogs.said(&manifest.title),
+                // A name of its author's making: its controls shown, isolated
+                // wherever it is drawn, in a sentence or alone (ADR-139, 5).
+                title: skwir_core::words::Words::shown(catalogs.said(&manifest.title)),
                 api: manifest.api,
                 catalogs,
                 kind,
