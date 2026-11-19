@@ -22,8 +22,9 @@ use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use skwir_core::words;
 
-/// A request takes at most this long, from connecting to the last byte,
-/// unless the client says otherwise (`Http::limited`).
+/// A request takes at most this long, from its call to the last byte (the
+/// wait for another request's connection to the server and a second try
+/// included), unless the client says otherwise (`Http::limited`).
 const DEADLINE: Duration = Duration::from_secs(15);
 /// An answer larger than this is refused, unless the client says
 /// otherwise: a tile larger is not a tile.
@@ -101,11 +102,22 @@ impl Http {
     }
 
     /// GET `url` with `headers`, which replace skwir's User-Agent when
-    /// they name one. A connection that fails is tried once more: a server
-    /// closes idle ones, and the first request on one it closed fails.
-    /// The first request to a server not connected to goes alone
-    /// (`servers`).
+    /// they name one, within the client's deadline. A connection that
+    /// fails is tried once more: a server closes idle ones, and the first
+    /// request on one it closed fails. The first request to a server not
+    /// connected to goes alone (`servers`).
     pub async fn get(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
+        tokio::time::timeout(self.deadline, self.get_gated(url, headers))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(words!(
+                    http_timed_out = "the server did not answer in time",
+                    note = "Why a request failed: the server it was sent to was waited for long enough."
+                ))
+            })?
+    }
+
+    async fn get_gated(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
         let uri: hyper::Uri = url.parse().context(words!(
             http_not_address = "not an address",
             note = "Why a request was not made: what it was to be sent to is no web address."
@@ -170,35 +182,26 @@ impl Http {
                 HeaderValue::from_str(value)?,
             );
         }
-        tokio::time::timeout(self.deadline, async {
-            let response = self.client.request(request).await?;
-            let (parts, body) = response.into_parts();
-            let body = Limited::new(body, self.max_body)
-                .collect()
-                .await
-                .map_err(|error| {
-                    anyhow::anyhow!(words!(
-                        http_unread = "the answer could not be read: { $error }",
-                        error = error.to_string(),
-                        note = "Why a request failed: what the server sent could not be read whole. error: what the network library said, in English."
-                    ))
-                })?
-                .to_bytes()
-                .to_vec();
-            Ok(Answer {
-                status: parts.status.as_u16(),
-                headers: parts.headers,
-                body,
-                version: parts.version,
-            })
+        let response = self.client.request(request).await?;
+        let (parts, body) = response.into_parts();
+        let body = Limited::new(body, self.max_body)
+            .collect()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(words!(
+                    http_unread = "the answer could not be read: { $error }",
+                    error = error.to_string(),
+                    note = "Why a request failed: what the server sent could not be read whole. error: what the network library said, in English."
+                ))
+            })?
+            .to_bytes()
+            .to_vec();
+        Ok(Answer {
+            status: parts.status.as_u16(),
+            headers: parts.headers,
+            body,
+            version: parts.version,
         })
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!(words!(
-                http_timed_out = "the server did not answer in time",
-                note = "Why a request failed: the server it was sent to was waited for long enough."
-            ))
-        })?
     }
 }
 
@@ -343,6 +346,23 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(impatient.get(&format!("{slow}/a"), &[]).await.is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    /// The deadline is the whole request's: the wait for another
+    /// request's connection to the same server counts.
+    #[tokio::test]
+    async fn the_deadline_counts_the_wait_for_another_request() {
+        let (address, _, _) = server(Duration::from_millis(800)).await;
+        let http = Arc::new(client().limited(Duration::from_millis(1200), 64));
+        let first = {
+            let (http, url) = (Arc::clone(&http), format!("{address}/1"));
+            tokio::spawn(async move { http.get(&url, &[]).await })
+        };
+        // The first goes alone, the second waits for its connection.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let second = http.get(&format!("{address}/2"), &[]).await;
+        assert!(first.await.unwrap().is_ok());
+        assert!(second.is_err(), "800 ms waited, then 800 more: past 1200");
     }
 
     #[tokio::test]

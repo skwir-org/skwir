@@ -71,8 +71,10 @@ impl Answer {
 }
 
 /// Ask `site` for the file, conditionally on `etag`, on a runtime of the
-/// request's own: blocks for `DEADLINE` at most. Call it on a thread of
-/// its own.
+/// request's own: blocks for `DEADLINE` at most, the request whole
+/// (`Http::get`), and the runtime is let go without waiting for what it
+/// still runs (a name the system is still asked for). Call it on a thread
+/// of its own.
 pub fn fetch(site: &str, etag: Option<&str>) -> anyhow::Result<Fetched> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -83,7 +85,9 @@ pub fn fetch(site: &str, etag: Option<&str>) -> anyhow::Result<Fetched> {
         .into_iter()
         .collect();
     let url = format!("{}{PATH}", site.trim_end_matches('/'));
-    let answer = runtime.block_on(http.get(&url, &headers))?;
+    let answer = runtime.block_on(http.get(&url, &headers));
+    runtime.shutdown_background();
+    let answer = answer?;
     match answer.status {
         304 => Ok(Fetched::Unchanged),
         200 => Ok(Fetched::Read {
