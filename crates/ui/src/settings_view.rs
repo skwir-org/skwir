@@ -368,9 +368,6 @@ fn plugin_found(plugin: &PluginInfo, words: &collate::Words) -> bool {
     ])
 }
 
-/// A setting's whole description, said: its first sentence, then what
-/// follows as a paragraph of its own (the two messages placed apart, never
-/// joined into one sentence).
 /// A kept choice's answer (`ChoiceSource`), once its owner gave one.
 fn kept_answer(value: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
     match serde_json::from_str::<serde_json::Value>(value) {
@@ -394,6 +391,9 @@ fn kept_detail(choice: &serde_json::Map<String, serde_json::Value>) -> Option<St
         .map(str::to_owned)
 }
 
+/// A setting's whole description, said: its first sentence, then what
+/// follows as a paragraph of its own (the two messages placed apart, never
+/// joined into one sentence).
 fn whole_description(spec: &SettingSpec) -> String {
     let first = spec.description.say();
     match &spec.more {
