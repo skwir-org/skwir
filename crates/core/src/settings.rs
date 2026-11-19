@@ -2648,6 +2648,9 @@ pub struct Settings {
     /// Kept even after the startup warning is consumed; unlike an explicit
     /// in-memory instance, headless preference changes cannot claim a save.
     saving_unavailable: Option<Words>,
+    /// Owners whose declarations are refused, the registries' (`gated`):
+    /// a plugin turned off declares nothing, from a worker of it too.
+    gate: std::sync::Arc<crate::registry::OwnerGate>,
 }
 
 /// A TOML error in a few words, with its line: "expected `=` on line 3".
@@ -2715,6 +2718,7 @@ impl Settings {
             revision: std::sync::atomic::AtomicU64::new(0),
             problem: Mutex::new(None),
             saving_unavailable: None,
+            gate: std::sync::Arc::default(),
         }
     }
 
@@ -2741,7 +2745,17 @@ impl Settings {
             revision: std::sync::atomic::AtomicU64::new(0),
             saving_unavailable: (!saves).then(|| problem.clone()).flatten(),
             problem: Mutex::new(problem),
+            gate: std::sync::Arc::default(),
         }
+    }
+
+    /// Declarations refused as `gate` refuses contributions: the app's, the
+    /// registries' gate (`Registry::gate`), which the plugin host closes
+    /// before it withdraws a plugin turned off.
+    #[must_use]
+    pub fn gated(mut self, gate: std::sync::Arc<crate::registry::OwnerGate>) -> Self {
+        self.gate = gate;
+        self
     }
 
     /// The table in the file at `path` (empty when there is none), and
@@ -2939,8 +2953,15 @@ impl Settings {
         !self.followed.lock().is_empty()
     }
 
-    /// Declare a setting. Registered by plugins and the core.
+    /// Declare a setting. Registered by plugins and the core. Refused while
+    /// its owner (`SettingSpec::owner`) is off (`gated`): a worker of a
+    /// plugin turned off that declares late (once it found what it needs)
+    /// leaves no setting of a plugin that is off. The gate is read again
+    /// under the schema's lock, which the withdrawal reads after closing it.
     pub fn declare(&self, mut spec: SettingSpec) {
+        if !self.gate.is_open(spec.owner()) {
+            return;
+        }
         if spec.store != Store::Settings {
             self.kept.write().insert(spec.key.clone(), spec.store);
             self.read_apart(&spec.key, spec.store);
@@ -2950,7 +2971,13 @@ impl Settings {
             let next = declared.len() as u64;
             spec.order = *declared.entry(spec.key.clone()).or_insert(next);
         }
-        self.schema.write().insert(spec.key.clone(), spec);
+        {
+            let mut schema = self.schema.write();
+            if !self.gate.is_open(spec.owner()) {
+                return;
+            }
+            schema.insert(spec.key.clone(), spec);
+        }
         self.bump();
     }
 
@@ -3879,6 +3906,38 @@ mod stored_tests {
         assert_eq!(settings.stored::<bool>("a.on"), Some(false));
         settings.unset("a.on");
         assert_eq!(settings.stored::<bool>("a.on"), None);
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::SettingSpec;
+    use crate::words::Words;
+
+    /// A plugin turned off declares nothing: a declaration made while it is
+    /// off (a worker of it, late) is refused, its other keys and the core's
+    /// declared still; turned on again, it declares.
+    #[test]
+    fn a_plugin_turned_off_declares_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let toggle = |key: &str| {
+            SettingSpec::toggle(key, Words::as_written("On".to_owned()), "Does.", false)
+        };
+        app.registry.set_owner_enabled("late", false);
+        app.settings.declare(toggle("late.tell"));
+        assert!(
+            app.settings.spec("late.tell").is_none(),
+            "refused while off"
+        );
+        app.settings.declare(toggle("other.tell"));
+        assert!(app.settings.spec("other.tell").is_some());
+        app.registry.set_owner_enabled("late", true);
+        app.settings.declare(toggle("late.tell"));
+        assert!(
+            app.settings.spec("late.tell").is_some(),
+            "on again, declared"
+        );
     }
 }
 

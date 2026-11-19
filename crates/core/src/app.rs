@@ -525,6 +525,8 @@ impl App {
         // plugin's worker publishing late is refused everywhere.
         let registry = Registry::default();
         let gate = registry.gate();
+        // Declarations refused too: a plugin turned off declares nothing.
+        let settings = settings.gated(Arc::clone(&gate));
         let app = Arc::new_cyclic(|weak| App {
             weak: weak.clone(),
             filter_rollover: parking_lot::Mutex::new(None),

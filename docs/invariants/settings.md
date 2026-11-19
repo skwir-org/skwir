@@ -458,6 +458,11 @@ The key is the owner's; the page is the subject's (ADR-072).
 - Lifecycle callbacks are serialized and must not enable or disable
   plugins recursively. Registry and settings locks are released before
   invoking them. Never invoke them from a UI render.
+- A plugin turned off declares nothing: `Settings::declare` refuses a
+  key whose owner (`SettingSpec::owner`) the registries' gate has closed
+  (`Settings::gated`), so a worker of the plugin that declares late
+  (once it read what the copy is) leaves no setting behind. The host
+  closes the gate before it withdraws.
 
 ## Privacy
 
