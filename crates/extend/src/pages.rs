@@ -135,9 +135,10 @@ impl Pages {
     }
 
     /// Where what the plugin made of this version of the file is kept:
-    /// the file's version, the plugin's, and `what`.
+    /// the file's version, the plugin's, `what`, and the languages it was
+    /// told (`providers::made_key`).
     fn key(&self, what: &serde_json::Value) -> anyhow::Result<Vec<u8>> {
-        skwir_platform::preview::made_key(self.id, &self.held, self.runner.made_by(), what)
+        crate::providers::made_key(&self.runner, self.id, &self.held, what)
     }
 
     fn keep(&self, key: &[u8], value: &[u8]) {

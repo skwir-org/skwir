@@ -348,12 +348,7 @@ impl PreviewProvider for Previews {
         // held is never kept as another version's.
         let held = request.held()?;
         anyhow::ensure!(!private(&self.app, held.path()), private_file());
-        let key = skwir_platform::preview::made_key(
-            request.entry.id,
-            &held,
-            self.runner.made_by(),
-            "converted",
-        )?;
+        let key = made_key(&self.runner, request.entry.id, &held, "converted")?;
         let kept = folder.join(blake3::hash(&key).to_hex().as_str());
         // It made nothing of this version of the file (it shows it a page
         // at a time instead): it is not asked again.
@@ -487,6 +482,24 @@ fn trim(folder: &Path, kept: &Path) {
     }
 }
 
+/// Where what `runner`'s plugin made of `held` (the version read of the
+/// file `id`) is kept: the file's version, the plugin's, `what`, and from
+/// protocol 2 the languages it was told, in the first of which it writes
+/// what it makes (protocol.md): what it made for one language is never
+/// shown in another, and a language chosen again finds what it made then.
+pub(crate) fn made_key(
+    runner: &Runner,
+    id: skwir_core::FileId,
+    held: &skwir_core::preview::Held,
+    what: impl serde::Serialize,
+) -> anyhow::Result<Vec<u8>> {
+    let made_by = runner.made_by();
+    if runner.api < 2 {
+        return skwir_platform::preview::made_key(id, held, made_by, what);
+    }
+    skwir_platform::preview::made_key(id, held, made_by, (what, crate::languages()))
+}
+
 /// What a plugin's preview shows, as the core draws it: what it says to a
 /// person in its words (`catalogs`), what it shows of the file as it is.
 pub(crate) fn inspection_of(
@@ -614,5 +627,76 @@ mod tests {
         let drawn = thumbnails.thumbnail(&req, &cancel).unwrap().unwrap();
         assert_eq!((drawn.width, drawn.height), (1, 1));
         assert_eq!(pixel.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    /// A plugin that converts a file to a page of text, counting its calls.
+    struct Converts(std::sync::atomic::AtomicUsize);
+
+    impl crate::call::Transport for Converts {
+        fn call(
+            &self,
+            method: &str,
+            _: serde_json::Value,
+            _: &Call,
+        ) -> anyhow::Result<serde_json::Value> {
+            assert_eq!(method, method::CONVERT);
+            let n = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(serde_json::to_value(ConvertAnswer {
+                name: "page.txt".into(),
+                data: skwir_plugin_api::base64::encode(format!("made {n}").as_bytes()),
+            })?)
+        }
+        fn stop(&self) {}
+    }
+
+    /// What a plugin on protocol 2 converted a file to is kept by the
+    /// languages it was told, in which it writes (PB-2): the window speaking
+    /// another asks it again, and the first again finds what it made then.
+    /// On protocol 1, told none, what it made serves every language.
+    #[test]
+    fn what_a_plugin_converted_is_kept_by_the_languages_it_was_told() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
+            tmp.path().join("state"),
+        ))
+        .unwrap();
+        let file = tmp.path().join("it's a document.example");
+        std::fs::write(&file, "words").unwrap();
+        let module = tmp.path().join("plugin.wasm");
+        std::fs::write(&module, "module").unwrap();
+        let request = PreviewRequest {
+            entry: skwir_core::op::EntryRef::from_path(&file).unwrap(),
+            mime: Some("application/x-example".into()),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+            text_size: None,
+            fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
+        };
+        let calls = |api: u32| {
+            let converts = Arc::new(Converts(std::sync::atomic::AtomicUsize::new(0)));
+            let mut runner = Runner::answered_by(&module, converts.clone());
+            runner.api = api;
+            let previews = Previews {
+                runner: Arc::new(runner),
+                app: Arc::downgrade(&app),
+                types: types(&["application/x-example".to_owned()]),
+                priority: 0,
+                shows_bytes: false,
+                converted: Some(tmp.path().join(format!("converted-{api}"))),
+                pages: None,
+            };
+            let cancel = CancelToken::new();
+            let mut shown = Vec::new();
+            for language in ["fr", "zh-Hans", "fr"] {
+                skwir_core::locale::set_chosen(Some(language.into()));
+                let made = previews.converted(&request, &cancel).unwrap().unwrap();
+                shown.push(std::fs::read_to_string(made.path).unwrap());
+            }
+            shown
+        };
+        assert_eq!(calls(2), ["made 0", "made 1", "made 0"]);
+        assert_eq!(calls(1), ["made 0", "made 0", "made 0"]);
     }
 }
