@@ -935,6 +935,7 @@ impl CosmicTextSystemState {
                 runs: Vec::new(),
                 len: text.len(),
                 bidi_levels: None,
+                bidi_row: Default::default(),
             };
         };
 
@@ -1011,6 +1012,7 @@ impl CosmicTextSystemState {
             runs,
             len: text.len(),
             bidi_levels: None,
+            bidi_row: Default::default(),
         }
     }
 

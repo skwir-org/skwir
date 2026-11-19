@@ -1,0 +1,239 @@
+0086 rows-reorder-within-paragraphs: A wrapped row holding the end of one paragraph and the start of the next (a separator parts them on one line, U+001C to U+001E) lays each paragraph's stretch of it, and the separator, out on its own in the text's order, as the platform lays the line out unwrapped, never reordered across them; a place at a paragraph's start whose two edges tie stands at that paragraph's
+
+diff --git a/crates/gpui/src/text_system/bidi.rs b/crates/gpui/src/text_system/bidi.rs
+index e10f43e..3b4905c 100644
+--- a/crates/gpui/src/text_system/bidi.rs
++++ b/crates/gpui/src/text_system/bidi.rs
+@@ -33,7 +33,11 @@
+ //! - **Rows.** A line wraps in its text's order; each row is then laid out
+ //!   as it reads (UAX #9's L1 and L2 on the row), its glyphs moved, and the
+ //!   rows follow each other along x as a wrapped line's always have. A long
+-//!   Hebrew paragraph starts on its first row.
++//!   Hebrew paragraph starts on its first row. Where a line holds several
++//!   paragraphs (a separator parts them, U+2029 or U+001C to U+001E), each
++//!   one's stretch of a row, and each separator, is laid out on its own,
++//!   in the text's order, as the platform lays a line's paragraphs out:
++//!   L2 reorders within a paragraph, never across one.
+ //!
+ //! A line all left to right (`LineLayout::bidi_levels` is `None`) keeps none
+ //! of this: its glyphs follow its text, and every answer is worked out as
+@@ -117,6 +121,13 @@ impl BidiLevels {
+             .map_or(0, |(_, level)| *level)
+     }
+ 
++    /// Which of the line's paragraphs byte `index` is in, counted from 0.
++    pub(crate) fn paragraph_of(&self, index: usize) -> usize {
++        self.paragraphs
++            .partition_point(|(start, _)| *start <= index)
++            .saturating_sub(1)
++    }
++
+     /// Whether the line's first paragraph reads right to left: it starts
+     /// at its right end.
+     pub fn is_right_to_left(&self) -> bool {
+@@ -379,7 +390,8 @@ impl LineLayout {
+     /// a row but the first, in `cells`, which are in its text's order): the
+     /// rows one after another along x, each laid out as it reads, its
+     /// trailing spaces at their paragraph's level (UAX #9's L1 and L2 on the
+-    /// row), and where each row after the first starts.
++    /// row, each paragraph's stretch of it on its own: `drawn_by_paragraph`),
++    /// and where each row after the first starts.
+     pub(crate) fn rows_as_read(
+         &self,
+         levels: &BidiLevels,
+@@ -418,7 +430,13 @@ impl LineLayout {
+                 });
+             }
+             let mut new_row = row_start > 0;
+-            for k in drawn_order(&row_cell_levels) {
++            let apart = |k: usize| {
++                levels.paragraph_of(row[k].index) != levels.paragraph_of(row[k - 1].index)
++                    || [row[k - 1].index, row[k].index]
++                        .into_iter()
++                        .any(|index| separates_paragraphs(text, index))
++            };
++            for k in drawn_by_paragraph(&row_cell_levels, apart) {
+                 let cell = &row[k];
+                 for (run, glyph) in cell.glyphs(self) {
+                     let mut glyph = glyph.clone();
+@@ -492,6 +510,39 @@ fn drawn_order(levels: &[u8]) -> SmallVec<[usize; 32]> {
+     order
+ }
+ 
++/// The order cells at `levels` are drawn in on one row, left to right,
++/// each stretch of them `apart` starts (whether cell `k`, never the first,
++/// starts one: a paragraph's start, a paragraph separator, what follows
++/// one) put in order on its own (`drawn_order`), the stretches in their
++/// text's order. UAX #9 reorders within a paragraph, never across one; a
++/// platform lays a line's paragraphs out one after another, each
++/// separator after its paragraph (cosmic-text shapes each, and each
++/// separator, on its own).
++fn drawn_by_paragraph(levels: &[u8], apart: impl Fn(usize) -> bool) -> SmallVec<[usize; 32]> {
++    let mut order = SmallVec::with_capacity(levels.len());
++    let mut start = 0;
++    let ends = (1..levels.len())
++        .filter(|&k| apart(k))
++        .chain([levels.len()]);
++    for end in ends {
++        order.extend(
++            drawn_order(&levels[start..end])
++                .into_iter()
++                .map(|k| start + k),
++        );
++        start = end;
++    }
++    order
++}
++
++/// Whether the character at byte `index` of `text` parts two paragraphs
++/// (UAX #9's class B).
++fn separates_paragraphs(text: &str, index: usize) -> bool {
++    text.get(index..)
++        .and_then(|rest| rest.chars().next())
++        .is_some_and(|c| bidi_class(c) == BidiClass::B)
++}
++
+ /// A stretch of a line's glyphs, from one place in its runs to another,
+ /// drawn from where its first glyph is to `right`, and the bytes of the
+ /// text they draw: one row of a wrapped line, or the whole line.
+@@ -632,7 +683,7 @@ impl BidiRow {
+             .map_or(px(0.), |glyph| glyph.position.x)
+             .min(row.right);
+         let cells = cells(layout, levels, row);
+-        let carets = carets(&cells, row.end, left);
++        let carets = carets(&cells, levels, row.end, left);
+         Self {
+             cells,
+             carets,
+@@ -719,11 +770,12 @@ impl BidiRow {
+ }
+ 
+ /// Where the caret stands at each place of a row whose cells are `cells`
+-/// (left to right) and whose text ends at `end`, in the text's order. Each
+-/// place stands at the start of the cell after it, or the end of the one
+-/// before: where the two differ, at the edge no other place has; where both
+-/// are free or both taken, at the edge of the cell at the lower level.
+-fn carets(cells: &[Cell], end: usize, left: Pixels) -> SmallVec<[Caret; 32]> {
++/// (left to right, at `levels`) and whose text ends at `end`, in the text's
++/// order. Each place stands at the start of the cell after it, or the end of
++/// the one before: where the two differ, at the edge no other place has;
++/// where both are free or both taken, at the edge of the cell at the lower
++/// level, at a paragraph's start that paragraph's.
++fn carets(cells: &[Cell], levels: &BidiLevels, end: usize, left: Pixels) -> SmallVec<[Caret; 32]> {
+     let mut order: SmallVec<[usize; 32]> = (0..cells.len()).collect();
+     order.sort_by_key(|&i| cells[i].index);
+     let mut carets: SmallVec<[Caret; 32]> = SmallVec::with_capacity(order.len() + 1);
+@@ -752,9 +804,12 @@ fn carets(cells: &[Cell], end: usize, left: Pixels) -> SmallVec<[Caret; 32]> {
+         let after = &cells[order[k]];
+         let (trailing, leading) = (before.trailing(), after.leading());
+         let free = |x: Pixels| taken.binary_search(&x).is_err();
++        let starts_paragraph =
++            levels.paragraph_of(before.index) != levels.paragraph_of(after.index);
+         let x = match (free(trailing), free(leading)) {
+             (true, false) => trailing,
+             (false, true) => leading,
++            _ if starts_paragraph => leading,
+             _ if before.level < after.level => trailing,
+             _ => leading,
+         };
+@@ -776,16 +831,31 @@ mod tests {
+     use super::*;
+     use crate::{FontId, GlyphId, LineLayout, ShapedRun, WrappedLineLayout, point};
+ 
++    /// The order a platform draws `chars` in on one line, at `levels`:
++    /// each paragraph's stretch, and each separator, as UAX #9 lays it out,
++    /// one after another in the text's order (cosmic-text shapes each on
++    /// its own).
++    fn platform_order(
++        chars: &[(usize, char)],
++        levels: Option<&BidiLevels>,
++    ) -> SmallVec<[usize; 32]> {
++        let level = |k: usize| levels.map_or(0, |levels| levels.level(chars[k].0));
++        let paragraph = |k: usize| levels.map_or(0, |levels| levels.paragraph_of(chars[k].0));
++        let char_levels: Vec<u8> = (0..chars.len()).map(level).collect();
++        drawn_by_paragraph(&char_levels, |k| {
++            paragraph(k) != paragraph(k - 1)
++                || [k - 1, k]
++                    .into_iter()
++                    .any(|k| bidi_class(chars[k].1) == BidiClass::B)
++        })
++    }
++
+     /// A line of `text` whose characters are each one glyph 10 px wide,
+     /// placed as UAX #9 lays them out on one line: what a platform hands.
+     pub(crate) fn laid_out(text: &str) -> LineLayout {
+         let levels = BidiLevels::of(text);
+         let chars: Vec<(usize, char)> = text.char_indices().collect();
+-        let char_levels: Vec<u8> = chars
+-            .iter()
+-            .map(|(i, _)| levels.as_ref().map_or(0, |levels| levels.level(*i)))
+-            .collect();
+-        let order = drawn_order(&char_levels);
++        let order = platform_order(&chars, levels.as_ref());
+         let glyphs = order
+             .iter()
+             .enumerate()
+@@ -816,12 +886,8 @@ mod tests {
+     fn laid_out_in(text: &str, direction: TextDirection) -> LineLayout {
+         let levels = BidiLevels::of_in(text, direction);
+         let chars: Vec<(usize, char)> = text.char_indices().collect();
+-        let char_levels: Vec<u8> = chars
+-            .iter()
+-            .map(|(i, _)| levels.as_ref().map_or(0, |levels| levels.level(*i)))
+-            .collect();
+         let mut x = px(0.);
+-        let glyphs = drawn_order(&char_levels)
++        let glyphs = platform_order(&chars, levels.as_ref())
+             .iter()
+             .map(|&k| {
+                 let glyph = ShapedGlyph {
+@@ -1312,6 +1378,39 @@ mod tests {
+         }
+     }
+ 
++    /// A line holding two paragraphs (U+001C parts them) lays each out on
++    /// its own, the first on the left, as the platform does: a row that
++    /// holds the end of one and the start of the other keeps them in that
++    /// order when the line wraps, never reversed as one stretch.
++    #[test]
++    fn two_paragraphs_on_one_row_keep_their_order() {
++        // "אבג דה" then "וז חט", ten pixels a character.
++        let text = "\u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}\u{1c}\u{5d5}\u{5d6} \u{5d7}\u{5d8}";
++        assert_eq!(
++            drawn(&laid_out(text), text),
++            "\u{5d4}\u{5d3} \u{5d2}\u{5d1}\u{5d0}\u{1c}\u{5d8}\u{5d7} \u{5d6}\u{5d5}"
++        );
++        // Wrapped at 75: "אבג ", then "דה" with its separator and "וז ",
++        // then "חט".
++        let line = wrapped(text, 75.);
++        let second = text.find('\u{5d3}').unwrap();
++        let third = text.find('\u{5d7}').unwrap();
++        assert_eq!(line.row_starts().as_slice(), [second, third]);
++        assert_eq!(
++            drawn(&line.unwrapped_layout, text),
++            " \u{5d2}\u{5d1}\u{5d0}\u{5d4}\u{5d3}\u{1c} \u{5d6}\u{5d5}\u{5d8}\u{5d7}"
++        );
++        // On the second row, the first paragraph's end at its left, the
++        // second's start at its right, each at its own end.
++        let separator = text.find('\u{1c}').unwrap();
++        let paragraph = text.find('\u{5d5}').unwrap();
++        assert_eq!(at(&line, separator), Some((0., 20.)));
++        assert_eq!(at(&line, paragraph), Some((60., 20.)));
++        // Where the line wraps ends the first row, at its left.
++        assert_eq!(at(&line, second), Some((0., 0.)));
++        assert_eq!(at(&line, second + 2), Some((10., 20.)));
++    }
++
+     #[test]
+     fn a_row_is_drawn_in_the_order_it_reads() {
+         let order = drawn_order(&[0, 0, 1, 1, 1, 0]);
+@@ -1319,5 +1418,9 @@ mod tests {
+         let order = drawn_order(&[1, 1, 2, 2, 1]);
+         assert_eq!(order.as_slice(), [4, 2, 3, 1, 0]);
+         assert!(drawn_order(&[]).is_empty());
++        // Each paragraph's stretch on its own, in the text's order.
++        let order = drawn_by_paragraph(&[1, 1, 1, 1, 1], |k| k == 2 || k == 3);
++        assert_eq!(order.as_slice(), [1, 0, 2, 4, 3]);
++        assert!(drawn_by_paragraph(&[], |_| true).is_empty());
+     }
+ }

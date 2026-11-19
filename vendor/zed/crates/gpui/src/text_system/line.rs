@@ -101,6 +101,7 @@ impl ShapedLine {
             runs: layout.runs.clone(),
             len,
             bidi_levels: layout.bidi_levels.clone(),
+            bidi_row: Default::default(),
         });
         self
     }
@@ -375,6 +376,7 @@ impl<'a> ShapedLineCursor<'a> {
                     .bidi_levels
                     .as_ref()
                     .map(|levels| Arc::new(levels.slice(previous_index..byte_index))),
+                bidi_row: Default::default(),
             }),
             text: SharedString::new(&self.line.text[previous_index..byte_index]),
             decoration_runs: decorations,
@@ -1227,6 +1229,7 @@ mod tests {
                 }],
                 len: text.len(),
                 bidi_levels: None,
+                bidi_row: Default::default(),
             }),
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
@@ -1264,6 +1267,7 @@ mod tests {
             ],
             len: 6,
             bidi_levels: None,
+            bidi_row: Default::default(),
         };
         let wraps = [WrapBoundary {
             run_ix: 1,
@@ -1341,6 +1345,7 @@ mod tests {
             ],
             len: 7,
             bidi_levels: None,
+            bidi_row: Default::default(),
         };
         let wraps = [
             WrapBoundary {
@@ -1717,6 +1722,7 @@ mod tests {
                         }]),
                         wrap_width: Some(px(16.)),
                         min_content: Default::default(),
+                        bidi_rows: Default::default(),
                     }),
                     text: line.text,
                     decoration_runs: line.decoration_runs.into_vec(),
@@ -1877,6 +1883,7 @@ mod tests {
                 ],
                 len: 6,
                 bidi_levels: None,
+                bidi_row: Default::default(),
             }),
             text: "abcdef".into(),
             decoration_runs: SmallVec::new(),
@@ -2114,6 +2121,7 @@ mod tests {
             runs,
             len: layout.len,
             bidi_levels: None,
+            bidi_row: Default::default(),
         });
         line
     }
@@ -2185,6 +2193,7 @@ mod tests {
                 ],
                 len: 10,
                 bidi_levels: None,
+                bidi_row: Default::default(),
             }),
             text: "a😀bcdef".into(),
             decoration_runs: SmallVec::new(),

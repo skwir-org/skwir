@@ -395,6 +395,7 @@ mod tests {
             descent: px(3.0),
             len: index * 2,
             bidi_levels: None,
+            bidi_row: Default::default(),
         }
     }
 

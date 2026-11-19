@@ -6,8 +6,8 @@ mod line_breaks;
 mod line_layout;
 mod line_wrapper;
 
-pub use bidi::BidiLevels;
 pub(crate) use bidi::lay_out_marked;
+pub use bidi::{BidiLevels, KeptBidiRow};
 pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;

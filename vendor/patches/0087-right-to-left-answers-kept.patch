@@ -1,0 +1,745 @@
+0087 right-to-left-answers-kept: A line holding right-to-left text works out where its carets stand, what is drawn where and what a selection covers at the first question asked of it, and keeps them with it (LineLayout::bidi_row, a wrapped line's rows), each answer after that a search; the edges its carets take are sorted once, so a long right-to-left line costs a sort, never a move of every edge taken for each
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 69f28bb..4ba8cb8 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -1837,6 +1837,7 @@ impl NoopTextSystem {
+             runs,
+             len: text.len(),
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         };
+         // Right-to-left text laid out as it reads, as a platform lays it
+         // out, so tests of it see what a window shows.
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index b3560a8..2732f9b 100644
+--- a/crates/gpui/src/text_system.rs
++++ b/crates/gpui/src/text_system.rs
+@@ -6,8 +6,8 @@ mod line_breaks;
+ mod line_layout;
+ mod line_wrapper;
+ 
+-pub use bidi::BidiLevels;
+ pub(crate) use bidi::lay_out_marked;
++pub use bidi::{BidiLevels, KeptBidiRow};
+ pub use font_fallbacks::*;
+ pub use font_features::*;
+ pub use line::*;
+diff --git a/crates/gpui/src/text_system/bidi.rs b/crates/gpui/src/text_system/bidi.rs
+index 3b4905c..0b63b47 100644
+--- a/crates/gpui/src/text_system/bidi.rs
++++ b/crates/gpui/src/text_system/bidi.rs
+@@ -38,6 +38,10 @@
+ //!   one's stretch of a row, and each separator, is laid out on its own,
+ //!   in the text's order, as the platform lays a line's paragraphs out:
+ //!   L2 reorders within a paragraph, never across one.
++//! - **Kept.** These answers are worked out at the first question asked
++//!   of a line (`LineLayout::bidi_row`, a wrapped line's rows with it) and
++//!   kept with it, as the line is kept from frame to frame: a frame's
++//!   carets, hit tests and selections cost a search each, not the line.
+ //!
+ //! A line all left to right (`LineLayout::bidi_levels` is `None`) keeps none
+ //! of this: its glyphs follow its text, and every answer is worked out as
+@@ -48,7 +52,11 @@ use crate::{
+     TextDirection, WrapBoundary, px,
+ };
+ use smallvec::SmallVec;
+-use std::{ops::Range, sync::Arc};
++use std::{
++    collections::BTreeSet,
++    ops::Range,
++    sync::{Arc, OnceLock},
++};
+ use unicode_bidi::{BidiClass, BidiInfo, Level, bidi_class};
+ 
+ /// How a line reads in both directions: the embedding level (UAX #9) of
+@@ -378,6 +386,13 @@ impl LineLayout {
+         }
+     }
+ 
++    /// The line as one row of places and where they are drawn, worked out
++    /// at the first question and kept with it (`bidi_row`).
++    pub(crate) fn kept_bidi_row(&self, levels: &BidiLevels) -> &BidiRow {
++        self.bidi_row
++            .get_or_init(|| BidiRow::new(self, levels, &self.whole_row()))
++    }
++
+     /// The line's cells in its text's order, each as wide as it is drawn:
+     /// what a wrap measures.
+     pub(crate) fn cells_in_text_order(&self, levels: &BidiLevels) -> SmallVec<[Cell; 32]> {
+@@ -456,6 +471,7 @@ impl LineLayout {
+             runs,
+             len: self.len,
+             bidi_levels: Some(Arc::new(row_levels)),
++            bidi_row: Default::default(),
+         };
+         (layout, boundaries)
+     }
+@@ -663,17 +679,30 @@ struct Caret {
+ }
+ 
+ /// A row of a line holding right-to-left text, as places in its text and
+-/// where they are drawn.
++/// where they are drawn: worked out once and kept with its line
++/// (`KeptBidiRow`, `WrappedLineLayout`'s rows), so each answer is a search.
++#[derive(Debug)]
+ pub(crate) struct BidiRow {
+     /// Its cells, left to right.
+-    cells: SmallVec<[Cell; 32]>,
++    cells: Box<[Cell]>,
+     /// Where a caret stands at each place, in the text's order: each
+     /// cell's start, then the row's end.
+-    carets: SmallVec<[Caret; 32]>,
++    carets: Box<[Caret]>,
++    /// The carets by where they stand, left to right, and in the text's
++    /// order where several stand at one edge: indices into `carets`.
++    by_x: Box<[usize]>,
+     left: Pixels,
+     right: Pixels,
+ }
+ 
++/// A line's row as places in its text and where they are drawn, where the
++/// line holds right-to-left text: worked out at the first question asked of
++/// the line and kept with it (`LineLayout::bidi_row`). A line is made with
++/// none (`Default`); one whose glyphs, width or length change after a
++/// question was asked of it is made anew, as gpui's are.
++#[derive(Debug, Default)]
++pub struct KeptBidiRow(OnceLock<BidiRow>);
++
+ impl BidiRow {
+     pub(crate) fn new(layout: &LineLayout, levels: &BidiLevels, row: &Row) -> Self {
+         let left = layout
+@@ -684,14 +713,25 @@ impl BidiRow {
+             .min(row.right);
+         let cells = cells(layout, levels, row);
+         let carets = carets(&cells, levels, row.end, left);
++        let mut by_x: Vec<usize> = (0..carets.len()).collect();
++        by_x.sort_by_key(|&k| (carets[k].x, k));
+         Self {
+-            cells,
+-            carets,
++            cells: cells.into_vec().into_boxed_slice(),
++            carets: carets.into_boxed_slice(),
++            by_x: by_x.into_boxed_slice(),
+             left,
+             right: row.right,
+         }
+     }
+ 
++    /// The places whose carets stand at `x`, left to right in `by_x`:
++    /// where they start in it and where they end.
++    fn standing_at(&self, x: Pixels) -> Range<usize> {
++        let start = self.by_x.partition_point(|&k| self.carets[k].x < x);
++        let end = self.by_x.partition_point(|&k| self.carets[k].x <= x);
++        start..end
++    }
++
+     /// Where the caret stands at byte `index`. A place inside a cell (in a
+     /// ligature) stands where the cell's text ends, as it always has.
+     pub(crate) fn x_for_index(&self, index: usize) -> Pixels {
+@@ -702,12 +742,29 @@ impl BidiRow {
+             .map_or(self.left, |caret| caret.x)
+     }
+ 
+-    /// The place whose caret stands nearest `x`.
++    /// The place whose caret stands nearest `x`; of several as near, the
++    /// first in the text.
+     pub(crate) fn closest_index_for_x(&self, x: Pixels) -> usize {
+-        self.carets
+-            .iter()
+-            .min_by_key(|caret| (caret.x - x).abs())
+-            .map_or(0, |caret| caret.index)
++        // The nearest edge on each side of `x` (or at it), and the first
++        // place in the text standing there.
++        let after = self.by_x.partition_point(|&k| self.carets[k].x < x);
++        let right = self.by_x.get(after).copied();
++        let left = after
++            .checked_sub(1)
++            .map(|before| self.by_x[self.standing_at(self.carets[self.by_x[before]].x).start]);
++        let nearest = match (left, right) {
++            (Some(left), Some(right)) => {
++                let to_left = x - self.carets[left].x;
++                let to_right = self.carets[right].x - x;
++                if to_left < to_right || to_left == to_right && left < right {
++                    Some(left)
++                } else {
++                    Some(right)
++                }
++            }
++            (left, right) => left.or(right),
++        };
++        nearest.map_or(0, |k| self.carets[k].index)
+     }
+ 
+     /// The character drawn at `x`; left of the row, its leftmost one; past
+@@ -754,18 +811,32 @@ impl BidiRow {
+     /// right: the nearest edge that way, and of the places there, the one
+     /// nearest in the text. `None` at that end of the row.
+     pub(crate) fn index_beside(&self, index: usize, toward_left: bool) -> Option<usize> {
+-        let x = self.x_for_index(index);
+-        self.carets
++        let here = self.standing_at(self.x_for_index(index));
++        // The nearest edge that way: the last left of here, or the first
++        // right of it.
++        let next = if toward_left {
++            self.carets[*self.by_x.get(here.start.checked_sub(1)?)?].x
++        } else {
++            self.carets[*self.by_x.get(here.end)?].x
++        };
++        // Of the places there, the first nearest in the text.
++        self.by_x[self.standing_at(next)]
+             .iter()
+-            .filter(|caret| {
+-                if toward_left {
+-                    caret.x < x
+-                } else {
+-                    caret.x > x
+-                }
+-            })
+-            .min_by_key(|caret| ((caret.x - x).abs(), caret.index.abs_diff(index)))
+-            .map(|caret| caret.index)
++            .map(|&k| self.carets[k].index)
++            .min_by_key(|at| at.abs_diff(index))
++    }
++}
++
++impl KeptBidiRow {
++    /// The row, worked out by `make` at the first question.
++    pub(crate) fn get_or_init(&self, make: impl FnOnce() -> BidiRow) -> &BidiRow {
++        self.0.get_or_init(make)
++    }
++
++    /// Whether it was worked out yet.
++    #[cfg(test)]
++    pub(crate) fn get(&self) -> Option<&BidiRow> {
++        self.0.get()
+     }
+ }
+ 
+@@ -774,12 +845,14 @@ impl BidiRow {
+ /// order. Each place stands at the start of the cell after it, or the end of
+ /// the one before: where the two differ, at the edge no other place has;
+ /// where both are free or both taken, at the edge of the cell at the lower
+-/// level, at a paragraph's start that paragraph's.
+-fn carets(cells: &[Cell], levels: &BidiLevels, end: usize, left: Pixels) -> SmallVec<[Caret; 32]> {
++/// level, at a paragraph's start that paragraph's. The edges taken are
++/// sorted once, those the places left open take kept beside them: a row of
++/// any length costs a sort, never a move of every edge taken for each.
++fn carets(cells: &[Cell], levels: &BidiLevels, end: usize, left: Pixels) -> Vec<Caret> {
+     let mut order: SmallVec<[usize; 32]> = (0..cells.len()).collect();
+     order.sort_by_key(|&i| cells[i].index);
+-    let mut carets: SmallVec<[Caret; 32]> = SmallVec::with_capacity(order.len() + 1);
+-    let mut taken: SmallVec<[Pixels; 32]> = SmallVec::new();
++    let mut carets: Vec<Caret> = Vec::with_capacity(order.len() + 1);
++    let mut taken: Vec<Pixels> = Vec::with_capacity(order.len() + 1);
+     let mut open: SmallVec<[usize; 4]> = SmallVec::new();
+     for k in 0..=order.len() {
+         let before = k.checked_sub(1).map(|j| &cells[order[j]]);
+@@ -795,15 +868,19 @@ fn carets(cells: &[Cell], levels: &BidiLevels, end: usize, left: Pixels) -> Smal
+             (None, None) => left,
+         };
+         if open.last() != Some(&k) {
+-            take(&mut taken, x);
++            taken.push(x);
+         }
+         carets.push(Caret { index, x });
+     }
++    taken.sort_unstable();
++    taken.dedup();
++    // The edges the open places took, as each is settled.
++    let mut settled: BTreeSet<Pixels> = BTreeSet::new();
+     for k in open {
+         let before = &cells[order[k - 1]];
+         let after = &cells[order[k]];
+         let (trailing, leading) = (before.trailing(), after.leading());
+-        let free = |x: Pixels| taken.binary_search(&x).is_err();
++        let free = |x: Pixels| taken.binary_search(&x).is_err() && !settled.contains(&x);
+         let starts_paragraph =
+             levels.paragraph_of(before.index) != levels.paragraph_of(after.index);
+         let x = match (free(trailing), free(leading)) {
+@@ -813,21 +890,16 @@ fn carets(cells: &[Cell], levels: &BidiLevels, end: usize, left: Pixels) -> Smal
+             _ if before.level < after.level => trailing,
+             _ => leading,
+         };
+-        take(&mut taken, x);
++        settled.insert(x);
+         carets[k].x = x;
+     }
+     carets
+ }
+ 
+-fn take(taken: &mut SmallVec<[Pixels; 32]>, x: Pixels) {
+-    if let Err(at) = taken.binary_search(&x) {
+-        taken.insert(at, x);
+-    }
+-}
+-
+ #[cfg(test)]
+ mod tests {
+     use super::super::line_breaks::LineBreaks;
++    use super::super::line_layout::BidiRows;
+     use super::*;
+     use crate::{FontId, GlyphId, LineLayout, ShapedRun, WrappedLineLayout, point};
+ 
+@@ -878,6 +950,7 @@ mod tests {
+             }],
+             len: text.len(),
+             bidi_levels: levels.map(Arc::new),
++            bidi_row: Default::default(),
+         }
+     }
+ 
+@@ -914,6 +987,7 @@ mod tests {
+             }],
+             len: text.len(),
+             bidi_levels: levels.map(Arc::new),
++            bidi_row: Default::default(),
+         }
+     }
+ 
+@@ -1099,6 +1173,7 @@ mod tests {
+             wrap_boundaries,
+             wrap_width: Some(px(width)),
+             min_content: Default::default(),
++            bidi_rows: Default::default(),
+         }
+     }
+ 
+@@ -1411,6 +1486,89 @@ mod tests {
+         assert_eq!(at(&line, second + 2), Some((10., 20.)));
+     }
+ 
++    /// What a line holding right-to-left text answers is worked out at its
++    /// first question and kept with it: the questions after read the same
++    /// row. A wrapped line keeps its rows so.
++    #[test]
++    fn a_line_s_answers_are_worked_out_once() {
++        let text = "abc \u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}\u{5d5} xyz";
++        let layout = laid_out(text);
++        assert!(layout.bidi_row.get().is_none());
++        let x = layout.x_for_index(5);
++        let kept = layout.bidi_row.get().map(|row| row as *const BidiRow);
++        assert!(kept.is_some());
++        layout.index_for_x(px(45.));
++        layout.closest_index_for_x(px(45.));
++        layout.selection_ranges(2..9);
++        layout.index_left_of(5);
++        layout.index_right_of(5);
++        assert_eq!(layout.x_for_index(5), x);
++        assert_eq!(layout.bidi_row.get().map(|row| row as *const BidiRow), kept);
++        let line = wrapped(text, 85.);
++        assert!(line.bidi_rows.get().is_none());
++        let starts = line.row_starts();
++        let kept = line.bidi_rows.get().map(|rows| rows as *const BidiRows);
++        assert!(kept.is_some());
++        at(&line, 13);
++        line.index_for_position(point(px(25.), px(25.)), px(20.))
++            .ok();
++        assert_eq!(line.row_starts(), starts);
++        assert_eq!(
++            line.bidi_rows.get().map(|rows| rows as *const BidiRows),
++            kept
++        );
++        // A line all left to right keeps nothing.
++        let latin = laid_out("abc def");
++        latin.x_for_index(2);
++        assert!(latin.bidi_row.get().is_none());
++    }
++
++    /// The nearest caret to a point, and the one beside a place, found by
++    /// their edges sorted once, are those a walk of every caret finds: the
++    /// nearest, of several as near the first in the text; beside, the
++    /// nearest edge that way, of its places the nearest in the text.
++    #[test]
++    fn a_row_s_carets_are_found_as_a_walk_of_them_finds_them() {
++        for text in [
++            "\u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}",
++            "abc \u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}\u{5d5} xyz",
++            "\u{5d0} 12 (b) \u{5d1}\u{5d2}, c\u{5d3}d",
++            "\u{627}\u{644} 123 \u{5d0}, 4.5 x",
++            "\u{5d0}\u{5d1}\u{1c}ab \u{5d2}\u{2029}c",
++        ] {
++            let layout = laid_out(text);
++            let levels = layout.bidi_levels.clone().unwrap();
++            let row = layout.kept_bidi_row(&levels);
++            let carets = &row.carets;
++            let mut x = -15.;
++            while x < f32::from(layout.width) + 15. {
++                let at = px(x);
++                let walked = carets
++                    .iter()
++                    .min_by_key(|caret| (caret.x - at).abs())
++                    .map_or(0, |caret| caret.index);
++                assert_eq!(row.closest_index_for_x(at), walked, "{text:?} at {x}");
++                x += 2.5;
++            }
++            for caret in carets.iter() {
++                for toward_left in [true, false] {
++                    let here = row.x_for_index(caret.index);
++                    let walked = carets
++                        .iter()
++                        .filter(|c| if toward_left { c.x < here } else { c.x > here })
++                        .min_by_key(|c| ((c.x - here).abs(), c.index.abs_diff(caret.index)))
++                        .map(|c| c.index);
++                    assert_eq!(
++                        row.index_beside(caret.index, toward_left),
++                        walked,
++                        "{text:?} beside {}",
++                        caret.index
++                    );
++                }
++            }
++        }
++    }
++
+     #[test]
+     fn a_row_is_drawn_in_the_order_it_reads() {
+         let order = drawn_order(&[0, 0, 1, 1, 1, 0]);
+diff --git a/crates/gpui/src/text_system/line.rs b/crates/gpui/src/text_system/line.rs
+index da0fd2c..261e684 100644
+--- a/crates/gpui/src/text_system/line.rs
++++ b/crates/gpui/src/text_system/line.rs
+@@ -101,6 +101,7 @@ impl ShapedLine {
+             runs: layout.runs.clone(),
+             len,
+             bidi_levels: layout.bidi_levels.clone(),
++            bidi_row: Default::default(),
+         });
+         self
+     }
+@@ -375,6 +376,7 @@ impl<'a> ShapedLineCursor<'a> {
+                     .bidi_levels
+                     .as_ref()
+                     .map(|levels| Arc::new(levels.slice(previous_index..byte_index))),
++                bidi_row: Default::default(),
+             }),
+             text: SharedString::new(&self.line.text[previous_index..byte_index]),
+             decoration_runs: decorations,
+@@ -1227,6 +1229,7 @@ mod tests {
+                 }],
+                 len: text.len(),
+                 bidi_levels: None,
++                bidi_row: Default::default(),
+             }),
+             text: SharedString::new(text),
+             decoration_runs: SmallVec::from(decorations.to_vec()),
+@@ -1264,6 +1267,7 @@ mod tests {
+             ],
+             len: 6,
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         };
+         let wraps = [WrapBoundary {
+             run_ix: 1,
+@@ -1341,6 +1345,7 @@ mod tests {
+             ],
+             len: 7,
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         };
+         let wraps = [
+             WrapBoundary {
+@@ -1717,6 +1722,7 @@ mod tests {
+                         }]),
+                         wrap_width: Some(px(16.)),
+                         min_content: Default::default(),
++                        bidi_rows: Default::default(),
+                     }),
+                     text: line.text,
+                     decoration_runs: line.decoration_runs.into_vec(),
+@@ -1877,6 +1883,7 @@ mod tests {
+                 ],
+                 len: 6,
+                 bidi_levels: None,
++                bidi_row: Default::default(),
+             }),
+             text: "abcdef".into(),
+             decoration_runs: SmallVec::new(),
+@@ -2114,6 +2121,7 @@ mod tests {
+             runs,
+             len: layout.len,
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         });
+         line
+     }
+@@ -2185,6 +2193,7 @@ mod tests {
+                 ],
+                 len: 10,
+                 bidi_levels: None,
++                bidi_row: Default::default(),
+             }),
+             text: "a😀bcdef".into(),
+             decoration_runs: SmallVec::new(),
+diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
+index 50d94ee..b218279 100644
+--- a/crates/gpui/src/text_system/line_layout.rs
++++ b/crates/gpui/src/text_system/line_layout.rs
+@@ -16,7 +16,7 @@ use std::{
+ };
+ 
+ use super::{
+-    bidi::{BidiLevels, BidiRow, Cell, Row},
++    bidi::{BidiLevels, BidiRow, Cell, KeptBidiRow, Row},
+     line_breaks::LineBreaks,
+ };
+ 
+@@ -39,6 +39,11 @@ pub struct LineLayout {
+     /// to left (`text_system::bidi`); `None` where all of it reads left to
+     /// right, its glyphs following its text.
+     pub bidi_levels: Option<Arc<BidiLevels>>,
++    /// The answers a line holding right-to-left text gives about places in
++    /// it (`x_for_index` and the others), worked out at the first question
++    /// and kept with it, as the line is kept from frame to frame. Made
++    /// empty (`Default::default()`) with the line.
++    pub bidi_row: KeptBidiRow,
+ }
+ 
+ /// A run of text that has been shaped .
+@@ -133,7 +138,7 @@ impl LineLayout {
+     /// The index for the character at the given x coordinate
+     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+         if let Some(levels) = &self.bidi_levels {
+-            return BidiRow::new(self, levels, &self.whole_row()).index_for_x(x);
++            return self.kept_bidi_row(levels).index_for_x(x);
+         }
+         if x >= self.width {
+             None
+@@ -153,7 +158,7 @@ impl LineLayout {
+     /// (e.g. to handle aligning up/down arrow keys)
+     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
+         if let Some(levels) = &self.bidi_levels {
+-            return BidiRow::new(self, levels, &self.whole_row()).closest_index_for_x(x);
++            return self.kept_bidi_row(levels).closest_index_for_x(x);
+         }
+         let mut prev_index = 0;
+         let mut prev_x = px(0.);
+@@ -189,7 +194,7 @@ impl LineLayout {
+     /// has (`text_system::bidi`).
+     pub fn x_for_index(&self, index: usize) -> Pixels {
+         if let Some(levels) = &self.bidi_levels {
+-            return BidiRow::new(self, levels, &self.whole_row()).x_for_index(index);
++            return self.kept_bidi_row(levels).x_for_index(index);
+         }
+         for run in &self.runs {
+             for glyph in &run.glyphs {
+@@ -208,7 +213,7 @@ impl LineLayout {
+     /// right. None for an empty range.
+     pub fn selection_ranges(&self, range: Range<usize>) -> SmallVec<[Range<Pixels>; 2]> {
+         if let Some(levels) = &self.bidi_levels {
+-            return BidiRow::new(self, levels, &self.whole_row()).selection(&range);
++            return self.kept_bidi_row(levels).selection(&range);
+         }
+         if range.is_empty() {
+             return SmallVec::new();
+@@ -222,7 +227,7 @@ impl LineLayout {
+     /// line's left end.
+     pub fn index_left_of(&self, index: usize) -> Option<usize> {
+         if let Some(levels) = &self.bidi_levels {
+-            return BidiRow::new(self, levels, &self.whole_row()).index_beside(index, true);
++            return self.kept_bidi_row(levels).index_beside(index, true);
+         }
+         self.runs
+             .iter()
+@@ -236,7 +241,7 @@ impl LineLayout {
+     /// line is drawn; `None` at the line's right end.
+     pub fn index_right_of(&self, index: usize) -> Option<usize> {
+         if let Some(levels) = &self.bidi_levels {
+-            return BidiRow::new(self, levels, &self.whole_row()).index_beside(index, false);
++            return self.kept_bidi_row(levels).index_beside(index, false);
+         }
+         if index >= self.len {
+             return None;
+@@ -319,6 +324,7 @@ impl LineLayout {
+             runs: left_runs,
+             len: byte_index,
+             bidi_levels: levels_of(0..byte_index),
++            bidi_row: Default::default(),
+         };
+ 
+         let right = LineLayout {
+@@ -329,6 +335,7 @@ impl LineLayout {
+             runs: right_runs,
+             len: self.len - byte_index,
+             bidi_levels: levels_of(byte_index..self.len),
++            bidi_row: Default::default(),
+         };
+ 
+         (left, right)
+@@ -574,6 +581,20 @@ pub struct WrappedLineLayout {
+     /// (`elements::text`), one entry a line whatever widths it is laid out
+     /// at.
+     pub(crate) min_content: OnceLock<(Pixels, SmallVec<[WrapBoundary; 1]>)>,
++
++    /// Its rows where it holds right-to-left text (`bidi_rows`): worked out
++    /// at the first question asked of the line, kept with it in the cache.
++    pub(crate) bidi_rows: OnceLock<BidiRows>,
++}
++
++/// A wrapped line holding right-to-left text, as its rows answer from it:
++/// where each row after the first starts in the text, as a byte index, and
++/// each row as places in its text and where they are drawn, with where it
++/// starts along x.
++#[derive(Debug)]
++pub(crate) struct BidiRows {
++    starts: SmallVec<[usize; 1]>,
++    rows: Box<[(BidiRow, Pixels)]>,
+ }
+ 
+ /// A boundary at which a line was wrapped
+@@ -779,13 +800,33 @@ impl WrappedLineLayout {
+     /// text draws at its right end.
+     pub fn row_starts(&self) -> SmallVec<[usize; 1]> {
+         let layout = &self.unwrapped_layout;
+-        if layout.bidi_levels.is_none() {
+-            return self
++        match &layout.bidi_levels {
++            None => self
+                 .wrap_boundaries
+                 .iter()
+                 .map(|boundary| layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index)
+-                .collect();
++                .collect(),
++            Some(levels) => self.bidi_rows(levels).starts.clone(),
+         }
++    }
++
++    /// The rows of a line holding right-to-left text, each as places in its
++    /// text and where they are drawn (`bidi_row`): worked out once for the
++    /// line, kept with it.
++    fn bidi_rows(&self, levels: &BidiLevels) -> &BidiRows {
++        self.bidi_rows.get_or_init(|| {
++            let starts = self.bidi_row_starts();
++            let rows = (0..=self.wrap_boundaries.len())
++                .map(|row| self.bidi_row(levels, row, &starts))
++                .collect();
++            BidiRows { starts, rows }
++        })
++    }
++
++    /// Where each row after the first of a line holding right-to-left text
++    /// starts: its first character in the text's order.
++    fn bidi_row_starts(&self) -> SmallVec<[usize; 1]> {
++        let layout = &self.unwrapped_layout;
+         (1..=self.wrap_boundaries.len())
+             .map(|row| {
+                 let from = self.wrap_boundaries[row - 1];
+@@ -850,8 +891,8 @@ impl WrappedLineLayout {
+             if wrapped_line_ix > self.wrap_boundaries.len() {
+                 return Err(0);
+             }
+-            let starts = self.row_starts();
+-            let (row, left) = self.bidi_row(levels, wrapped_line_ix, &starts);
++            let (row, left) = &self.bidi_rows(levels).rows[wrapped_line_ix];
++            let (row, left) = (row, *left);
+             let x = position.x + left;
+             let (leftmost, rightmost) = row.ends();
+             return if x < left {
+@@ -920,14 +961,14 @@ impl WrappedLineLayout {
+         if let Some(levels) = &self.unwrapped_layout.bidi_levels {
+             // The row it is in, where it ends one (as below): the first
+             // whose end it does not pass.
+-            let starts = self.row_starts();
+             if index > self.len() {
+                 return None;
+             }
+-            let row = starts.partition_point(|start| *start < index);
+-            let (bidi_row, left) = self.bidi_row(levels, row, &starts);
++            let kept = self.bidi_rows(levels);
++            let row = kept.starts.partition_point(|start| *start < index);
++            let (bidi_row, left) = &kept.rows[row];
+             return Some(point(
+-                bidi_row.x_for_index(index) - left,
++                bidi_row.x_for_index(index) - *left,
+                 self.rows(line_height).top(row),
+             ));
+         }
+@@ -1152,6 +1193,7 @@ impl LineLayoutCache {
+                 wrap_boundaries,
+                 wrap_width,
+                 min_content: OnceLock::new(),
++                bidi_rows: OnceLock::new(),
+             });
+             let key = Arc::new(CacheKey {
+                 text,
+@@ -1503,6 +1545,7 @@ mod tests {
+             }],
+             len: 0,
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         }
+     }
+ 
+@@ -1874,6 +1917,7 @@ mod run_position_tests {
+             ],
+             len: 7,
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         };
+         let wraps = smallvec::smallvec![
+             WrapBoundary {
+@@ -1920,6 +1964,7 @@ mod run_position_tests {
+             wrap_boundaries: wraps,
+             wrap_width: Some(px(60.)),
+             min_content: OnceLock::new(),
++            bidi_rows: OnceLock::new(),
+         };
+         assert_eq!(wrapped.size(px(20.)).height, px(70.));
+         assert_eq!(
+diff --git a/crates/gpui_apple/src/text_system.rs b/crates/gpui_apple/src/text_system.rs
+index 18b1038..d36fc15 100644
+--- a/crates/gpui_apple/src/text_system.rs
++++ b/crates/gpui_apple/src/text_system.rs
+@@ -666,6 +666,7 @@ impl AppleTextSystemState {
+             descent: max_descent.into(),
+             len: text.len(),
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         }
+     }
+ }
+diff --git a/crates/gpui_web/src/run_replacements.rs b/crates/gpui_web/src/run_replacements.rs
+index 31b48aa..1f74051 100644
+--- a/crates/gpui_web/src/run_replacements.rs
++++ b/crates/gpui_web/src/run_replacements.rs
+@@ -395,6 +395,7 @@ mod tests {
+             descent: px(3.0),
+             len: index * 2,
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         }
+     }
+ 
+diff --git a/crates/gpui_wgpu/src/cosmic_text_system.rs b/crates/gpui_wgpu/src/cosmic_text_system.rs
+index d895548..7714600 100644
+--- a/crates/gpui_wgpu/src/cosmic_text_system.rs
++++ b/crates/gpui_wgpu/src/cosmic_text_system.rs
+@@ -935,6 +935,7 @@ impl CosmicTextSystemState {
+                 runs: Vec::new(),
+                 len: text.len(),
+                 bidi_levels: None,
++                bidi_row: Default::default(),
+             };
+         };
+ 
+@@ -1011,6 +1012,7 @@ impl CosmicTextSystemState {
+             runs,
+             len: text.len(),
+             bidi_levels: None,
++            bidi_row: Default::default(),
+         }
+     }
+ 
+diff --git a/crates/gpui_windows/src/direct_write.rs b/crates/gpui_windows/src/direct_write.rs
+index 419fee4..5c6593b 100644
+--- a/crates/gpui_windows/src/direct_write.rs
++++ b/crates/gpui_windows/src/direct_write.rs
+@@ -769,6 +769,7 @@ impl DirectWriteState {
+                 runs,
+                 len: text.len(),
+                 bidi_levels: None,
++                bidi_row: Default::default(),
+             })
+         }
+     }

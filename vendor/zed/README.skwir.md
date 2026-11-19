@@ -118,6 +118,8 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0083-window-menu-by-a-flag` | The menu macOS lists the windows in is the one that says it is (`Menu::window_menu`), never the one named "Window" | — |
 | `0084-text-direction` | A text's paragraphs read in the direction it says (`TextDirection`, inherited, `Styled::text_direction`; `WindowTextSystem::shape_text_in`), not each its first strong character's: gpui's levels worked out so (UAX #9's HL1) and the platform told (`PlatformTextSystem::layout_line_in`: DirectWrite's reading direction, Core Text's base writing direction, for cosmic-text a mark left out of what it gives back); a line of code that starts with an Arabic comment keeps its `//` at its left | — |
 | `0085-foreign-parent` | `WindowOptions::foreign_parent`: a window shown for another program (a dialog it asked for, the desktop portal's `parent_window`) is that program's window's child, `WM_TRANSIENT_FOR` on X11, imported through xdg-foreign (unstable v2) on Wayland, so the window manager keeps it over it; a handle that names nothing leaves a window of its own | — |
+| `0086-rows-reorder-within-paragraphs` | A wrapped row holding the end of one paragraph and the start of the next (a separator parts them on one line) lays each paragraph's stretch, and the separator, out on its own in the text's order, as the line is laid out unwrapped, never reordered across them | — |
+| `0087-right-to-left-answers-kept` | A line holding right-to-left text works out its carets, hit tests and selections at the first question and keeps them with it (`LineLayout::bidi_row`, a wrapped line's rows), each answer after that a search; its carets' edges sorted once, so a long right-to-left line costs a sort, never a move of every edge for each | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1396,7 +1398,8 @@ answer is found; in short:
   (its first character in the text's order, drawn at its right end in
   Hebrew), which `TextLayout::row_bounds_for_index` and `wrapped_text`
   read; `position_for_index` and `index_for_position` answer row by row as
-  above.
+  above. A row holding two paragraphs reorders each on its own (0086); the
+  answers are kept with the line (0087).
 - **Decorations.** A glyph whose character comes before its decoration
   run's start (one read right to left, painted from its end) has its run
   looked for from the first again: colors, backgrounds, underlines and
@@ -2138,3 +2141,65 @@ had exported itself through xdg-foreign v2 floated over it (the asker
 tiled), and one asked with no window tiled. Not checked: KWin, mutter and
 Hyprland (whose 0.57.1 offers `zxdg_importer_v2`); no test, as gpui's
 tests have no display server to answer.
+
+### 0086: Rows reorder within their paragraphs
+
+A line may hold several paragraphs, parted by a separator other than a
+newline (UAX #9's class B: U+2029, U+001C to U+001E, U+0085, a lone CR),
+which gpui's lines are not split at. cosmic-text lays such a line
+out a paragraph at a time, each separator on its own, one after another in
+the text's order (`layout_line_with_separators`), and 0069's levels are
+each paragraph's. But a wrapped row holding the end of one paragraph and
+the start of the next was reordered as one stretch (L2 over the whole
+row): two right-to-left paragraphs swapped places when the line wrapped,
+the same line drawn in one order unwrapped and in the other wrapped.
+
+Each row is now cut where a paragraph starts and around each separator,
+each piece reordered on its own (`drawn_by_paragraph`, L2 within the
+piece), the pieces in the text's order, as the platform lays out the line
+unwrapped. A place at a paragraph's start whose two edges tie (both free,
+or both taken) stands at that paragraph's edge, its first character's,
+rather than at the edge of the lower level, which compared levels of two
+paragraphs. The tests' text system (`laid_out_as_read`) lays a line's
+paragraphs out so too, as the tests' stand-in for a platform does.
+
+The tests are `text_system::bidi::tests::two_paragraphs_on_one_row_keep_their_order`
+(two right-to-left paragraphs parted by U+001C, drawn unwrapped and
+wrapped with the first on the left, the carets at their ends) and
+`a_row_is_drawn_in_the_order_it_reads` (pieces kept apart).
+
+### 0087: Right-to-left answers kept
+
+Every question asked of a line holding right-to-left text (`x_for_index`,
+`index_for_x`, `closest_index_for_x`, `selection_ranges`,
+`index_left_of`, `index_right_of`, a wrapped line's `position_for_index`,
+`index_for_position` and `row_starts`) walked its glyphs, sorted its cells
+and worked out its carets again, and the carets' edges were kept sorted by
+inserting each where it goes: for right-to-left text, whose edges come
+right to left as its text goes on, each at the front. A long unwrapped
+right-to-left line of n cells (a text preview with wrapping off) cost
+about n²/2 moves per hover, caret or selection asked.
+
+- **Kept.** A line works its row out at the first question and keeps it
+  (`LineLayout::bidi_row`, a `KeptBidiRow`, made empty with the line:
+  every platform's text system and gpui's own make a line with
+  `Default::default()` there), as the line is kept from frame to frame in
+  the layout cache. A wrapped line keeps its rows and where each starts
+  (`WrappedLineLayout`'s, beside its narrowest width, 0061). A line all
+  left to right keeps nothing, as before.
+- **Sorted once.** The edges the carets take are gathered and sorted once,
+  those the places left open settle kept beside them, as each is settled
+  (0069's order of settling kept): a row costs a sort.
+- **Searched.** A row keeps its carets by where they stand too: the caret
+  nearest a point (of several as near, the first in the text), and the one
+  beside a place (the nearest edge that way, of its places the nearest in
+  the text), are a binary search, where they were a walk of every caret.
+
+The tests are `text_system::bidi::tests::a_line_s_answers_are_worked_out_once`
+(one row kept through every question, a wrapped line's rows too, none for
+a line all left to right) and
+`a_row_s_carets_are_found_as_a_walk_of_them_finds_them` (the nearest and
+the beside answers equal to a walk of every caret, on Hebrew, mixed,
+Arabic with digits and two paragraphs, every 2.5 px and every place);
+0069's tests of carets, hit tests and selections answer as they did. Not
+measured.

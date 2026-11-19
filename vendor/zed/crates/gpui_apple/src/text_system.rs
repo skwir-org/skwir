@@ -666,6 +666,7 @@ impl AppleTextSystemState {
             descent: max_descent.into(),
             len: text.len(),
             bidi_levels: None,
+            bidi_row: Default::default(),
         }
     }
 }

@@ -769,6 +769,7 @@ impl DirectWriteState {
                 runs,
                 len: text.len(),
                 bidi_levels: None,
+                bidi_row: Default::default(),
             })
         }
     }

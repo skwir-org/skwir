@@ -16,7 +16,7 @@ use std::{
 };
 
 use super::{
-    bidi::{BidiLevels, BidiRow, Cell, Row},
+    bidi::{BidiLevels, BidiRow, Cell, KeptBidiRow, Row},
     line_breaks::LineBreaks,
 };
 
@@ -39,6 +39,11 @@ pub struct LineLayout {
     /// to left (`text_system::bidi`); `None` where all of it reads left to
     /// right, its glyphs following its text.
     pub bidi_levels: Option<Arc<BidiLevels>>,
+    /// The answers a line holding right-to-left text gives about places in
+    /// it (`x_for_index` and the others), worked out at the first question
+    /// and kept with it, as the line is kept from frame to frame. Made
+    /// empty (`Default::default()`) with the line.
+    pub bidi_row: KeptBidiRow,
 }
 
 /// A run of text that has been shaped .
@@ -133,7 +138,7 @@ impl LineLayout {
     /// The index for the character at the given x coordinate
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
         if let Some(levels) = &self.bidi_levels {
-            return BidiRow::new(self, levels, &self.whole_row()).index_for_x(x);
+            return self.kept_bidi_row(levels).index_for_x(x);
         }
         if x >= self.width {
             None
@@ -153,7 +158,7 @@ impl LineLayout {
     /// (e.g. to handle aligning up/down arrow keys)
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
         if let Some(levels) = &self.bidi_levels {
-            return BidiRow::new(self, levels, &self.whole_row()).closest_index_for_x(x);
+            return self.kept_bidi_row(levels).closest_index_for_x(x);
         }
         let mut prev_index = 0;
         let mut prev_x = px(0.);
@@ -189,7 +194,7 @@ impl LineLayout {
     /// has (`text_system::bidi`).
     pub fn x_for_index(&self, index: usize) -> Pixels {
         if let Some(levels) = &self.bidi_levels {
-            return BidiRow::new(self, levels, &self.whole_row()).x_for_index(index);
+            return self.kept_bidi_row(levels).x_for_index(index);
         }
         for run in &self.runs {
             for glyph in &run.glyphs {
@@ -208,7 +213,7 @@ impl LineLayout {
     /// right. None for an empty range.
     pub fn selection_ranges(&self, range: Range<usize>) -> SmallVec<[Range<Pixels>; 2]> {
         if let Some(levels) = &self.bidi_levels {
-            return BidiRow::new(self, levels, &self.whole_row()).selection(&range);
+            return self.kept_bidi_row(levels).selection(&range);
         }
         if range.is_empty() {
             return SmallVec::new();
@@ -222,7 +227,7 @@ impl LineLayout {
     /// line's left end.
     pub fn index_left_of(&self, index: usize) -> Option<usize> {
         if let Some(levels) = &self.bidi_levels {
-            return BidiRow::new(self, levels, &self.whole_row()).index_beside(index, true);
+            return self.kept_bidi_row(levels).index_beside(index, true);
         }
         self.runs
             .iter()
@@ -236,7 +241,7 @@ impl LineLayout {
     /// line is drawn; `None` at the line's right end.
     pub fn index_right_of(&self, index: usize) -> Option<usize> {
         if let Some(levels) = &self.bidi_levels {
-            return BidiRow::new(self, levels, &self.whole_row()).index_beside(index, false);
+            return self.kept_bidi_row(levels).index_beside(index, false);
         }
         if index >= self.len {
             return None;
@@ -319,6 +324,7 @@ impl LineLayout {
             runs: left_runs,
             len: byte_index,
             bidi_levels: levels_of(0..byte_index),
+            bidi_row: Default::default(),
         };
 
         let right = LineLayout {
@@ -329,6 +335,7 @@ impl LineLayout {
             runs: right_runs,
             len: self.len - byte_index,
             bidi_levels: levels_of(byte_index..self.len),
+            bidi_row: Default::default(),
         };
 
         (left, right)
@@ -574,6 +581,20 @@ pub struct WrappedLineLayout {
     /// (`elements::text`), one entry a line whatever widths it is laid out
     /// at.
     pub(crate) min_content: OnceLock<(Pixels, SmallVec<[WrapBoundary; 1]>)>,
+
+    /// Its rows where it holds right-to-left text (`bidi_rows`): worked out
+    /// at the first question asked of the line, kept with it in the cache.
+    pub(crate) bidi_rows: OnceLock<BidiRows>,
+}
+
+/// A wrapped line holding right-to-left text, as its rows answer from it:
+/// where each row after the first starts in the text, as a byte index, and
+/// each row as places in its text and where they are drawn, with where it
+/// starts along x.
+#[derive(Debug)]
+pub(crate) struct BidiRows {
+    starts: SmallVec<[usize; 1]>,
+    rows: Box<[(BidiRow, Pixels)]>,
 }
 
 /// A boundary at which a line was wrapped
@@ -779,13 +800,33 @@ impl WrappedLineLayout {
     /// text draws at its right end.
     pub fn row_starts(&self) -> SmallVec<[usize; 1]> {
         let layout = &self.unwrapped_layout;
-        if layout.bidi_levels.is_none() {
-            return self
+        match &layout.bidi_levels {
+            None => self
                 .wrap_boundaries
                 .iter()
                 .map(|boundary| layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index)
-                .collect();
+                .collect(),
+            Some(levels) => self.bidi_rows(levels).starts.clone(),
         }
+    }
+
+    /// The rows of a line holding right-to-left text, each as places in its
+    /// text and where they are drawn (`bidi_row`): worked out once for the
+    /// line, kept with it.
+    fn bidi_rows(&self, levels: &BidiLevels) -> &BidiRows {
+        self.bidi_rows.get_or_init(|| {
+            let starts = self.bidi_row_starts();
+            let rows = (0..=self.wrap_boundaries.len())
+                .map(|row| self.bidi_row(levels, row, &starts))
+                .collect();
+            BidiRows { starts, rows }
+        })
+    }
+
+    /// Where each row after the first of a line holding right-to-left text
+    /// starts: its first character in the text's order.
+    fn bidi_row_starts(&self) -> SmallVec<[usize; 1]> {
+        let layout = &self.unwrapped_layout;
         (1..=self.wrap_boundaries.len())
             .map(|row| {
                 let from = self.wrap_boundaries[row - 1];
@@ -850,8 +891,8 @@ impl WrappedLineLayout {
             if wrapped_line_ix > self.wrap_boundaries.len() {
                 return Err(0);
             }
-            let starts = self.row_starts();
-            let (row, left) = self.bidi_row(levels, wrapped_line_ix, &starts);
+            let (row, left) = &self.bidi_rows(levels).rows[wrapped_line_ix];
+            let (row, left) = (row, *left);
             let x = position.x + left;
             let (leftmost, rightmost) = row.ends();
             return if x < left {
@@ -920,14 +961,14 @@ impl WrappedLineLayout {
         if let Some(levels) = &self.unwrapped_layout.bidi_levels {
             // The row it is in, where it ends one (as below): the first
             // whose end it does not pass.
-            let starts = self.row_starts();
             if index > self.len() {
                 return None;
             }
-            let row = starts.partition_point(|start| *start < index);
-            let (bidi_row, left) = self.bidi_row(levels, row, &starts);
+            let kept = self.bidi_rows(levels);
+            let row = kept.starts.partition_point(|start| *start < index);
+            let (bidi_row, left) = &kept.rows[row];
             return Some(point(
-                bidi_row.x_for_index(index) - left,
+                bidi_row.x_for_index(index) - *left,
                 self.rows(line_height).top(row),
             ));
         }
@@ -1152,6 +1193,7 @@ impl LineLayoutCache {
                 wrap_boundaries,
                 wrap_width,
                 min_content: OnceLock::new(),
+                bidi_rows: OnceLock::new(),
             });
             let key = Arc::new(CacheKey {
                 text,
@@ -1503,6 +1545,7 @@ mod tests {
             }],
             len: 0,
             bidi_levels: None,
+            bidi_row: Default::default(),
         }
     }
 
@@ -1874,6 +1917,7 @@ mod run_position_tests {
             ],
             len: 7,
             bidi_levels: None,
+            bidi_row: Default::default(),
         };
         let wraps = smallvec::smallvec![
             WrapBoundary {
@@ -1920,6 +1964,7 @@ mod run_position_tests {
             wrap_boundaries: wraps,
             wrap_width: Some(px(60.)),
             min_content: OnceLock::new(),
+            bidi_rows: OnceLock::new(),
         };
         assert_eq!(wrapped.size(px(20.)).height, px(70.));
         assert_eq!(

@@ -1837,6 +1837,7 @@ impl NoopTextSystem {
             runs,
             len: text.len(),
             bidi_levels: None,
+            bidi_row: Default::default(),
         };
         // Right-to-left text laid out as it reads, as a platform lays it
         // out, so tests of it see what a window shows.

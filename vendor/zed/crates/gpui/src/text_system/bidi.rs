@@ -33,7 +33,15 @@
 //! - **Rows.** A line wraps in its text's order; each row is then laid out
 //!   as it reads (UAX #9's L1 and L2 on the row), its glyphs moved, and the
 //!   rows follow each other along x as a wrapped line's always have. A long
-//!   Hebrew paragraph starts on its first row.
+//!   Hebrew paragraph starts on its first row. Where a line holds several
+//!   paragraphs (a separator parts them, U+2029 or U+001C to U+001E), each
+//!   one's stretch of a row, and each separator, is laid out on its own,
+//!   in the text's order, as the platform lays a line's paragraphs out:
+//!   L2 reorders within a paragraph, never across one.
+//! - **Kept.** These answers are worked out at the first question asked
+//!   of a line (`LineLayout::bidi_row`, a wrapped line's rows with it) and
+//!   kept with it, as the line is kept from frame to frame: a frame's
+//!   carets, hit tests and selections cost a search each, not the line.
 //!
 //! A line all left to right (`LineLayout::bidi_levels` is `None`) keeps none
 //! of this: its glyphs follow its text, and every answer is worked out as
@@ -44,7 +52,11 @@ use crate::{
     TextDirection, WrapBoundary, px,
 };
 use smallvec::SmallVec;
-use std::{ops::Range, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    ops::Range,
+    sync::{Arc, OnceLock},
+};
 use unicode_bidi::{BidiClass, BidiInfo, Level, bidi_class};
 
 /// How a line reads in both directions: the embedding level (UAX #9) of
@@ -115,6 +127,13 @@ impl BidiLevels {
         self.paragraphs
             .get(after.saturating_sub(1))
             .map_or(0, |(_, level)| *level)
+    }
+
+    /// Which of the line's paragraphs byte `index` is in, counted from 0.
+    pub(crate) fn paragraph_of(&self, index: usize) -> usize {
+        self.paragraphs
+            .partition_point(|(start, _)| *start <= index)
+            .saturating_sub(1)
     }
 
     /// Whether the line's first paragraph reads right to left: it starts
@@ -367,6 +386,13 @@ impl LineLayout {
         }
     }
 
+    /// The line as one row of places and where they are drawn, worked out
+    /// at the first question and kept with it (`bidi_row`).
+    pub(crate) fn kept_bidi_row(&self, levels: &BidiLevels) -> &BidiRow {
+        self.bidi_row
+            .get_or_init(|| BidiRow::new(self, levels, &self.whole_row()))
+    }
+
     /// The line's cells in its text's order, each as wide as it is drawn:
     /// what a wrap measures.
     pub(crate) fn cells_in_text_order(&self, levels: &BidiLevels) -> SmallVec<[Cell; 32]> {
@@ -379,7 +405,8 @@ impl LineLayout {
     /// a row but the first, in `cells`, which are in its text's order): the
     /// rows one after another along x, each laid out as it reads, its
     /// trailing spaces at their paragraph's level (UAX #9's L1 and L2 on the
-    /// row), and where each row after the first starts.
+    /// row, each paragraph's stretch of it on its own: `drawn_by_paragraph`),
+    /// and where each row after the first starts.
     pub(crate) fn rows_as_read(
         &self,
         levels: &BidiLevels,
@@ -418,7 +445,13 @@ impl LineLayout {
                 });
             }
             let mut new_row = row_start > 0;
-            for k in drawn_order(&row_cell_levels) {
+            let apart = |k: usize| {
+                levels.paragraph_of(row[k].index) != levels.paragraph_of(row[k - 1].index)
+                    || [row[k - 1].index, row[k].index]
+                        .into_iter()
+                        .any(|index| separates_paragraphs(text, index))
+            };
+            for k in drawn_by_paragraph(&row_cell_levels, apart) {
                 let cell = &row[k];
                 for (run, glyph) in cell.glyphs(self) {
                     let mut glyph = glyph.clone();
@@ -438,6 +471,7 @@ impl LineLayout {
             runs,
             len: self.len,
             bidi_levels: Some(Arc::new(row_levels)),
+            bidi_row: Default::default(),
         };
         (layout, boundaries)
     }
@@ -490,6 +524,39 @@ fn drawn_order(levels: &[u8]) -> SmallVec<[usize; 32]> {
         level -= 1;
     }
     order
+}
+
+/// The order cells at `levels` are drawn in on one row, left to right,
+/// each stretch of them `apart` starts (whether cell `k`, never the first,
+/// starts one: a paragraph's start, a paragraph separator, what follows
+/// one) put in order on its own (`drawn_order`), the stretches in their
+/// text's order. UAX #9 reorders within a paragraph, never across one; a
+/// platform lays a line's paragraphs out one after another, each
+/// separator after its paragraph (cosmic-text shapes each, and each
+/// separator, on its own).
+fn drawn_by_paragraph(levels: &[u8], apart: impl Fn(usize) -> bool) -> SmallVec<[usize; 32]> {
+    let mut order = SmallVec::with_capacity(levels.len());
+    let mut start = 0;
+    let ends = (1..levels.len())
+        .filter(|&k| apart(k))
+        .chain([levels.len()]);
+    for end in ends {
+        order.extend(
+            drawn_order(&levels[start..end])
+                .into_iter()
+                .map(|k| start + k),
+        );
+        start = end;
+    }
+    order
+}
+
+/// Whether the character at byte `index` of `text` parts two paragraphs
+/// (UAX #9's class B).
+fn separates_paragraphs(text: &str, index: usize) -> bool {
+    text.get(index..)
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| bidi_class(c) == BidiClass::B)
 }
 
 /// A stretch of a line's glyphs, from one place in its runs to another,
@@ -612,16 +679,29 @@ struct Caret {
 }
 
 /// A row of a line holding right-to-left text, as places in its text and
-/// where they are drawn.
+/// where they are drawn: worked out once and kept with its line
+/// (`KeptBidiRow`, `WrappedLineLayout`'s rows), so each answer is a search.
+#[derive(Debug)]
 pub(crate) struct BidiRow {
     /// Its cells, left to right.
-    cells: SmallVec<[Cell; 32]>,
+    cells: Box<[Cell]>,
     /// Where a caret stands at each place, in the text's order: each
     /// cell's start, then the row's end.
-    carets: SmallVec<[Caret; 32]>,
+    carets: Box<[Caret]>,
+    /// The carets by where they stand, left to right, and in the text's
+    /// order where several stand at one edge: indices into `carets`.
+    by_x: Box<[usize]>,
     left: Pixels,
     right: Pixels,
 }
+
+/// A line's row as places in its text and where they are drawn, where the
+/// line holds right-to-left text: worked out at the first question asked of
+/// the line and kept with it (`LineLayout::bidi_row`). A line is made with
+/// none (`Default`); one whose glyphs, width or length change after a
+/// question was asked of it is made anew, as gpui's are.
+#[derive(Debug, Default)]
+pub struct KeptBidiRow(OnceLock<BidiRow>);
 
 impl BidiRow {
     pub(crate) fn new(layout: &LineLayout, levels: &BidiLevels, row: &Row) -> Self {
@@ -632,13 +712,24 @@ impl BidiRow {
             .map_or(px(0.), |glyph| glyph.position.x)
             .min(row.right);
         let cells = cells(layout, levels, row);
-        let carets = carets(&cells, row.end, left);
+        let carets = carets(&cells, levels, row.end, left);
+        let mut by_x: Vec<usize> = (0..carets.len()).collect();
+        by_x.sort_by_key(|&k| (carets[k].x, k));
         Self {
-            cells,
-            carets,
+            cells: cells.into_vec().into_boxed_slice(),
+            carets: carets.into_boxed_slice(),
+            by_x: by_x.into_boxed_slice(),
             left,
             right: row.right,
         }
+    }
+
+    /// The places whose carets stand at `x`, left to right in `by_x`:
+    /// where they start in it and where they end.
+    fn standing_at(&self, x: Pixels) -> Range<usize> {
+        let start = self.by_x.partition_point(|&k| self.carets[k].x < x);
+        let end = self.by_x.partition_point(|&k| self.carets[k].x <= x);
+        start..end
     }
 
     /// Where the caret stands at byte `index`. A place inside a cell (in a
@@ -651,12 +742,29 @@ impl BidiRow {
             .map_or(self.left, |caret| caret.x)
     }
 
-    /// The place whose caret stands nearest `x`.
+    /// The place whose caret stands nearest `x`; of several as near, the
+    /// first in the text.
     pub(crate) fn closest_index_for_x(&self, x: Pixels) -> usize {
-        self.carets
-            .iter()
-            .min_by_key(|caret| (caret.x - x).abs())
-            .map_or(0, |caret| caret.index)
+        // The nearest edge on each side of `x` (or at it), and the first
+        // place in the text standing there.
+        let after = self.by_x.partition_point(|&k| self.carets[k].x < x);
+        let right = self.by_x.get(after).copied();
+        let left = after
+            .checked_sub(1)
+            .map(|before| self.by_x[self.standing_at(self.carets[self.by_x[before]].x).start]);
+        let nearest = match (left, right) {
+            (Some(left), Some(right)) => {
+                let to_left = x - self.carets[left].x;
+                let to_right = self.carets[right].x - x;
+                if to_left < to_right || to_left == to_right && left < right {
+                    Some(left)
+                } else {
+                    Some(right)
+                }
+            }
+            (left, right) => left.or(right),
+        };
+        nearest.map_or(0, |k| self.carets[k].index)
     }
 
     /// The character drawn at `x`; left of the row, its leftmost one; past
@@ -703,31 +811,48 @@ impl BidiRow {
     /// right: the nearest edge that way, and of the places there, the one
     /// nearest in the text. `None` at that end of the row.
     pub(crate) fn index_beside(&self, index: usize, toward_left: bool) -> Option<usize> {
-        let x = self.x_for_index(index);
-        self.carets
+        let here = self.standing_at(self.x_for_index(index));
+        // The nearest edge that way: the last left of here, or the first
+        // right of it.
+        let next = if toward_left {
+            self.carets[*self.by_x.get(here.start.checked_sub(1)?)?].x
+        } else {
+            self.carets[*self.by_x.get(here.end)?].x
+        };
+        // Of the places there, the first nearest in the text.
+        self.by_x[self.standing_at(next)]
             .iter()
-            .filter(|caret| {
-                if toward_left {
-                    caret.x < x
-                } else {
-                    caret.x > x
-                }
-            })
-            .min_by_key(|caret| ((caret.x - x).abs(), caret.index.abs_diff(index)))
-            .map(|caret| caret.index)
+            .map(|&k| self.carets[k].index)
+            .min_by_key(|at| at.abs_diff(index))
+    }
+}
+
+impl KeptBidiRow {
+    /// The row, worked out by `make` at the first question.
+    pub(crate) fn get_or_init(&self, make: impl FnOnce() -> BidiRow) -> &BidiRow {
+        self.0.get_or_init(make)
+    }
+
+    /// Whether it was worked out yet.
+    #[cfg(test)]
+    pub(crate) fn get(&self) -> Option<&BidiRow> {
+        self.0.get()
     }
 }
 
 /// Where the caret stands at each place of a row whose cells are `cells`
-/// (left to right) and whose text ends at `end`, in the text's order. Each
-/// place stands at the start of the cell after it, or the end of the one
-/// before: where the two differ, at the edge no other place has; where both
-/// are free or both taken, at the edge of the cell at the lower level.
-fn carets(cells: &[Cell], end: usize, left: Pixels) -> SmallVec<[Caret; 32]> {
+/// (left to right, at `levels`) and whose text ends at `end`, in the text's
+/// order. Each place stands at the start of the cell after it, or the end of
+/// the one before: where the two differ, at the edge no other place has;
+/// where both are free or both taken, at the edge of the cell at the lower
+/// level, at a paragraph's start that paragraph's. The edges taken are
+/// sorted once, those the places left open take kept beside them: a row of
+/// any length costs a sort, never a move of every edge taken for each.
+fn carets(cells: &[Cell], levels: &BidiLevels, end: usize, left: Pixels) -> Vec<Caret> {
     let mut order: SmallVec<[usize; 32]> = (0..cells.len()).collect();
     order.sort_by_key(|&i| cells[i].index);
-    let mut carets: SmallVec<[Caret; 32]> = SmallVec::with_capacity(order.len() + 1);
-    let mut taken: SmallVec<[Pixels; 32]> = SmallVec::new();
+    let mut carets: Vec<Caret> = Vec::with_capacity(order.len() + 1);
+    let mut taken: Vec<Pixels> = Vec::with_capacity(order.len() + 1);
     let mut open: SmallVec<[usize; 4]> = SmallVec::new();
     for k in 0..=order.len() {
         let before = k.checked_sub(1).map(|j| &cells[order[j]]);
@@ -743,49 +868,66 @@ fn carets(cells: &[Cell], end: usize, left: Pixels) -> SmallVec<[Caret; 32]> {
             (None, None) => left,
         };
         if open.last() != Some(&k) {
-            take(&mut taken, x);
+            taken.push(x);
         }
         carets.push(Caret { index, x });
     }
+    taken.sort_unstable();
+    taken.dedup();
+    // The edges the open places took, as each is settled.
+    let mut settled: BTreeSet<Pixels> = BTreeSet::new();
     for k in open {
         let before = &cells[order[k - 1]];
         let after = &cells[order[k]];
         let (trailing, leading) = (before.trailing(), after.leading());
-        let free = |x: Pixels| taken.binary_search(&x).is_err();
+        let free = |x: Pixels| taken.binary_search(&x).is_err() && !settled.contains(&x);
+        let starts_paragraph =
+            levels.paragraph_of(before.index) != levels.paragraph_of(after.index);
         let x = match (free(trailing), free(leading)) {
             (true, false) => trailing,
             (false, true) => leading,
+            _ if starts_paragraph => leading,
             _ if before.level < after.level => trailing,
             _ => leading,
         };
-        take(&mut taken, x);
+        settled.insert(x);
         carets[k].x = x;
     }
     carets
 }
 
-fn take(taken: &mut SmallVec<[Pixels; 32]>, x: Pixels) {
-    if let Err(at) = taken.binary_search(&x) {
-        taken.insert(at, x);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::line_breaks::LineBreaks;
+    use super::super::line_layout::BidiRows;
     use super::*;
     use crate::{FontId, GlyphId, LineLayout, ShapedRun, WrappedLineLayout, point};
+
+    /// The order a platform draws `chars` in on one line, at `levels`:
+    /// each paragraph's stretch, and each separator, as UAX #9 lays it out,
+    /// one after another in the text's order (cosmic-text shapes each on
+    /// its own).
+    fn platform_order(
+        chars: &[(usize, char)],
+        levels: Option<&BidiLevels>,
+    ) -> SmallVec<[usize; 32]> {
+        let level = |k: usize| levels.map_or(0, |levels| levels.level(chars[k].0));
+        let paragraph = |k: usize| levels.map_or(0, |levels| levels.paragraph_of(chars[k].0));
+        let char_levels: Vec<u8> = (0..chars.len()).map(level).collect();
+        drawn_by_paragraph(&char_levels, |k| {
+            paragraph(k) != paragraph(k - 1)
+                || [k - 1, k]
+                    .into_iter()
+                    .any(|k| bidi_class(chars[k].1) == BidiClass::B)
+        })
+    }
 
     /// A line of `text` whose characters are each one glyph 10 px wide,
     /// placed as UAX #9 lays them out on one line: what a platform hands.
     pub(crate) fn laid_out(text: &str) -> LineLayout {
         let levels = BidiLevels::of(text);
         let chars: Vec<(usize, char)> = text.char_indices().collect();
-        let char_levels: Vec<u8> = chars
-            .iter()
-            .map(|(i, _)| levels.as_ref().map_or(0, |levels| levels.level(*i)))
-            .collect();
-        let order = drawn_order(&char_levels);
+        let order = platform_order(&chars, levels.as_ref());
         let glyphs = order
             .iter()
             .enumerate()
@@ -808,6 +950,7 @@ mod tests {
             }],
             len: text.len(),
             bidi_levels: levels.map(Arc::new),
+            bidi_row: Default::default(),
         }
     }
 
@@ -816,12 +959,8 @@ mod tests {
     fn laid_out_in(text: &str, direction: TextDirection) -> LineLayout {
         let levels = BidiLevels::of_in(text, direction);
         let chars: Vec<(usize, char)> = text.char_indices().collect();
-        let char_levels: Vec<u8> = chars
-            .iter()
-            .map(|(i, _)| levels.as_ref().map_or(0, |levels| levels.level(*i)))
-            .collect();
         let mut x = px(0.);
-        let glyphs = drawn_order(&char_levels)
+        let glyphs = platform_order(&chars, levels.as_ref())
             .iter()
             .map(|&k| {
                 let glyph = ShapedGlyph {
@@ -848,6 +987,7 @@ mod tests {
             }],
             len: text.len(),
             bidi_levels: levels.map(Arc::new),
+            bidi_row: Default::default(),
         }
     }
 
@@ -1033,6 +1173,7 @@ mod tests {
             wrap_boundaries,
             wrap_width: Some(px(width)),
             min_content: Default::default(),
+            bidi_rows: Default::default(),
         }
     }
 
@@ -1312,6 +1453,122 @@ mod tests {
         }
     }
 
+    /// A line holding two paragraphs (U+001C parts them) lays each out on
+    /// its own, the first on the left, as the platform does: a row that
+    /// holds the end of one and the start of the other keeps them in that
+    /// order when the line wraps, never reversed as one stretch.
+    #[test]
+    fn two_paragraphs_on_one_row_keep_their_order() {
+        // "אבג דה" then "וז חט", ten pixels a character.
+        let text = "\u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}\u{1c}\u{5d5}\u{5d6} \u{5d7}\u{5d8}";
+        assert_eq!(
+            drawn(&laid_out(text), text),
+            "\u{5d4}\u{5d3} \u{5d2}\u{5d1}\u{5d0}\u{1c}\u{5d8}\u{5d7} \u{5d6}\u{5d5}"
+        );
+        // Wrapped at 75: "אבג ", then "דה" with its separator and "וז ",
+        // then "חט".
+        let line = wrapped(text, 75.);
+        let second = text.find('\u{5d3}').unwrap();
+        let third = text.find('\u{5d7}').unwrap();
+        assert_eq!(line.row_starts().as_slice(), [second, third]);
+        assert_eq!(
+            drawn(&line.unwrapped_layout, text),
+            " \u{5d2}\u{5d1}\u{5d0}\u{5d4}\u{5d3}\u{1c} \u{5d6}\u{5d5}\u{5d8}\u{5d7}"
+        );
+        // On the second row, the first paragraph's end at its left, the
+        // second's start at its right, each at its own end.
+        let separator = text.find('\u{1c}').unwrap();
+        let paragraph = text.find('\u{5d5}').unwrap();
+        assert_eq!(at(&line, separator), Some((0., 20.)));
+        assert_eq!(at(&line, paragraph), Some((60., 20.)));
+        // Where the line wraps ends the first row, at its left.
+        assert_eq!(at(&line, second), Some((0., 0.)));
+        assert_eq!(at(&line, second + 2), Some((10., 20.)));
+    }
+
+    /// What a line holding right-to-left text answers is worked out at its
+    /// first question and kept with it: the questions after read the same
+    /// row. A wrapped line keeps its rows so.
+    #[test]
+    fn a_line_s_answers_are_worked_out_once() {
+        let text = "abc \u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}\u{5d5} xyz";
+        let layout = laid_out(text);
+        assert!(layout.bidi_row.get().is_none());
+        let x = layout.x_for_index(5);
+        let kept = layout.bidi_row.get().map(|row| row as *const BidiRow);
+        assert!(kept.is_some());
+        layout.index_for_x(px(45.));
+        layout.closest_index_for_x(px(45.));
+        layout.selection_ranges(2..9);
+        layout.index_left_of(5);
+        layout.index_right_of(5);
+        assert_eq!(layout.x_for_index(5), x);
+        assert_eq!(layout.bidi_row.get().map(|row| row as *const BidiRow), kept);
+        let line = wrapped(text, 85.);
+        assert!(line.bidi_rows.get().is_none());
+        let starts = line.row_starts();
+        let kept = line.bidi_rows.get().map(|rows| rows as *const BidiRows);
+        assert!(kept.is_some());
+        at(&line, 13);
+        line.index_for_position(point(px(25.), px(25.)), px(20.))
+            .ok();
+        assert_eq!(line.row_starts(), starts);
+        assert_eq!(
+            line.bidi_rows.get().map(|rows| rows as *const BidiRows),
+            kept
+        );
+        // A line all left to right keeps nothing.
+        let latin = laid_out("abc def");
+        latin.x_for_index(2);
+        assert!(latin.bidi_row.get().is_none());
+    }
+
+    /// The nearest caret to a point, and the one beside a place, found by
+    /// their edges sorted once, are those a walk of every caret finds: the
+    /// nearest, of several as near the first in the text; beside, the
+    /// nearest edge that way, of its places the nearest in the text.
+    #[test]
+    fn a_row_s_carets_are_found_as_a_walk_of_them_finds_them() {
+        for text in [
+            "\u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}",
+            "abc \u{5d0}\u{5d1}\u{5d2} \u{5d3}\u{5d4}\u{5d5} xyz",
+            "\u{5d0} 12 (b) \u{5d1}\u{5d2}, c\u{5d3}d",
+            "\u{627}\u{644} 123 \u{5d0}, 4.5 x",
+            "\u{5d0}\u{5d1}\u{1c}ab \u{5d2}\u{2029}c",
+        ] {
+            let layout = laid_out(text);
+            let levels = layout.bidi_levels.clone().unwrap();
+            let row = layout.kept_bidi_row(&levels);
+            let carets = &row.carets;
+            let mut x = -15.;
+            while x < f32::from(layout.width) + 15. {
+                let at = px(x);
+                let walked = carets
+                    .iter()
+                    .min_by_key(|caret| (caret.x - at).abs())
+                    .map_or(0, |caret| caret.index);
+                assert_eq!(row.closest_index_for_x(at), walked, "{text:?} at {x}");
+                x += 2.5;
+            }
+            for caret in carets.iter() {
+                for toward_left in [true, false] {
+                    let here = row.x_for_index(caret.index);
+                    let walked = carets
+                        .iter()
+                        .filter(|c| if toward_left { c.x < here } else { c.x > here })
+                        .min_by_key(|c| ((c.x - here).abs(), c.index.abs_diff(caret.index)))
+                        .map(|c| c.index);
+                    assert_eq!(
+                        row.index_beside(caret.index, toward_left),
+                        walked,
+                        "{text:?} beside {}",
+                        caret.index
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_row_is_drawn_in_the_order_it_reads() {
         let order = drawn_order(&[0, 0, 1, 1, 1, 0]);
@@ -1319,5 +1576,9 @@ mod tests {
         let order = drawn_order(&[1, 1, 2, 2, 1]);
         assert_eq!(order.as_slice(), [4, 2, 3, 1, 0]);
         assert!(drawn_order(&[]).is_empty());
+        // Each paragraph's stretch on its own, in the text's order.
+        let order = drawn_by_paragraph(&[1, 1, 1, 1, 1], |k| k == 2 || k == 3);
+        assert_eq!(order.as_slice(), [1, 0, 2, 4, 3]);
+        assert!(drawn_by_paragraph(&[], |_| true).is_empty());
     }
 }
