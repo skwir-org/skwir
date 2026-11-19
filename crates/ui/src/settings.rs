@@ -2345,7 +2345,7 @@ pub fn declare(app: &App) {
                     settings_reader_continuous_description = "Read a document, a book laid out in pages or a comic as one scrolling column."
                 ),
                 words!(
-                    settings_reader_continuous_description_more = "Off shows one page at a time, and the reader's own button still changes it for the document in front of you.",
+                    settings_reader_continuous_description_more = "Off shows one page at a time. The reader's own button changes it too.",
                     note = "What a setting's description says after its first sentence, in its tooltip."
                 ),
             ),
@@ -2357,13 +2357,13 @@ pub fn declare(app: &App) {
     app.settings.declare(
         SettingSpec::toggle(
             READER_DRAG_KEY,
-            crate::preview_bar::label::drag_moves(),
+            words!(settings_reader_drag = "Drag to move the page"),
             (
                 words!(
                     settings_reader_drag_description = "A drag across a page's text moves the page, as a hand would, instead of selecting the text."
                 ),
                 words!(
-                    settings_reader_drag_description_more = "Where a page has no text, around and between pages, and on a picture zoomed in, a drag moves what is shown either way, and so does a drag with the middle button. The reader's own button changes it for the document in front of you.",
+                    settings_reader_drag_description_more = "Where a drag has no text to select (a page's margins and pictures, a page with no text, around and between pages, a picture zoomed in), it moves what is shown either way, and so does a drag with the middle button. The reader's own button changes it too.",
                     note = "What a setting's description says after its first sentence, in its tooltip."
                 ),
             ),

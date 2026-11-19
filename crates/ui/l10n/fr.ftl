@@ -7715,13 +7715,16 @@ settings_reader_continuous = Défilement continu
 settings_reader_continuous_description = Lire un document, un livre mis en pages ou une bande dessinée en une seule colonne qui défile.
 
 # draft
-settings_reader_continuous_description_more = Désactivé, une page s’affiche à la fois, et le bouton du lecteur change toujours ce réglage pour le document que vous avez sous les yeux.
+settings_reader_continuous_description_more = Désactivé, une page s’affiche à la fois. Le bouton du lecteur change aussi ce réglage.
+
+# draft
+settings_reader_drag = Glisser pour déplacer la page
 
 # draft
 settings_reader_drag_description = Faire glisser sur le texte d’une page déplace la page, comme le ferait une main, au lieu de sélectionner le texte.
 
 # draft
-settings_reader_drag_description_more = Là où une page n’a pas de texte, autour des pages et entre elles, et sur une image agrandie, faire glisser déplace ce qui est affiché dans tous les cas, de même qu’avec le bouton du milieu. Le bouton du lecteur change ce réglage pour le document que vous avez sous les yeux.
+settings_reader_drag_description_more = Là où il n’y a pas de texte à sélectionner (les marges et les images d’une page, une page sans texte, autour des pages et entre elles, une image agrandie), faire glisser déplace ce qui est affiché dans tous les cas, de même qu’avec le bouton du milieu. Le bouton du lecteur change aussi ce réglage.
 
 # draft
 settings_reading_font = Police de lecture

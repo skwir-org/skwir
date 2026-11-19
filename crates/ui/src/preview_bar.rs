@@ -157,7 +157,8 @@ pub mod label {
             note = "A preview's button: its pages one under the other, scrolled through, rather than a screen at a time."
         )
     }
-    /// The reader's button and its setting, one choice (ADR-143).
+    /// The reader's button, the same choice as its setting, whose title is
+    /// a message of its own (`settings_reader_drag`, ADR-143).
     pub fn drag_moves() -> Words {
         words!(
             preview_drag_moves = "Drag to move the page",

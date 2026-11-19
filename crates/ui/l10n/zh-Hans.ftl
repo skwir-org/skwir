@@ -7452,13 +7452,16 @@ settings_reader_continuous = 连续滚动
 settings_reader_continuous_description = 将文档、按页排版的书籍或漫画作为一整列滚动阅读。
 
 # draft
-settings_reader_continuous_description_more = 关闭后一次显示一页，阅读器自身的按钮仍可为眼前的文档更改此项。
+settings_reader_continuous_description_more = 关闭后一次显示一页。阅读器自身的按钮也会更改此项。
+
+# draft
+settings_reader_drag = 拖动以移动页面
 
 # draft
 settings_reader_drag_description = 在页面文字上拖动会像用手一样移动页面，而不是选择文字。
 
 # draft
-settings_reader_drag_description_more = 在没有文字的页面上、页面周围和页面之间，以及放大的图片上，拖动总会移动所显示的内容，用鼠标中键拖动也是如此。阅读器自身的按钮可为眼前的文档更改此项。
+settings_reader_drag_description_more = 在没有文字可选的地方（页面的边距和图片、没有文字的页面、页面周围和页面之间、放大的图片），拖动总会移动所显示的内容，用鼠标中键拖动也是如此。阅读器自身的按钮也会更改此项。
 
 # draft
 settings_reading_font = 阅读字体
