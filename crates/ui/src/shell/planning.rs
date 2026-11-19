@@ -160,7 +160,7 @@ pub(super) fn turn(
     args: &serde_json::Value,
 ) -> Turn {
     if matches!(name, "ui.close_window" | "ui.quit")
-        || (name == "tab.close" && super::closes_last_window(app, window, args))
+        || (name == "tab.close" && super::closes_last_tab(app, window, args))
     {
         return Turn::EndsWindow;
     }

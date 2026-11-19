@@ -111,9 +111,10 @@ pub(crate) struct Finishing {
     openings: Openings,
     /// Other programs' dialogs handed in (ADR-141), for the next wake.
     choosings: Arc<Mutex<Vec<Choosing>>>,
-    /// The windows asleep as a dialog's window opened with none of the
-    /// user's own up: they stay asleep until one is asked (`show`), as
-    /// while no window is up.
+    /// The windows of the core asleep: those that were as a dialog's
+    /// window opened with none of the user's own up, and one kept as it
+    /// left (`left`, the last of the user's own): they stay asleep until
+    /// one is asked (`show`), as while no window is up.
     asleep: HashSet<WindowId>,
     /// What a window that closed held and no other has taken yet: the next
     /// `deliver` hands it on (`hand_on`).
@@ -448,6 +449,20 @@ pub(crate) fn active_handle(cx: &App) -> Option<WindowHandle<Shell>> {
 pub(crate) fn window_count(cx: &App) -> usize {
     cx.try_global::<Finishing>()
         .map_or(0, |state| state.windows.len())
+}
+
+/// How many windows of the user's own are up: what "the last window"
+/// counts (ADR-115, ADR-122), never those answering other programs'
+/// dialogs (ADR-141).
+pub(crate) fn own_window_count(cx: &App) -> usize {
+    cx.try_global::<Finishing>()
+        .map_or(0, |state| own_windows(state).len())
+}
+
+/// Window `id` of the core, made for the user while no window of theirs
+/// is up, sleeps until one is asked, as the others (`show`).
+pub(crate) fn sleeps(cx: &mut App, id: WindowId) {
+    cx.global_mut::<Finishing>().asleep.insert(id);
 }
 
 /// The windows up other than `id`.
@@ -1070,6 +1085,12 @@ fn end(cx: &mut App) {
 pub(crate) fn left(cx: &mut App, id: WindowId) {
     let state = cx.global_mut::<Finishing>();
     state.windows.retain(|(up, _)| *up != id);
+    // Kept in the core (the last of the user's own, ADR-115): asleep until
+    // one is asked (`show`), never opened again by the next wake while
+    // dialogs' windows are up.
+    if state.app.workspace.read().window(id).is_some() {
+        state.asleep.insert(id);
+    }
     if state.player == Some(id) {
         state.player = None;
     }

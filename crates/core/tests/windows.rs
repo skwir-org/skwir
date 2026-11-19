@@ -383,6 +383,48 @@ fn closing_the_active_window_goes_to_the_one_used_before_it() {
     assert_eq!(active_window(&app), first);
 }
 
+/// A window that answered another program's dialog goes from the core
+/// whatever else is there (ADR-141): never kept as the last window, nor
+/// remembered to be reopened. Were it the last, a window of the user's
+/// own takes its place.
+#[test]
+fn a_dialog_s_window_goes_from_the_core_the_last_one_too() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let own = active_window(&app);
+    let (dialog, _, _) = app.open_window(Location::from_path(dir.path())).unwrap();
+    app.workspace.write().set_chooses(dialog, true);
+    assert_eq!(app.close_dialog_window(dialog, dir.path()).unwrap(), None);
+    assert_eq!(windows(&app), [own], "gone, the user's left");
+
+    let (dialog, _, _) = app.open_window(Location::from_path(dir.path())).unwrap();
+    app.workspace.write().set_chooses(dialog, true);
+    // The user's window closed while the dialog's was up: it is the last.
+    run(&app, "window.close", serde_json::json!({ "window": own }));
+    assert_eq!(windows(&app), [dialog]);
+    let placed = app
+        .close_dialog_window(dialog, dir.path())
+        .unwrap()
+        .expect("one takes its place");
+    assert_eq!(windows(&app), [placed]);
+    let ws = app.workspace.read();
+    let window = ws.window(placed).unwrap();
+    assert!(!window.chooses(), "the user's own");
+    assert_eq!(
+        ws.pane(window.shown().active)
+            .and_then(|p| p.location().cloned()),
+        Some(Location::from_path(dir.path()))
+    );
+    drop(ws);
+    // What comes back is the user's window, never a dialog's.
+    run(&app, "tab.reopen", serde_json::json!({}));
+    assert_eq!(windows(&app).len(), 2, "the user's window again");
+    let _ = app.dispatch(&Invocation::new("tab.reopen"));
+    assert_eq!(windows(&app).len(), 2, "nothing more: no dialog's window");
+}
+
 #[test]
 fn the_active_pane_is_in_the_active_window() {
     let dir = home_tempdir();

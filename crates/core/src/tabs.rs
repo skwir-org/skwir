@@ -795,6 +795,26 @@ impl App {
         Ok((window, tab, pane))
     }
 
+    /// Close window `id`, which answered another program's dialog
+    /// (ADR-141): it goes from the core whatever else is there, never kept
+    /// as the last window. Were it the last, a window of the user's own on
+    /// `folder` takes its place first: its id, which the UI keeps asleep.
+    ///
+    /// # Errors
+    /// When there is no window `id`, or none can take its place.
+    pub fn close_dialog_window(
+        &self,
+        id: WindowId,
+        folder: &std::path::Path,
+    ) -> anyhow::Result<Option<WindowId>> {
+        if self.close_window(id)?.is_some() {
+            return Ok(None);
+        }
+        let (placed, _, _) = self.open_window(Location::from_path(folder))?;
+        self.close_window(id)?;
+        Ok(Some(placed))
+    }
+
     /// Move tab `tab` to `window` (a new window made from its own when
     /// `None`), at `to` (last when `None`), shown there, the window made
     /// active. The tab shown there before is left; a tab alone in its

@@ -6,6 +6,7 @@
 //! on a file and a double click answer through `open`, which the window
 //! takes while it chooses (`Shell::chooser_open`).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use gpui::{
 use skwir_core::Location;
 use skwir_core::words;
 use skwir_core::words::Words;
-use skwir_core::workspace::Admits;
+use skwir_core::workspace::{Admits, PaneId};
 use skwir_platform::chooser::{Answer, Asked, Choosing, Kind};
 
 use crate::controls::{self, ButtonStyle};
@@ -77,6 +78,9 @@ pub(crate) struct Chooser {
     filter: Option<usize>,
     /// What it admits, set on the pane shown (`Shell::chooser_sync`).
     admits: Option<Admits>,
+    /// The panes it was set on, taken off as the window lets go of the
+    /// request or the pane leaves the window.
+    admitted: HashSet<PaneId>,
     /// Each choice's value, in the request's order.
     choices: Vec<String>,
     /// The dropdown whose list is open.
@@ -260,6 +264,7 @@ impl Shell {
         choosing.when_closed(move || wake());
         self.chooser = Some(Chooser {
             admits: admits_of(&asked, filter),
+            admitted: HashSet::new(),
             choosing,
             name,
             filter,
@@ -302,16 +307,31 @@ impl Shell {
             return;
         }
         let admits = chooser.admits.clone();
+        let (pane, window_id) = (self.pane, self.window_id);
         let mut ws = self.app.workspace.write();
-        if let Some(pane) = ws.pane_mut(self.pane) {
-            pane.set_admits(admits);
+        if let Some(shown) = ws.pane_mut(pane) {
+            shown.set_admits(admits);
         }
+        // A pane moved to another window shows all again there.
+        let Some(chooser) = &mut self.chooser else {
+            return;
+        };
+        chooser.admitted.insert(pane);
+        chooser.admitted.retain(|admitted| {
+            let here = ws.window_of(*admitted) == Some(window_id);
+            if !here && let Some(moved) = ws.pane_mut(*admitted) {
+                moved.set_admits(None);
+            }
+            here
+        });
     }
 
-    /// The window answers `answer` and goes, its core window with it, the
-    /// last one included: kept as the core's last, it is an ordinary
-    /// window again (ADR-141). Nothing if it chooses nothing.
-    fn chooser_let_go(&mut self, answer: Answer) {
+    /// The window answers `answer` (unless it did) and goes from the
+    /// core, whatever else is there: never kept as the last window, nor
+    /// an ordinary one (ADR-141). What it admitted goes with it. Every way
+    /// the window goes passes here (`Shell::leave`). Nothing if it chooses
+    /// nothing.
+    pub(crate) fn chooser_let_go(&mut self, answer: Answer, cx: &mut gpui::App) {
         let Some(chooser) = self.chooser.take() else {
             return;
         };
@@ -319,32 +339,34 @@ impl Shell {
             self.chooser_remember(chooser.asked(), paths);
         }
         chooser.choosing.answer(answer);
-        match self.app.close_window(self.window_id) {
-            Ok(Some(_)) => {}
-            Ok(None) => self
-                .app
-                .workspace
-                .write()
-                .set_chooses(self.window_id, false),
+        {
+            let mut ws = self.app.workspace.write();
+            for admitted in &chooser.admitted {
+                if let Some(pane) = ws.pane_mut(*admitted) {
+                    pane.set_admits(None);
+                }
+            }
+        }
+        // Gone already where the core closed it.
+        if self.app.workspace.read().window(self.window_id).is_none() {
+            return;
+        }
+        let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/"));
+        let folder = skwir_core::settings::startup_folder(&self.app.settings, &home);
+        match self.app.close_dialog_window(self.window_id, &folder) {
+            // The core's last, a window of the user's own took its place:
+            // asleep until one is asked, as the others.
+            Ok(Some(placed)) => crate::finishing::sleeps(cx, placed),
+            Ok(None) => {}
             Err(error) => tracing::warn!("a dialog's window closes: {error:#}"),
         }
     }
 
     /// `chooser_let_go`, and the window closes.
     fn chooser_end(&mut self, answer: Answer, window: &mut Window, cx: &mut Context<Self>) {
-        self.chooser_let_go(answer);
+        self.chooser_let_go(answer, cx);
         self.leave(window, cx);
         window.remove_window();
-    }
-
-    /// The window closes while it chooses (its close button, Ctrl+Shift+W):
-    /// the dialog is cancelled. Whether it chose.
-    pub(crate) fn chooser_closing(&mut self) -> bool {
-        if self.chooser.is_none() {
-            return false;
-        }
-        self.chooser_let_go(Answer::Cancelled);
-        true
     }
 
     /// The folder its program chose in, kept for its next dialog
@@ -725,6 +747,7 @@ impl Shell {
             chooser.filter = index;
             chooser.admits = admits_of(chooser.asked(), index);
             let admits = chooser.admits.clone();
+            chooser.admitted.insert(self.pane);
             if let Some(pane) = self.app.workspace.write().pane_mut(self.pane) {
                 pane.set_admits(admits);
             }

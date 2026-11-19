@@ -2063,10 +2063,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   Move to New Window on a tab of a window with more than one. Closing a
   window (its button, Ctrl+Shift+W, `ui.close_window`; `tab.close` of its
   last tab run in the window, Ctrl+W, `Shell::closes_last_window`, the
-  last window included) with others up
+  last window included) with others of the user's own up
   closes the core's window, its tabs kept to be reopened together
-  (Ctrl+Shift+T); the last one leaves as ADR-115 says. Quit closes every
-  window (`Shell::close_every_window`), none forgotten.
+  (Ctrl+Shift+T); the last one leaves as ADR-115 says, kept in the core
+  (asleep while windows answering other programs' dialogs are up,
+  `finishing::left`): those never count as one of the user's own
+  (`finishing::own_window_count`). Quit closes every window
+  (`Shell::close_every_window`), none forgotten.
 - **A tab is not dragged between windows** (ADR-122, Rejected): a tab's
   drag moves it along its own window's tabs; Move to New Window and
   `tab.move` with a `window` carry it elsewhere, on every system alike.
@@ -2159,8 +2162,15 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   launch goes to a window of the user's own (`ordinary_handle`); nothing
   is recorded for the next start until one opened in the run
   (`Opened::Own`), so a skwir the bus started (`--portal`) never
-  replaces the windows the user left. The window answers once, and goes
-  with its core window, the last one too (`chooser_let_go`).
+  replaces the windows the user left. The window answers once, and every
+  way it goes answers it (cancelled unless it answered: its close
+  button, Ctrl+W, Quit and its answers, finishing in the background, its
+  request closed; `Shell::leave`, `chooser_let_go`). Its core window goes
+  from the core whatever else is there, never kept as the last window
+  nor turned into an ordinary one (`App::close_dialog_window`: were it
+  the last, a window of the user's own on the startup folder takes its
+  place, asleep), and what it admitted goes with it, from a pane moved
+  to another window too.
 - **A wake draws the windows it concerns** (`finishing::woken`): the
   listings are pumped once for all the windows, then a window syncs and
   draws if the wake was for all (`App::wake`, an

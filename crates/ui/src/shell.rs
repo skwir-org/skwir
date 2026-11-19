@@ -3069,7 +3069,7 @@ impl Shell {
         // the palette, a script asking the window), closes the window, as
         // its close button does (ADR-122): the core keeps a last tab, which
         // only the window lets go of (ADR-115).
-        if name == "tab.close" && self.closes_last_window(&args) {
+        if name == "tab.close" && self.closes_last_window(&args, cx) {
             self.close_window(window, cx);
             window.remove_window();
             return;
@@ -3263,6 +3263,11 @@ impl Shell {
         if self.left {
             return;
         }
+        // Another program's dialog is answered cancelled, unless it was
+        // answered, and its window goes from the core, whichever way the
+        // window goes (its close button, Ctrl+W, Quit and its answers,
+        // ADR-141).
+        self.chooser_let_go(skwir_platform::chooser::Answer::Cancelled, cx);
         let held = self.take_held();
         self.left = true;
         // A plan being made for it, and what waited, go with it.
@@ -3280,18 +3285,16 @@ impl Shell {
         }
     }
 
-    /// The window's close button, or Ctrl+Shift+W: with other windows up,
-    /// this one and its tabs go, Reopen closed tab bringing them back
-    /// (ADR-122); the last one leaves as ADR-115 says, what runs going on
-    /// without it.
+    /// The window's close button, or Ctrl+Shift+W: with other windows of
+    /// the user's own up, this one and its tabs go, Reopen closed tab
+    /// bringing them back (ADR-122); the last of the user's own leaves as
+    /// ADR-115 says, what runs going on without it, kept in the core
+    /// (asleep while dialogs' windows are up). Windows answering other
+    /// programs' dialogs count for neither: one closing is cancelled, and
+    /// goes from the core as it leaves (ADR-141).
     pub(crate) fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Another program's dialog is cancelled, its window gone with it,
-        // the last one too (ADR-141).
-        if self.chooser_closing() {
-            self.leave(window, cx);
-            return;
-        }
-        if crate::finishing::window_count(cx) > 1
+        if self.chooser.is_none()
+            && crate::finishing::own_window_count(cx) > 1
             && let Err(error) = self.app.close_window(self.window_id)
         {
             tracing::warn!("a window closes: {error:#}");
@@ -3299,10 +3302,13 @@ impl Shell {
         self.leave(window, cx);
     }
 
-    /// Whether `tab.close` with `args` closes the last tab of the last
-    /// window: the tab named, else this window's shown one.
-    fn closes_last_window(&self, args: &serde_json::Value) -> bool {
-        closes_last_window(&self.app, self.window_id, args)
+    /// Whether `tab.close` with `args` closes this window as its close
+    /// button does: its last tab (the tab named, else the one shown), the
+    /// window being the last of the user's own up, or one answering
+    /// another program's dialog.
+    fn closes_last_window(&self, args: &serde_json::Value, cx: &gpui::App) -> bool {
+        closes_last_tab(&self.app, self.window_id, args)
+            && (self.chooser.is_some() || crate::finishing::own_window_count(cx) <= 1)
     }
 
     /// Quit's windows: every one goes, this one first, none forgotten by
@@ -5540,22 +5546,21 @@ fn show_resolved(app: &Arc<App>, cx: &gpui::App) -> u64 {
     crate::settings::show_resolved(app, shown)
 }
 
-/// Whether `tab.close` with `args`, asked in `window`, closes the last tab
-/// of the last window: the tab named, else that window's shown one.
-fn closes_last_window(
+/// Whether `tab.close` with `args`, asked in `window`, closes that
+/// window's last tab (the tab named, else the one shown), which takes the
+/// window with it.
+fn closes_last_tab(
     app: &App,
     window: skwir_core::workspace::WindowId,
     args: &serde_json::Value,
 ) -> bool {
     let ws = app.workspace.read();
-    if ws.windows().len() != 1 {
-        return false;
-    }
     let tab = match args.get("tab").filter(|tab| !tab.is_null()) {
         Some(tab) => serde_json::from_value::<skwir_core::workspace::TabId>(tab.clone()).ok(),
         None => ws.window(window).map(|w| w.shown().id),
     };
     tab.and_then(|tab| ws.window_of_tab(tab))
+        .filter(|w| *w == window)
         .and_then(|w| ws.window(w))
         .is_some_and(|w| w.tabs().len() == 1)
 }
