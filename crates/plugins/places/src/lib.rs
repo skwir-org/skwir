@@ -2859,7 +2859,7 @@ mod tests {
             next_notice(&app)
         };
         let undo = |notice: &skwir_core::app::Notification, label: &str| {
-            let action = notice.action.as_ref().expect("a way back");
+            let action = notice.actions.first().expect("a way back");
             assert_eq!(action.label.english(), label);
             app.dispatch(&action.command).unwrap();
             next_notice(&app)
@@ -2876,7 +2876,7 @@ mod tests {
             again.text.english(),
             "“it's 100% a folder” is already bookmarked"
         );
-        assert!(again.action.is_none());
+        assert!(again.actions.is_empty());
         // A folder of the trash is not bookmarked: restored or deleted,
         // the bookmark would lead nowhere.
         let trashed = tmp.path().join(".Trash-1000/files/old project");
@@ -2992,7 +2992,7 @@ mod tests {
             next_notice(&app)
         };
         let undo = |notice: &skwir_core::app::Notification| {
-            let action = notice.action.as_ref().expect("a way back");
+            let action = notice.actions.first().expect("a way back");
             app.dispatch(&action.command).unwrap();
             next_notice(&app)
         };

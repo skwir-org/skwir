@@ -518,7 +518,11 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
         assert!(Instant::now() < deadline, "never added");
         std::thread::sleep(Duration::from_millis(20));
     };
-    let action = offered.action.expect("encrypting offered");
+    let action = offered
+        .actions
+        .into_iter()
+        .next()
+        .expect("encrypting offered");
     assert_eq!(action.command.name.as_ref(), "remote.encrypt_rclone_config");
 
     // Typed twice: two that differ are refused.

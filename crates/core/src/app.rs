@@ -225,10 +225,16 @@ pub struct Notification {
     /// offers to open it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting: Option<String>,
-    /// A button that goes with the message: Undo for what a command did
-    /// outside the journal (a bookmark), Redo after that undo.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action: Option<NotifyAction>,
+    /// Its buttons, in their order: Undo for what a command did outside
+    /// the journal (a bookmark), Redo after that undo; a question's
+    /// answers (`App::ask_quietly`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<NotifyAction>,
+    /// Whether it stays until it is answered or closed, untimed: a
+    /// question that may wait for the user (`App::ask_quietly`), never a
+    /// dialog.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stays: bool,
 }
 
 /// A button on a [`Notification`]: its label and the command it runs.
@@ -3086,7 +3092,8 @@ impl App {
             level,
             text: text.into(),
             setting: None,
-            action: None,
+            actions: Vec::new(),
+            stays: false,
         });
         self.wake();
     }
@@ -3103,10 +3110,27 @@ impl App {
             level,
             text: text.into(),
             setting: None,
-            action: Some(NotifyAction {
+            actions: vec![NotifyAction {
                 label: label.into(),
                 command,
-            }),
+            }],
+            stays: false,
+        });
+        self.wake();
+    }
+
+    /// Ask something that may wait for the user (ADR-142: whether to be
+    /// told of new versions) in a toast that stays until one of `answers`
+    /// is pressed or it is closed: never a dialog, nothing timed. Closed
+    /// or replaced unanswered, nothing ran: its owner may ask again
+    /// another time.
+    pub fn ask_quietly(&self, text: impl Into<Words>, answers: Vec<NotifyAction>) {
+        self.notifications.lock().push(Notification {
+            level: NotifyLevel::Info,
+            text: text.into(),
+            setting: None,
+            actions: answers,
+            stays: true,
         });
         self.wake();
     }
@@ -3140,7 +3164,8 @@ impl App {
             level,
             text: text.into(),
             setting: Some(key.into()),
-            action: None,
+            actions: Vec::new(),
+            stays: false,
         });
         self.wake();
     }

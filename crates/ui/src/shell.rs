@@ -4335,27 +4335,37 @@ impl Shell {
         self.take_plans(inbox.taken, cx);
         for n in inbox.notifications {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
-            match (n.setting, n.action) {
-                (Some(key), _) if error => self.set_status_about(n.text, &key, cx),
-                // Something done outside the journal, with its own way back,
-                // or something to know, with what to do about it.
-                (_, Some(action)) => self.toast(
-                    crate::toast::Toast::new(
-                        n.text,
-                        match n.level {
-                            NotifyLevel::Error | NotifyLevel::Warning => crate::toast::Tone::Error,
-                            NotifyLevel::Done => crate::toast::Tone::Success,
-                            NotifyLevel::Info => crate::toast::Tone::Info,
-                        },
-                        vec![crate::toast::Action {
-                            label: action.label,
-                            command: action.command.name.to_string(),
-                            args: action.command.args,
-                        }],
-                    ),
-                    cx,
-                ),
-                _ => self.set_status(n.text, error, cx),
+            if let (Some(key), true) = (&n.setting, error) {
+                self.set_status_about(n.text, key, cx);
+                continue;
+            }
+            if n.actions.is_empty() {
+                self.set_status(n.text, error, cx);
+                continue;
+            }
+            // Something done outside the journal, with its own way back,
+            // something to know, with what to do about it, or a question
+            // that may wait, staying until answered or closed.
+            let toast = crate::toast::Toast::new(
+                n.text,
+                match n.level {
+                    NotifyLevel::Error | NotifyLevel::Warning => crate::toast::Tone::Error,
+                    NotifyLevel::Done => crate::toast::Tone::Success,
+                    NotifyLevel::Info => crate::toast::Tone::Info,
+                },
+                n.actions
+                    .into_iter()
+                    .map(|action| crate::toast::Action {
+                        label: action.label,
+                        command: action.command.name.to_string(),
+                        args: action.command.args,
+                    })
+                    .collect(),
+            );
+            if n.stays {
+                self.notice(toast, cx);
+            } else {
+                self.toast(toast, cx);
             }
         }
         self.pending = self.app.pending.get();

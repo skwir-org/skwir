@@ -203,7 +203,7 @@ fn closing_a_tab_can_be_undone_with_its_history() {
     let notes = app.take_notifications();
     let note = notes.last().expect("a notification");
     assert_eq!(note.text.english(), "Closed tab “it's a folder”");
-    let undo = note.action.clone().expect("Undo").command;
+    let undo = note.actions.first().cloned().expect("Undo").command;
     assert_eq!(&*undo.name, "tab.reopen");
 
     app.dispatch(&undo).expect("reopen");

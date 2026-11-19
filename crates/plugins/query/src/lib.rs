@@ -2071,7 +2071,9 @@ mod tests {
         };
         app.dispatch(&invocation).unwrap();
         let note = note(app);
-        note.action
+        note.actions
+            .into_iter()
+            .next()
             .unwrap_or_else(|| panic!("{name}: {}", note.text))
             .command
     }
@@ -2116,7 +2118,7 @@ mod tests {
         // Keeping it again says so and changes nothing.
         app.dispatch(&Invocation::new("keep")).unwrap();
         let again = note(&app);
-        assert!(again.action.is_none() && again.text.english().contains("already saved"));
+        assert!(again.actions.is_empty() && again.text.english().contains("already saved"));
         // Undo, then Redo, from the notifications' buttons.
         let redo = edit(&app, &undo.name, undo.args.clone());
         assert!(exprs(&app).is_empty());

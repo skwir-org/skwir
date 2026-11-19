@@ -507,7 +507,7 @@ mod tests {
             said[0].text.english(),
             "Other programs' Open and Save dialogs: Skwir, from the desktop portal's next start"
         );
-        let undo = said[0].action.clone().expect("Undo");
+        let undo = said[0].actions.first().cloned().expect("Undo");
         let user = root.join("config/hyprland-portals.conf");
         assert!(
             std::fs::read_to_string(&user)

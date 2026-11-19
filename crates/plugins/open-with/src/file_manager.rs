@@ -505,7 +505,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         };
         assert_eq!(notice.text.english(), "skwir now opens folders");
-        assert!(notice.action.is_some(), "with Undo");
+        assert!(!notice.actions.is_empty(), "with Undo");
         assert_ne!(row.file_manager.source.revision(), before);
         assert_eq!(listed(&app)["value"], "org.skwir.skwir.desktop");
         // The desktop's, never a preference of Skwir's.

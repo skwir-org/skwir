@@ -2547,7 +2547,7 @@ mod tests {
         .unwrap();
         let said = next_notification(&app);
         assert_eq!(said.text.english(), "Editor now opens PNG image files");
-        let undo = said.action.expect("Undo");
+        let undo = said.actions.into_iter().next().expect("Undo");
         assert_eq!(undo.label.english(), "Undo");
         let written = std::fs::read_to_string(&list).unwrap();
         assert!(written.starts_with(
@@ -2558,7 +2558,7 @@ mod tests {
         app.dispatch(&undo.command).unwrap();
         let said = next_notification(&app);
         assert_eq!(said.text.english(), "Viewer now opens PNG image files");
-        let redo = said.action.expect("Redo");
+        let redo = said.actions.into_iter().next().expect("Redo");
         assert_eq!(redo.label.english(), "Redo");
         assert_eq!(
             std::fs::read_to_string(&list).unwrap(),
@@ -2569,7 +2569,15 @@ mod tests {
         app.dispatch(&redo.command).unwrap();
         let said = next_notification(&app);
         assert_eq!(said.text.english(), "Editor now opens PNG image files");
-        assert_eq!(said.action.expect("Undo again").label.english(), "Undo");
+        assert_eq!(
+            said.actions
+                .into_iter()
+                .next()
+                .expect("Undo again")
+                .label
+                .english(),
+            "Undo"
+        );
     }
 
     /// Properties' Opens with: the application a file's type opens with,

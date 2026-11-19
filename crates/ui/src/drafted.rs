@@ -112,7 +112,7 @@ mod tests {
         let told = app.take_notifications();
         assert_eq!(told.len(), 1);
         assert_eq!(told[0].text, super::notice());
-        let action = told[0].action.as_ref().expect("a button");
+        let action = told[0].actions.first().expect("a button");
         assert_eq!(action.label.english(), "Use English");
         assert_eq!(&*action.command.name, "settings.apply");
         assert_eq!(action.command.args["changes"]["core.language"], "en");

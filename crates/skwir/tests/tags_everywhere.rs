@@ -295,7 +295,7 @@ fn pinned_tags_replace_the_suggestions_in_the_order_put() {
             .rev()
             .find(|n| n.text.english() == "Moved the tag “x”")
     });
-    let undo = undo.action.expect("an Undo").command;
+    let undo = undo.actions.into_iter().next().expect("an Undo").command;
     app.dispatch(&undo).unwrap();
     until_sidebar(&[("Été", true), ("x", true)]);
 
