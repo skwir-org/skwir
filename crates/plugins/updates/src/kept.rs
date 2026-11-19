@@ -41,10 +41,7 @@ pub struct Kept {
     /// The day of the last check that got an answer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checked_on: Option<i64>,
-    /// The site's answer then, as it was read, and its tag for the next
-    /// conditional request.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub etag: Option<String>,
+    /// The site's answer then, as it was read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -339,7 +336,6 @@ mod tests {
             asked_on: Some(20_002),
             answered: true,
             checked_on: Some(20_003),
-            etag: Some("\"abc\"".into()),
             latest: Some("0.6.2".into()),
             important_since: None,
             told: Some("0.6.2".into()),

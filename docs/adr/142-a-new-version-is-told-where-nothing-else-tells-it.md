@@ -283,9 +283,16 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   `updates.latest` answers from memory, how the copy came included.
 - **About and More** draw what a plugin keeps said about Skwir
   (`registry::News`): the window names no plugin.
-- **Metered connections** (6) are read on Linux alone, from the portal.
-  Windows' connection cost and macOS's `isExpensive` are not read yet:
-  the check runs there.
+- **Metered connections** (6) are read on Linux alone, from the portal,
+  on a connection of its own given up on after 3 s
+  (`network::metered`), not the one session connection: a portal that
+  hangs would hold a call there for good (`AGENTS.md`). Windows'
+  connection cost and macOS's `isExpensive` are not read yet: the check
+  runs there. Only a check asked for now (`updates.check`) is made on a
+  metered connection; it always answers, with the newer version (told
+  before or within the 14 days), up to date, or why it could not tell.
+  The question's Yes waits as the daily check does, and says the version
+  it finds in place of its confirmation.
 - **The AppImage** (3.1): the update information names
   `skwir.org/latest/skwir-x86_64.AppImage.zsync` (`/download/` is the
   site's download page). `zsyncmake` makes the zsync file, which names
@@ -332,4 +339,20 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   not run (no Windows here).
 - **HTTP** is `skwir_platform::http`, behind the platform's `http`
   feature that only the two plugins enable, a client limited per use
-  (`Http::limited`: the check waits 10 s and reads 16 KiB at most).
+  (`Http::limited`: the check waits 10 s and reads 16 KiB at most). The
+  deadline is the request's whole: a second try, and the wait for
+  another request's connection to the server, included.
+  - It asks without `If-None-Match`, and no ETag is kept (decision 6
+    amended): a tag the server chose, sent back each day, could tell one
+    copy from another, as a cookie would, and the file is a few dozen
+    bytes.
+  - It follows no redirect. The site serves `/updates/1.json` as a file,
+    never a redirect (`docs/RELEASING.md`); any other answer than the
+    file is a failure.
+  - It goes through no proxy: neither the `https_proxy` variables nor
+    the desktop's, Windows' or macOS's proxy settings are read. On a
+    network that lets requests out only through a proxy, the check fails
+    (quietly, as any) and map tiles do not load (`docs/PORTING.md`).
+    hyper-util's `client::proxy` (the system's settings matched, a
+    `CONNECT` tunnel) would carry it, with one crate more (`ipnet`) and,
+    for Windows' and macOS's settings, theirs.

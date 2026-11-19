@@ -1,7 +1,10 @@
-//! The request (ADR-142, 6): `GET <site>/updates/1.json`, conditional on
-//! the last answer's tag, with a User-Agent of `skwir` alone and nothing
-//! else about the copy: no version, system, language, identifier or
-//! cookie. Only versions are read from the answer; no text and no address.
+//! The request (ADR-142, 6): `GET <site>/updates/1.json`, with a
+//! User-Agent of `skwir` alone and nothing else about the copy: no
+//! version, system, language, identifier or cookie. It is not made
+//! conditional on the last answer's tag: a tag the server chose, sent
+//! back each day, could tell one copy from another, and the file is a few
+//! dozen bytes. Only versions are read from the answer; no text and no
+//! address.
 
 use std::time::Duration;
 
@@ -18,18 +21,6 @@ pub const DEADLINE: Duration = Duration::from_secs(10);
 pub const MAX_BODY: usize = 16 * 1024;
 /// What the request says it comes from.
 pub const USER_AGENT: &str = "skwir";
-
-/// What the site answered.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Fetched {
-    /// The file as it was last read (304).
-    Unchanged,
-    /// The file, read anew, with its tag if it gave one.
-    Read {
-        answer: Answer,
-        etag: Option<String>,
-    },
-}
 
 /// The newest release, and the newest that fixes a loss of data or a hole
 /// in security.
@@ -70,34 +61,22 @@ impl Answer {
     }
 }
 
-/// Ask `site` for the file, conditionally on `etag`, on a runtime of the
-/// request's own: blocks for `DEADLINE` at most, the request whole
-/// (`Http::get`), and the runtime is let go without waiting for what it
-/// still runs (a name the system is still asked for). Call it on a thread
-/// of its own.
-pub fn fetch(site: &str, etag: Option<&str>) -> anyhow::Result<Fetched> {
+/// Ask `site` for the file, on a runtime of the request's own: blocks for
+/// `DEADLINE` at most, the request whole (`Http::get`), and the runtime is
+/// let go without waiting for what it still runs (a name the system is
+/// still asked for). Any answer but the file (a redirect included, which
+/// is not followed) is a failure. Call it on a thread of its own.
+pub fn fetch(site: &str) -> anyhow::Result<Answer> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     let http = skwir_platform::http::Http::system(USER_AGENT)?.limited(DEADLINE, MAX_BODY);
-    let headers: Vec<(String, String)> = etag
-        .map(|etag| ("If-None-Match".to_owned(), etag.to_owned()))
-        .into_iter()
-        .collect();
     let url = format!("{}{PATH}", site.trim_end_matches('/'));
-    let answer = runtime.block_on(http.get(&url, &headers));
+    let answer = runtime.block_on(http.get(&url, &[]));
     runtime.shutdown_background();
     let answer = answer?;
     match answer.status {
-        304 => Ok(Fetched::Unchanged),
-        200 => Ok(Fetched::Read {
-            answer: Answer::read(&answer.body)?,
-            etag: answer
-                .headers
-                .get("etag")
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_owned),
-        }),
+        200 => Answer::read(&answer.body),
         status => Err(anyhow::anyhow!(words!(
             updates_status = "skwir.org answered { $status }",
             status = status.to_string(),

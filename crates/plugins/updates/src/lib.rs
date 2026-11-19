@@ -8,8 +8,9 @@
 //! once in a toast that stays (`App::ask_quietly`) two days after the copy
 //! was first seen. Then at the first look of each calendar day
 //! (`Plugin::on_looked_at`) a thread of its own asks the site for
-//! `updates/1.json` (`check`): quietly when it fails, never on a metered
-//! connection, sending nothing about the copy, reading only versions. A
+//! `updates/1.json` (`check`): quietly when it fails, on a metered
+//! connection only when asked for now (`updates.check`, which always
+//! answers), sending nothing about the copy, reading only versions. A
 //! newer version is told once, in a toast, 14 days apart unless one is
 //! important (`kept`), and kept said in About and More (`registry::News`)
 //! until the copy is updated. Nothing is ever downloaded or installed.
@@ -747,11 +748,7 @@ impl Inner {
         let fetched = loop {
             let now = self.run.lock().checking == Some(Asked::Now);
             if now || (self.setup.metered)() != Some(true) {
-                let etag = app.upgrade().and_then(|app| {
-                    let _held = self.kept.lock();
-                    Kept::read(&app.settings).etag
-                });
-                break check::fetch(&self.setup.site, etag.as_deref());
+                break check::fetch(&self.setup.site);
             }
             // Put off to a later look, unless asked for now meanwhile.
             let asked = {
@@ -789,8 +786,8 @@ impl Inner {
                 let asked = run.checking.take().unwrap_or(Asked::Daily);
                 (asked, run.here.and_then(Here::downloaded).is_some())
             };
-            let fetched = match fetched {
-                Ok(fetched) => fetched,
+            let answer = match fetched {
+                Ok(answer) => answer,
                 Err(error) => {
                     tracing::debug!("updates: no answer: {error:#}");
                     match asked {
@@ -814,11 +811,8 @@ impl Inner {
             }
             let mut kept = Kept::read(&app.settings);
             kept.as_of(today);
-            if let check::Fetched::Read { answer, etag } = fetched {
-                kept.latest = Some(answer.latest.to_string());
-                kept.important_since = answer.important_since.map(|v| v.to_string());
-                kept.etag = etag;
-            }
+            kept.latest = Some(answer.latest.to_string());
+            kept.important_since = answer.important_since.map(|v| v.to_string());
             kept.checked_on = Some(today);
             let telling = self.setup.running.and_then(|running| match asked {
                 // Asked for now: the newer version, told or not, the 14

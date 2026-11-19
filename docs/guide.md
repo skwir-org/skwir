@@ -1054,7 +1054,12 @@ with **What's new**, and About and the More menu say it until you update;
 a version that fixes a loss of data or a hole in security is told at
 once, others two weeks after the last you were told of. Skwir never
 downloads or installs anything: the version's page has its files. Settings
-› General › Updates turns it on or off.
+› General › Updates turns it on or off. On a connection your system says
+is metered, the day's check waits for another; **Check for a new
+version**, in the command palette, asks at once all the same, and says
+what it found: the new version, that Skwir is up to date, or why it could
+not tell. Skwir asks skwir.org directly, never through a proxy: where a
+network lets nothing out but through one, it is never told.
 
 A copy something else updates never asks: the AUR, Nix, your
 distribution, or Skwir's own apt and dnf repositories

@@ -26,9 +26,9 @@ struct File {
     etag: String,
 }
 
-/// A site answering `/updates/1.json` with its file (304 to a request
-/// naming the file's tag), keeping the head of each request; held, it
-/// answers once let go (`hold`).
+/// A site answering `/updates/1.json` with its file and a tag (304 to a
+/// request naming the tag, which a copy never sends), keeping the head of
+/// each request; held, it answers once let go (`hold`).
 struct Site {
     address: String,
     file: Arc<Mutex<File>>,
@@ -254,8 +254,8 @@ fn opens(said: &Notification) -> String {
 /// A downloaded copy says nothing for two days, then asks once; a yes
 /// checks at once and tells of the newer version in place of its
 /// confirmation, kept said in About until updated; the next days ask
-/// again, conditionally, and an answer unchanged tells nothing more. The
-/// request says nothing about the copy.
+/// again, and an answer unchanged tells nothing more. The request says
+/// nothing about the copy, nor sends back the tag the site gave.
 #[test]
 fn a_downloaded_copy_asks_once_then_checks_once_a_day() {
     let site = Site::new(&file("0.6.2"), "\"a\"");
@@ -294,10 +294,9 @@ fn a_downloaded_copy_asks_once_then_checks_once_a_day() {
         !head.contains("0.5.1") && !head.contains("cookie"),
         "{head}"
     );
-    assert!(!head.contains("if-none-match"), "nothing to compare yet");
 
-    // Again the same day: no request. The next day: asked conditionally,
-    // and the answer unchanged tells nothing again.
+    // Again the same day: no request. The next day: asked again, and the
+    // answer unchanged tells nothing again.
     f.look_on(20_002);
     f.settled();
     assert_eq!(site.heads().len(), 1);
@@ -305,11 +304,12 @@ fn a_downloaded_copy_asks_once_then_checks_once_a_day() {
     f.settled();
     let heads = site.heads();
     assert_eq!(heads.len(), 2);
-    assert!(
-        heads[1]
-            .to_ascii_lowercase()
-            .contains("if-none-match: \"a\"")
-    );
+    for head in heads {
+        assert!(
+            !head.to_ascii_lowercase().contains("if-none-match"),
+            "no tag of the site's sent back: {head}"
+        );
+    }
     assert!(f.said().is_empty(), "told once");
     assert_eq!(f.news(), ["Skwir 0.6.2 is out"], "kept said");
     assert_eq!(f.kept().checked_on, Some(20_003));

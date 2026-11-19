@@ -561,6 +561,12 @@ Left:
   cost (`NetworkInformation`) and macOS's `NWPath.isExpensive` are not
   read yet, so a downloaded copy's daily check for a new version runs
   there on any connection.
+- **Proxies** (ADR-020, ADR-142): `skwir_platform::http` connects
+  directly on every system, Linux included. No proxy setting is read
+  (the `https_proxy` variables, GNOME's or KDE's, Windows' WinHTTP and
+  Internet settings, macOS's): behind a network that lets requests out
+  only through a proxy, map tiles do not load and the check for a new
+  version fails, quietly.
 
 ## Tests that run on Linux alone
 
