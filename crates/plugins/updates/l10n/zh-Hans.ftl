@@ -23,7 +23,10 @@ updates_ask_yes = 是
 updates_check = 检查新版本
 
 # draft
-updates_check_description = 现在询问 skwir.org 是否发布了更新的 Skwir 版本，适用于会收到通知的副本：一条消息会说明结果
+updates_check_description = 现在询问 skwir.org 是否发布了更新的 Skwir 版本，适用于会收到通知的副本，按流量计费的连接也会询问：一条消息会说明找到的版本、Skwir 已是最新，或无法得知的原因
+
+# draft
+updates_check_failed = Skwir 无法检查新版本
 
 # draft
 updates_kept_description = 更新插件保留的内容：此副本首次被看到和询问的时间、上次检查以及它通知过的内容。
@@ -39,6 +42,9 @@ updates_managed = 不检查此 Skwir 副本：安装它的程序会告知新版�
 
 # draft
 updates_not_ready = Skwir 仍在读取它的安装方式：请重试
+
+# draft
+updates_not_started = 无法开始检查
 
 # draft
 updates_not_understood = 无法理解 skwir.org 的应答
@@ -78,6 +84,9 @@ updates_told_no = Skwir 不会再询问；可在设置中开启
 
 # draft
 updates_told_yes = Skwir 会在有新版本时通知你
+
+# draft
+updates_up_to_date = Skwir 已是最新版本
 
 # draft
 updates_updated = Skwir 已更新到 { $version }

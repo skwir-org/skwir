@@ -54,6 +54,24 @@ const SECTION: &str = "updates";
 /// tried again at a later look, this long after at the soonest.
 const AGAIN_AFTER: Duration = Duration::from_hours(1);
 
+/// Who asked for a check: what it may do and what it says. Ordered by how
+/// much is said, so a check under way that is asked again answers as the
+/// one who asks most (`Inner::start_check`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Asked {
+    /// The day's, at a look or as the setting is turned on: put off on a
+    /// metered connection, and an hour after one that got no answer; says
+    /// only a version `kept` tells.
+    Daily,
+    /// The question answered Yes: as the day's, and says the confirmation
+    /// where it tells no version, rather than one toast over the other.
+    Answered,
+    /// `updates.check`, the user's own "now": made on a metered connection
+    /// too, whatever failed within the hour, and always answered: the
+    /// newer version found (the 14 days aside), up to date, or why not.
+    Now,
+}
+
 /// How this copy came, as read on a worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Here {
@@ -93,6 +111,9 @@ pub struct Setup {
     /// The user's calendar day (`calendar::Calendar::day_of`).
     pub today: Clock,
     pub metered: Arc<dyn Fn() -> Option<bool> + Send + Sync>,
+    /// The clock the hour after a check that got no answer is counted on
+    /// (`Instant::now`).
+    pub now: Arc<dyn Fn() -> Instant + Send + Sync>,
 }
 
 impl Default for Setup {
@@ -105,6 +126,7 @@ impl Default for Setup {
                 skwir_platform::calendar::Calendar::system().day_of(SystemTime::now())
             }),
             metered: Arc::new(skwir_platform::network::metered),
+            now: Arc::new(Instant::now),
         }
     }
 }
@@ -136,7 +158,8 @@ struct Inner {
     /// While registered.
     run: Mutex<Run>,
     /// Held across a read and a write of what is kept, so a look and a
-    /// check never write over each other.
+    /// check never write over each other. Taken before `run` where both
+    /// are held.
     kept: Mutex<()>,
 }
 
@@ -148,9 +171,13 @@ struct Run {
     here: Option<Here>,
     /// Whether this run looked for what is new yet.
     looked_for_whats_new: bool,
-    /// A check under way, and when the last that got no answer ended.
-    checking: bool,
+    /// A check under way, and who asked it (the most of those who did);
+    /// when the last that got no answer ended.
+    checking: Option<Asked>,
     failed: Option<Instant>,
+    /// The last check's thread, for a test to wait for its end.
+    #[cfg(test)]
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Plugin for UpdatesPlugin {
@@ -200,7 +227,7 @@ impl Plugin for UpdatesPlugin {
                 before.cancel();
             }
             run.here = None;
-            run.checking = false;
+            run.checking = None;
             run.failed = None;
         }
         // How the copy came is read on a worker; what depends on it waits.
@@ -238,8 +265,8 @@ impl Plugin for UpdatesPlugin {
         // Chosen in Settings: the question is never asked.
         self.inner.answered(app);
         self.inner.stand(app);
-        if tells(app) {
-            self.inner.start_check(app, false);
+        if self.inner.downloaded().is_some() && tells(app) {
+            self.inner.start_check(app, Asked::Daily);
         }
     }
     fn on_looked_at(&self, app: &App) {
@@ -273,7 +300,7 @@ impl UpdatesPlugin {
                 "updates.check",
                 words!(updates_check = "Check for a new version"),
                 words!(
-                    updates_check_description = "Ask skwir.org now whether a newer version of Skwir is out, for a copy that is told of them: a toast says what it found"
+                    updates_check_description = "Ask skwir.org now whether a newer version of Skwir is out, for a copy that is told of them, on a metered connection too: a toast says what it found, that Skwir is up to date, or why it could not tell"
                 ),
                 move |_, app| inner.check_now(app),
             );
@@ -334,6 +361,15 @@ fn release_page(site: &str, version: Version) -> Invocation {
 
 fn open_url(url: &str) -> Invocation {
     Invocation::with_args("ui.open_url", &serde_json::json!({ "url": url }))
+}
+
+/// The confirmation of a yes, said where the check it starts tells no
+/// version.
+fn told_yes() -> Words {
+    words!(
+        updates_told_yes = "Skwir will tell you when a new version is out",
+        note = "Said once the question about new versions was answered yes."
+    )
 }
 
 fn whats_new_label() -> Words {
@@ -462,7 +498,7 @@ impl Inner {
             check
         };
         if check {
-            self.start_check(app, false);
+            self.start_check(app, Asked::Daily);
         }
     }
 
@@ -513,20 +549,16 @@ impl Inner {
     }
 
     /// The question's answer: the setting written, never asked again, and
-    /// a yes checked at once.
+    /// a yes checked at once, which says the version it finds in place of
+    /// the confirmation (`Asked::Answered`).
     fn answer(self: &Arc<Self>, app: &App, tell: bool) {
         app.settings.set(TELL, toml::Value::Boolean(tell));
         self.answered(app);
         self.stand(app);
         if tell {
-            app.notify(
-                NotifyLevel::Done,
-                words!(
-                    updates_told_yes = "Skwir will tell you when a new version is out",
-                    note = "Said once the question about new versions was answered yes."
-                ),
-            );
-            self.start_check(app, true);
+            if !self.start_check(app, Asked::Answered) {
+                app.notify(NotifyLevel::Done, told_yes());
+            }
         } else {
             app.notify(
                 NotifyLevel::Done,
@@ -570,7 +602,12 @@ impl Inner {
                 note = "Why a check for a new version was not made: the setting Tell me when a new version is out is off."
             ));
         }
-        self.start_check(app, true);
+        if !self.start_check(app, Asked::Now) {
+            anyhow::bail!(words!(
+                updates_not_started = "The check could not be started",
+                note = "Why a check for a new version was not made: the system refused a thread for it."
+            ));
+        }
         Ok(Outcome::Value(serde_json::json!({ "checking": true })))
     }
 
@@ -598,68 +635,126 @@ impl Inner {
         })
     }
 
-    /// Start a check on a thread of its own, unless one runs, or, unless
-    /// `forced`, the last got no answer less than `AGAIN_AFTER` ago.
-    fn start_check(self: &Arc<Self>, app: &App, forced: bool) {
+    /// Start a check for `asked` on a thread of its own: whether one will
+    /// answer it. A check under way answers it, as the one who asked most;
+    /// the day's waits `AGAIN_AFTER` after one that got no answer.
+    fn start_check(self: &Arc<Self>, app: &App, asked: Asked) -> bool {
         let lifetime = {
             let mut run = self.run.lock();
-            if run.checking
-                || (!forced
-                    && run
-                        .failed
-                        .is_some_and(|failed| failed.elapsed() < AGAIN_AFTER))
+            if let Some(running) = &mut run.checking {
+                *running = (*running).max(asked);
+                return true;
+            }
+            if asked == Asked::Daily
+                && run.failed.is_some_and(|failed| {
+                    (self.setup.now)().saturating_duration_since(failed) < AGAIN_AFTER
+                })
             {
-                return;
+                return false;
             }
             let Some(lifetime) = run.lifetime.clone() else {
-                return;
+                return false;
             };
-            run.checking = true;
+            run.checking = Some(asked);
             lifetime
         };
         let inner = Arc::clone(self);
         let weak = app.weak();
         let spawned = std::thread::Builder::new()
             .name("skwir-updates".into())
-            .spawn(move || {
-                let answered = inner.check(&weak, &lifetime, forced);
-                if let Err(error) = &answered {
-                    tracing::debug!("updates: no answer: {error:#}");
+            .spawn(move || inner.check(&weak, &lifetime));
+        match spawned {
+            Ok(thread) => {
+                #[cfg(test)]
+                {
+                    self.run.lock().thread = Some(thread);
                 }
-                let mut run = inner.run.lock();
-                run.checking = false;
-                run.failed = match answered {
-                    Ok(true) => None,
-                    _ => Some(Instant::now()),
-                };
-            });
-        if let Err(error) = spawned {
-            self.run.lock().checking = false;
-            tracing::warn!("updates: cannot start a check: {error}");
+                #[cfg(not(test))]
+                drop(thread);
+                true
+            }
+            Err(error) => {
+                self.run.lock().checking = None;
+                tracing::warn!("updates: cannot start a check: {error}");
+                false
+            }
         }
     }
 
-    /// Ask the site, then keep and tell what it answered: whether it
-    /// answered.
-    fn check(&self, app: &Weak<App>, lifetime: &CancelToken, forced: bool) -> anyhow::Result<bool> {
-        if !forced && (self.setup.metered)() == Some(true) {
+    /// The check's thread: ask the site, unless the connection is metered
+    /// and nobody asked for now, then keep what it answered and say what
+    /// who asked is told. The check ends (`Run::checking`) where who asked
+    /// is read for the last time, so one asked meanwhile is answered by it
+    /// or started anew.
+    fn check(&self, app: &Weak<App>, lifetime: &CancelToken) {
+        let fetched = loop {
+            let now = self.run.lock().checking == Some(Asked::Now);
+            if now || (self.setup.metered)() != Some(true) {
+                let etag = app.upgrade().and_then(|app| {
+                    let _held = self.kept.lock();
+                    Kept::read(&app.settings).etag
+                });
+                break check::fetch(&self.setup.site, etag.as_deref());
+            }
+            // Put off to a later look, unless asked for now meanwhile.
+            let asked = {
+                let mut run = self.run.lock();
+                if lifetime.is_cancelled() {
+                    return;
+                }
+                if run.checking == Some(Asked::Now) {
+                    continue;
+                }
+                run.failed = Some((self.setup.now)());
+                run.checking.take()
+            };
             tracing::debug!("updates: the connection is metered, put off");
-            return Ok(false);
-        }
-        let gone = || anyhow::anyhow!("the application ended");
-        let etag = {
-            let app = app.upgrade().ok_or_else(gone)?;
-            let _held = self.kept.lock();
-            Kept::read(&app.settings).etag
+            if asked == Some(Asked::Answered)
+                && let Some(app) = app.upgrade()
+            {
+                app.notify(NotifyLevel::Done, told_yes());
+            }
+            return;
         };
-        let fetched = check::fetch(&self.setup.site, etag.as_deref())?;
-        let app = app.upgrade().ok_or_else(gone)?;
-        if lifetime.is_cancelled() {
-            return Ok(false);
-        }
+        let Some(app) = app.upgrade() else {
+            return;
+        };
         let today = (self.setup.today)();
         let kept = {
+            // `kept` before `run`, wherever both are held.
             let _held = self.kept.lock();
+            let (asked, downloaded) = {
+                let mut run = self.run.lock();
+                if lifetime.is_cancelled() {
+                    return;
+                }
+                run.failed = fetched.is_err().then(|| (self.setup.now)());
+                let asked = run.checking.take().unwrap_or(Asked::Daily);
+                (asked, run.here.and_then(Here::downloaded).is_some())
+            };
+            let fetched = match fetched {
+                Ok(fetched) => fetched,
+                Err(error) => {
+                    tracing::debug!("updates: no answer: {error:#}");
+                    match asked {
+                        Asked::Now => app.notify(
+                            NotifyLevel::Error,
+                            Words::of_error(error.context(words!(
+                                updates_check_failed = "Skwir could not check for a new version",
+                                note = "Said when a check for a new version asked for now got no answer it reads; why follows (the website's answer, no connection)."
+                            ))),
+                        ),
+                        Asked::Answered => app.notify(NotifyLevel::Done, told_yes()),
+                        Asked::Daily => {}
+                    }
+                    return;
+                }
+            };
+            // Turned off, or updated by the system, while it was asked:
+            // nothing kept, nothing said.
+            if !downloaded || !tells(&app) {
+                return;
+            }
             let mut kept = Kept::read(&app.settings);
             kept.as_of(today);
             if let check::Fetched::Read { answer, etag } = fetched {
@@ -668,17 +763,37 @@ impl Inner {
                 kept.etag = etag;
             }
             kept.checked_on = Some(today);
-            if let Some(running) = self.setup.running
-                && let Some(telling) = kept.tells(running, today)
-            {
-                kept.told = Some(telling.version.to_string());
-                kept.told_on = Some(today);
-                app.notify_with_action(
-                    NotifyLevel::Info,
-                    said_out(telling),
-                    whats_new_label(),
-                    release_page(&self.setup.site, telling.version),
-                );
+            let telling = self.setup.running.and_then(|running| match asked {
+                // Asked for now: the newer version, told or not, the 14
+                // days aside.
+                Asked::Now => kept.standing(running),
+                Asked::Answered | Asked::Daily => kept.tells(running, today),
+            });
+            match telling {
+                Some(telling) => {
+                    let told = kept.told.as_deref().and_then(Version::parse);
+                    if told.is_none_or(|told| told < telling.version) {
+                        kept.told = Some(telling.version.to_string());
+                        kept.told_on = Some(today);
+                    }
+                    app.notify_with_action(
+                        NotifyLevel::Info,
+                        said_out(telling),
+                        whats_new_label(),
+                        release_page(&self.setup.site, telling.version),
+                    );
+                }
+                None => match asked {
+                    Asked::Now => app.notify(
+                        NotifyLevel::Done,
+                        words!(
+                            updates_up_to_date = "Skwir is up to date",
+                            note = "The answer to a check for a new version asked for now: no newer version is out."
+                        ),
+                    ),
+                    Asked::Answered => app.notify(NotifyLevel::Done, told_yes()),
+                    Asked::Daily => {}
+                },
             }
             kept.write(&app.settings);
             kept
@@ -687,7 +802,6 @@ impl Inner {
             tracing::warn!("cannot save what the updates plugin keeps: {error:#}");
         }
         self.stand_with(&app, &kept);
-        Ok(true)
     }
 
     /// What About and More say, from what is kept.

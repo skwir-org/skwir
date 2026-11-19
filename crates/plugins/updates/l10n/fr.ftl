@@ -23,7 +23,10 @@ updates_ask_yes = Oui
 updates_check = Chercher une nouvelle version
 
 # draft
-updates_check_description = Demander maintenant à skwir.org si une version plus récente de Skwir est parue, pour une copie qui en est prévenue : un message dit ce qui a été trouvé
+updates_check_description = Demander maintenant à skwir.org si une version plus récente de Skwir est parue, pour une copie qui en est prévenue, même sur une connexion limitée : un message dit ce qui a été trouvé, que Skwir est à jour, ou pourquoi il n’a pu le savoir
+
+# draft
+updates_check_failed = Skwir n’a pas pu chercher de nouvelle version
 
 # draft
 updates_kept_description = Ce que garde l’extension des mises à jour : quand cette copie a été vue et interrogée pour la première fois, la dernière vérification et ce qu’elle a annoncé.
@@ -39,6 +42,9 @@ updates_managed = Cette copie de Skwir n’est pas vérifiée : ce qui l’a in
 
 # draft
 updates_not_ready = Skwir lit encore comment il a été installé : réessayez
+
+# draft
+updates_not_started = La vérification n’a pas pu démarrer
 
 # draft
 updates_not_understood = la réponse de skwir.org n’a pas été comprise
@@ -78,6 +84,9 @@ updates_told_no = Skwir ne le demandera plus ; les Réglages peuvent l’activ
 
 # draft
 updates_told_yes = Skwir vous préviendra quand une nouvelle version paraîtra
+
+# draft
+updates_up_to_date = Skwir est à jour
 
 # draft
 updates_updated = Skwir a été mis à jour en { $version }
