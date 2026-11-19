@@ -538,8 +538,14 @@ places_udisks_no_mount_point = udisksctl did not say where it mounted the volume
 # udisksctl is the program that mounts and unlocks volumes (a name). error: why it could not be run.
 places_udisks_unrun = udisksctl could not be run: { $error }
 
+# Why Undo of a choice of what answers other programs' Open and Save dialogs did nothing: the portal's configuration file was edited after the choice. Begins in lower case: said after other words.
+portals_changed_since = the file was changed since Skwir wrote it, and is kept as it is
+
 # An error choosing what answers other programs' Open and Save dialogs: the user has no configuration folder (no XDG_CONFIG_HOME, no home).
 portals_no_config_folder = There is no configuration folder to write the choice in
+
+# Why the desktop portal's configuration file was left alone: its text is not UTF-8, which the portal reads. Begins in lower case: said after other words.
+portals_not_utf8 = it is not written in UTF-8
 
 # Why a picture of a file is not shown: the file was written to while it was drawn.
 preview_changed = file changed during preview

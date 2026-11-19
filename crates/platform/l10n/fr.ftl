@@ -542,7 +542,13 @@ places_udisks_no_mount_point = udisksctl n’a pas indiqué où il a monté le v
 places_udisks_unrun = udisksctl n’a pas pu être lancé : { $error }
 
 # draft
+portals_changed_since = le fichier a été modifié depuis que Skwir l’a écrit, et il est gardé tel quel
+
+# draft
 portals_no_config_folder = Il n’y a aucun dossier de configuration où écrire ce choix
+
+# draft
+portals_not_utf8 = il n’est pas écrit en UTF-8
 
 # draft
 preview_changed = le fichier a changé pendant l’aperçu

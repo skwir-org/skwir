@@ -8,8 +8,9 @@
 //! starts: a choice applies then, the next login, and the row says so.
 //! Linux's alone (ADR-141, 11).
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use schemars::JsonSchema;
@@ -21,7 +22,7 @@ use skwir_core::scheduler::Priority;
 use skwir_core::settings::{ChoiceSource, SettingSpec};
 use skwir_core::words;
 use skwir_core::words::Words;
-use skwir_platform::portals::{Before, Places, Portals};
+use skwir_platform::portals::{Before, Named, Places, Portals};
 
 /// The setting: a choice the portal's configuration keeps.
 pub(crate) const KEY: &str = "ui.file_chooser";
@@ -46,6 +47,16 @@ struct Row {
     read: Mutex<Option<Portals>>,
     /// A worker reads it now.
     asking: AtomicBool,
+    /// The choices made, by the serial their Undo names: kept here, so
+    /// that Undo names no file nor its text.
+    done: Mutex<HashMap<u64, Done>>,
+    next: AtomicU64,
+}
+
+/// A choice made: what to put back, and what was chosen (for Redo).
+struct Done {
+    before: Before,
+    portal: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -57,11 +68,8 @@ struct SetArgs {
 
 #[derive(Deserialize, JsonSchema)]
 struct PutBackArgs {
-    /// The user's configuration file as it was, and what was chosen.
-    file: std::path::PathBuf,
-    #[serde(default)]
-    text: Option<String>,
-    portal: String,
+    /// The choice to take back, as its notification's Undo names it.
+    done: u64,
 }
 
 /// Declare the row and its commands, for the session's portal.
@@ -75,6 +83,8 @@ fn register_with(app: &App, places: Where) {
         places,
         read: Mutex::default(),
         asking: AtomicBool::default(),
+        done: Mutex::default(),
+        next: AtomicU64::new(1),
     });
     app.settings.declare(
         SettingSpec::choice_kept_by(
@@ -142,7 +152,7 @@ fn register_with(app: &App, places: Where) {
             PUT_BACK,
             words!(commands_file_chooser_put_back = "Put back what answered open and save dialogs"),
             words!(
-                commands_file_chooser_put_back_description = "Put the user's portal configuration `file` back as it was (`text`, none for no file): what Undo of `dialogs.choose` runs, `portal` being what it chose"
+                commands_file_chooser_put_back_description = "Put the user's portal configuration back as it was before the choice `done` (what Undo of `dialogs.choose` runs, from its notification), only while the file holds what that choice wrote"
             ),
             move |a, app| {
                 let row = Arc::clone(&back);
@@ -240,23 +250,34 @@ fn answer(read: Option<&Portals>) -> serde_json::Value {
             .iter()
             .map(|name| serde_json::json!({ "value": name, "label": label(name).to_data() })),
     );
-    let value = read.chooser.clone().unwrap_or_default();
-    let shown = if value.is_empty() {
-        unnamed()
-    } else {
-        label(&value)
+    let (value, shown) = match &read.chooser {
+        Named::BackEnd(name) => (name.as_str(), label(name)),
+        Named::Unnamed => ("", unnamed()),
+        // No choice of the row's: the configuration's own `none`.
+        Named::Refused => (
+            "none",
+            words!(
+                settings_file_chooser_refused = "None: the desktop portal shows no dialog",
+                note = "The Open and save dialogs setting's value where the portal's configuration says none answers them (its 'none'): programs that ask the portal get no dialog."
+            ),
+        ),
     };
-    let detail = if read.choosers.iter().any(|name| name == OWN) {
-        words!(
-            settings_file_chooser_applies =
-                "Applies when the desktop portal starts again, at the next login",
-            note = "Said under the Open and save dialogs setting: the desktop portal reads its configuration as it starts."
-        )
-    } else {
+    let detail = if !read.choosers.iter().any(|name| name == OWN) {
         words!(
             settings_file_chooser_not_installed =
                 "Skwir cannot be chosen here: its portal file is not installed",
             note = "Said under the Open and save dialogs setting where Skwir's package did not install the file that offers it to the desktop portal (a build run from its folder)."
+        )
+    } else if read.pending {
+        words!(
+            settings_file_chooser_pending = "Changed since the desktop portal started: this applies at its next start, the next login",
+            note = "Said under the Open and save dialogs setting when its configuration was changed after the desktop portal read it: what the setting shows is not what answers yet."
+        )
+    } else {
+        words!(
+            settings_file_chooser_applies =
+                "Applies when the desktop portal starts again, at the next login",
+            note = "Said under the Open and save dialogs setting: the desktop portal reads its configuration as it starts."
         )
     };
     serde_json::json!({
@@ -270,71 +291,95 @@ fn answer(read: Option<&Portals>) -> serde_json::Value {
     })
 }
 
-/// What a choice of `portal` is said as.
+/// What a choice of `portal` is said as: the desktop's choice (empty) in
+/// words of its own, a back end by its name.
 fn chosen_words(portal: &str, already: bool) -> Words {
-    let chooser = if portal.is_empty() {
-        unnamed()
-    } else {
-        label(portal)
-    };
-    if already {
-        return words!(
+    match (portal.is_empty(), already) {
+        (true, true) => words!(
+            settings_file_chooser_already_desktop =
+                "The desktop already chooses what answers other programs' Open and Save dialogs",
+            note = "Said once the desktop's own choice is chosen for what answers other programs' Open and Save dialogs and the user's portal configuration named nothing for them already."
+        ),
+        (true, false) => words!(
+            settings_file_chooser_chosen_desktop = "The desktop chooses what answers other programs' Open and Save dialogs, from the desktop portal's next start",
+            note = "Said once the desktop's own choice is chosen for what answers other programs' Open and Save dialogs, with Undo: the user's portal configuration names nothing for them any more; it applies when the portal starts again, at the next login."
+        ),
+        (false, true) => words!(
             settings_file_chooser_already =
                 "Other programs' Open and Save dialogs are already { $chooser }",
-            chooser = chooser,
-            note = "Said once what answers other programs' dialogs is chosen and the configuration said so already: chooser is the choice (Skwir, KDE, As the desktop chooses)."
-        );
+            chooser = label(portal),
+            note = "Said once what answers other programs' dialogs is chosen and the configuration said so already: chooser is the back end's name (Skwir, KDE)."
+        ),
+        (false, false) => words!(
+            settings_file_chooser_chosen = "Other programs' Open and Save dialogs: { $chooser }, from the desktop portal's next start",
+            chooser = label(portal),
+            note = "Said once what answers other programs' dialogs is chosen, with Undo: chooser is the back end's name (Skwir, KDE); it applies when the portal starts again, at the next login."
+        ),
     }
-    words!(
-        settings_file_chooser_chosen = "Other programs' Open and Save dialogs: { $chooser }, from the desktop portal's next start",
-        chooser = chooser,
-        note = "Said once what answers other programs' dialogs is chosen, with Undo: chooser is the choice (Skwir, KDE, As the desktop chooses); it applies when the portal starts again, at the next login."
-    )
 }
 
 fn failed(error: &std::io::Error) -> Words {
     words!(
         settings_file_chooser_failed =
             "What answers Open and Save dialogs is unchanged: { $error }",
-        error = error.to_string(),
-        note = "Said when the portal's configuration cannot be written: error is why."
+        error = skwir_core::op::io_words(error),
+        note = "Said when the portal's configuration cannot be read, written or put back: error is why."
     )
 }
 
-/// Choose `portal`, on a worker; Undo puts the file back as it was.
+/// Choose `portal`, on a worker; Undo puts the file back as it was,
+/// naming what it keeps here.
 fn set(app: &App, row: &Row, portal: &str, redo: bool) {
     match skwir_platform::portals::choose(&(row.places)(), portal) {
         Ok(Some(before)) => {
             read_now(app, row);
-            let undo = put_back_invocation(&before, portal);
+            let serial = row.next.fetch_add(1, Ordering::Relaxed);
+            row.done.lock().insert(
+                serial,
+                Done {
+                    before,
+                    portal: portal.to_owned(),
+                },
+            );
+            let undo = Invocation::with_args(PUT_BACK, &serde_json::json!({ "done": serial }));
             app.notify_undoable(chosen_words(portal, false), redo, undo);
         }
-        Ok(None) => app.notify(NotifyLevel::Info, chosen_words(portal, true)),
-        Err(error) => app.notify(NotifyLevel::Error, failed(&error)),
+        Ok(None) => {
+            answered(app, row);
+            app.notify(NotifyLevel::Info, chosen_words(portal, true));
+        }
+        Err(error) => {
+            answered(app, row);
+            app.notify(NotifyLevel::Error, failed(&error));
+        }
     }
 }
 
-fn put_back_invocation(before: &Before, portal: &str) -> Invocation {
-    Invocation::with_args(
-        PUT_BACK,
-        &serde_json::json!({
-            "file": before.file,
-            "text": before.text,
-            "portal": portal,
-        }),
-    )
+/// A choice asked answered with nothing to read again (as it was, or
+/// refused): the row is listed again all the same, as the dialog waits for
+/// that before asking anything more of it (`ChoiceSource`).
+fn answered(app: &App, row: &Row) {
+    row.source.changed();
+    app.wake();
 }
 
-/// Undo: the file as it was; Redo chooses again.
+/// Undo: the file as it was, while it holds what the choice wrote; Redo
+/// chooses again.
 fn put_back(app: &App, row: &Row, a: PutBackArgs) {
-    let before = Before {
-        file: a.file,
-        text: a.text,
+    let Some(done) = row.done.lock().remove(&a.done) else {
+        app.notify(
+            NotifyLevel::Info,
+            words!(
+                settings_file_chooser_put_back_gone = "That choice of what answers Open and Save dialogs was undone already",
+                note = "Said where Undo of a choice of what answers other programs' Open and Save dialogs is asked again, or of a choice this Skwir did not make."
+            ),
+        );
+        return;
     };
-    match skwir_platform::portals::put_back(&before) {
+    match skwir_platform::portals::put_back(&done.before) {
         Ok(()) => {
             read_now(app, row);
-            let redo = Invocation::with_args(SET, &serde_json::json!({ "portal": a.portal }));
+            let redo = Invocation::with_args(SET, &serde_json::json!({ "portal": done.portal }));
             app.notify_undoable(
                 words!(
                     settings_file_chooser_put_back = "What answered other programs' Open and Save dialogs is back, from the desktop portal's next start",
@@ -370,6 +415,7 @@ mod tests {
             config_dirs: vec![root.join("config"), root.join("etc")],
             user_dir: Some(root.join("config")),
             desktops: vec!["hyprland".into()],
+            started: None,
         }
     }
 
@@ -453,8 +499,53 @@ mod tests {
         );
         until("named", || list()["value"] == "skwir");
 
+        // Undo names what the row keeps, never the file nor its text.
+        assert_eq!(undo.command.args, serde_json::json!({ "done": 1 }));
         app.dispatch(&undo.command).unwrap();
         until("put back", || !user.exists());
         until("kde again", || list()["value"] == "kde");
+        let said = |app: &App| {
+            let mut said = Vec::new();
+            until("said", || {
+                said.extend(app.take_notifications());
+                !said.is_empty()
+            });
+            said[0].text.english()
+        };
+        assert_eq!(
+            said(&app),
+            "What answered other programs' Open and Save dialogs is back, from the desktop portal's next start"
+        );
+        app.dispatch(&undo.command).unwrap();
+        assert_eq!(
+            said(&app),
+            "That choice of what answers Open and Save dialogs was undone already"
+        );
+
+        // The desktop's choice where the user has no file: nothing to take
+        // out, said in words of its own.
+        app.dispatch(&Invocation::with_args(
+            SET,
+            &serde_json::json!({ "portal": "" }),
+        ))
+        .unwrap();
+        assert_eq!(
+            said(&app),
+            "The desktop already chooses what answers other programs' Open and Save dialogs"
+        );
+        assert!(!user.exists());
+
+        // The configuration's own none: shown as none, chosen by nothing.
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(
+            &user,
+            "[preferred]\norg.freedesktop.impl.portal.FileChooser=none\n",
+        )
+        .unwrap();
+        until("none", || list()["value"] == "none");
+        assert_eq!(
+            list()["label"]["english"],
+            "None: the desktop portal shows no dialog"
+        );
     }
 }

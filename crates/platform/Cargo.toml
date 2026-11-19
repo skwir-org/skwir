@@ -60,7 +60,9 @@ encoding_rs = "0.8"
 # Where a text file's lines end, counted at memory speed (`text_rows`).
 memchr.workspace = true
 crossbeam-channel.workspace = true
-rustix = { workspace = true, features = ["process", "event", "system"] }
+# `param`: the clock's ticks, which date a process's start (the desktop
+# portal's, `portals`).
+rustix = { workspace = true, features = ["process", "event", "system", "param"] }
 futures-lite = "2"
 kamadak-exif = "0.6"
 # The desktop's type database (shared-mime-info): Linux's own, and the

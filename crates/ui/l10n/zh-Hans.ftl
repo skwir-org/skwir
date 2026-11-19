@@ -1146,7 +1146,7 @@ commands_file_chooser_list_description = 应答其他程序“打开”和“保
 commands_file_chooser_put_back = 恢复原先应答打开和保存对话框的程序
 
 # draft
-commands_file_chooser_put_back_description = 将用户的门户配置文件 `file` 恢复原样（`text`，无文件时为空）：即撤销 `dialogs.choose` 时所运行的命令，`portal` 为其所选
+commands_file_chooser_put_back_description = 将用户的门户配置恢复为选择 `done` 之前的样子（即从通知中撤销 `dialogs.choose` 时所运行的命令），仅当文件仍为该选择所写入的内容时
 
 # draft
 commands_file_chooser_set = 选择应答打开和保存对话框的程序
@@ -6877,10 +6877,16 @@ settings_file_chooser = 打开和保存对话框
 settings_file_chooser_already = 其他程序的“打开”和“保存”对话框已经是 { $chooser }
 
 # draft
+settings_file_chooser_already_desktop = 已由桌面选择应答其他程序“打开”和“保存”对话框的程序
+
+# draft
 settings_file_chooser_applies = 桌面门户下次启动时（即下次登录时）生效
 
 # draft
 settings_file_chooser_chosen = 其他程序的“打开”和“保存”对话框：{ $chooser }，自桌面门户下次启动起
+
+# draft
+settings_file_chooser_chosen_desktop = 自桌面门户下次启动起，由桌面选择应答其他程序“打开”和“保存”对话框的程序
 
 # draft
 settings_file_chooser_description = 应答其他程序（向桌面请求对话框的程序）“打开”和“保存”对话框的程序：Skwir 的窗口，或另一个程序的对话框。
@@ -6895,10 +6901,19 @@ settings_file_chooser_failed = 应答“打开”和“保存”对话框的程�
 settings_file_chooser_not_installed = 此处无法选择 Skwir：其门户文件未安装
 
 # draft
+settings_file_chooser_pending = 自桌面门户启动后已更改：将在其下次启动（即下次登录）时生效
+
+# draft
 settings_file_chooser_put_back = 已恢复原先应答其他程序“打开”和“保存”对话框的程序，自桌面门户下次启动起
 
 # draft
+settings_file_chooser_put_back_gone = 这一应答“打开”和“保存”对话框的选择已撤销过了
+
+# draft
 settings_file_chooser_reading = 正在读取桌面门户的配置…
+
+# draft
+settings_file_chooser_refused = 无：桌面门户不显示任何对话框
 
 # draft
 settings_file_chooser_unnamed = 由桌面选择

@@ -131,23 +131,34 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    v2) and sets the window its child, a patch of gpui's
    (`vendor/patches`). An identifier that names nothing, or a
    compositor without the protocol, leaves a window of its own, brought
-   forward.
+   forward. The request's `modal` is passed on, not followed: the window
+   is kept over the asking one, which it does not hold.
 10. **Turning it on: Settings › "Open and save dialogs"** (the user's
     choice), on General beside the default file manager: a choice its
-    owner keeps (ADR-140, 8), the back ends installed that offer the
-    file chooser (their `.portal` files, as the portal finds them), the
-    one the portal's configuration names now, else Automatic. Choosing
-    writes `org.freedesktop.impl.portal.FileChooser=` in the user's
-    `<desktop>-portals.conf` (`portals.conf` where no desktop is named),
-    its other lines kept; where the user has none, the file the portal
-    reads first is copied into it first: a portal before 1.22 takes that
-    file whole, and a new one would drop the system's other choices
-    (1.22 reads the same values; the copy freezes them where the system
-    later changes its own). It says the change applies when the portal
-    starts again (the next login); skwir never restarts it. Undo as the
-    default file manager's: the file put back as it was, or none, then
-    Redo. As built, an essential of General beside the default file
-    manager, which it is for the same reason (it decides what other
+    owner keeps (ADR-140, 8), the back ends installed that offer the file
+    chooser (their `.portal` files, as the portal finds them), the one the
+    portal's configuration names now (read as 1.22.1 reads it: `none` is
+    none, `*` the first installed, a key written twice its last), else
+    Automatic. Choosing writes `org.freedesktop.impl.portal.FileChooser=`
+    in the user's `<desktop>-portals.conf` (`portals.conf` where no
+    desktop is named), its other lines kept, through a link to its target
+    (its mode kept); a file there that cannot be read is left alone, and
+    why said. Automatic takes out only a key the user's file holds; where
+    the user has no file, it and a back end already in effect write
+    nothing ("already"). For another, where the user has none, the file
+    the portal reads first is copied into it first. Since 1.22 a file
+    holding the key alone would do (the cascade takes the rest from the
+    system's files), but skwir cannot tell which portal reads it, and one
+    before 1.22 (Ubuntu 24.04 ships 1.18) takes the first file whole,
+    where a lone key would drop the system's other choices: the copy works
+    for both, at the cost of freezing the system's lines where it later
+    changes its own. It says the change applies when the portal starts
+    again (the next login); skwir never restarts it. Undo as the default
+    file manager's: the file put back as it was, or none, only while it
+    holds what skwir wrote (an edit since is kept, and said), then Redo;
+    its command names the choice by a serial the row keeps, never a file
+    and its text. As built, an essential of General beside the default
+    file manager, which it is for the same reason (it decides what other
     programs see; ADR-072); its commands `dialogs.list`, `dialogs.choose`
     (the user's) and `dialogs.put_back`, never `ui.*`, which the window
     carries out itself (a notice's Undo would reach nothing).

@@ -532,7 +532,13 @@ places_udisks_no_mount_point = udisksctl 未说明将卷挂载到了何处
 places_udisks_unrun = 无法运行 udisksctl：{ $error }
 
 # draft
+portals_changed_since = 自 Skwir 写入后该文件已被修改，因此保持原样
+
+# draft
 portals_no_config_folder = 没有可写入此选择的配置文件夹
+
+# draft
+portals_not_utf8 = 它不是以 UTF-8 编写的
 
 # draft
 preview_changed = 预览期间文件已更改

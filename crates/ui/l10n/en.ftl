@@ -1083,7 +1083,7 @@ commands_file_chooser_list_description = What answers other programs' Open and S
 
 commands_file_chooser_put_back = Put back what answered open and save dialogs
 
-commands_file_chooser_put_back_description = Put the user's portal configuration `file` back as it was (`text`, none for no file): what Undo of `dialogs.choose` runs, `portal` being what it chose
+commands_file_chooser_put_back_description = Put the user's portal configuration back as it was before the choice `done` (what Undo of `dialogs.choose` runs, from its notification), only while the file holds what that choice wrote
 
 commands_file_chooser_set = Choose what answers open and save dialogs
 
@@ -6365,14 +6365,20 @@ settings_file_at = { $path }. It lists only what differs from the defaults.
 # A setting's title on the General page: what answers other programs' Open and Save dialogs.
 settings_file_chooser = Open and save dialogs
 
-# Said once what answers other programs' dialogs is chosen and the configuration said so already: chooser is the choice (Skwir, KDE, As the desktop chooses).
+# Said once what answers other programs' dialogs is chosen and the configuration said so already: chooser is the back end's name (Skwir, KDE).
 settings_file_chooser_already = Other programs' Open and Save dialogs are already { $chooser }
+
+# Said once the desktop's own choice is chosen for what answers other programs' Open and Save dialogs and the user's portal configuration named nothing for them already.
+settings_file_chooser_already_desktop = The desktop already chooses what answers other programs' Open and Save dialogs
 
 # Said under the Open and save dialogs setting: the desktop portal reads its configuration as it starts.
 settings_file_chooser_applies = Applies when the desktop portal starts again, at the next login
 
-# Said once what answers other programs' dialogs is chosen, with Undo: chooser is the choice (Skwir, KDE, As the desktop chooses); it applies when the portal starts again, at the next login.
+# Said once what answers other programs' dialogs is chosen, with Undo: chooser is the back end's name (Skwir, KDE); it applies when the portal starts again, at the next login.
 settings_file_chooser_chosen = Other programs' Open and Save dialogs: { $chooser }, from the desktop portal's next start
+
+# Said once the desktop's own choice is chosen for what answers other programs' Open and Save dialogs, with Undo: the user's portal configuration names nothing for them any more; it applies when the portal starts again, at the next login.
+settings_file_chooser_chosen_desktop = The desktop chooses what answers other programs' Open and Save dialogs, from the desktop portal's next start
 
 # Open and Save are what programs call their dialogs for choosing a file.
 settings_file_chooser_description = What answers other programs' Open and Save dialogs, those that ask the desktop for one: Skwir's windows, or another program's dialogs.
@@ -6380,17 +6386,26 @@ settings_file_chooser_description = What answers other programs' Open and Save d
 # What a setting's description says after its first sentence, in its tooltip. The desktop portal is the desktop's service programs ask for dialogs.
 settings_file_chooser_description_more = The desktop portal reads this as it starts: a change applies at the next login. Programs that draw their own dialogs keep them.
 
-# Said when the portal's configuration cannot be written: error is why.
+# Said when the portal's configuration cannot be read, written or put back: error is why.
 settings_file_chooser_failed = What answers Open and Save dialogs is unchanged: { $error }
 
 # Said under the Open and save dialogs setting where Skwir's package did not install the file that offers it to the desktop portal (a build run from its folder).
 settings_file_chooser_not_installed = Skwir cannot be chosen here: its portal file is not installed
 
+# Said under the Open and save dialogs setting when its configuration was changed after the desktop portal read it: what the setting shows is not what answers yet.
+settings_file_chooser_pending = Changed since the desktop portal started: this applies at its next start, the next login
+
 # Said once a choice of what answers other programs' dialogs is undone, with Redo.
 settings_file_chooser_put_back = What answered other programs' Open and Save dialogs is back, from the desktop portal's next start
 
+# Said where Undo of a choice of what answers other programs' Open and Save dialogs is asked again, or of a choice this Skwir did not make.
+settings_file_chooser_put_back_gone = That choice of what answers Open and Save dialogs was undone already
+
 # Said under the Open and save dialogs setting while it is read.
 settings_file_chooser_reading = Reading the desktop portal's configuration…
+
+# The Open and save dialogs setting's value where the portal's configuration says none answers them (its 'none'): programs that ask the portal get no dialog.
+settings_file_chooser_refused = None: the desktop portal shows no dialog
 
 # The Open and save dialogs setting's choice when the portal's configuration names nothing for them: the desktop's own way of choosing.
 settings_file_chooser_unnamed = As the desktop chooses

@@ -1188,7 +1188,7 @@ commands_file_chooser_list_description = Ce qui répond aux boîtes de dialogue 
 commands_file_chooser_put_back = Rétablir ce qui répondait aux boîtes de dialogue d’ouverture et d’enregistrement
 
 # draft
-commands_file_chooser_put_back_description = Remettre le fichier de configuration du portail de l’utilisateur `file` tel qu’il était (`text`, rien pour aucun fichier) : ce qu’exécute l’annulation de `dialogs.choose`, `portal` étant ce qu’il avait choisi
+commands_file_chooser_put_back_description = Remettre la configuration du portail de l’utilisateur telle qu’elle était avant le choix `done` (ce qu’exécute l’annulation de `dialogs.choose`, depuis sa notification), seulement tant que le fichier contient ce que ce choix a écrit
 
 # draft
 commands_file_chooser_set = Choisir ce qui répond aux boîtes de dialogue d’ouverture et d’enregistrement
@@ -7132,10 +7132,16 @@ settings_file_chooser = Boîtes de dialogue d’ouverture et d’enregistrement
 settings_file_chooser_already = Les boîtes de dialogue Ouvrir et Enregistrer des autres programmes sont déjà { $chooser }
 
 # draft
+settings_file_chooser_already_desktop = Le bureau choisit déjà ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes
+
+# draft
 settings_file_chooser_applies = S’applique au prochain démarrage du portail du bureau, à la prochaine connexion
 
 # draft
 settings_file_chooser_chosen = Boîtes de dialogue Ouvrir et Enregistrer des autres programmes : { $chooser }, dès le prochain démarrage du portail du bureau
+
+# draft
+settings_file_chooser_chosen_desktop = Le bureau choisit ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, dès le prochain démarrage du portail du bureau
 
 # draft
 settings_file_chooser_description = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, ceux qui en demandent une au bureau : les fenêtres de Skwir, ou les boîtes de dialogue d’un autre programme.
@@ -7150,10 +7156,19 @@ settings_file_chooser_failed = Ce qui répond aux boîtes de dialogue Ouvrir et 
 settings_file_chooser_not_installed = Skwir ne peut pas être choisi ici : son fichier de portail n’est pas installé
 
 # draft
+settings_file_chooser_pending = Modifié depuis le démarrage du portail du bureau : cela s’applique à son prochain démarrage, à la prochaine connexion
+
+# draft
 settings_file_chooser_put_back = Ce qui répondait aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes est rétabli, dès le prochain démarrage du portail du bureau
 
 # draft
+settings_file_chooser_put_back_gone = Ce choix de ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer a déjà été annulé
+
+# draft
 settings_file_chooser_reading = Lecture de la configuration du portail du bureau…
+
+# draft
+settings_file_chooser_refused = Aucun : le portail du bureau n’affiche aucune boîte de dialogue
 
 # draft
 settings_file_chooser_unnamed = Comme le bureau le choisit

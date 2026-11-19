@@ -3,21 +3,29 @@
 //! its configuration names, and the user's configuration written to name
 //! another, its other lines kept.
 //!
-//! Found as xdg-desktop-portal 1.22 finds them. Its `.portal` files: in
-//! `XDG_DESKTOP_PORTAL_DIR` alone where that is set, else in the data
-//! folders' `xdg-desktop-portal/portals` (the user's first). Its
-//! configuration: a file a folder, `<desktop>-portals.conf` for each of
-//! `XDG_CURRENT_DESKTOP`'s desktops (lower case) before `portals.conf`,
-//! one with a `[preferred]` group alone, in the user's configuration
-//! folder, the system's, `/etc`'s, then the data folders'. An interface
-//! goes to the first file naming a back end installed for it, its own key
-//! before its `default`; a portal before 1.22 read the first file alone.
-//! The portal reads all this once, at its start: a choice applies when it
-//! starts again, which skwir never does (the session's service).
+//! Found and read as xdg-desktop-portal 1.22.1 does (its
+//! `xdp-portal-config.c`). Its `.portal` files: in `XDG_DESKTOP_PORTAL_DIR`
+//! alone where that is set, else in the data folders'
+//! `xdg-desktop-portal/portals` (the user's first), a name's first file
+//! taken. Its configuration: a file a folder, `<desktop>-portals.conf` for
+//! each of `XDG_CURRENT_DESKTOP`'s desktops (lower case) before
+//! `portals.conf`, the first with a `[preferred]` group (keys or none), in
+//! the user's configuration folder, the system's, `/etc`'s, then the data
+//! folders'. Each key as `GKeyFile` reads it, a key written twice its last
+//! value. An interface goes to the first file whose own key, else its
+//! `default`, names a back end installed for it: `none` there (its own key's,
+//! else the default's) gives it none, the cascade ending; `*` the first
+//! installed (those whose `UseIn` names a desktop first, then by name). A
+//! portal before 1.22 read the first file alone. The portal reads all this
+//! once, at its start: a choice applies when it starts again, which skwir
+//! never does (the session's service); what changed since the portal that
+//! runs started is said pending (its process's start, from the bus and
+//! `/proc`).
 //!
 //! Linux's: elsewhere the system's dialogs cannot be replaced (ADR-141, 11).
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 /// The interface the row chooses a back end for.
 pub const FILE_CHOOSER: &str = "org.freedesktop.impl.portal.FileChooser";
@@ -32,6 +40,26 @@ const LIMIT: u64 = 256 * 1024;
 pub struct BackEnd {
     pub name: String,
     pub interfaces: Vec<String>,
+    /// The desktops it offers itself for (`UseIn`), which order `*`.
+    pub use_in: Vec<String>,
+}
+
+impl BackEnd {
+    fn chooses(&self) -> bool {
+        self.interfaces.iter().any(|i| i == FILE_CHOOSER)
+    }
+}
+
+/// What the configuration gives the file chooser.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Named {
+    /// This back end, installed.
+    BackEnd(String),
+    /// `none`: no back end, so no dialog from the portal.
+    Refused,
+    /// No back end it names is installed: the portal falls back on the
+    /// back ends' `UseIn` keys, then GTK's.
+    Unnamed,
 }
 
 /// What the portal would choose from, and chooses.
@@ -39,11 +67,14 @@ pub struct BackEnd {
 pub struct Portals {
     /// The back ends installed that answer the file chooser, by name.
     pub choosers: Vec<String>,
-    /// The one the configuration names for it, if any (else the portal
-    /// falls back on the desktops' `UseIn` keys, then GTK's).
-    pub chooser: Option<String>,
+    /// What the configuration gives it.
+    pub chooser: Named,
     /// The user's own configuration file, where there is one.
     pub user_file: Option<PathBuf>,
+    /// The configuration changed since the running portal read it (a
+    /// file or a folder of it written after the portal started): what
+    /// it names applies at the portal's next start.
+    pub pending: bool,
 }
 
 /// Where the portal looks, as read from the environment: kept apart so
@@ -58,16 +89,21 @@ pub struct Places {
     pub user_dir: Option<PathBuf>,
     /// `XDG_CURRENT_DESKTOP`'s desktops, lower case.
     pub desktops: Vec<String>,
+    /// When the portal that runs started, and read its configuration
+    /// (`None`: none runs, or it is not known).
+    pub started: Option<SystemTime>,
 }
 
 impl Places {
-    /// Where the portal of this session looks.
+    /// Where the portal of this session looks, and when it started (asked
+    /// of the bus, read in `/proc`): on a worker.
     pub fn here() -> Places {
         const SUBDIR: &str = "xdg-desktop-portal";
         let desktops: Vec<String> = crate::apps::current_desktops()
             .iter()
             .map(|desktop| desktop.to_ascii_lowercase())
             .collect();
+        let started = portal_started();
         if let Some(dir) = std::env::var_os("XDG_DESKTOP_PORTAL_DIR").filter(|d| !d.is_empty()) {
             // The portal's tests' setting: that folder alone, for both.
             let dir = PathBuf::from(dir);
@@ -76,6 +112,7 @@ impl Places {
                 config_dirs: vec![dir.clone()],
                 user_dir: Some(dir),
                 desktops,
+                started,
             };
         }
         let data = skwir_core::xdg::data_search();
@@ -104,11 +141,14 @@ impl Places {
             config_dirs,
             user_dir,
             desktops,
+            started,
         }
     }
 
     /// The configuration file the portal reads in `dir`, if any: the
-    /// first desktop's that has choices, else `portals.conf`'s. Reads it.
+    /// first desktop's with a `[preferred]` group, else `portals.conf`'s.
+    /// One that cannot be read is passed over, as the portal does. Reads
+    /// it.
     fn config_in(&self, dir: &Path) -> Option<(PathBuf, Config)> {
         self.desktops
             .iter()
@@ -116,8 +156,7 @@ impl Places {
             .chain(std::iter::once("portals.conf".to_owned()))
             .find_map(|name| {
                 let path = dir.join(name);
-                let config = Config::read(&path)?;
-                config.has_choices().then_some((path, config))
+                Config::read(&path).map(|config| (path, config))
             })
     }
 
@@ -139,23 +178,22 @@ impl Places {
 /// Reads the disk: on a worker.
 pub fn read(places: &Places) -> Portals {
     let installed = installed(places);
-    let answers = |name: &str| {
-        installed
-            .iter()
-            .any(|b| b.name == name && b.interfaces.iter().any(|i| i == FILE_CHOOSER))
-    };
-    let configs: Vec<(PathBuf, Config)> = places
+    let found: Vec<(PathBuf, Config)> = places
         .config_dirs
         .iter()
         .filter_map(|dir| places.config_in(dir))
         .collect();
-    // As the portal reads them: the first file naming one installed, its
-    // own key before its default.
-    let chooser = configs.iter().find_map(|(_, config)| {
-        [FILE_CHOOSER, "default"]
-            .iter()
-            .find_map(|key| config.names(key).into_iter().find(|name| answers(name)))
+    let pending = places.started.is_some_and(|started| {
+        changed_since(
+            started,
+            places
+                .config_dirs
+                .iter()
+                .chain(found.iter().map(|(path, _)| path)),
+        )
     });
+    let configs: Vec<Config> = found.into_iter().map(|(_, config)| config).collect();
+    let chooser = named(&configs, &installed, &places.desktops);
     let user_file = places
         .user_dir
         .as_ref()
@@ -163,7 +201,7 @@ pub fn read(places: &Places) -> Portals {
         .map(|(path, _)| path);
     let mut choosers: Vec<String> = installed
         .iter()
-        .filter(|b| b.interfaces.iter().any(|i| i == FILE_CHOOSER))
+        .filter(|b| b.chooses())
         .map(|b| b.name.clone())
         .collect();
     choosers.sort();
@@ -172,7 +210,118 @@ pub fn read(places: &Places) -> Portals {
         choosers,
         chooser,
         user_file,
+        pending,
     }
+}
+
+/// Whether any of `paths` (the configuration's folders, which a file made,
+/// replaced or taken away there changes, and its files, which an edit in
+/// place changes) was written after `started`: two seconds after, the
+/// start being known to the second.
+fn changed_since<'a>(started: SystemTime, paths: impl Iterator<Item = &'a PathBuf>) -> bool {
+    let after = started + Duration::from_secs(2);
+    paths
+        .filter_map(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok())
+        .any(|modified| modified > after)
+}
+
+/// When the desktop portal that runs started: its process's, asked of the
+/// bus and read in `/proc`. On a worker.
+fn portal_started() -> Option<SystemTime> {
+    let bus = crate::bus::session().ok()?;
+    let dbus = zbus::blocking::fdo::DBusProxy::new(&bus).ok()?;
+    let name = zbus::names::BusName::try_from("org.freedesktop.portal.Desktop").ok()?;
+    started_at(dbus.get_connection_unix_process_id(name).ok()?)
+}
+
+/// When the process `pid` started: its start in clock ticks after boot
+/// (`/proc/<pid>/stat`'s 22nd field), after the boot's time (`/proc/stat`'s
+/// `btime`, in seconds).
+fn started_at(pid: u32) -> Option<SystemTime> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Read after the name, which may hold spaces and parentheses: the
+    // third field (its state) first.
+    let ticks: u64 = stat[stat.rfind(')')? + 1..]
+        .split_whitespace()
+        .nth(22 - 3)?
+        .parse()
+        .ok()?;
+    let boot: u64 = std::fs::read_to_string("/proc/stat")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))?
+        .trim()
+        .parse()
+        .ok()?;
+    let hz = rustix::param::clock_ticks_per_second().max(1);
+    Some(
+        SystemTime::UNIX_EPOCH
+            + Duration::from_secs(boot + ticks / hz)
+            + Duration::from_nanos((ticks % hz) * 1_000_000_000 / hz),
+    )
+}
+
+/// What `configs` give the file chooser, as the portal goes through them
+/// (`xdp_portal_config_find`): in each, `none` ends it with none; else its
+/// own key's names, then its default's, the first installed for it taken.
+fn named(configs: &[Config], installed: &[BackEnd], desktops: &[String]) -> Named {
+    let refuses = |names: &Option<Vec<String>>| {
+        names
+            .as_ref()
+            .is_some_and(|names| names.iter().any(|n| n == "none"))
+    };
+    for config in configs {
+        let own = config.names(FILE_CHOOSER);
+        let default = config.names("default");
+        // The default's `none` counts only where the file has no key of
+        // the interface's own.
+        if refuses(&own) || (own.is_none() && refuses(&default)) {
+            return Named::Refused;
+        }
+        for names in [own, default].into_iter().flatten() {
+            if let Some(name) = first_installed(&names, installed, desktops) {
+                return Named::BackEnd(name);
+            }
+        }
+    }
+    Named::Unnamed
+}
+
+/// The first of `names` installed for the file chooser; `*` stands for the
+/// first installed, and ends the list either way, as the portal reads it.
+fn first_installed(names: &[String], installed: &[BackEnd], desktops: &[String]) -> Option<String> {
+    for name in names {
+        if name == "*" {
+            return any_installed(installed, desktops);
+        }
+        if installed.iter().any(|b| b.name == *name && b.chooses()) {
+            return Some(name.clone());
+        }
+    }
+    None
+}
+
+/// What `*` names: the back ends for the file chooser in the portal's
+/// order, the first desktop one of two offers itself for first
+/// (`UseIn`, case ignored), then by name.
+fn any_installed(installed: &[BackEnd], desktops: &[String]) -> Option<String> {
+    let uses =
+        |b: &BackEnd, desktop: &str| b.use_in.iter().any(|d| d.eq_ignore_ascii_case(desktop));
+    installed
+        .iter()
+        .filter(|b| b.chooses())
+        .min_by(|a, b| {
+            for desktop in desktops {
+                match (uses(a, desktop), uses(b, desktop)) {
+                    (true, false) => return std::cmp::Ordering::Less,
+                    (false, true) => return std::cmp::Ordering::Greater,
+                    (true, true) => break,
+                    (false, false) => {}
+                }
+            }
+            a.name.cmp(&b.name)
+        })
+        .map(|b| b.name.clone())
 }
 
 /// The back ends installed: each name once, the first folder's.
@@ -199,34 +348,48 @@ fn installed(places: &Places) -> Vec<BackEnd> {
             let Some(text) = read_text(&path) else {
                 continue;
             };
-            let interfaces = keys_of(&text, "portal")
-                .into_iter()
-                .find(|(key, _)| key == "Interfaces")
-                .map(|(_, value)| crate::keyfile::list(&value))
-                .unwrap_or_default();
-            found.push(BackEnd { name, interfaces });
+            let keys = keys_of(&text, "portal");
+            // A key written twice is its last, as `GKeyFile` reads it.
+            let list = |wanted: &str| {
+                keys.iter()
+                    .rev()
+                    .find(|(key, _)| key == wanted)
+                    .map(|(_, value)| crate::keyfile::list(value))
+                    .unwrap_or_default()
+            };
+            found.push(BackEnd {
+                interfaces: list("Interfaces"),
+                use_in: list("UseIn"),
+                name,
+            });
         }
     }
     found
 }
 
-/// What a choice changed: the user's file as it was (`None`: there was
-/// none), to put back.
+/// What a choice changed, for Undo: the user's file (the end of its links,
+/// where it is one: what was written), as it was (`None`: there was none),
+/// and what skwir wrote in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Before {
-    pub file: PathBuf,
-    pub text: Option<String>,
+    file: PathBuf,
+    text: Option<String>,
+    written: String,
 }
 
 /// Name `chooser` for the file chooser in the user's configuration (empty:
 /// none, its key taken out), its other lines kept. Where the user has no
-/// file, the one the portal reads first is copied into it before: a
-/// portal before 1.22 reads that file alone, and a new one would drop the
-/// system's other choices. What it was, for Undo; `None` when it already
-/// said so. Writes the disk: on a worker.
+/// file, nothing is written for one already in effect, nor for the
+/// desktop's choice (nothing of the user's to take out); for another, the
+/// file the portal reads first is copied in before: a portal before 1.22
+/// takes that file whole, and a lone key would drop the system's other
+/// choices (ADR-141, 10). What it was, for Undo; `None` when it already
+/// said so. A file that is there and cannot be read is left alone, the
+/// error said; a link is written through, its target's mode kept. Writes
+/// the disk: on a worker.
 ///
 /// # Errors
-/// When the folder or the file cannot be written.
+/// When the file cannot be read, or the folder or the file written.
 pub fn choose(places: &Places, chooser: &str) -> std::io::Result<Option<Before>> {
     let Some(file) = places.user_file() else {
         return Err(std::io::Error::other(skwir_core::words!(
@@ -234,35 +397,52 @@ pub fn choose(places: &Places, chooser: &str) -> std::io::Result<Option<Before>>
             note = "An error choosing what answers other programs' Open and Save dialogs: the user has no configuration folder (no XDG_CONFIG_HOME, no home)."
         )));
     };
-    let before = read_text(&file);
-    let base = match &before {
-        Some(text) => text.clone(),
-        None => places
-            .config_dirs
-            .iter()
-            .filter(|dir| Some(*dir) != places.user_dir.as_ref())
-            .find_map(|dir| places.config_in(dir))
-            .and_then(|(path, _)| read_text(&path))
-            .unwrap_or_default(),
+    let file = through_links(&file)?;
+    let before = text_at(&file)?;
+    let named = Some(chooser).filter(|c| !c.is_empty());
+    let text = match (&before, named) {
+        (Some(text), _) => with_key(text, PREFERRED, FILE_CHOOSER, named),
+        // Nothing of the user's to take out: the desktop chooses already.
+        (None, None) => return Ok(None),
+        (None, Some(name)) if read(places).chooser == Named::BackEnd(name.to_owned()) => {
+            return Ok(None);
+        }
+        (None, Some(_)) => {
+            let base = places
+                .config_dirs
+                .iter()
+                .filter(|dir| Some(*dir) != places.user_dir.as_ref())
+                .find_map(|dir| places.config_in(dir))
+                .and_then(|(path, _)| read_text(&path))
+                .unwrap_or_default();
+            with_key(&base, PREFERRED, FILE_CHOOSER, named)
+        }
     };
-    let text = with_key(
-        &base,
-        PREFERRED,
-        FILE_CHOOSER,
-        Some(chooser).filter(|c| !c.is_empty()),
-    );
     if before.as_deref() == Some(text.as_str()) {
         return Ok(None);
     }
     write(&file, &text)?;
-    Ok(Some(Before { file, text: before }))
+    Ok(Some(Before {
+        file,
+        text: before,
+        written: text,
+    }))
 }
 
-/// Put back what `choose` changed: the file as it was, or none.
+/// Put back what `choose` changed: the file as it was, or none; only while
+/// it holds what skwir wrote, an edit made since being kept.
 ///
 /// # Errors
-/// When the file cannot be written or taken away.
+/// When the file was changed since, cannot be read, written or taken
+/// away.
 pub fn put_back(before: &Before) -> std::io::Result<()> {
+    if text_at(&before.file)?.as_deref() != Some(before.written.as_str()) {
+        return Err(std::io::Error::other(skwir_core::words!(
+            portals_changed_since =
+                "the file was changed since Skwir wrote it, and is kept as it is",
+            note = "Why Undo of a choice of what answers other programs' Open and Save dialogs did nothing: the portal's configuration file was edited after the choice. Begins in lower case: said after other words."
+        )));
+    }
     match &before.text {
         Some(text) => write(&before.file, text),
         None => match std::fs::remove_file(&before.file) {
@@ -272,17 +452,63 @@ pub fn put_back(before: &Before) -> std::io::Result<()> {
     }
 }
 
+/// Where `path` leads: the file at the end of its links (one not there yet
+/// included), read and written in its place so that the links stay.
+fn through_links(path: &Path) -> std::io::Result<PathBuf> {
+    let mut at = path.to_path_buf();
+    // As many as the system follows.
+    for _ in 0..40 {
+        match std::fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = std::fs::read_link(&at)?;
+                at = match at.parent() {
+                    Some(dir) => dir.join(target),
+                    None => target,
+                };
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => return Ok(at),
+        }
+    }
+    Err(rustix::io::Errno::LOOP.into())
+}
+
+/// What `file` holds: `None` when nothing is there, an error when what is
+/// there cannot be read as the portal's configuration (not allowed, not a
+/// file, too large, not UTF-8).
+fn text_at(file: &Path) -> std::io::Result<Option<String>> {
+    match crate::file::read_regular(file, LIMIT) {
+        Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                skwir_core::words!(
+                    portals_not_utf8 = "it is not written in UTF-8",
+                    note = "Why the desktop portal's configuration file was left alone: its text is not UTF-8, which the portal reads. Begins in lower case: said after other words."
+                ),
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// `file` replaced whole by `text`, its mode kept (a new one is the
+/// user's alone).
 fn write(file: &Path, text: &str) -> std::io::Result<()> {
     let dir = file.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
     let mut staged = tempfile::NamedTempFile::new_in(dir)?;
     std::io::Write::write_all(&mut staged, text.as_bytes())?;
+    match std::fs::metadata(file) {
+        Ok(meta) => std::fs::set_permissions(staged.path(), meta.permissions())?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     crate::file::take_place(staged, file)
 }
 
 fn read_text(path: &Path) -> Option<String> {
-    let bytes = crate::file::read_regular(path, LIMIT).ok()?;
-    String::from_utf8(bytes).ok()
+    text_at(path).ok().flatten()
 }
 
 /// A configuration file, as the portal reads it: its `[preferred]` keys.
@@ -292,25 +518,26 @@ struct Config {
 }
 
 impl Config {
+    /// The file at `path`, if the portal takes it: one with a `[preferred]`
+    /// group, even an empty one, as `GKeyFile` finds its keys; one without
+    /// is passed over.
     fn read(path: &Path) -> Option<Config> {
         let text = read_text(path)?;
-        Some(Config {
+        let header = format!("[{PREFERRED}]");
+        let grouped = text.lines().any(|line| line.trim() == header);
+        grouped.then(|| Config {
             preferred: keys_of(&text, PREFERRED),
         })
     }
 
-    /// A file without choices is passed over, as the portal does.
-    fn has_choices(&self) -> bool {
-        !self.preferred.is_empty()
-    }
-
-    /// The back ends `key` names, in order.
-    fn names(&self, key: &str) -> Vec<String> {
+    /// The back ends `key` names, in order; `None` where it has no such
+    /// key. A key written twice is its last, as `GKeyFile` reads it.
+    fn names(&self, key: &str) -> Option<Vec<String>> {
         self.preferred
             .iter()
+            .rev()
             .find(|(k, _)| k == key)
             .map(|(_, value)| crate::keyfile::list(value))
-            .unwrap_or_default()
     }
 }
 
@@ -388,12 +615,17 @@ fn with_key(text: &str, group: &str, key: &str, value: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn portal(dir: &Path, name: &str, interfaces: &str) {
+        portal_for(dir, name, interfaces, "");
+    }
+
+    fn portal_for(dir: &Path, name: &str, interfaces: &str, use_in: &str) {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(
             dir.join(format!("{name}.portal")),
-            format!("[portal]\nDBusName=org.freedesktop.impl.portal.desktop.{name}\nInterfaces={interfaces}\n"),
+            format!("[portal]\nDBusName=org.freedesktop.impl.portal.desktop.{name}\nInterfaces={interfaces}\nUseIn={use_in}\n"),
         )
         .unwrap();
     }
@@ -404,13 +636,18 @@ mod tests {
             config_dirs: vec![root.join("config"), root.join("etc")],
             user_dir: Some(root.join("config")),
             desktops: desktops.iter().map(|d| (*d).to_owned()).collect(),
+            started: None,
         }
+    }
+
+    fn named(name: &str) -> Named {
+        Named::BackEnd(name.to_owned())
     }
 
     /// The back ends listed are those installed for the file chooser; the
     /// one chosen is the first file's naming one of them, its own key
     /// before its default, a desktop's file before `portals.conf`, one
-    /// without choices passed over.
+    /// without a `[preferred]` group passed over.
     #[test]
     fn the_choice_is_read_as_the_portal_reads_it() {
         let tmp = tempfile::tempdir().unwrap();
@@ -434,35 +671,105 @@ mod tests {
         let p = places(root, &["hyprland"]);
         let read = read(&p);
         assert_eq!(read.choosers, ["gtk", "kde", "skwir"]);
-        assert_eq!(read.chooser, None);
+        assert_eq!(read.chooser, Named::Unnamed);
 
         std::fs::create_dir_all(root.join("etc")).unwrap();
         std::fs::write(root.join("etc/portals.conf"), "[preferred]\ndefault=gtk\n").unwrap();
-        assert_eq!(super::read(&p).chooser.as_deref(), Some("gtk"));
+        assert_eq!(super::read(&p).chooser, named("gtk"));
         std::fs::write(
             root.join("etc/hyprland-portals.conf"),
             "[preferred]\ndefault=hyprland;kde\norg.freedesktop.impl.portal.FileChooser=nautilus;kde\n",
         )
         .unwrap();
         assert_eq!(
-            super::read(&p).chooser.as_deref(),
-            Some("kde"),
+            super::read(&p).chooser,
+            named("kde"),
             "one not installed is passed over"
         );
         std::fs::create_dir_all(root.join("config")).unwrap();
         std::fs::write(root.join("config/portals.conf"), "# no choices\n").unwrap();
         assert_eq!(
-            super::read(&p).chooser.as_deref(),
-            Some("kde"),
-            "a file without choices is passed over"
+            super::read(&p).chooser,
+            named("kde"),
+            "a file without the group is passed over"
         );
         assert_eq!(super::read(&p).user_file, None);
+    }
+
+    /// `none` gives the file chooser no back end, ending the cascade (the
+    /// default's only where the file has no key of its own); `*` the first
+    /// installed, a desktop's own first; a key written twice is its last;
+    /// a file with an empty `[preferred]` group is its folder's, as the
+    /// portal takes it.
+    #[test]
+    fn none_any_and_repeats_are_read_as_the_portal_reads_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        portal(&root.join("sys/portals"), "gtk", FILE_CHOOSER);
+        portal(&root.join("sys/portals"), "kde", FILE_CHOOSER);
+        portal_for(&root.join("sys/portals"), "lxqt", FILE_CHOOSER, "LXQt;");
+        let p = places(root, &["lxqt", "hyprland"]);
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(root.join("etc/portals.conf"), "[preferred]\ndefault=kde\n").unwrap();
+        let user = |text: &str| std::fs::write(root.join("config/portals.conf"), text).unwrap();
+
+        user(&format!("[preferred]\n{FILE_CHOOSER}=none\ndefault=gtk\n"));
+        assert_eq!(read(&p).chooser, Named::Refused, "its own none");
+        user(&format!("[preferred]\n{FILE_CHOOSER}=gtk;none\n"));
+        assert_eq!(read(&p).chooser, Named::Refused, "none anywhere in it");
+        user("[preferred]\ndefault=none\n");
+        assert_eq!(read(&p).chooser, Named::Refused, "the default's none");
+        user(&format!(
+            "[preferred]\n{FILE_CHOOSER}=nautilus\ndefault=none\n"
+        ));
+        assert_eq!(
+            read(&p).chooser,
+            named("kde"),
+            "the default's none counts only without a key of its own"
+        );
+        user(&format!("[preferred]\n{FILE_CHOOSER}=nautilus;*;gtk\n"));
+        assert_eq!(
+            read(&p).chooser,
+            named("lxqt"),
+            "* is one offered for the desktop"
+        );
+        portal_for(&root.join("sys/portals"), "lxqt", FILE_CHOOSER, "");
+        assert_eq!(read(&p).chooser, named("gtk"), "else by name");
+        user(&format!(
+            "[preferred]\n{FILE_CHOOSER}=gtk\n{FILE_CHOOSER}=kde\n"
+        ));
+        assert_eq!(
+            read(&p).chooser,
+            named("kde"),
+            "a key written twice is its last"
+        );
+        user(&format!(
+            "[preferred]\n{FILE_CHOOSER}=gtk\n\n[preferred]\n{FILE_CHOOSER}=lxqt\n"
+        ));
+        assert_eq!(
+            read(&p).chooser,
+            named("lxqt"),
+            "so is one in a group written twice"
+        );
+
+        std::fs::write(root.join("config/lxqt-portals.conf"), "[preferred]\n").unwrap();
+        assert_eq!(
+            read(&p).chooser,
+            named("kde"),
+            "an empty group is the folder's file: its portals.conf is not read"
+        );
+        assert_eq!(
+            read(&p).user_file,
+            Some(root.join("config/lxqt-portals.conf"))
+        );
     }
 
     /// A choice is written in the user's own file, its other lines and
     /// comments kept; where the user had none, the one the portal reads
     /// first is copied in before. Undo puts back the file as it was, or
-    /// none; a choice already so writes nothing.
+    /// none, only while it holds what was written; a choice already so
+    /// writes nothing.
     #[test]
     fn a_choice_keeps_the_rest_of_the_configuration() {
         let tmp = tempfile::tempdir().unwrap();
@@ -478,38 +785,139 @@ mod tests {
         let p = places(root, &["hyprland"]);
         let first = choose(&p, "skwir").unwrap().expect("changed");
         let user = root.join("config/hyprland-portals.conf");
-        assert_eq!(
-            first,
-            Before {
-                file: user.clone(),
-                text: None
-            }
-        );
-        assert_eq!(
-            std::fs::read_to_string(&user).unwrap(),
-            "[preferred]\ndefault=hyprland;kde\norg.freedesktop.impl.portal.Screenshot=hyprland\norg.freedesktop.impl.portal.FileChooser=skwir\n"
-        );
-        assert_eq!(read(&p).chooser.as_deref(), Some("skwir"));
+        assert_eq!((&first.file, &first.text), (&user, &None));
+        let copied = "[preferred]\ndefault=hyprland;kde\norg.freedesktop.impl.portal.Screenshot=hyprland\norg.freedesktop.impl.portal.FileChooser=skwir\n";
+        assert_eq!(std::fs::read_to_string(&user).unwrap(), copied);
+        assert_eq!(read(&p).chooser, named("skwir"));
         assert_eq!(choose(&p, "skwir").unwrap(), None, "already so");
 
-        std::fs::write(
-            &user,
-            "# mine\n[preferred]\ndefault=hyprland;kde\norg.freedesktop.impl.portal.FileChooser=skwir\n\n[other]\nx=1\n",
-        )
-        .unwrap();
+        let mine = "# mine\n[preferred]\ndefault=hyprland;kde\norg.freedesktop.impl.portal.FileChooser=skwir\n\n[other]\nx=1\n";
+        std::fs::write(&user, mine).unwrap();
         let second = choose(&p, "kde").unwrap().expect("changed");
-        assert_eq!(
-            std::fs::read_to_string(&user).unwrap(),
-            "# mine\n[preferred]\ndefault=hyprland;kde\norg.freedesktop.impl.portal.FileChooser=kde\n\n[other]\nx=1\n"
-        );
+        let chose_kde = "# mine\n[preferred]\ndefault=hyprland;kde\norg.freedesktop.impl.portal.FileChooser=kde\n\n[other]\nx=1\n";
+        assert_eq!(std::fs::read_to_string(&user).unwrap(), chose_kde);
         put_back(&second).unwrap();
-        assert!(
-            std::fs::read_to_string(&user)
-                .unwrap()
-                .contains("FileChooser=skwir")
-        );
+        assert_eq!(std::fs::read_to_string(&user).unwrap(), mine);
+        let kept = put_back(&first).expect_err("edited since the first choice");
+        assert!(kept.to_string().contains("changed since"), "{kept}");
+        assert_eq!(std::fs::read_to_string(&user).unwrap(), mine, "kept");
+        std::fs::write(&user, copied).unwrap();
         put_back(&first).unwrap();
         assert!(!user.exists(), "the user had none");
+    }
+
+    /// Where the user has no file, the desktop's choice and one already in
+    /// effect write nothing; with a file of the user's, the desktop's
+    /// choice takes out its key alone.
+    #[test]
+    fn nothing_is_written_for_what_is_so_already() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        portal(&root.join("sys/portals"), "kde", FILE_CHOOSER);
+        portal(&root.join("sys/portals"), "gtk", FILE_CHOOSER);
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        std::fs::write(
+            root.join("etc/hyprland-portals.conf"),
+            format!("[preferred]\ndefault=gtk\n{FILE_CHOOSER}=kde\n"),
+        )
+        .unwrap();
+        let p = places(root, &["hyprland"]);
+        let user = root.join("config/hyprland-portals.conf");
+        assert_eq!(choose(&p, "").unwrap(), None, "the desktop's choice");
+        assert_eq!(choose(&p, "kde").unwrap(), None, "named already");
+        assert!(!user.exists());
+
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(&user, format!("[preferred]\n{FILE_CHOOSER}=gtk\n# note\n")).unwrap();
+        let undo = choose(&p, "").unwrap().expect("its key taken out");
+        assert_eq!(
+            std::fs::read_to_string(&user).unwrap(),
+            "[preferred]\n# note\n"
+        );
+        assert_eq!(read(&p).chooser, named("kde"), "the desktop's again");
+        put_back(&undo).unwrap();
+        assert_eq!(read(&p).chooser, named("gtk"));
+    }
+
+    /// A file there that cannot be read as the configuration is left as it
+    /// is and why said; a link is written through to its target, which
+    /// keeps its mode, and put back there, the link staying a link.
+    #[test]
+    fn what_is_there_is_kept_or_written_through() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        portal(&root.join("sys/portals"), "kde", FILE_CHOOSER);
+        portal(&root.join("sys/portals"), "skwir", FILE_CHOOSER);
+        let p = places(root, &["hyprland"]);
+        let user = root.join("config/hyprland-portals.conf");
+        std::fs::create_dir_all(root.join("config")).unwrap();
+
+        std::fs::write(&user, b"[preferred]\n# caf\xe9\ndefault=kde\n").unwrap();
+        let refused = choose(&p, "skwir").expect_err("not UTF-8");
+        assert!(refused.to_string().contains("UTF-8"), "{refused}");
+        assert_eq!(
+            std::fs::read(&user).unwrap(),
+            b"[preferred]\n# caf\xe9\ndefault=kde\n"
+        );
+        std::fs::remove_file(&user).unwrap();
+        std::fs::create_dir(&user).unwrap();
+        choose(&p, "skwir").expect_err("a folder");
+        assert!(user.is_dir());
+        std::fs::remove_dir(&user).unwrap();
+
+        // A link into the user's own files, as a dotfiles folder makes.
+        let dotfiles = root.join("dotfiles");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        let target = dotfiles.join("portals.conf");
+        std::fs::write(&target, "[preferred]\ndefault=kde\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        std::os::unix::fs::symlink("../dotfiles/portals.conf", &user).unwrap();
+        let undo = choose(&p, "skwir").unwrap().expect("changed");
+        assert!(user.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            format!("[preferred]\ndefault=kde\n{FILE_CHOOSER}=skwir\n")
+        );
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        put_back(&undo).unwrap();
+        assert!(user.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "[preferred]\ndefault=kde\n"
+        );
+
+        // One leading nowhere yet: its target is made, and taken away by
+        // Undo, the link left as it was.
+        std::fs::remove_file(&target).unwrap();
+        let undo = choose(&p, "skwir").unwrap().expect("made");
+        assert!(target.is_file() && user.symlink_metadata().unwrap().file_type().is_symlink());
+        put_back(&undo).unwrap();
+        assert!(!target.exists() && user.symlink_metadata().is_ok());
+    }
+
+    /// A configuration written after the portal started is pending: its
+    /// file, or its folder for a file made or taken away; one read before
+    /// is not. A process's start is read as the system dates it.
+    #[test]
+    fn a_change_after_the_portal_started_is_pending() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        portal(&root.join("sys/portals"), "kde", FILE_CHOOSER);
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        std::fs::write(root.join("etc/portals.conf"), "[preferred]\ndefault=kde\n").unwrap();
+        let mut p = places(root, &["hyprland"]);
+        assert!(!read(&p).pending, "no portal runs");
+        p.started = Some(SystemTime::now() + Duration::from_secs(60));
+        assert!(!read(&p).pending, "read as it started");
+        p.started = Some(SystemTime::now() - Duration::from_secs(60));
+        assert!(read(&p).pending, "written since");
+
+        let now = SystemTime::now();
+        let started = started_at(std::process::id()).expect("this process's start");
+        assert!(started <= now && now.duration_since(started).unwrap() < Duration::from_secs(3600));
     }
 
     /// Taking the key out leaves the rest; a group without it gets it at
