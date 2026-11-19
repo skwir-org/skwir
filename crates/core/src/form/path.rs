@@ -121,7 +121,13 @@ mod tests {
         let joined = save_join("~", "notes.pdf");
         let (folder, name) = save_split(&joined);
         assert_eq!(name, "notes.pdf");
-        let home = Path::new("/example/home");
+        // A home is whole on each system: `/example/home` is not on
+        // Windows, which wants its drive.
+        let home = Path::new(if cfg!(windows) {
+            r"C:\example\home"
+        } else {
+            "/example/home"
+        });
         assert_eq!(save_folder(folder, Some(home)), Some(home.to_owned()));
     }
 
