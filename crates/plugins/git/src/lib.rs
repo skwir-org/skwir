@@ -378,13 +378,15 @@ fn names(refs: &[String], head: Option<&str>) -> String {
 
 /// When a commit was made, to the minute in the user's time zone, as the
 /// window writes dates: by the locale, or as ISO 8601 where the dates
-/// setting says so.
+/// setting says so. Its seconds as the history has them, before 1970 too
+/// (a history converted from an older system's): only a date no calendar
+/// can say is "—".
 fn when(seconds: i64) -> String {
-    u64::try_from(seconds)
-        .ok()
-        .map(|seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
-        .and_then(|at| skwir_core::words::Moment::of(at, skwir_core::words::Shape::DateTime))
-        .map_or_else(|| "—".into(), skwir_core::words::Moment::said)
+    skwir_core::words::Moment {
+        at: seconds,
+        shape: skwir_core::words::Shape::DateTime,
+    }
+    .said()
 }
 
 #[cfg(test)]
@@ -516,7 +518,11 @@ mod tests {
         assert_eq!(when(1_700_000_000), "14 Nov 2023, 22:13");
         skwir_core::locale::set_iso_dates(true);
         assert_eq!(when(1_700_000_000), "2023-11-14 22:13");
+        // Before 1970, as a converted history has it (PA-9).
+        assert_eq!(when(-86_400), "1969-12-31 00:00");
+        assert_eq!(when(i64::MIN), "—", "no calendar says it");
         skwir_core::locale::set_iso_dates(false);
+        assert_eq!(when(-86_400), "31 Dec 1969, 00:00");
         skwir_core::locale::set_formats(None, None);
     }
 }
