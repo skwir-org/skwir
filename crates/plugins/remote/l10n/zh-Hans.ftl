@@ -1473,6 +1473,9 @@ remote_tool_failed = { $tool }：{ $error }
 remote_tool_unknown = Skwir 不知道挂载它的工具
 
 # draft
+remote_tools_failed = { $failures }
+
+# draft
 remote_under_way = 那里仍有操作正在进行：{ $actions }
 
 # draft

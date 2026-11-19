@@ -1012,7 +1012,7 @@ impl Remotes {
         if failed.len() == 1 {
             return Err(failed.remove(0).1);
         }
-        // Failures are said together, each by its tool.
+        // Failures are said together, each by its tool, as a list.
         if !failed.is_empty() {
             let said: Vec<Words> = failed
                 .into_iter()
@@ -1026,7 +1026,13 @@ impl Remotes {
                     )
                 })
                 .collect();
-            anyhow::bail!(OneAfterAnother(said));
+            anyhow::bail!(words!(
+                remote_tools_failed = "{ $failures }",
+                failures = listed(said),
+                note = "Why a server was not reached, after Could not connect to …: what each \
+                        tool tried could not do (remote_tool_failed), a list (sshfs: the server \
+                        refused the login and rclone: the server's name was not found)."
+            ));
         }
         if why_not.is_empty() {
             anyhow::bail!(words!(
@@ -1037,9 +1043,9 @@ impl Remotes {
         }
         anyhow::bail!(words!(
             remote_nothing_installed = "nothing installed can open it: { $why }",
-            why = OneAfterAnother(why_not).said(),
-            note = "why: why each tool that opens such addresses cannot here, one after the \
-                    other (sshfs is not installed; rclone is not installed)."
+            why = listed(why_not),
+            note = "why: why each tool that opens such addresses cannot here, a list (sshfs \
+                    is not installed and rclone is not installed)."
         ))
     }
 
@@ -2684,33 +2690,6 @@ fn listed(items: Vec<Words>) -> skwir_core::words::Arg {
     skwir_core::words::List::and(items).into()
 }
 
-/// Sentences said one after the other, each in the reader's language
-/// where they are said (`Words::of_error`): what each tool said, why none
-/// can. Core has no list argument yet.
-#[derive(Debug)]
-struct OneAfterAnother(Vec<Words>);
-
-impl std::fmt::Display for OneAfterAnother {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (at, words) in self.0.iter().enumerate() {
-            if at > 0 {
-                f.write_str("; ")?;
-            }
-            write!(f, "{words}")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for OneAfterAnother {}
-
-impl OneAfterAnother {
-    /// As words: an argument of a message.
-    fn said(self) -> Words {
-        Words::of_error(anyhow::Error::new(self))
-    }
-}
-
 /// Refused while actions of Skwir's are under way at or below `point`
 /// (`Executor::under_way_in`), named: letting go of the mount would cut
 /// them.
@@ -3377,7 +3356,11 @@ mod tests {
             Tool::new("second", Some("no entry"), false),
         );
         let error = reach(&[&one, &other]).unwrap_err();
-        assert_eq!(format!("{error:#}"), "first: no export; second: no entry");
+        assert_eq!(
+            format!("{error:#}"),
+            "first: no export and second: no entry",
+            "a list, joined as the reader's language joins one"
+        );
     }
 
     /// Two panes opening one server at once connect one after the other,

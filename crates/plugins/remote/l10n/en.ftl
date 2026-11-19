@@ -654,7 +654,7 @@ remote_not_installed = { $program } is not installed
 
 remote_not_mounted_there = no remote folder is mounted there
 
-# why: why each tool that opens such addresses cannot here, one after the other (sshfs is not installed; rclone is not installed).
+# why: why each tool that opens such addresses cannot here, a list (sshfs is not installed and rclone is not installed).
 remote_nothing_installed = nothing installed can open it: { $why }
 
 remote_options_bandwidth = Bandwidth Limit
@@ -1223,6 +1223,9 @@ remote_thumbnails_submenu = Thumbnails
 remote_tool_failed = { $tool }: { $error }
 
 remote_tool_unknown = Skwir does not know the tool that mounted it
+
+# Why a server was not reached, after Could not connect to …: what each tool tried could not do (remote_tool_failed), a list (sshfs: the server refused the login and rclone: the server's name was not found).
+remote_tools_failed = { $failures }
 
 # Why a remote folder is not let go of: actions: the titles of what Skwir does there.
 remote_under_way = { $count ->

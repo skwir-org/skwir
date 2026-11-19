@@ -1506,6 +1506,9 @@ remote_tool_failed = { $tool } : { $error }
 remote_tool_unknown = Skwir ne connaît pas l’outil qui l’a monté
 
 # draft
+remote_tools_failed = { $failures }
+
+# draft
 remote_under_way = { $count ->
         [1] { $actions } y est en cours
         [one] { $actions } y est en cours
