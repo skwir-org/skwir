@@ -106,8 +106,9 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
       live at `skwir.org/apt` and `skwir.org/rpm`.
       - Their indexes are the site's static files: `dists/trixie` and
         `dists/noble` with a signed `InRelease` (apt-ftparchive), and
-        `repodata` with a signed `repomd.xml` (createrepo_c). The
-        `.rpm` files are signed with rpmsign as well.
+        `repodata` with a signed `repomd.xml` (createrepo_c).
+        ~~The `.rpm` files are signed with rpmsign as well.~~ (Amended:
+        they are not; their index is, below.)
       - The packages stay the release's. One `_redirects` line for each
         format sends `pool/:tag/:file` to the release's file (302). The
         SHA-256 in the signed indexes checks what arrives, wherever it
@@ -118,22 +119,30 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
         its own, as it is a build root of its own today. A Fedora
         release that changes a library a package links gets its own
         folder.
-   4. *The key.* One OpenPGP key signs both repositories. It has a
-      passphrase and is kept off the site's host. Its public part is on
-      the site and in `skwir-repository`.
+   4. *The key.* One OpenPGP key signs both repositories (the new one
+      carried beside it while it changes, below). It has a passphrase
+      and is kept off the site's host. Its public part is on the site
+      and in `skwir-repository`.
    5. *`skwir-repository`.* A package of its own for each format,
       architecture-independent and a few KiB, holding the sources or
       repo file (with `Signed-By` for apt) and the key.
       - The site's download page gives the command that installs it:
         `sudo dnf install https://skwir.org/rpm/skwir-repository.rpm`,
         or the `.deb` downloaded and then `sudo apt install
-        ./skwir-repository.deb`.
+        ./skwir-repository.deb`. (Amended: one a family,
+        `rpm/fedora/own/skwir-repository.rpm` and
+        `apt/own/skwir-repository-debian.deb` or `-ubuntu.deb`, below.)
       - Skwir's own packages never install it, and Skwir never runs
         anything with administrator rights.
       - Removing it removes the repository. A new key reaches users as
-        an update of it.
-   6. *Tried.* `try.sh` installs from the repository, served locally,
-      in a fresh root, and upgrades there from the release before.
+        an update of it (amended: two updates, the new key beside the
+        old one, which signs, then the new alone, below).
+   6. *Tried.* ~~`try.sh` installs from the repository, served locally,
+      in a fresh root, and upgrades there from the release before.~~
+      (Amended: `repository-check.sh` tries the repositories in fresh
+      roots of its own, below; it downloads `skwir` from them without
+      installing it, and no upgrade of `skwir` from the release before
+      is tried yet.)
    7. No Copr and no OBS (Context).
 4. **The `updates` plugin** checks only for a downloaded copy. It
    declares `network` (ADR-044) and is turned off like any plugin, which
@@ -225,10 +234,14 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
 
 - When built, `map-tiles` and `updates` both make requests.
   `AGENTS.md`'s "Network" rule, ADR-020 and `commands.md` name both.
-- A release gains steps: the `.zsync` file, rpmsign, the repositories'
-  indexes, the site's `updates/1.json` and its redirects (one deploy,
-  after publishing), and a winget manifest (the user's). `release-verify`
-  checks that the indexes name the files uploaded.
+- A release gains steps: the `.zsync` file, ~~rpmsign,~~ the
+  repositories' indexes, the site's `updates/1.json` and its redirects
+  (one deploy, after publishing), and a winget manifest (the user's).
+  ~~`release-verify` checks that the indexes name the files uploaded.~~
+  (Amended: `just repositories` refuses a bundle whose packages are not
+  those its manifest records, as `release-verify` refuses it; GitHub's
+  copies are compared with the manifest when `release-upload` uploads
+  them, not again when the indexes are made.)
 - The repositories' key is a new secret. If it is lost, users install a
   new `skwir-repository` by hand.
 - Cloudflare sees the IP address of each check and of each
@@ -244,7 +257,7 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   authority (as `map-tiles` does); (3) the site's file and redirects;
   (4) AppImage's update information, tried with Gear Lever and
   AppImageUpdate; (5) winget; (6) the repositories, `skwir-repository`
-  and `try.sh`'s upgrade.
+  and ~~`try.sh`'s upgrade~~ (amended: `repository-check.sh`, below).
 
 ## Amendments
 
@@ -288,14 +301,28 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   and `noble` (Ubuntu 24.04), dnf's `fedora`; `skwir-repository` one
   package a family (`apt/own/skwir-repository-debian.deb`, `-ubuntu.deb`,
   `rpm/fedora/own/skwir-repository.rpm`), made by nfpm at the version
-  `tools/package/repository/version` says. dnf reads with
+  `tools/package/repository/version` says, dated by that folder's last
+  commit: the same file until its version is raised. Its apt source is a
+  plain file: a conffile would stay once the package is removed (dpkg
+  takes one only on purge), its key gone. dnf reads with
   `repo_gpgcheck=1` and `gpgcheck=0`: the index is signed and names each
   package's checksum, and a package signed after the release checked it
   would no longer be the release's. `just repositories <tag>` makes them
-  (`tools/package/repository.py`); `just repository-check` tries them in
-  fresh roots with a throwaway key, against a stand-in for the site that
-  sends each package to another host's name, an upgrade of
-  `skwir-repository` included.
+  (`tools/package/repository.py`), both before writing either into the
+  site, from a bundle whose packages are those its manifest records.
+  - The indexes are signed by one key, `skwir.asc`'s: Fedora 44's dnf
+    refuses a signature beside another (tried). A new key (3.5) takes
+    two versions of `skwir-repository`: the new key (`next.asc`)
+    carried beside the old, which signs, then, after a grace period,
+    the new alone, signing (`docs/RELEASING.md`). A key that expires
+    within 180 days is refused: it is extended, and the extension
+    brought by an update, while every system can still read what it
+    signs.
+  - `just repository-check` tries them in fresh roots with throwaway
+    keys, against a stand-in for the site that sends each package to
+    another host's name: the index a stranger's key signed refused, each
+    upgrade of a change of key, and `skwir-repository` removed with its
+    source and key, the system's own sources read after.
 - **winget**: `just winget <tag>` writes the manifests
   (`tools/package/winget.py`, identifier `Skwir.Skwir`, schema 1.10.0),
   the installer matched by its `UpgradeCode`. winget's own validation was

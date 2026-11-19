@@ -315,11 +315,49 @@ gpg --armor --export <its fingerprint> > tools/package/repository/skwir.asc
 
 Commit the public key, publish the first repositories, then set
 `REPOSITORY_PUBLISHED` in the site's `src/lib/data/downloads.ts`: its
-download page then shows how to add them. A new key, or another address,
-raises `tools/package/repository/version`: `skwir-repository`'s update
-brings it to every system that has the repositories. `just
-repository-check` tries the repositories in fresh Debian, Ubuntu and
-Fedora roots with a throwaway key, an upgrade included.
+download page then shows how to add them. What `skwir-repository` holds
+changing raises `tools/package/repository/version`, and its update
+brings the change to every system that has the repositories; another
+address only while the old one still answers. `just repository-check`
+tries the repositories in fresh Debian, Ubuntu and Fedora roots with
+throwaway keys: an index a stranger's key signed refused, a change of key
+followed, `skwir-repository` removed with its source and its key.
+
+**Its expiry.** Once a key has expired, a system that trusts it refuses
+everything it signed, the update that would extend it included. `just
+repositories` says when each key expires and refuses one within 180 days
+of it. Extend it before then, and bring the extension to every system as
+an update:
+
+```sh
+gpg --quick-set-expire <its fingerprint> 5y
+gpg --armor --export <its fingerprint> > tools/package/repository/skwir.asc
+```
+
+(`next.asc` for the key coming, below), then raise
+`tools/package/repository/version`, commit both and publish the
+repositories (with the next release, or alone from the last one's bundle).
+
+**A new key** reaches a system only through an index signed by a key it
+already has, and dnf refuses an index signed by two, so a change takes two
+versions of `skwir-repository` (a key lost cannot: every user then installs
+a new `skwir-repository` by hand):
+
+1. Make the new key as the first was and export it beside the old
+   (`gpg --armor --export <new> > tools/package/repository/next.asc`),
+   raise the version, commit and publish. The old key still signs the
+   indexes, and the update brings the new one to every system that has the
+   old.
+2. After a grace period of months, which lets the systems that update
+   rarely take the first step, put the new key in the old one's place
+   (`git mv tools/package/repository/next.asc
+   tools/package/repository/skwir.asc`), raise the version again, commit
+   and publish: the new key signs the indexes, and the update takes the
+   old one away.
+
+`just repositories` signs with the key of `skwir.asc`, whose secret part
+must be in the keyring, and carries the key of `next.asc` beside it while
+there is one; each file holds one key.
 
 **Packagers.** A package manager that repackages a release (as the AUR's
 `skwir-bin` repackages the tarball) removes `share/skwir/channel`: what it
