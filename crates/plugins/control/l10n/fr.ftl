@@ -35,6 +35,9 @@ control_elsewhere = consulter { $path } amènerait le système à joindre une au
 control_instructions = Skwir, un gestionnaire de fichiers. Chaque outil est l’une de ses commandes, ses points écrits sous la forme de deux tirets bas. Nommez les fichiers sur lesquels agit une commande dans son argument `entries`, par chemin absolu : la sélection est celle de l’utilisateur et peut changer entre deux appels (l’outil `entries` liste ce que montre un panneau, ou avec `location` un dossier, sans changer ce que voit l’utilisateur). Une commande qui modifierait des fichiers propose un plan que l’utilisateur examine dans la fenêtre de Skwir ; sa réponse dit si l’utilisateur l’a appliqué, et comment, ou s’il l’a écarté. Une commande qui agit autrement demande d’abord à l’utilisateur. Les dossiers privés ne vous sont jamais montrés.
 
 # draft
+control_names_dialog = `{ $command }` désigne la fenêtre qui répond à la boîte de dialogue Ouvrir ou Enregistrer d’un autre programme, à laquelle seul l’utilisateur répond dans la fenêtre de Skwir
+
+# draft
 control_no_script_endpoint = la fenêtre n’a pas de point d’accès pour les scripts : redémarrez Skwir avant d’exécuter cette commande
 
 # draft

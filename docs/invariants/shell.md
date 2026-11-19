@@ -2142,7 +2142,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   the close button cancel, a name taken is asked Replace? in skwir
   (`Confirmed::Replace`, read on a worker in the folder's lane), and a
   request its program closes takes its window away at the next wake.
-  Only the user answers: `ui.chooser_*` are the user's alone. A dialog's
+  Only the user answers: `ui.chooser_*` are the user's alone, and no
+  call from elsewhere reaches its window (commands.md). What asks the
+  user an answer (proposals, questions, clashes, secrets, forms) and
+  what is asked from elsewhere (`ui.*` requests) go to a window of the
+  user's own (`finishing::deliver`, `own_windows`), never to a dialog's:
+  while dialogs' windows alone are up, they wait in the core as with no
+  window at all, and what the user's last own window held is declined
+  as it closes (`hand_on`). A dialog's
   window is a core window marked so (`WindowTabs::chooses`): never
   recorded for the next start nor reopened, its shape never the next
   window's, a dialog's size at most and never maximized, the asking

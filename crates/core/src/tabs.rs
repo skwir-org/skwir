@@ -861,12 +861,14 @@ impl App {
         Ok(folders)
     }
 
-    /// Every window, for scripts and agents.
+    /// Every window, for scripts and agents: the user's own, never one
+    /// answering another program's dialog (ADR-141, 8).
     pub fn window_list(&self) -> Vec<WindowInfo> {
         let ws = self.workspace.read();
         let active = ws.active_window_id();
         ws.windows()
             .iter()
+            .filter(|w| !w.chooses())
             .map(|w| WindowInfo {
                 id: w.id,
                 tabs: w.tabs().iter().map(|t| t.id).collect(),
@@ -876,12 +878,15 @@ impl App {
             .collect()
     }
 
-    /// Every tab, window after window, in order, for scripts and agents.
+    /// Every tab, window after window, in order, for scripts and agents:
+    /// the user's windows', never those of a window answering another
+    /// program's dialog (ADR-141, 8).
     pub fn tab_list(&self) -> Vec<TabInfo> {
         let rows: Vec<_> = {
             let ws = self.workspace.read();
             ws.windows()
                 .iter()
+                .filter(|w| !w.chooses())
                 .flat_map(|w| {
                     let shown = w.shown().id;
                     let ws = &ws;
@@ -913,6 +918,32 @@ impl App {
                 shown,
             })
             .collect()
+    }
+
+    /// Whether `args` name the window answering another program's dialog
+    /// (ADR-141, 8), or a tab or a pane of it, by `window`, `tab` or
+    /// `pane`: refused to a call from elsewhere (an agent's, a script's),
+    /// which neither acts in that window nor sees what it asks.
+    pub fn names_a_dialog(&self, args: &serde_json::Value) -> bool {
+        let ws = self.workspace.read();
+        let id = |key: &str| args.get(key).filter(|value| !value.is_null()).cloned();
+        id("window")
+            .and_then(|w| serde_json::from_value::<WindowId>(w).ok())
+            .into_iter()
+            .chain(
+                id("tab")
+                    .and_then(|t| serde_json::from_value::<TabId>(t).ok())
+                    .and_then(|t| ws.window_of_tab(t)),
+            )
+            .chain(
+                id("pane")
+                    .and_then(|p| serde_json::from_value::<PaneId>(p).ok())
+                    .and_then(|p| ws.window_of(p)),
+            )
+            .any(|w| {
+                ws.window(w)
+                    .is_some_and(crate::workspace::WindowTabs::chooses)
+            })
     }
 
     /// Put the windows of `saved` in place of the workspace's one untouched

@@ -5941,9 +5941,10 @@ impl Workspace {
     fn add_pane_to(&mut self, tab: TabId) -> PaneId {
         let id = self.new_pane_id();
         self.push_pane(Pane::new(id));
-        let (w, t) = self
-            .tab_place(tab)
-            .unwrap_or((self.active_window, self.windows[self.active_window].shown));
+        let (w, t) = self.tab_place(tab).unwrap_or_else(|| {
+            let w = self.active_index();
+            (w, self.windows[w].shown)
+        });
         self.windows[w].tabs[t].panes.push(id);
         self.revision += 1;
         id
@@ -5980,7 +5981,9 @@ impl Workspace {
         let ids = self.new_panes(panes);
         let tab = self.new_tab(ids.clone());
         let id = tab.id;
-        let w = self.window_index(window).unwrap_or(self.active_window);
+        let w = self
+            .window_index(window)
+            .unwrap_or_else(|| self.active_index());
         self.windows[w].insert_tab(at, tab);
         self.revision += 1;
         (id, ids)
@@ -6248,7 +6251,7 @@ impl Workspace {
 
     /// The active window's tabs, in order.
     pub fn tabs(&self) -> &[Tab] {
-        &self.windows[self.active_window].tabs
+        &self.windows[self.active_index()].tabs
     }
 
     /// Every window's tabs, window after window.
@@ -6267,7 +6270,7 @@ impl Workspace {
 
     /// The tab the active window shows.
     pub fn active_tab(&self) -> &Tab {
-        self.windows[self.active_window].shown()
+        self.windows[self.active_index()].shown()
     }
 
     /// The tab `pane` belongs to.
@@ -6322,11 +6325,28 @@ impl Workspace {
 
     /// The window commands act in when they name no pane.
     pub fn active_window(&self) -> &WindowTabs {
-        &self.windows[self.active_window]
+        &self.windows[self.active_index()]
     }
 
     pub fn active_window_id(&self) -> WindowId {
-        self.windows[self.active_window].id
+        self.windows[self.active_index()].id
+    }
+
+    /// Where the active window is: the one used last; for a call from
+    /// elsewhere (an agent's, a script's, `permissions::from_elsewhere`),
+    /// the one used last of the user's own, never the window answering
+    /// another program's dialog, which only the user reaches (ADR-141, 8).
+    fn active_index(&self) -> usize {
+        if !self.windows[self.active_window].chooses || !crate::permissions::from_elsewhere() {
+            return self.active_window;
+        }
+        self.used
+            .iter()
+            .rev()
+            .filter_map(|id| self.window_index(*id))
+            .chain(0..self.windows.len())
+            .find(|i| !self.windows[*i].chooses)
+            .unwrap_or(self.active_window)
     }
 
     /// Make `id` the active window: the user went to it.

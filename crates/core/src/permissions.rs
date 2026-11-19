@@ -899,6 +899,34 @@ pub fn agent_call() -> Option<Privacy> {
     AGENT.with(|agent| agent.borrow().clone())
 }
 
+thread_local! {
+    /// Whether a script's call (`skwir cmd`) runs on this thread.
+    static SCRIPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` as a script's call: the user's own, yet from elsewhere than the
+/// window (`from_elsewhere`). The control plugin runs every script's call
+/// so; a command that hands its work to another thread runs there as
+/// anyone's.
+pub fn as_script<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCRIPT.with(|script| script.set(self.0));
+        }
+    }
+    let _restore = Restore(SCRIPT.with(|script| script.replace(true)));
+    f()
+}
+
+/// Whether the call running on this thread comes from elsewhere than the
+/// window: an agent's or a script's. Neither reaches another program's
+/// Open or Save dialog, which only the user answers (ADR-141, 8): the
+/// window that answers it is never theirs to act in, list or close.
+pub fn from_elsewhere() -> bool {
+    SCRIPT.with(std::cell::Cell::get) || AGENT.with(|agent| agent.borrow().is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

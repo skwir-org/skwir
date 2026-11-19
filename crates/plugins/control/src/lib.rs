@@ -486,8 +486,18 @@ pub fn run(
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Answer> {
     app.commands.check(invocation)?;
+    // Another program's dialog is answered by the user alone (ADR-141, 8):
+    // its window is neither an agent's nor a script's to act in.
+    if app.names_a_dialog(&invocation.args) {
+        anyhow::bail!(words!(
+            control_names_dialog = "`{ $command }` names the window answering another program's Open or Save dialog, which only the user answers in Skwir's window",
+            command = invocation.name.to_string(),
+            note = "Read by agents and scripts: why their command is refused. The command's id, as typed; Open and Save are what programs call their dialogs for choosing a file."
+        ));
+    }
     if mode != PlanMode::Propose {
-        return dispatched(app, invocation, mode, cancelled);
+        // A script's call: the user's own, from elsewhere than the window.
+        return permissions::as_script(|| dispatched(app, invocation, mode, cancelled));
     }
     let privacy = app.privacy();
     let mut check = privacy.checker();

@@ -34,6 +34,9 @@ control_elsewhere = looking up { $path } would make the system reach another mac
 # Read by agents: what an AI agent is told of Skwir as it connects. entries and location are arguments' names, as typed.
 control_instructions = Skwir, a file manager. Each tool is one of its commands, its dots written as two underscores. Name the files a command acts on in its `entries`, by absolute path: the selection is the user's, and can change between two calls (the `entries` tool lists what a pane shows, or with `location` a folder, without changing what the user sees). A command that would change files proposes a plan the user reviews in Skwir's window; its answer says whether the user applied it, and how, or dismissed it. One that acts otherwise asks the user first. Private folders are never shown to you.
 
+# Read by agents and scripts: why their command is refused. The command's id, as typed; Open and Save are what programs call their dialogs for choosing a file.
+control_names_dialog = `{ $command }` names the window answering another program's Open or Save dialog, which only the user answers in Skwir's window
+
 # Read by scripts: the window running is an older Skwir's, which takes no script's command.
 control_no_script_endpoint = the window has no script endpoint: restart Skwir before running this command
 

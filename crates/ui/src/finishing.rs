@@ -42,7 +42,7 @@ use gpui::{App, AppContext, Global, WindowHandle};
 use parking_lot::Mutex;
 use skwir_core::Location;
 use skwir_core::op::PlanId;
-use skwir_core::workspace::{PaneId, WindowId};
+use skwir_core::workspace::{PaneId, WindowId, WindowTabs};
 use skwir_platform::chooser::{Answer, Choosing};
 use skwir_platform::desktop::{Asked, Presence, Standing};
 use skwir_platform::handover::{NotTaken, Opening, TakingOver};
@@ -417,9 +417,12 @@ fn show(
     shown
 }
 
-/// Say `text` as an error in the active window's status.
+/// Say `text` as an error in the status of the front window of the
+/// user's own, never another program's dialog (ADR-141, 8).
 fn say_in_active(cx: &mut App, text: Words) {
-    if let Some(window) = active_handle(cx) {
+    // What it says may name a path, never traced: unsaid while no window
+    // of the user's own is up.
+    if let Some(window) = ordinary_handle(cx) {
         let _ = window.update(cx, |shell, _, cx| shell.set_status(text, true, cx));
     }
 }
@@ -690,7 +693,20 @@ fn deliver(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
     let active = app.workspace.read().active_window_id();
-    let Some(front) = front_of(&state.windows, active).map(|(id, _)| *id) else {
+    // What asks the user an answer, and what is asked from elsewhere, go
+    // to a window of the user's own, never to one answering another
+    // program's dialog (ADR-141, 8): while those alone are up, they wait
+    // in the core as with no window at all.
+    let own = own_windows(state);
+    let dialogs: HashSet<WindowId> = state
+        .windows
+        .iter()
+        .map(|(id, _)| *id)
+        .filter(|id| !own.iter().any(|(mine, _)| mine == id))
+        .collect();
+    let own_front = front_of(&own, active).map(|(id, _)| *id);
+    let Some(front) = own_front.or_else(|| front_of(&state.windows, active).map(|(id, _)| *id))
+    else {
         return;
     };
     let mut inboxes: HashMap<WindowId, Inbox> = HashMap::new();
@@ -739,28 +755,31 @@ fn deliver(cx: &mut App) {
     }
     let inbox = inboxes.entry(front).or_default();
     inbox.notifications = app.take_notifications();
-    inbox.proposals = app.take_proposals();
-    inbox.questions = app.take_questions();
-    inbox.clashes = app.take_clash_questions();
-    inbox.secrets = app.take_secret_questions();
-    inbox.forms = app.take_forms();
-    let handed = std::mem::take(&mut cx.global_mut::<Finishing>().handed);
-    inbox.take_in(handed);
-    for request in app.take_front_requests() {
-        // Asked for a pane: the window that shows it.
-        let window = request
-            .args
-            .get("pane")
-            .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok())
-            .and_then(|pane| app.workspace.read().window_of(pane))
-            .filter(|w| {
-                cx.global::<Finishing>()
-                    .windows
-                    .iter()
-                    .any(|(up, _)| up == w)
-            })
-            .unwrap_or(front);
-        inboxes.entry(window).or_default().front.push(request);
+    if let Some(front) = own_front {
+        let inbox = inboxes.entry(front).or_default();
+        inbox.proposals = app.take_proposals();
+        inbox.questions = app.take_questions();
+        inbox.clashes = app.take_clash_questions();
+        inbox.secrets = app.take_secret_questions();
+        inbox.forms = app.take_forms();
+        let handed = std::mem::take(&mut cx.global_mut::<Finishing>().handed);
+        inbox.take_in(handed);
+        for request in app.take_front_requests() {
+            // Asked for a pane: the window that shows it, never one
+            // answering another program's dialog.
+            let named = request
+                .args
+                .get("pane")
+                .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok())
+                .and_then(|pane| app.workspace.read().window_of(pane));
+            let mine = |w: &WindowId| own.iter().any(|(up, _)| up == w);
+            if named.is_some_and(|w| dialogs.contains(&w)) {
+                tracing::debug!(name = %request.name, "not run: asked of another program's dialog");
+                continue;
+            }
+            let window = named.filter(mine).unwrap_or(front);
+            inboxes.entry(window).or_default().front.push(request);
+        }
     }
     let windows = cx.global::<Finishing>().windows.clone();
     for (id, window) in windows {
@@ -1066,7 +1085,10 @@ pub(crate) fn left(cx: &mut App, id: WindowId) {
 pub(crate) fn hand_on(cx: &mut App, held: Inbox) {
     let state = cx.global_mut::<Finishing>();
     state.handed.take_in(held);
-    if state.windows.is_empty() {
+    // The windows answering other programs' dialogs ask nothing of the
+    // user's (ADR-141, 8): with none of the user's own left, it is
+    // declined as when the last window closes.
+    if own_windows(state).is_empty() {
         let held = std::mem::take(&mut state.handed);
         held.decline(&state.app);
     } else {
@@ -1624,14 +1646,21 @@ fn open_chooser(cx: &mut App, choosing: Choosing) {
 /// dialog (`front_of`).
 fn ordinary_handle(cx: &App) -> Option<WindowHandle<Shell>> {
     let state = cx.global::<Finishing>();
+    let active = state.app.workspace.read().active_window_id();
+    front_of(&own_windows(state), active).map(|(_, handle)| *handle)
+}
+
+/// The windows up that are the user's own: all but those answering
+/// another program's dialog (ADR-141), which take nothing that names no
+/// window (what asks an answer, what is asked from elsewhere).
+fn own_windows(state: &Finishing) -> Vec<(WindowId, WindowHandle<Shell>)> {
     let ws = state.app.workspace.read();
-    let own: Vec<(WindowId, WindowHandle<Shell>)> = state
+    state
         .windows
         .iter()
-        .filter(|(id, _)| ws.window(*id).is_some_and(|w| !w.chooses()))
+        .filter(|(id, _)| !ws.window(*id).is_some_and(WindowTabs::chooses))
         .copied()
-        .collect();
-    front_of(&own, ws.active_window_id()).map(|(_, handle)| *handle)
+        .collect()
 }
 
 /// Whether windows of the user's own sleep, none being up: `show` wakes
@@ -1890,7 +1919,8 @@ pub(crate) fn may_quit(cx: &mut App) -> bool {
     if cx.global::<Finishing>().windows.is_empty() {
         show(cx, None, None, false);
     }
-    if let Some(window) = active_handle(cx) {
+    // Asked in a window of the user's own, where one is up.
+    if let Some(window) = ordinary_handle(cx).or_else(|| active_handle(cx)) {
         let _ = window.update(cx, |shell, window, cx| {
             window.activate_window();
             shell.quit(window, cx);

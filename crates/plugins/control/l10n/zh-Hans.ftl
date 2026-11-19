@@ -35,6 +35,9 @@ control_elsewhere = 查找 { $path } 会使系统访问另一台计算机，智�
 control_instructions = Skwir，一款文件管理器。每个工具都是它的一个命令，命令中的点写作两个下划线。在命令的 `entries` 中用绝对路径指明它要处理的文件：所选内容由用户决定，两次调用之间可能改变（`entries` 工具列出窗格显示的内容，或配合 `location` 列出某个文件夹的内容，不会改变用户看到的内容）。会更改文件的命令会提出一个计划，由用户在 Skwir 的窗口中审阅；其回答会说明用户是否应用了计划、如何应用，或是否忽略了它。以其他方式起作用的命令会先询问用户。私密文件夹永远不会向您显示。
 
 # draft
+control_names_dialog = `{ $command }` 指向应答其他程序“打开”或“保存”对话框的窗口，只有用户才能在 Skwir 的窗口中应答它
+
+# draft
 control_no_script_endpoint = 该窗口没有脚本端点：请先重启 Skwir 再运行此命令
 
 # draft
