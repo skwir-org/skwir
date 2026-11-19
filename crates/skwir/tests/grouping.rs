@@ -152,6 +152,61 @@ fn a_pane_sorts_by_what_types_are_called() {
     );
 }
 
+/// The headings are said in the window's language: another chosen, they
+/// are said again in it, their files under them as before (ADR-139: what
+/// is said is kept only while its language is the one said).
+#[test]
+fn a_pane_s_headings_follow_the_language() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("field guide");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(root.join("sketches")).unwrap();
+    std::fs::write(root.join("packing list.txt"), "list").unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    run(&app, "group", &serde_json::json!({ "by": "kind" }));
+    assert!(pump_until(&app, pane, settled), "grouped");
+    let headings = |app: &App| -> Vec<String> {
+        shown(app, pane)
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect()
+    };
+    let english = ["Folders", "Text and code"];
+    assert_eq!(headings(&app), english);
+
+    // Said in the pseudo-language (every message accented): the headings
+    // too, at the next pump, without the sort being asked again.
+    skwir_core::locale::set_chosen(Some(skwir_core::words::PSEUDO.into()));
+    let said_again = |p: &Pane| {
+        settled(p)
+            && p.groups()
+                .iter()
+                .filter_map(|span| span.group.as_ref())
+                .all(|g| !english.contains(&&*g.label))
+    };
+    assert!(pump_until(&app, pane, said_again), "said again");
+    let pseudo = shown(&app, pane);
+    assert_eq!(pseudo.len(), 2);
+    assert_eq!(pseudo[0].1, ["sketches"]);
+    assert_eq!(pseudo[1].1, ["packing list.txt"]);
+
+    skwir_core::locale::set_chosen(None);
+    assert!(
+        pump_until(&app, pane, |p| settled(p)
+            && p.groups()
+                .first()
+                .and_then(|span| span.group.as_ref())
+                .is_some_and(|g| &*g.label == "Folders")),
+        "in English again"
+    );
+    assert_eq!(headings(&app), english);
+}
+
 /// A search grouped by Folder: each folder a group, called by its path,
 /// in their paths' order, as the search knows where each file is; sorted
 /// by Folder, its files together.

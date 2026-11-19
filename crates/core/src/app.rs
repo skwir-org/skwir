@@ -1150,20 +1150,23 @@ impl App {
 
     /// Make the keys of the panes whose keys are not those their sort wants
     /// (`Pane::keys_wanted`): a sort or a group changed by any path, a tab
-    /// opened with another's sort, a sorter turned on or off. Asked by
-    /// every pump, before the listings' jobs, so an order asked anew is
-    /// made with them.
+    /// opened with another's sort, a sorter turned on or off, the words
+    /// their headings are said in changed (ADR-139). Asked by every pump,
+    /// before the listings' jobs, so an order asked anew is made with them.
     fn make_wanted_keys(&self) {
         self.make_keys(crate::workspace::Pane::keys_wanted);
     }
 
     /// Make the keys of the panes `which` picks: whether it picked any.
-    fn make_keys(&self, which: impl Fn(&crate::workspace::Pane, u64) -> bool) -> bool {
+    fn make_keys(
+        &self,
+        which: impl Fn(&crate::workspace::Pane, crate::workspace::KeysMadeAt) -> bool,
+    ) -> bool {
         // Each pane's, and those of the columns beside it whose order is
         // not the pane's (ADR-132): theirs as they want them, every one
         // with the pane's where the pane's are made again.
         type Asked = (PaneId, Option<Location>, Option<crate::workspace::KeysFor>);
-        let revision = self.registry.sorters.revision();
+        let revision = (self.registry.sorters.revision(), crate::words::revision());
         let asked: Vec<Asked> = self
             .workspace
             .read()

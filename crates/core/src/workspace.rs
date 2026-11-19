@@ -757,12 +757,19 @@ struct OrderCache {
 }
 
 /// What a pane's keys were made for: the sort's criterion, the group's,
-/// and the sorters' revision.
+/// and what else they answer from ([`KeysMadeAt`]).
 pub(crate) type KeysFor = (
     crate::location::SortKey,
     Option<crate::location::SortKey>,
-    u64,
+    KeysMadeAt,
 );
+
+/// What keys answer from beyond their criteria, made again once either
+/// moves: the sorters' revision (a sorter turned on or off), and the
+/// words' (`words::revision`, ADR-139: the language, the units sizes are
+/// said in, the dates' shape), in which their groups' headings are said
+/// and by whose collation those are ordered.
+pub(crate) type KeysMadeAt = (u64, u64);
 
 /// The groups of a pane's order (`Pane::groups`), and what they were made
 /// from, compared by identity.
@@ -1100,8 +1107,8 @@ pub struct Pane {
     /// `App::make_keys_again` whenever `sort` needs them; every listing the
     /// pane shows is sorted with them (`sorting`).
     keys: Option<crate::grouping::Keys>,
-    /// What `keys` were made for: the criteria, and the sorters' revision
-    /// then; none while the sort needs none.
+    /// What `keys` were made for: the criteria, and the sorters' and the
+    /// words' revisions then; none while the sort needs none.
     keys_for: Option<KeysFor>,
     pub history: Vec<Location>,
     /// Index into `history` of the current location.
@@ -3340,7 +3347,11 @@ impl Pane {
     /// The columns whose order wants keys the pane's do not answer, and
     /// what for: those whose keys are not that yet, or all of them
     /// (`all`, the keys made again everywhere).
-    pub(crate) fn column_keys_wanted(&self, revision: u64, all: bool) -> Vec<(Location, KeysFor)> {
+    pub(crate) fn column_keys_wanted(
+        &self,
+        revision: KeysMadeAt,
+        all: bool,
+    ) -> Vec<(Location, KeysFor)> {
         self.kept
             .iter()
             .filter_map(|kept| {
@@ -5424,18 +5435,19 @@ impl Pane {
         self.keys_for = made_for;
     }
 
-    /// What the pane's keys are to be made for with the sorters at
-    /// `revision`: the criteria, while its sort needs keys.
-    pub(crate) fn keys_wanted_for(&self, revision: u64) -> Option<KeysFor> {
+    /// What the pane's keys are to be made for at `revision`: the
+    /// criteria, while its sort needs keys.
+    pub(crate) fn keys_wanted_for(&self, revision: KeysMadeAt) -> Option<KeysFor> {
         self.sort
             .needs_keys()
             .then(|| (self.sort.key, self.sort.group_key(), revision))
     }
 
     /// Whether its keys are not those its sort wants (a tab opened with
-    /// another's sort, a sorter turned on or off): made again at the next
-    /// pump, whatever path changed the sort.
-    pub(crate) fn keys_wanted(&self, revision: u64) -> bool {
+    /// another's sort, a sorter turned on or off, the language or the
+    /// units changed): made again at the next pump, whatever path changed
+    /// the sort.
+    pub(crate) fn keys_wanted(&self, revision: KeysMadeAt) -> bool {
         self.keys_wanted_for(revision) != self.keys_for
     }
 

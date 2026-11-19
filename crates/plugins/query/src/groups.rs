@@ -245,17 +245,38 @@ fn by_kind() -> Keyer {
     })
 }
 
-/// The types whose names were read, by type: shared by every keys, as a
-/// type's name does not change while skwir runs.
-fn type_groups() -> &'static RwLock<HashMap<String, Arc<Group>>> {
-    static NAMES: OnceLock<RwLock<HashMap<String, Arc<Group>>>> = OnceLock::new();
+/// The types whose names were read, by type, and the words' revision
+/// they were read at: shared by every keys while that revision stands. A
+/// type's name is the database's comment in the reader's languages
+/// (`Mime::description`, `locale::preferred`), which a language chosen
+/// changes, so it depends on the type and on `words::revision()` alone.
+#[derive(Default)]
+struct TypeGroups {
+    said_at: u64,
+    groups: HashMap<String, Arc<Group>>,
+}
+
+fn type_groups() -> &'static RwLock<TypeGroups> {
+    static NAMES: OnceLock<RwLock<TypeGroups>> = OnceLock::new();
     NAMES.get_or_init(RwLock::default)
 }
 
-/// The group of type `mime`, its name read now.
+/// The group of type `mime` if its name was read in the words said now.
+fn known_type_group(mime: &str) -> Option<Arc<Group>> {
+    let now = words::revision();
+    let kept = type_groups().read();
+    (kept.said_at == now)
+        .then(|| kept.groups.get(mime).map(Arc::clone))
+        .flatten()
+}
+
+/// The group of type `mime`, its name read now if it is not known in the
+/// words said now. What was read before the words moved is forgotten
+/// once they have, and a name read while they moved is not kept.
 fn type_group(mime: &Mime) -> Arc<Group> {
-    if let Some(group) = type_groups().read().get(mime.as_str()) {
-        return Arc::clone(group);
+    let now = words::revision();
+    if let Some(group) = known_type_group(mime.as_str()) {
+        return group;
     }
     let name = mime.description().unwrap_or_else(|| mime.to_string());
     let group = Group::new(1, &name).with_term(format!("mime:{mime}"));
@@ -264,12 +285,19 @@ fn type_group(mime: &Mime) -> Arc<Group> {
     } else {
         group
     });
-    Arc::clone(
-        type_groups()
-            .write()
-            .entry(mime.as_str().to_owned())
-            .or_insert(group),
-    )
+    let mut kept = type_groups().write();
+    // The revisions only go up: one kept from before is let go of, and
+    // one read before the kept one's is said in words gone.
+    if kept.said_at < now {
+        *kept = TypeGroups {
+            said_at: now,
+            groups: HashMap::new(),
+        };
+    }
+    if kept.said_at != now {
+        return group;
+    }
+    Arc::clone(kept.groups.entry(mime.as_str().to_owned()).or_insert(group))
 }
 
 /// By what the type is called (`JPEG image`). Its name is read from the
@@ -292,8 +320,8 @@ fn by_type(app: &Weak<App>, keys: &Keys) -> Keyer {
         let Some(mime) = mime::of_entry(e) else {
             return Arc::clone(&unknown);
         };
-        if let Some(group) = type_groups().read().get(mime.as_str()) {
-            return Arc::clone(group);
+        if let Some(group) = known_type_group(mime.as_str()) {
+            return group;
         }
         if !skwir_core::scheduler::on_window_thread() {
             return type_group(&mime);
@@ -1092,6 +1120,30 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// A type's group is kept while the words its name was read in are
+    /// said: once they move (a language chosen), its name is read again,
+    /// and one read while they moved is not kept.
+    #[test]
+    fn a_type_s_name_is_read_again_once_the_words_move() {
+        let png = Mime("image/png".into());
+        let first = type_group(&png);
+        assert!(Arc::ptr_eq(&first, &type_group(&png)), "kept");
+        skwir_core::locale::set_chosen(Some(words::PSEUDO.into()));
+        assert!(known_type_group("image/png").is_none(), "forgotten");
+        let again = type_group(&png);
+        assert!(!Arc::ptr_eq(&first, &again), "read again");
+        assert!(Arc::ptr_eq(&again, &type_group(&png)), "kept again");
+        // As if the words moved while the name was read: what it read is
+        // answered, not kept.
+        *type_groups().write() = TypeGroups {
+            said_at: words::revision() + 1,
+            groups: HashMap::new(),
+        };
+        type_group(&png);
+        assert!(type_groups().read().groups.is_empty(), "not kept");
+        skwir_core::locale::set_chosen(None);
     }
 
     /// On Wednesday 11 November 2026, weeks from Monday: each date in the

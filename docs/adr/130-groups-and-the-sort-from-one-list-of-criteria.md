@@ -105,8 +105,11 @@ name's heading in every script, as CLDR's index for the locale says it.
    type itself standing for it meanwhile, and the order is made again
    once it is (`Keys::changed`). Core reads Name, Size, the dates,
    Rating, Extension and Tags itself. Keys are made again when the sort
-   or the group changes, when the plugin is turned on or off, and when
-   they say they change (midnight). With no sorter (the plugin off),
+   or the group changes, when the plugin is turned on or off, when the
+   words their headings are said in move (`words::revision`, ADR-139:
+   the language, the units sizes are said in, the dates' shape; a type's
+   name read is kept only while they stand), and when they say they
+   change (midnight). With no sorter (the plugin off),
    Group by and the criteria it answers are not offered, and a pane
    sorted by one is in name order.
 9. **Headings are rows, never entries** (phases 2 and 3). A view that
