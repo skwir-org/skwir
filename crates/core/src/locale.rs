@@ -52,9 +52,17 @@ struct Languages {
     /// Dates written as ISO 8601 writes them, whatever the locale (the
     /// window's dates setting, `ui.date_format`).
     iso_dates: bool,
-    /// Moves whenever what is said would change, for what keeps what it
-    /// read of them (a cache of names by language).
-    revision: u64,
+}
+
+/// Moves whenever what is said would change, for what keeps what it read
+/// of them (a cache of names by language): moved under `LANGUAGES`' lock
+/// once what it holds changed, read without one, as every word said
+/// reads it.
+static REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What is said moved: `REVISION` moves, after what changed is written.
+fn moved() {
+    REVISION.fetch_add(1, std::sync::atomic::Ordering::Release);
 }
 
 static LANGUAGES: RwLock<Languages> = RwLock::new(Languages {
@@ -64,7 +72,6 @@ static LANGUAGES: RwLock<Languages> = RwLock::new(Languages {
     dates: None,
     hours: None,
     iso_dates: false,
-    revision: 0,
 });
 
 /// How a time's hours are written, where the desktop says so apart from
@@ -84,7 +91,7 @@ pub fn set_hours(hours: Option<Hours>) {
     let mut kept = LANGUAGES.write();
     if kept.hours != hours {
         kept.hours = hours;
-        kept.revision += 1;
+        moved();
     }
 }
 
@@ -94,7 +101,7 @@ pub fn set_iso_dates(iso: bool) {
     let mut kept = LANGUAGES.write();
     if kept.iso_dates != iso {
         kept.iso_dates = iso;
-        kept.revision += 1;
+        moved();
     }
 }
 
@@ -102,7 +109,7 @@ pub fn set_iso_dates(iso: bool) {
 /// setting's units, `fs::set_size_units`): what keeps words it said keyed
 /// by the revision says them again.
 pub(crate) fn said_moved() {
-    LANGUAGES.write().revision += 1;
+    moved();
 }
 
 /// Whether the window writes dates as ISO 8601 writes them.
@@ -119,7 +126,7 @@ pub fn set_formats(numbers: Option<String>, dates: Option<String>) {
     if kept.numbers != numbers || kept.dates != dates {
         kept.numbers = numbers;
         kept.dates = dates;
-        kept.revision += 1;
+        moved();
     }
 }
 
@@ -211,7 +218,7 @@ pub fn set_system(languages: Vec<String>) {
     let mut kept = LANGUAGES.write();
     if kept.system != languages {
         kept.system = languages;
-        kept.revision += 1;
+        moved();
     }
 }
 
@@ -220,7 +227,7 @@ pub fn set_chosen(language: Option<String>) {
     let mut kept = LANGUAGES.write();
     if kept.chosen != language {
         kept.chosen = language;
-        kept.revision += 1;
+        moved();
     }
 }
 
@@ -559,7 +566,13 @@ impl Ranker {
 pub fn said_in(words: &crate::words::Words) -> String {
     words
         .message_of()
-        .and_then(|message| crate::words::find(message.domain, message.id, &languages()))
+        .and_then(|message| {
+            crate::words::find(
+                message.domain,
+                message.id,
+                &crate::words::window_languages(),
+            )
+        })
         .map_or_else(|| ENGLISH.to_owned(), |(_, tag)| tag)
 }
 
@@ -611,7 +624,7 @@ pub fn automatic() -> String {
 
 /// What moves whenever [`languages`] would answer otherwise.
 pub fn revision() -> u64 {
-    LANGUAGES.read().revision
+    REVISION.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// The language the setting's value `value` chooses: `None` for

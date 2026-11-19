@@ -339,7 +339,7 @@ fn a_name_is_isolated_where_the_window_draws_it() {
     register_french_quotes();
     let mut out = String::new();
     super::formats::within(
-        super::formats::Formats::window(super::Isolation::Names),
+        super::formats::Formats::window().isolating(super::Isolation::Names),
         || super::quoted("fr", hebrew, &mut out),
     );
     assert_eq!(out, "«\u{202f}\u{2068}שלום 2.txt\u{2069}\u{202f}»");

@@ -326,7 +326,7 @@ pub fn register(owner: &str, domain: &str, catalog: Catalog) {
         domain: domain.to_owned(),
         catalog: Arc::new(catalog),
     });
-    catalogs.1 += 1;
+    moved(&mut catalogs);
 }
 
 /// A catalog Skwir ships: a crate's (domain's) messages in one language,
@@ -442,7 +442,7 @@ static SHARES: RwLock<&'static [Share]> = RwLock::new(&[]);
 pub fn ship_shares(shares: &'static [Share]) {
     *SHARES.write() = shares;
     // What is said in the system's languages may change with it.
-    CATALOGS.write().1 += 1;
+    moved(&mut CATALOGS.write());
 }
 
 /// The share of `language` (a tag as a catalog is named, any case): `None`
@@ -496,7 +496,7 @@ pub fn withdraw(owner: &str) {
     let before = catalogs.0.len();
     catalogs.0.retain(|kept| kept.owner != owner);
     if catalogs.0.len() != before {
-        catalogs.1 += 1;
+        moved(&mut catalogs);
     }
 }
 
@@ -645,8 +645,20 @@ pub(crate) fn was_read(domain: &str, language: &str) -> bool {
 
 /// What moves as catalogs come and go.
 pub fn revision() -> u64 {
-    CATALOGS.read().1
+    REVISION.load(std::sync::atomic::Ordering::Acquire)
 }
+
+/// What the catalogs registered say moved: the registry's own count, which
+/// what it keeps under its lock reads, and `REVISION`, which every word
+/// said reads without one.
+fn moved(catalogs: &mut Registry) {
+    catalogs.1 += 1;
+    REVISION.fetch_add(1, std::sync::atomic::Ordering::Release);
+}
+
+/// The catalogs' part of `words::revision`: moved with the registry's own,
+/// read without its lock.
+static REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The languages a catalog is registered in for `domain`, as their tags.
 pub fn languages_of(domain: &str) -> Vec<String> {

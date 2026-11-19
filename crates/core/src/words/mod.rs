@@ -401,10 +401,11 @@ impl Moment {
     /// Written for the window, as the system's locale writes dates, or as
     /// ISO 8601 does where the window's dates setting says so.
     pub fn said(self) -> String {
-        if crate::locale::iso_dates() {
+        let (_, formats) = window_said();
+        if formats.iso() {
             dates::iso(self)
         } else {
-            dates::written(&crate::locale::dates(), self)
+            dates::written(formats.dates(), self)
         }
     }
 }
@@ -778,19 +779,8 @@ impl Words {
     }
 
     fn said_for_window(&self, isolation: Isolation) -> String {
-        thread_local! {
-            static SAID_IN: std::cell::RefCell<(u64, Vec<String>)> =
-                const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
-        }
-        let now = revision();
-        let (languages, formats) = SAID_IN.with_borrow_mut(|(at, languages)| {
-            if *at != now {
-                *languages = crate::locale::languages();
-                *at = now;
-            }
-            (languages.clone(), formats::Formats::window(isolation))
-        });
-        formats::within(formats, || self.say_in(&languages))
+        let (languages, formats) = window_said();
+        formats::within(formats.isolating(isolation), || self.say_in(&languages))
     }
 
     /// Said in English: what agents, scripts and logs read, its numbers
@@ -938,6 +928,36 @@ impl Words {
             ),
         }
     }
+}
+
+/// The languages and the formats words are said in for the window (no name
+/// isolated: `Formats::isolating` says how), kept on each thread while what
+/// is said stays as it was (`revision`): a frame says many words, and reads
+/// them of the locale once.
+fn window_said() -> (std::rc::Rc<[String]>, formats::Formats) {
+    type Said = (u64, std::rc::Rc<[String]>, formats::Formats);
+    thread_local! {
+        static SAID: std::cell::RefCell<Option<Said>> = const { std::cell::RefCell::new(None) };
+    }
+    let now = revision();
+    SAID.with_borrow_mut(|kept| {
+        if let Some((at, languages, formats)) = kept.as_ref()
+            && *at == now
+        {
+            return (languages.clone(), formats.clone());
+        }
+        let languages: std::rc::Rc<[String]> = crate::locale::languages().into();
+        let formats = formats::Formats::window();
+        *kept = Some((now, languages.clone(), formats.clone()));
+        (languages, formats)
+    })
+}
+
+/// The languages Skwir says its words in for the window
+/// (`locale::languages`), as [`Words::say`] reads them: kept on each thread
+/// while they stay as they were.
+pub(crate) fn window_languages() -> std::rc::Rc<[String]> {
+    window_said().0
 }
 
 /// How a message is found in the catalogs, in the first of the reader's
@@ -1389,35 +1409,57 @@ pub fn shown_controls(name: &str) -> Cow<'_, str> {
 /// said in given languages (`say_in`) outside both.
 mod formats {
     use std::cell::RefCell;
+    use std::rc::Rc;
 
     use super::Isolation;
 
+    /// Shared, not copied, as it is handed to every word said: each is a
+    /// locale's tag.
     #[derive(Clone)]
     pub struct Formats {
-        numbers: String,
-        dates: String,
+        numbers: Rc<str>,
+        dates: Rc<str>,
         /// Dates as ISO 8601 writes them (the window's dates setting).
         iso: bool,
         isolation: Isolation,
     }
 
     impl Formats {
-        pub fn window(isolation: Isolation) -> Self {
+        /// The window's, no name isolated.
+        pub fn window() -> Self {
             Formats {
-                numbers: crate::locale::numbers(),
-                dates: crate::locale::dates(),
+                numbers: crate::locale::numbers().into(),
+                dates: crate::locale::dates().into(),
                 iso: crate::locale::iso_dates(),
-                isolation,
+                isolation: Isolation::None,
             }
         }
 
         pub fn english() -> Self {
+            thread_local! {
+                static ENGLISH: Rc<str> = Rc::from(super::ENGLISH);
+            }
+            let english = ENGLISH.with(Rc::clone);
             Formats {
-                numbers: super::ENGLISH.to_owned(),
-                dates: super::ENGLISH.to_owned(),
+                numbers: english.clone(),
+                dates: english,
                 iso: false,
                 isolation: Isolation::None,
             }
+        }
+
+        /// These, names isolated as `isolation` says.
+        pub fn isolating(mut self, isolation: Isolation) -> Self {
+            self.isolation = isolation;
+            self
+        }
+
+        pub fn dates(&self) -> &str {
+            &self.dates
+        }
+
+        pub fn iso(&self) -> bool {
+            self.iso
         }
     }
 
@@ -1434,17 +1476,17 @@ mod formats {
         answer
     }
 
-    pub fn numbers() -> String {
+    pub fn numbers() -> Rc<str> {
         NOW.with_borrow(|now| {
             now.as_ref()
-                .map_or_else(|| super::ENGLISH.to_owned(), |f| f.numbers.clone())
+                .map_or_else(|| Rc::from(super::ENGLISH), |f| f.numbers.clone())
         })
     }
 
-    pub fn dates() -> String {
+    pub fn dates() -> Rc<str> {
         NOW.with_borrow(|now| {
             now.as_ref()
-                .map_or_else(|| super::ENGLISH.to_owned(), |f| f.dates.clone())
+                .map_or_else(|| Rc::from(super::ENGLISH), |f| f.dates.clone())
         })
     }
 
@@ -1493,7 +1535,8 @@ mod dates {
     }
 
     thread_local! {
-        static FORMATTERS: RefCell<HashMap<(String, &'static str), Option<Formatter>>> =
+        /// By locale, then by shape: looked up by the locale's tag as it is.
+        static FORMATTERS: RefCell<HashMap<String, HashMap<&'static str, Option<Formatter>>>> =
             RefCell::new(HashMap::new());
     }
 
@@ -1614,8 +1657,13 @@ mod dates {
         };
         let both = icu_time::DateTime { date, time };
         FORMATTERS.with_borrow_mut(|formatters| {
+            if !formatters.contains_key(locale) {
+                formatters.insert(locale.to_owned(), HashMap::new());
+            }
             let formatter = formatters
-                .entry((locale.to_owned(), moment.shape.word()))
+                .get_mut(locale)
+                .expect("just made")
+                .entry(moment.shape.word())
                 .or_insert_with(|| made(locale, moment.shape));
             match formatter {
                 None => as_iso(),
@@ -1651,11 +1699,18 @@ mod numbers {
 
     fn formatted(language: &str, number: &Decimal) -> String {
         FORMATTERS.with_borrow_mut(|formatters| {
-            let formatter = formatters.entry(language.to_owned()).or_insert_with(|| {
-                let locale: icu_locale_core::Locale = language.parse().ok()?;
-                DecimalFormatter::try_new(locale.into(), DecimalFormatterOptions::default()).ok()
-            });
-            match formatter {
+            // Looked up by the tag as it is: a key made only the first time.
+            if !formatters.contains_key(language) {
+                let made = language
+                    .parse::<icu_locale_core::Locale>()
+                    .ok()
+                    .and_then(|locale| {
+                        DecimalFormatter::try_new(locale.into(), DecimalFormatterOptions::default())
+                            .ok()
+                    });
+                formatters.insert(language.to_owned(), made);
+            }
+            match formatters.get(language).and_then(Option::as_ref) {
                 Some(formatter) => formatter.format_to_string(number),
                 None => number.to_string(),
             }
@@ -2214,13 +2269,17 @@ mod plurals {
     /// unknown.
     pub fn category(language: &str, n: i64) -> &'static str {
         let category = RULES.with_borrow_mut(|rules| {
+            // Looked up by the tag as it is: a key made only the first time.
+            if !rules.contains_key(language) {
+                let made = language
+                    .parse::<icu_locale_core::Locale>()
+                    .ok()
+                    .and_then(|locale| PluralRules::try_new_cardinal(locale.into()).ok());
+                rules.insert(language.to_owned(), made);
+            }
             rules
-                .entry(language.to_owned())
-                .or_insert_with(|| {
-                    let locale: icu_locale_core::Locale = language.parse().ok()?;
-                    PluralRules::try_new_cardinal(locale.into()).ok()
-                })
-                .as_ref()
+                .get(language)
+                .and_then(Option::as_ref)
                 .map_or(PluralCategory::Other, |rules| rules.category_for(n))
         });
         match category {
