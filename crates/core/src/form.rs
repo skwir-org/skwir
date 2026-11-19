@@ -188,9 +188,22 @@ pub struct Choice {
     pub section: Words,
     /// What it looks like, drawn above its title in a row.
     pub picture: Option<Picture>,
+    /// Pictures drawn in place of `picture` while the form's fields hold
+    /// what each one's `when` asks, the first that holds
+    /// ([`Choice::picture_with`]): what it does, drawn as another field
+    /// chooses it (a booklet bound on the edge a switch says).
+    pub pictures: Vec<Pictured>,
     /// The verb on the form's answer while it is chosen (Print…, Save);
     /// empty: the form's own.
     pub accept: Words,
+}
+
+/// A picture a [`Choice`] shows while the form's fields hold what its
+/// `when` asks, as [`Field::when`] does.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Pictured {
+    pub picture: Picture,
+    pub when: Vec<When>,
 }
 
 /// A small drawing of what a choice does (how a booklet's sheets fold),
@@ -250,6 +263,37 @@ impl Choice {
     pub fn picture(mut self, picture: Picture) -> Self {
         self.picture = Some(picture);
         self
+    }
+
+    /// `picture` drawn in place of its own while the field `key` holds one
+    /// of `values`.
+    #[must_use]
+    pub fn picture_when(
+        mut self,
+        key: impl Into<String>,
+        values: &[&str],
+        picture: Picture,
+    ) -> Self {
+        self.pictures.push(Pictured {
+            picture,
+            when: vec![When::of(key, values)],
+        });
+        self
+    }
+
+    /// What it looks like while the form's fields hold `values`: the first
+    /// of its pictures whose `when` holds, else its own.
+    pub fn picture_with(&self, values: &Values) -> Option<&Picture> {
+        self.pictures
+            .iter()
+            .find(|pictured| When::all(&pictured.when, values))
+            .map(|pictured| &pictured.picture)
+            .or(self.picture.as_ref())
+    }
+
+    /// Whether it is drawn with a picture, whatever the fields hold.
+    pub fn pictured(&self) -> bool {
+        self.picture.is_some() || !self.pictures.is_empty()
     }
 
     #[must_use]

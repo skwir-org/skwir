@@ -952,7 +952,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         }
         if state.shows(field, &values) {
             body = body.child(field_row(
-                shell, state, at, field, control, &theme, window, cx,
+                shell, state, at, field, control, &values, &theme, window, cx,
             ));
         }
     }
@@ -1132,6 +1132,7 @@ fn field_row(
     at: usize,
     field: &Field,
     control: &Control,
+    values: &Values,
     theme: &Theme,
     window: &Window,
     cx: &mut Context<Shell>,
@@ -1332,7 +1333,7 @@ fn field_row(
         Control::Row { value, focus } => {
             row = row
                 .child(label)
-                .child(choice_row(at, field, value, focus, theme, cx));
+                .child(choice_row(at, field, value, values, focus, theme, cx));
         }
         Control::Link { focus } => {
             let url = field.value.clone();
@@ -1360,7 +1361,8 @@ fn field_row(
 }
 
 /// A row of choices, `value` chosen: cards when one has a picture (the
-/// picture over its title and detail), else segments. The row has the
+/// picture over its title and detail, drawn as the form's fields hold
+/// `values`: `Choice::picture_with`), else segments. The row has the
 /// keyboard as one: Up and Down choose the one before or after, Space the
 /// next; Enter answers the form, as it does from a field; a click
 /// chooses one.
@@ -1368,6 +1370,7 @@ fn choice_row(
     at: usize,
     field: &Field,
     value: &str,
+    values: &Values,
     focus: &FocusHandle,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -1386,10 +1389,7 @@ fn choice_row(
     });
     // Segments hold a title alone: a choice that says more, or shows it,
     // is a card.
-    if all
-        .iter()
-        .all(|c| c.picture.is_none() && c.detail.is_empty())
-    {
+    if all.iter().all(|c| !c.pictured() && c.detail.is_empty()) {
         let mut frame = controls::segmented(id, focus, theme)
             .aria_label(field.title.say())
             .on_click(keyboard);
@@ -1454,7 +1454,11 @@ fn choice_row(
             .when(!selected, |d| {
                 d.border_color(theme.border).hover(move |s| s.bg(hover))
             })
-            .children(choice.picture.as_ref().map(|picture| drawn(picture, theme)))
+            .children(
+                choice
+                    .picture_with(values)
+                    .map(|picture| drawn(picture, theme)),
+            )
             .child(div().text_body().text_center().child(choice.shown().say()))
             .when(!choice.detail.is_empty(), |d| {
                 d.child(

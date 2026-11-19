@@ -825,14 +825,12 @@ fn offers(
     } else {
         args.count.or(told.pages)
     };
-    let bound = args
-        .bound
-        .or_else(|| {
-            args.reads
-                .or(told.reads)
-                .map(skwir_core::print::booklet::Bound::reading)
-        })
-        .unwrap_or_default();
+    // Unknown where nothing tells it in time: bound as it reads once made.
+    let bound = args.bound.or_else(|| {
+        args.reads
+            .or(told.reads)
+            .map(skwir_core::print::booklet::Bound::reading)
+    });
     Ok(dialog::Offers {
         what,
         saved,
@@ -1100,7 +1098,7 @@ fn chosen_then(
         signature: chosen.signature,
         trim: chosen.trim,
         per_side: Some(chosen.per_side.count()),
-        bound: Some(chosen.bound),
+        bound: chosen.bound,
         asked: true,
         ..args
     };
@@ -2378,11 +2376,19 @@ mod tests {
         };
         let none = PrintArgs::default;
         let manga_offered = offered(&manga, none());
-        assert_eq!(manga_offered.bound, Bound::Right, "a PDF's own");
+        assert_eq!(manga_offered.bound, Some(Bound::Right), "a PDF's own");
         assert_eq!(manga_offered.count, Some(3), "read with its count");
-        assert_eq!(offered(&report, none()).bound, Bound::Left);
-        assert_eq!(offered(&hebrew, none()).bound, Bound::Right, "its text");
-        assert_eq!(offered(&english, none()).bound, Bound::Left);
+        assert_eq!(
+            offered(&report, none()).bound,
+            None,
+            "told nothing: bound as it reads once made"
+        );
+        assert_eq!(
+            offered(&hebrew, none()).bound,
+            Some(Bound::Right),
+            "its text"
+        );
+        assert_eq!(offered(&english, none()).bound, Some(Bound::Left));
         // Asked, or told by the caller: over what the file says.
         let asked = |bound| PrintArgs {
             bound: Some(bound),
@@ -2392,15 +2398,18 @@ mod tests {
             reads: Some(reads),
             ..none()
         };
-        assert_eq!(offered(&manga, asked(Bound::Left)).bound, Bound::Left);
-        assert_eq!(offered(&english, asked(Bound::Right)).bound, Bound::Right);
+        assert_eq!(offered(&manga, asked(Bound::Left)).bound, Some(Bound::Left));
+        assert_eq!(
+            offered(&english, asked(Bound::Right)).bound,
+            Some(Bound::Right)
+        );
         assert_eq!(
             offered(&manga, reads(Direction::LeftToRight)).bound,
-            Bound::Left
+            Some(Bound::Left)
         );
         assert_eq!(
             offered(&report, reads(Direction::RightToLeft)).bound,
-            Bound::Right
+            Some(Bound::Right)
         );
         // Several files: as the first reads.
         let several = PrintArgs {
@@ -2416,7 +2425,7 @@ mod tests {
             &CancelToken::new(),
         )
         .unwrap();
-        assert_eq!((several.bound, several.count), (Bound::Right, None));
+        assert_eq!((several.bound, several.count), (Some(Bound::Right), None));
     }
 
     /// Without a dialog (Save as PDF, `asked`), a booklet is bound on the

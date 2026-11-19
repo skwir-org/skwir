@@ -48,9 +48,11 @@ pub(crate) struct Offers {
     /// The edge a booklet is bound on as the dialog opens: the one asked
     /// (`PrintArgs::bound`), else as the document reads (the caller's
     /// `reads`, else what the file says of itself or its text tells, as
-    /// it is told before the dialog asks: `crate::told`), else the left.
-    /// Drawn so on the booklets' pictures.
-    pub bound: Bound,
+    /// it is told before the dialog asks: `crate::told`). `None` where
+    /// nothing tells it in time (an office document, a file a plugin
+    /// converts, one on a slow server): the switch opens off, and left so
+    /// the booklet is bound as it reads once made, as without the dialog.
+    pub bound: Option<Bound>,
     pub subject: Subject,
     /// Where a PDF of it goes, and what else is offered.
     pub saved: Saved,
@@ -169,8 +171,9 @@ pub(crate) struct Chosen {
     pub smaller: bool,
     /// A booklet's pages to a side of a sheet.
     pub per_side: PerSide,
-    /// The edge a booklet is bound on.
-    pub bound: Bound,
+    /// The edge a booklet is bound on; `None`: as it reads once made (the
+    /// switch left off where nothing told the edge, `Offers::bound`).
+    pub bound: Option<Bound>,
     /// The paper a PDF is laid out on, by name (`Paper::NAMED`).
     pub paper: String,
     /// The folder a PDF is saved in, typed or chosen; where it goes by
@@ -534,7 +537,7 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
             ),
         )
         .detail(words!(print_booklet_detail = "Pages on both sides, folded"))
-        .picture(folded(offers.bound)),
+        .pictures_bound(folded),
     ];
     if offers.sheet() {
         layouts.push(
@@ -603,7 +606,7 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
                                     words!(print_folded_three_times = "Folded three times, cut")
                                 }
                             })
-                            .picture(per_side_picture(side, bound))
+                            .pictures_bound(|bound| per_side_picture(side, bound))
                         })
                         .collect(),
                 },
@@ -631,19 +634,19 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
                             || words!(print_every_sheet = "Every sheet in one fold"),
                             |count| sheets_said(count.div_ceil(4)),
                         ))
-                        .picture(fold_picture(count, None, bound)),
+                        .pictures_bound(|bound| fold_picture(count, None, bound)),
                         Choice::new(
                             "16",
                             words!(print_sets_of_16 = "Sets of 16 pages"),
                         )
                         .detail(words!(print_four_sheets = "4 sheets to a fold"))
-                        .picture(fold_picture(count, Some(16), bound)),
+                        .pictures_bound(|bound| fold_picture(count, Some(16), bound)),
                         Choice::new(
                             "32",
                             words!(print_sets_of_32 = "Sets of 32 pages"),
                         )
                         .detail(words!(print_eight_sheets = "8 sheets to a fold"))
-                        .picture(fold_picture(count, Some(32), bound)),
+                        .pictures_bound(|bound| fold_picture(count, Some(32), bound)),
                     ],
                 },
             )
@@ -681,7 +684,7 @@ fn form(offers: &Offers, last: &Remembered) -> Form {
                 note = "Under the switch binding a booklet on the right: its pages are read and turned from right to left, as in Hebrew, Arabic or a manga."
             ))
             // The document's edge every time, never the last dialog's.
-            .value((bound == Bound::Right).to_string())
+            .value((bound == Some(Bound::Right)).to_string())
             .when(LAYOUT, &["booklet"]),
         );
     if offers.several() {
@@ -1040,14 +1043,12 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, Words> {
             .filter(|_| booklet)
             .unwrap_or_default(),
         // A booklet's; the edge the dialog opened on where none is held.
-        bound: if values.0.contains_key(BOUND) {
-            if values.on(BOUND) {
-                Bound::Right
-            } else {
-                Bound::Left
-            }
-        } else {
-            offers.bound
+        // Left off where nothing told the edge, it is none: the booklet is
+        // bound as it reads once made, as it is without the dialog.
+        bound: match (values.0.contains_key(BOUND), values.on(BOUND)) {
+            (true, true) => Some(Bound::Right),
+            (true, false) => offers.bound.map(|_| Bound::Left),
+            (false, _) => offers.bound,
         },
         paper: Some(values.get(PAPER))
             .filter(|name| skwir_core::print::Paper::named(name).is_some())
@@ -1115,6 +1116,21 @@ fn as_shown() -> Picture {
         width: 64,
         height: 36,
         marks,
+    }
+}
+
+/// A card drawn bound on the edge the Bound on the right switch says.
+trait PicturesBound {
+    /// `draw` bound on the left, and on the right while the switch is on
+    /// (`Choice::picture_when`): the card follows the switch as it is
+    /// turned, hidden or not.
+    fn pictures_bound(self, draw: impl Fn(Bound) -> Picture) -> Self;
+}
+
+impl PicturesBound for Choice {
+    fn pictures_bound(self, draw: impl Fn(Bound) -> Picture) -> Self {
+        self.picture(draw(Bound::Left))
+            .picture_when(BOUND, &["true"], draw(Bound::Right))
     }
 }
 
@@ -1334,7 +1350,7 @@ mod tests {
             page: Some(4),
             selection: true,
             count: Some(12),
-            bound: Bound::Left,
+            bound: Some(Bound::Left),
             subject: Subject::One,
             saved: Saved {
                 folder: Some(PathBuf::from("/example/notes")),
@@ -1443,7 +1459,7 @@ mod tests {
                 together: false,
                 smaller: false,
                 per_side: PerSide::Two,
-                bound: Bound::Left,
+                bound: Some(Bound::Left),
                 paper: skwir_platform::print::paper_name().to_owned(),
                 dest: None,
                 name: None,
@@ -1581,24 +1597,55 @@ mod tests {
                 .clone()
         };
         let hebrew = Offers {
-            bound: Bound::Right,
+            bound: Some(Bound::Right),
             ..offers()
         };
         assert_eq!(value(&opened(&hebrew)), "true");
         assert_eq!(value(&opened(&offers())), "false");
-        // The Layout card's booklet drawn as it is bound: page 1 on the
-        // left of the sheet's front bound on the right, else on its right.
-        let page_one = |form: &Form| {
-            let layout = form.fields.iter().find(|f| f.key == LAYOUT).unwrap();
-            let booklet = layout
-                .choices()
-                .iter()
-                .find(|c| c.value == "booklet")
-                .unwrap();
-            booklet
-                .picture
-                .as_ref()
-                .unwrap()
+        // Chosen on the left for the Hebrew book, then a book read left to
+        // right opens on the left, and the Hebrew one on the right again.
+        let answered = values(&[(TO, "printer"), (LAYOUT, "booklet"), (BOUND, "false")]);
+        let chosen = super::chosen(&answered, &hebrew).unwrap();
+        assert_eq!(chosen.bound, Some(Bound::Left));
+        let last = remembered(&answered, &chosen, &Remembered::default());
+        assert_eq!(value(&super::form(&offers(), &last)), "false");
+        assert_eq!(value(&super::form(&hebrew, &last)), "true");
+        let answered = values(&[(TO, "pdf"), (LAYOUT, "booklet"), (BOUND, "true")]);
+        let chosen = super::chosen(&answered, &offers()).unwrap();
+        assert_eq!(chosen.bound, Some(Bound::Right));
+        let last = remembered(&answered, &chosen, &last);
+        assert_eq!(value(&super::form(&offers(), &last)), "false");
+        // Held by no field (no booklet asked): the edge it opened on.
+        let printed = values(&[(TO, "printer"), (LAYOUT, "as_shown")]);
+        assert_eq!(
+            super::chosen(&printed, &hebrew).unwrap().bound,
+            Some(Bound::Right)
+        );
+        // Nothing told the edge (PB-4): the switch opens off, and left so,
+        // no edge is sent, the booklet bound as it reads once made, as
+        // Save as PDF binds it without the dialog; turned on, the right.
+        let untold = Offers {
+            bound: None,
+            ..offers()
+        };
+        assert_eq!(value(&opened(&untold)), "false");
+        let left_off = values(&[(TO, "printer"), (LAYOUT, "booklet"), (BOUND, "false")]);
+        assert_eq!(super::chosen(&left_off, &untold).unwrap().bound, None);
+        let turned_on = values(&[(TO, "printer"), (LAYOUT, "booklet"), (BOUND, "true")]);
+        assert_eq!(
+            super::chosen(&turned_on, &untold).unwrap().bound,
+            Some(Bound::Right)
+        );
+    }
+
+    /// Every booklet card is drawn bound on the edge the switch says as it
+    /// is turned (PB-3), whatever the edge the dialog opened on: Layout's
+    /// Booklet (page 1 on the left of the sheet's front bound on the
+    /// right, else on its right), Pages a side and Folded as.
+    #[test]
+    fn the_booklet_cards_follow_the_binding_switch() {
+        let page_one = |picture: &Picture| {
+            picture
                 .marks
                 .iter()
                 .find_map(|mark| match mark {
@@ -1607,27 +1654,49 @@ mod tests {
                 })
                 .unwrap()
         };
-        let (right, left) = (page_one(&opened(&hebrew)), page_one(&opened(&offers())));
-        assert!(right < 32 && left >= 32, "{right} {left}");
-        // Chosen on the left for the Hebrew book, then a book read left to
-        // right opens on the left, and the Hebrew one on the right again.
-        let answered = values(&[(TO, "printer"), (LAYOUT, "booklet"), (BOUND, "false")]);
-        let chosen = super::chosen(&answered, &hebrew).unwrap();
-        assert_eq!(chosen.bound, Bound::Left);
-        let last = remembered(&answered, &chosen, &Remembered::default());
-        assert_eq!(value(&super::form(&offers(), &last)), "false");
-        assert_eq!(value(&super::form(&hebrew, &last)), "true");
-        let answered = values(&[(TO, "pdf"), (LAYOUT, "booklet"), (BOUND, "true")]);
-        let chosen = super::chosen(&answered, &offers()).unwrap();
-        assert_eq!(chosen.bound, Bound::Right);
-        let last = remembered(&answered, &chosen, &last);
-        assert_eq!(value(&super::form(&offers(), &last)), "false");
-        // Held by no field (no booklet asked): the edge it opened on.
-        let printed = values(&[(TO, "printer"), (LAYOUT, "as_shown")]);
-        assert_eq!(
-            super::chosen(&printed, &hebrew).unwrap().bound,
-            Bound::Right
-        );
+        for opened_on in [Some(Bound::Left), Some(Bound::Right), None] {
+            let form = opened(&Offers {
+                bound: opened_on,
+                ..offers()
+            });
+            let choice = |key: &str, value: &str| {
+                form.fields
+                    .iter()
+                    .find(|f| f.key == key)
+                    .unwrap()
+                    .choices()
+                    .iter()
+                    .find(|c| c.value == value)
+                    .unwrap()
+                    .clone()
+            };
+            let booklet = choice(LAYOUT, "booklet");
+            let switched = |on: &str| values(&[(LAYOUT, "booklet"), (BOUND, on)]);
+            let (right, left) = (
+                page_one(booklet.picture_with(&switched("true")).unwrap()),
+                page_one(booklet.picture_with(&switched("false")).unwrap()),
+            );
+            assert!(right < 32 && left >= 32, "{right} {left}");
+            for (key, value, draw) in [
+                (
+                    PER_SIDE,
+                    "4",
+                    &(|bound| per_side_picture(PerSide::Four, bound)) as &dyn Fn(Bound) -> Picture,
+                ),
+                (FOLD, "whole", &|bound| fold_picture(Some(12), None, bound)),
+                (FOLD, "16", &|bound| fold_picture(Some(12), Some(16), bound)),
+            ] {
+                let card = choice(key, value);
+                assert_eq!(
+                    card.picture_with(&switched("true")),
+                    Some(&draw(Bound::Right))
+                );
+                assert_eq!(
+                    card.picture_with(&switched("false")),
+                    Some(&draw(Bound::Left))
+                );
+            }
+        }
     }
 
     /// The next dialog opens on the last choices, but its pages.

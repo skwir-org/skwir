@@ -470,7 +470,9 @@ binds on the right.
   was (`sheets_bound`, `Sheet::mirrored`); folded the mirrored way, they
   read in order. The dialog's "Bound on the right" switch follows "Trim
   white margins" among the booklet's options (a switch, as the edge is
-  seldom changed; the pictures of Pages a side show where page 1 lands),
+  seldom changed; the booklet's pictures, Layout's, Pages a side's and
+  Folded as's, show where page 1 lands on the edge it says as it is
+  turned: `form::Choice::picture_when`),
   shown whenever a booklet is chosen, whatever the window's language:
   binding is the document's, not the reader's. Its preset is
   the document's every time, never remembered: `bound` asked, else what
@@ -480,8 +482,12 @@ binds on the right.
   comic's or a `DjVu`'s, read with its count; never an office document's,
   which its reader converts first), or for what Skwir lays out its text's
   first letter with a direction (`direction::of_text`, UAX #9's P2 and
-  P3), within the 400 ms the dialog already waits; else the left. Without
-  the dialog (Save as PDF, `asked`, no window), a booklet is bound in the
-  same order as it is made. A PDF that declares nothing is preset on the
-  left: telling it by its text would read its pages first.
+  P3), within the 400 ms the dialog already waits. Where none of these
+  tells it in time (an office document, a file a plugin converts, a PDF
+  that declares nothing, one on a server that answers slowly), the switch
+  opens off and, left so, the dialog sends no edge: the booklet is bound
+  as it reads once made (amended 2026-11-19), as it is without the
+  dialog (Save as PDF, `asked`, no window), bound in the same order as it
+  is made. A PDF that declares nothing reads on the left: telling it by
+  its text would read its pages first.
 
