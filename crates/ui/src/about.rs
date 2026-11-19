@@ -87,14 +87,20 @@ pub struct About {
     facts: Vec<(Words, Words)>,
     /// What shows the licences this installation keeps, if it keeps any.
     licences: Option<PathBuf>,
-    /// What a plugin keeps said about Skwir itself as About opened (a
-    /// newer version out, ADR-142), each with its button.
-    news: Vec<(skwir_core::registry::News, FocusHandle)>,
+    /// What a plugin keeps said about Skwir itself (a newer version out,
+    /// ADR-142), read as About draws (`render`): a check answering while it
+    /// is open shows, a plugin turned off takes its line away. Read again
+    /// once the registry's revision moves (`news_read`).
+    news: Vec<skwir_core::registry::News>,
+    news_read: Option<u64>,
+    /// Their buttons' focus, kept across frames so Tab reaches them, grown
+    /// as more are said.
+    news_focus: Vec<FocusHandle>,
 }
 
 impl About {
     fn buttons(&self) -> Vec<&FocusHandle> {
-        let mut buttons: Vec<&FocusHandle> = self.news.iter().map(|(_, focus)| focus).collect();
+        let mut buttons: Vec<&FocusHandle> = self.news_focus.iter().take(self.news.len()).collect();
         buttons.push(&self.copy);
         if self.licences.is_some() {
             buttons.push(&self.licences_button);
@@ -363,14 +369,9 @@ impl Shell {
                     previous,
                     facts,
                     licences,
-                    news: this
-                        .app
-                        .registry
-                        .news
-                        .all()
-                        .into_iter()
-                        .map(|news| (news, cx.focus_handle()))
-                        .collect(),
+                    news: Vec::new(),
+                    news_read: None,
+                    news_focus: Vec::new(),
                 });
                 cx.notify();
             },
@@ -418,8 +419,18 @@ impl Shell {
 
 /// Drawn before the toasts, not deferred: what Copy details answers is
 /// read above it.
-pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let about = shell.about.as_ref()?;
+pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let about = shell.about.as_mut()?;
+    // What is said of Skwir as it stands now, not as About opened.
+    let revision = shell.app.registry.news.revision();
+    if about.news_read != Some(revision) {
+        about.news = shell.app.registry.news.all();
+        about.news_read = Some(revision);
+    }
+    while about.news_focus.len() < about.news.len() {
+        about.news_focus.push(cx.focus_handle());
+    }
+    let about = &*about;
     let theme = cx.global::<Theme>().clone();
     // The details ask for the dialog's width and take whatever it is: a
     // long fact is cut short, never a reason for a wider dialog.
@@ -599,7 +610,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 ),
         )
         .child(SharedString::from(summary().say()))
-        .children(about.news.iter().enumerate().map(|(n, (news, focus))| {
+        .children(about.news.iter().zip(&about.news_focus).enumerate().map(|(n, (news, focus))| {
             let command = news.command.clone();
             // The sentence beside its button, the button under it where
             // the dialog is too narrow for both; held in a block, as
