@@ -54,19 +54,30 @@ pub(crate) fn start_folder(app: &skwir_core::App, asked: &Asked) -> PathBuf {
     kept.unwrap_or_else(|| skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")))
 }
 
+/// The longest handle of a Wayland window taken (ADR-141, 9): the one
+/// xdg-foreign exports is a short token (a UUID's length), and what the
+/// program gives goes whole into a Wayland request, which libwayland
+/// cannot send past its buffer: the display would fail, and every window
+/// of this skwir with it.
+const HANDLE_MAX: usize = 256;
+
 /// The asking program's window (ADR-141, 9), as the portal names it:
 /// `x11:` and its id in hexadecimal, `wayland:` and the handle it
-/// exported. Anything else names none: the window is one of its own.
+/// exported, printable ASCII of `HANDLE_MAX` bytes at most. Anything else
+/// names none: the window is one of its own.
 pub(crate) fn foreign_parent(window: &str) -> Option<gpui::ForeignParent> {
     if let Some(id) = window.strip_prefix("x11:") {
-        let id = id.trim_start_matches("0x");
+        let id = id.strip_prefix("0x").unwrap_or(id);
         return u32::from_str_radix(id, 16)
             .ok()
             .filter(|id| *id != 0)
             .map(gpui::ForeignParent::X11);
     }
     let handle = window.strip_prefix("wayland:")?;
-    (!handle.is_empty()).then(|| gpui::ForeignParent::Wayland(handle.to_owned()))
+    (!handle.is_empty()
+        && handle.len() <= HANDLE_MAX
+        && handle.bytes().all(|byte| byte.is_ascii_graphic()))
+    .then(|| gpui::ForeignParent::Wayland(handle.to_owned()))
 }
 
 /// A request being answered in this window.
@@ -1088,8 +1099,34 @@ mod tests {
             foreign_parent("wayland:6c1f5a2e-handle"),
             Some(gpui::ForeignParent::Wayland("6c1f5a2e-handle".into()))
         );
-        for none in ["", "x11:", "x11:zz", "x11:0", "wayland:", "win32:12"] {
+        for none in [
+            "",
+            "x11:",
+            "x11:zz",
+            "x11:0",
+            "x11:0x0x2c",
+            "wayland:",
+            "win32:12",
+        ] {
             assert_eq!(foreign_parent(none), None, "{none}");
+        }
+        // A handle is a short token of printable ASCII: one longer, or
+        // holding anything else, names none (it would go whole into a
+        // Wayland request).
+        let longest = "h".repeat(HANDLE_MAX);
+        assert_eq!(
+            foreign_parent(&format!("wayland:{longest}")),
+            Some(gpui::ForeignParent::Wayland(longest.clone()))
+        );
+        for none in [
+            format!("wayland:{longest}h"),
+            format!("wayland:{}", "h".repeat(70_000)),
+            "wayland:a handle".to_owned(),
+            "wayland:poign\u{e9}e".to_owned(),
+            "wayland:a\nb".to_owned(),
+            "wayland:a\0b".to_owned(),
+        ] {
+            assert_eq!(foreign_parent(&none), None, "{} bytes", none.len());
         }
     }
 
