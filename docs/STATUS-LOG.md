@@ -20899,3 +20899,47 @@ validation; the bench's budgets and `idle-pss` (the plugin does nothing
 at startup but a job reading one small file); the full `just test` (it
 filled the disk to 3 GB free while linking and was stopped: the touched
 crates' tests were run instead).
+
+## 2026-11-19: a drag moves what has nothing to select (ADR-143)
+
+Asked by the user: a drag mode beside the readers' selection, to move a
+document or a picture zoomed in. Proposed and chosen the same evening:
+no switch where nothing can be selected, a switch for a page's text
+(Select text by default), the middle button's drag anywhere, a default
+key only if one is free (H, Acrobat's; Okular's Ctrl+1 and Ctrl+4 are
+the views'), every key changeable on the Keyboard page.
+
+- **Built**: `elements::pan` (a `Grab` shared by a window's views and
+  the layer laid first under what is shown, moving the scroll handles
+  the arrows and the scrollbars move: a picture's box, the page read a
+  page at a time, the column's list and its sideways scroll); the page
+  element holds the grab where `reader::drags` says (the switch, or a
+  page without text), sends no move then, and its release follows a
+  link only if the pages did not move; its hitbox is the page drawn, no
+  longer the letterbox around it. `ui.reader_drag` (bar, palette, H in
+  the reader) and `reading.drag_moves` (Settings › Reading › Pages, off),
+  remembered as Continuous scrolling and read when a reader is made. A
+  new icon (`pan`, four arrows, drawn for Skwir). Six messages, drafted
+  in French and Simplified Chinese as the rest (both 6,939 of 6,939).
+- **Checked**: rustfmt, the words' check, `cargo clippy --all-targets`
+  on the default members, skwir-ui's tests (785, four new for the grab:
+  a click's tremble moves nothing, the point grabbed follows the pointer
+  past the slop, a move is taken once, a let-go grab moves nothing), the
+  binary's settings, key titles, CLI and Escape tests (18), `just
+  check-windows`. In a window (Xvfb, the debug build, XDG folders of its
+  own), on synthetic fixtures (a PDF of text with a link to its second
+  page, the PDF fixtures' scan, a picture of a grid): zoomed to 214 %, a
+  left drag across text selected it and moved nothing; the middle
+  button's drag over that text moved the page 200 by 198 px for a
+  200 px drag, the selection kept; H lit the button, and a left drag
+  across text then moved the page, the selection on that page kept; a
+  drag starting on the link moved the page and followed nothing, a click
+  on it went to page 2; the scan moved under a left drag with the switch
+  off; read a page at a time, the page moved and a drag past its bottom
+  stayed on page 1; a picture zoomed in the panel moved sideways (it
+  fit up and down), and a double click still took it to the whole
+  screen; the setting was saved (`drag_moves`) by the button.
+- **Not seen**: the hands (Xvfb's captures draw no cursor: read in the
+  code), a touchscreen, a screen reader on the button, macOS (compiled
+  only with the rest of skwir-ui where `check-macos` builds it, which
+  leaves the UI out).

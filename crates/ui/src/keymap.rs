@@ -1118,6 +1118,8 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("]", "ui.preview_page", r#"{"delta":1}"#, Some("inspector")),
     ("[", "ui.preview_page", r#"{"delta":-1}"#, Some("reader")),
     ("]", "ui.preview_page", r#"{"delta":1}"#, Some("reader")),
+    // H for the hand, as in other readers (ADR-143).
+    ("h", "ui.reader_drag", "{}", Some("reader")),
     ("alt-pageup", "ui.preview_page", r#"{"delta":-1}"#, None),
     ("alt-pagedown", "ui.preview_page", r#"{"delta":1}"#, None),
     (

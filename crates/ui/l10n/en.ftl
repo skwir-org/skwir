@@ -1772,6 +1772,10 @@ commands_reader_continuous = Document: toggle continuous scrolling
 
 commands_reader_continuous_description = Scroll a document's pages as one, or one at a time
 
+commands_reader_drag = Document: toggle dragging to move the page
+
+commands_reader_drag_description = Drag across a page's text to move the page, or to select the text
+
 commands_reader_link = Document: follow a link
 
 commands_reader_link_description = Follow one of a page's links
@@ -4636,6 +4640,8 @@ palette_quit = Quit
 
 palette_reader_continuous = Document: toggle continuous scrolling
 
+palette_reader_drag = Document: toggle dragging to move the page
+
 palette_rename_bulk_prompt = Rename several…
 
 palette_rename_prompt = Rename…
@@ -4859,6 +4865,9 @@ preview_copy_path = Copy path
 
 # Pointing at the count of a document's pages or a book's chapters, which chooses how they are counted: in order, or by the numbers printed on them.
 preview_count_by = Count by
+
+# A document reader's button, lit while on: dragging across a page's text moves the page, as a hand would, rather than selecting the text.
+preview_drag_moves = Drag to move the page
 
 # The button and the title of the choices of how long a slideshow shows each picture (5 s), which follow it.
 preview_each_picture_for = Each picture for
@@ -6911,6 +6920,11 @@ settings_reader_continuous_description = Read a document, a book laid out in pag
 
 # What a setting's description says after its first sentence, in its tooltip.
 settings_reader_continuous_description_more = Off shows one page at a time, and the reader's own button still changes it for the document in front of you.
+
+settings_reader_drag_description = A drag across a page's text moves the page, as a hand would, instead of selecting the text.
+
+# What a setting's description says after its first sentence, in its tooltip.
+settings_reader_drag_description_more = Where a page has no text, around and between pages, and on a picture zoomed in, a drag moves what is shown either way, and so does a drag with the middle button. The reader's own button changes it for the document in front of you.
 
 settings_reading_font = Reading font
 

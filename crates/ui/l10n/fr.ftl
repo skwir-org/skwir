@@ -2145,6 +2145,12 @@ commands_reader_continuous = Document : activer ou désactiver le défilement c
 commands_reader_continuous_description = Faire défiler les pages d’un document d’un seul tenant, ou une à une
 
 # draft
+commands_reader_drag = Document : activer ou désactiver le glisser pour déplacer la page
+
+# draft
+commands_reader_drag_description = Faire glisser sur le texte d’une page pour déplacer la page, ou pour sélectionner le texte
+
+# draft
 commands_reader_link = Document : suivre un lien
 
 # draft
@@ -5303,6 +5309,9 @@ palette_quit = Quitter
 palette_reader_continuous = Document : activer ou désactiver le défilement continu
 
 # draft
+palette_reader_drag = Document : activer ou désactiver le glisser pour déplacer la page
+
+# draft
 palette_rename_bulk_prompt = Renommer en lot…
 
 # draft
@@ -5580,6 +5589,9 @@ preview_copy_path = Copier le chemin
 
 # draft
 preview_count_by = Compter par
+
+# draft
+preview_drag_moves = Glisser pour déplacer la page
 
 # draft
 preview_each_picture_for = Durée de chaque image
@@ -7704,6 +7716,12 @@ settings_reader_continuous_description = Lire un document, un livre mis en pages
 
 # draft
 settings_reader_continuous_description_more = Désactivé, une page s’affiche à la fois, et le bouton du lecteur change toujours ce réglage pour le document que vous avez sous les yeux.
+
+# draft
+settings_reader_drag_description = Faire glisser sur le texte d’une page déplace la page, comme le ferait une main, au lieu de sélectionner le texte.
+
+# draft
+settings_reader_drag_description_more = Là où une page n’a pas de texte, autour des pages et entre elles, et sur une image agrandie, faire glisser déplace ce qui est affiché dans tous les cas, de même qu’avec le bouton du milieu. Le bouton du lecteur change ce réglage pour le document que vous avez sous les yeux.
 
 # draft
 settings_reading_font = Police de lecture

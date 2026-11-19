@@ -2105,6 +2105,12 @@ commands_reader_continuous = 文档：切换连续滚动
 commands_reader_continuous_description = 将文档的各页作为一个整体滚动，或一次一页
 
 # draft
+commands_reader_drag = 文档：切换拖动以移动页面
+
+# draft
+commands_reader_drag_description = 在页面文字上拖动以移动页面，或选择文字
+
+# draft
 commands_reader_link = 文档：打开链接
 
 # draft
@@ -5114,6 +5120,9 @@ palette_quit = 退出
 palette_reader_continuous = 文档：切换连续滚动
 
 # draft
+palette_reader_drag = 文档：切换拖动以移动页面
+
+# draft
 palette_rename_bulk_prompt = 批量重命名…
 
 # draft
@@ -5388,6 +5397,9 @@ preview_copy_path = 复制路径
 
 # draft
 preview_count_by = 计数方式
+
+# draft
+preview_drag_moves = 拖动以移动页面
 
 # draft
 preview_each_picture_for = 每张图片显示
@@ -7441,6 +7453,12 @@ settings_reader_continuous_description = 将文档、按页排版的书籍或漫
 
 # draft
 settings_reader_continuous_description_more = 关闭后一次显示一页，阅读器自身的按钮仍可为眼前的文档更改此项。
+
+# draft
+settings_reader_drag_description = 在页面文字上拖动会像用手一样移动页面，而不是选择文字。
+
+# draft
+settings_reader_drag_description_more = 在没有文字的页面上、页面周围和页面之间，以及放大的图片上，拖动总会移动所显示的内容，用鼠标中键拖动也是如此。阅读器自身的按钮可为眼前的文档更改此项。
 
 # draft
 settings_reading_font = 阅读字体

@@ -102,6 +102,8 @@ contributors). The rules for working on preview code are in
 | `F` | Picture, reader, text, peek | Fullscreen, or back |
 | `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Reader, picture, map, text | Zoom in, out, reset; text larger, smaller, as it was |
 | `Ctrl` and the wheel | Over a page, a picture or text | Zoom in or out around the pointer; text larger or smaller (a map zooms with the wheel alone) |
+| A drag; a drag with the middle button | Over a picture or pages zoomed in | Move them: a drag where there is nothing to select (a picture, beside and between pages, a page without text), the middle button anywhere |
+| `H` | Reader | Drag to move the page: a drag across a page's text moves the page, or selects the text again |
 | Arrows | Map | Pan |
 | Up, Down; Left, Right | Archive or message | Walk its files; fold or unfold |
 | `Ctrl+Shift+O` | Text and structured previews | Label the links in view for the keyboard |
@@ -251,7 +253,12 @@ The player, in the panel or pinned at its foot:
 ### Documents (`documents`)
 
 - **PDF** in the document reader: continuous or a page at a time, zoom,
-  search, contents, links, text selection and copy. **Document engine**:
+  search, contents, links, text selection and copy. Zoomed in, a drag
+  moves the pages wherever it has nothing to select (beside and between
+  them, a page without text), and the middle button's drag anywhere;
+  **Drag to move the page** in the bar (`H`, or Settings › Reading)
+  makes a drag across the text move the page too, a click still
+  following a link. **Document engine**:
   Automatic prefers PDFium and falls back to Poppler; MuPDF is used only
   when chosen. A PDF that names its pages (roman numerals for the front
   matter, a body starting at 1 further in) can be counted by those
@@ -351,7 +358,8 @@ The player, in the panel or pinned at its foot:
 
 - Decoded in Skwir: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM,
   OpenEXR, DDS. SVG drawings (`.svg`, `.svgz`) are drawn, thumbnails
-  included, and sharper as the preview is zoomed.
+  included, and sharper as the preview is zoomed. Zoomed past the panel,
+  a picture moves with a drag.
 - Other kinds (HEIC, AVIF, JPEG XL, a camera's raw file) are shown as
   the desktop's thumbnailer for them draws them, at most 1024 pixels,
   when one is installed (`thumbnails` plugin). Otherwise ImageMagick

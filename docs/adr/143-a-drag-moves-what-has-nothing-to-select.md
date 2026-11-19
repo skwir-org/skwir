@@ -1,0 +1,75 @@
+# ADR-143: A drag moves what has nothing to select
+
+Status: accepted, 2026-11-19, on the user's answers (asked for a drag
+mode beside the readers' selection, to move a document or a picture
+zoomed in; chose Select text as the default, a default key only if one
+is free and every key changeable, and the drag with no switch where
+nothing can be selected). Built on Linux, checked in a window on Xvfb;
+linted for Windows (`just check-windows`); macOS's check leaves the UI
+out.
+
+## Context
+
+- **Zoomed in, only the wheel, the touchpad, the arrows and the
+  scrollbars moved what is shown.** A left drag on a document's page
+  selected its text and a click followed a link; on a picture a drag did
+  nothing. A page or a picture larger than the panel, both ways, was
+  read in steps of a scrollbar.
+- **Readers answer it with a tool.** Okular's Browse tool (Ctrl+1)
+  beside its Text Selection tool (Ctrl+4), Firefox's Hand tool beside its
+  Text Selection tool, Acrobat's Hand (H) beside Select (V), and Space
+  held for the hand meanwhile. Image viewers have nothing to select: a
+  drag moves the picture.
+- **What a press on a page does today is the page's**
+  (`elements/document.rs`): a press on its text begins a selection and
+  is taken there; a press around it reaches nothing.
+
+## Decision
+
+1. **Where there is nothing to select, a drag moves what is shown, with
+   no switch.** A picture zoomed past its room (in the panel, peek and
+   the whole screen), a page with no text (a scan, a comic, a DjVu
+   without its text layer: `reader::drags`), and the room around and
+   between pages: the press holds what is shown, which then moves as far
+   as the pointer, the point grabbed under it, until the button is let
+   go.
+2. **On a page's text, a drag selects, unless the reader's switch says
+   to move.** The reader's bar has **Drag to move the page**
+   (`ui.reader_drag`, lit while on), the same choice as the setting
+   `reading.drag_moves` (Settings › Reading › Pages), off by default:
+   as Continuous scrolling, it is the user's, remembered, read when the
+   reader for the next file is made. On, a drag across the text moves
+   the page; a click still follows a link (a release within
+   `pan::CLICK_SLOP` of the press, the page unmoved); a selection made
+   before stays on its page.
+3. **The middle button's drag moves what is shown anywhere**, whatever
+   the switch says: what moves now and then needs no switch. Space held
+   is not taken: it closes peek.
+4. **Its key is H** in the reader (Acrobat's), free there (Okular's
+   Ctrl+1 and Ctrl+4 are the views'), and changeable or freed on the
+   Keyboard page as every command's.
+5. **One mechanism, under what is shown.** A view that scrolls both ways
+   lays `elements::pan::layer` under it, first drawn, so what is drawn
+   over it (a page, a scrollbar, a drawer, the bar) hears a press first
+   and keeps what it takes. It moves the handles the arrows and the
+   scrollbars move (`pan::Moves`: a box's offset; the column's list and
+   its sideways scroll), so it goes no further than they do: a drag never
+   turns a page read a page at a time. The press is a `pan::Grab` shared
+   with the pages, which hold it themselves where their drag moves them
+   and tell a click by it. Each move is taken once, however many layers
+   share it. The hand shows open where a drag would move something, and
+   closed while it does.
+6. **A film keeps its click**: a click plays or pauses it, so only the
+   middle button drags one zoomed in.
+7. **Nothing is thrown.** What is shown stops when the pointer does: a
+   throw would draw frame after frame (ADR-000).
+
+## Consequences
+
+- A page's room (its hitbox) is the page drawn, not the letterbox
+  around it read a page at a time: the hand shows there, and a press
+  there is the layer's.
+- What a press on text does is unchanged with the switch off; a press
+  beside a page, which did nothing, now holds the pages.
+- Nothing shows the cursor in a capture on Xvfb: the hands were read in
+  the code, not seen.

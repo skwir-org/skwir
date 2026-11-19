@@ -4118,6 +4118,7 @@ impl Shell {
             "toggle_preview" => self.toggle_preview(window, cx),
             "preview_close" => self.preview_close(window, cx),
             "reader_continuous" => self.reader_continuous(window, cx),
+            "reader_drag" => self.reader_drag(cx),
             "reader_pointer" => self.reader_pointer(
                 args.get("phase")
                     .and_then(serde_json::Value::as_str)

@@ -915,6 +915,9 @@ pub struct PreviewState {
     pub(crate) fit_width: bool,
     /// Where a picture zoomed past the panel is scrolled to (`picture`).
     pub(crate) picture_scroll: gpui::ScrollHandle,
+    /// A press holding what is shown, a picture or a document's pages, to
+    /// move it by dragging (`elements::pan`, ADR-143).
+    pub(crate) grab: crate::elements::pan::Grab,
     /// The file's thumbnail while its preview is on its way, or the page a
     /// document opens on drawn small (`reader_scroll::draft_side`): shown
     /// only once the wait has lasted, as "Loading…" is (`body`).
@@ -1322,7 +1325,7 @@ impl Default for PreviewState {
         PreviewState {
             // No file yet: each one shown gets a reader of its own, in the
             // mode the user chose (`Shell::let_reader_go`).
-            reader: crate::reader::ReaderState::new(false),
+            reader: crate::reader::ReaderState::new(false, false),
             inspection: crate::inspector::State::default(),
             media: crate::media::MediaState::default(),
             menu: None,
@@ -1347,6 +1350,7 @@ impl Default for PreviewState {
             zoom: None,
             fit_width: false,
             picture_scroll: gpui::ScrollHandle::new(),
+            grab: crate::elements::pan::Grab::default(),
             placeholder: None,
             placeholder_page: false,
             picture_side: 0,
@@ -7005,6 +7009,7 @@ pub(crate) fn content(
                         "preview-placeholder",
                         None,
                         crate::backdrop::behind(*ink, theme.surface, theme),
+                        None,
                     )
                 })
                 .into_any_element()
@@ -7103,6 +7108,7 @@ pub(crate) fn content(
                         },
                     }),
                     crate::backdrop::behind(*ink, theme.surface, theme),
+                    interactive.then_some(&p.grab),
                 )
             };
             // A film answers a click like a player does.
@@ -7900,8 +7906,11 @@ pub(crate) fn picture(
     id: &'static str,
     sharpen: Option<Sharpen>,
     backdrop: Option<gpui::Hsla>,
+    grab: Option<&crate::elements::pan::Grab>,
 ) -> AnyElement {
     let (width, height) = (lay.own.0.max(1.), lay.own.1.max(1.));
+    // A film's click is the player's: only the middle button drags it.
+    let left = lay.shown_as != ShownAs::Film;
     let scrolling = |content: AnyElement| {
         div()
             .relative()
@@ -7910,6 +7919,16 @@ pub(crate) fn picture(
             .w_full()
             .flex()
             .flex_col()
+            // Under it, a drag that moves it where it is larger than its
+            // room (ADR-143); where it is drawn only as a picture of the
+            // preview (behind peek), none.
+            .children(grab.map(|grab| {
+                crate::elements::pan::layer(
+                    grab,
+                    crate::elements::pan::Moves::Offset(scroll.clone()),
+                    left,
+                )
+            }))
             .child(
                 div()
                     .id(id)

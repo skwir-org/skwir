@@ -157,6 +157,13 @@ pub mod label {
             note = "A preview's button: its pages one under the other, scrolled through, rather than a screen at a time."
         )
     }
+    /// The reader's button and its setting, one choice (ADR-143).
+    pub fn drag_moves() -> Words {
+        words!(
+            preview_drag_moves = "Drag to move the page",
+            note = "A document reader's button, lit while on: dragging across a page's text moves the page, as a hand would, rather than selecting the text."
+        )
+    }
     pub fn previous_match() -> Words {
         words!(
             preview_previous_match = "Previous match",

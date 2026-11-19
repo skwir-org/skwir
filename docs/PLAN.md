@@ -1186,12 +1186,33 @@ release, sends what Skwir names to the release (its redirects), and shows
 the repositories once they are published. Checks in `docs/STATUS-LOG.md`
 (2026-11-19).
 
+## A drag moves what has nothing to select (ADR-143, 2026-11-19)
+
+Asked by the user beside the readers' text selection, the choices theirs
+(Select text by default, a default key only where one is free and every
+key changeable, no switch where nothing can be selected). A picture
+zoomed past its room, a page with no text and the room around and
+between pages move with a left drag; the middle button's drag moves
+them anywhere; the reader's **Drag to move the page** (`ui.reader_drag`,
+H, `reading.drag_moves`) makes a drag across a page's text move it too,
+a click still following a link. One layer under what is shown does it
+(`elements::pan`), with the handles the arrows and the scrollbars move.
+Checks in `docs/STATUS-LOG.md` (2026-11-19).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**A drag moves what has nothing to select** (ADR-143, built
+2026-11-19). Left: the open and closed hands were read in the code, not
+seen (Xvfb's captures draw no cursor); a touchscreen's drag (gpui says
+its scrolling, not a drag) and a screen reader on the bar's button not
+tried; a press that moves the pages on another page than the selection's
+drops the selection (the reader reads a release and a link on the
+selection's page: a page of the press of its own would keep it).
 
 **A new version told** (ADR-142, built 2026-11-19). Left: the
 repositories' key (the user's to make, `docs/RELEASING.md`), then the

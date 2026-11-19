@@ -19,6 +19,7 @@ pub mod kept;
 pub mod map;
 pub mod marquee;
 pub mod model;
+pub mod pan;
 pub mod picture;
 pub mod pill;
 pub mod popover;

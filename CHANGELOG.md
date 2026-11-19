@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A document or a picture zoomed in moves with a drag**: a picture
+  larger than the panel, a page without text and the room around and
+  between pages follow the pointer; the middle button's drag moves them
+  anywhere; **Drag to move the page** in the reader's bar (`H`, or
+  Settings › Reading › Pages) makes a drag across a page's text move it
+  too, rather than select, a click still following a link.
 - **What you are on keeps its place more surely as a view changes size**:
   a grid's tile kept at the foot of the view was left cut by its gutter,
   so the next arrow scrolled it again; a list's place given back (a tab

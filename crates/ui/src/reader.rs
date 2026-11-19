@@ -68,11 +68,15 @@ pub struct ReaderState {
     /// The search the find field asked for.
     pub(crate) search: Latest<Result<Vec<SearchHit>, Words>>,
     pub down: Option<(f32, f32)>,
+    /// A drag across a page's text moves the page, as one across what has
+    /// no text does, rather than selecting (`ui.reader_drag`, ADR-143).
+    pub drag_moves: bool,
 }
 impl ReaderState {
     /// A reader for the next file, reading as `continuous` says before its
-    /// document opens: its first page is drawn that way from the start.
-    pub fn new(continuous: bool) -> Self {
+    /// document opens: its first page is drawn that way from the start. A
+    /// drag across its text moves its pages where `drag_moves` says so.
+    pub fn new(continuous: bool, drag_moves: bool) -> Self {
         Self {
             scroll: crate::reader_scroll::DocumentScroll::new(continuous),
             selection_page: None,
@@ -97,6 +101,7 @@ impl ReaderState {
             active_hit: None,
             search: Latest::default(),
             down: None,
+            drag_moves,
         }
     }
 }
@@ -125,6 +130,13 @@ impl ReaderState {
     pub fn cancel_search(&mut self) {
         self.search.forget();
     }
+}
+
+/// Whether a left drag on `page` moves the pages rather than selecting its
+/// text: the user chose it (`drag_moves`), or it has no text to select
+/// (ADR-143). The page's element and `Shell::reader_pointer` both ask it.
+pub(crate) fn drags(drag_moves: bool, page: &PageContent) -> bool {
+    drag_moves || page.chars.is_empty()
 }
 
 fn page(shell: &Shell) -> Option<&Arc<PageContent>> {
@@ -284,34 +296,49 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Whether the press is on the page of what is selected.
+        let on_selection = self.preview.reader.selection_page == Some(number);
         if phase == "down" {
             self.preview.reader.selection_page = Some(number);
-        } else if self.preview.reader.selection_page != Some(number) {
+        } else if !on_selection {
             return;
         }
         let Some(page) = page(self).cloned() else {
             return;
         };
+        let drags = drags(self.preview.reader.drag_moves, &page);
         if phase == "down" {
             if let Some(focus) = &self.preview.reader.focus {
                 window.focus(focus, cx);
             }
             let reader = &mut self.preview.reader;
             reader.down = Some((x, y));
-            reader.selection = nearest(&page, x, y)
-                .filter(|&i| page.chars[i].bounds.contains(x, y))
-                .map(|i| (i, i));
+            // A press that holds the pages selects nothing and keeps what
+            // is selected on them, as the middle button's does (ADR-143);
+            // on another page, where its release and its link are read, it
+            // takes the selection's page.
+            if !drags {
+                reader.selection = nearest(&page, x, y)
+                    .filter(|&i| page.chars[i].bounds.contains(x, y))
+                    .map(|i| (i, i));
+            } else if !on_selection {
+                reader.selection = None;
+            }
         } else if self.preview.reader.down.is_some() {
-            if let Some((a, _)) = self.preview.reader.selection {
+            if let Some((a, _)) = self.preview.reader.selection.filter(|_| !drags) {
                 self.preview.reader.selection = nearest(&page, x, y).map(|b| (a, b));
             }
             if phase == "up" {
-                let clicked = self
-                    .preview
-                    .reader
-                    .down
-                    .take()
-                    .is_some_and(|(a, b)| (a - x).abs() + (b - y).abs() < 0.006);
+                // A press that held the pages clicks where it did not move
+                // them: the page follows the pointer, so where on it the
+                // release falls tells nothing. One that selects clicks where
+                // it stayed on the page.
+                let down = self.preview.reader.down.take();
+                let clicked = if drags {
+                    down.is_some() && !self.preview.grab.dragged()
+                } else {
+                    down.is_some_and(|(a, b)| (a - x).abs() + (b - y).abs() < 0.006)
+                };
                 if clicked
                     && let Some((index, _)) = page
                         .links
@@ -319,6 +346,8 @@ impl Shell {
                         .enumerate()
                         .find(|(_, link)| link.bounds.contains(x, y))
                 {
+                    // Following it, the selection goes, as a press to select
+                    // would have taken it.
                     self.preview.reader.selection = None;
                     let tab = window.modifiers().shift;
                     self.run(
@@ -332,6 +361,18 @@ impl Shell {
         } else {
             return;
         }
+        cx.notify();
+    }
+
+    /// `ui.reader_drag`: the reader's own switch between a drag across a
+    /// page's text selecting it and moving the page (ADR-143). The choice is
+    /// the user's, not this document's, so it is remembered, as Continuous
+    /// scrolling is, and the next document reads the same way. A selection
+    /// made before stays.
+    pub fn reader_drag(&mut self, cx: &mut Context<Self>) {
+        let moves = !self.preview.reader.drag_moves;
+        self.preview.reader.drag_moves = moves;
+        crate::settings::remember_reader_drags(self, moves, cx);
         cx.notify();
     }
 
@@ -615,6 +656,13 @@ pub fn page_element(
         .left_to_right()
         .flex()
         .flex_col()
+        // Under the page: a drag around it, or across it where it drags,
+        // moves it within the canvas, never to the next page (ADR-143).
+        .child(crate::elements::pan::layer(
+            &shell.preview.grab,
+            crate::elements::pan::Moves::Offset(single.clone()),
+            true,
+        ))
         .child(
             expose(div().id("reader-canvas"), shell)
                 .flex_1()
@@ -719,6 +767,7 @@ pub(crate) fn page_surface(
         cx.global::<Theme>(),
         cx.entity().downgrade(),
         report,
+        (&shell.preview.grab, shell.preview.reader.drag_moves),
     )
 }
 
@@ -735,8 +784,12 @@ pub(crate) fn surface(
     theme: &Theme,
     entity: gpui::WeakEntity<Shell>,
     report: Option<crate::elements::document::Report>,
+    // The press holding the pages, and whether a drag across text moves
+    // them (`ReaderState::drag_moves`).
+    (grab, drag_moves): (&crate::elements::pan::Grab, bool),
 ) -> AnyElement {
     let number = page.page;
+    let drags = drags(drag_moves, &page);
     let selection = selection
         .filter(|_| selection_page == Some(number))
         .map_or_else(Vec::new, |(a, b)| {
@@ -759,6 +812,8 @@ pub(crate) fn surface(
         fit_width,
         report,
         colors: (theme.page_match, theme.page_selection),
+        grab: grab.clone(),
+        drags,
         on_pointer: Rc::new(move |phase, x, y, window, cx| {
             if let Some(entity) = entity.upgrade() {
                 entity.update(cx, |shell, cx| {
@@ -1031,6 +1086,13 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         )
         .active(reader.scroll.continuous)
         .enabled(native),
+    ));
+    bar.push(Item::button(
+        Slot::View,
+        1,
+        Button::new("reader-drag", "pan", label::drag_moves(), "ui.reader_drag")
+            .active(reader.drag_moves)
+            .enabled(native),
     ));
 
     bar.push(

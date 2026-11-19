@@ -181,6 +181,9 @@ pub const NOTIFY_DESKTOP_KEY: &str = "ui.notify_desktop";
 pub const KEEP_AWAKE_KEY: &str = "ui.keep_awake";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
+/// Whether a drag across a page's text moves the page rather than selecting
+/// (`ui.reader_drag`, ADR-143).
+pub const READER_DRAG_KEY: &str = "reading.drag_moves";
 /// How what is read is: one scrolling column, or a screen at a time
 /// (`ui.text_continuous`, `inspector_pages`).
 pub const TEXT_CONTINUOUS_KEY: &str = "reading.text_continuous";
@@ -2353,6 +2356,23 @@ pub fn declare(app: &App) {
     );
     app.settings.declare(
         SettingSpec::toggle(
+            READER_DRAG_KEY,
+            crate::preview_bar::label::drag_moves(),
+            (
+                words!(
+                    settings_reader_drag_description = "A drag across a page's text moves the page, as a hand would, instead of selecting the text."
+                ),
+                words!(
+                    settings_reader_drag_description_more = "Where a page has no text, around and between pages, and on a picture zoomed in, a drag moves what is shown either way, and so does a drag with the middle button. The reader's own button changes it for the document in front of you.",
+                    note = "What a setting's description says after its first sentence, in its tooltip."
+                ),
+            ),
+            false,
+        )
+        .section(section::PAGES),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
             TEXT_CONTINUOUS_KEY,
             words!(settings_text_continuous = "Continuous scrolling of text"),
             (
@@ -2877,6 +2897,22 @@ pub fn remember_reader_mode(
 /// stored one.
 pub fn reader_mode(shell: &crate::shell::Shell) -> bool {
     preference(shell, READER_CONTINUOUS_KEY).is_none_or(|mode| mode != "false")
+}
+
+/// Record whether a drag across a page's text moves it: the reader's
+/// button is the same choice as the one in the dialog.
+pub fn remember_reader_drags(
+    shell: &mut crate::shell::Shell,
+    moves: bool,
+    cx: &mut gpui::Context<crate::shell::Shell>,
+) {
+    remember(shell, READER_DRAG_KEY, moves.to_string(), cx);
+}
+
+/// Whether a drag across the next document's text moves its pages: the
+/// choice waiting to be saved, else the stored one (off by default).
+pub fn reader_drags(shell: &crate::shell::Shell) -> bool {
+    preference(shell, READER_DRAG_KEY).is_some_and(|moves| moves == "true")
 }
 
 /// How long the slideshow shows each picture: the choice waiting to be

@@ -35,6 +35,13 @@ pub struct DocumentElement {
     pub fit_width: bool,
     pub on_pointer: Pointer,
     pub report: Option<Report>,
+    /// The press holding the pages, shared with the layer under them that
+    /// moves them (`elements::pan`, ADR-143).
+    pub grab: crate::elements::pan::Grab,
+    /// A left drag here moves the pages rather than selecting its text
+    /// (`reader::drags`): the page holds the grab itself, and a release
+    /// that did not move them is a click.
+    pub drags: bool,
 }
 impl IntoElement for DocumentElement {
     type Element = Self;
@@ -117,7 +124,9 @@ impl Element for DocumentElement {
                 report.set(Some(shown));
             }
         }
-        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        // The page alone, not the room around it a page at a time: a press
+        // there is the layer's under it, and its hand shows there.
+        let hitbox = window.insert_hitbox(image, HitboxBehavior::Normal);
         Prepaint { image, hitbox }
     }
     fn paint(
@@ -136,17 +145,26 @@ impl Element for DocumentElement {
             f32::from(mouse.x - image_bounds.origin.x) / f32::from(image_bounds.size.width).max(1.);
         let y = f32::from(mouse.y - image_bounds.origin.y)
             / f32::from(image_bounds.size.height).max(1.);
-        let cursor = if self
+        // While a press holds the pages, the hand closed on them is the
+        // layer's, over a link or text too; where a drag moves them, its
+        // hand is open, where they can move.
+        let cursor = if self.grab.grabbing() {
+            None
+        } else if self
             .page
             .links
             .iter()
             .any(|link| link.bounds.contains(x, y))
         {
-            gpui::CursorStyle::PointingHand
+            Some(gpui::CursorStyle::PointingHand)
+        } else if !self.drags {
+            Some(gpui::CursorStyle::IBeam)
         } else {
-            gpui::CursorStyle::IBeam
+            self.grab.movable().then_some(gpui::CursorStyle::OpenHand)
         };
-        window.set_cursor_style(cursor, &prepaint.hitbox);
+        if let Some(cursor) = cursor {
+            window.set_cursor_style(cursor, &prepaint.hitbox);
+        }
         window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
             let _ = window.paint_image(
                 image_bounds,
@@ -185,6 +203,7 @@ impl Element for DocumentElement {
         };
         let callback = self.on_pointer.clone();
         let hitbox = prepaint.hitbox.clone();
+        let (grab, drags) = (self.grab.clone(), self.drags);
         window.on_mouse_event(
             move |ev: &MouseDownEvent, phase: DispatchPhase, window, cx| {
                 if phase.bubble()
@@ -192,6 +211,9 @@ impl Element for DocumentElement {
                     && hitbox.is_hovered(window)
                     && image_bounds.contains(&ev.position)
                 {
+                    if drags {
+                        grab.press(ev.position, MouseButton::Left);
+                    }
                     let (x, y) = coordinates(ev.position);
                     callback("down", x, y, window, cx);
                     cx.stop_propagation();
@@ -199,9 +221,11 @@ impl Element for DocumentElement {
             },
         );
         let callback = self.on_pointer.clone();
+        // A drag that moves the pages is the layer's: the page has nothing
+        // to select as it goes.
         window.on_mouse_event(
             move |ev: &MouseMoveEvent, phase: DispatchPhase, window, cx| {
-                if phase.bubble() && ev.pressed_button == Some(MouseButton::Left) {
+                if phase.bubble() && !drags && ev.pressed_button == Some(MouseButton::Left) {
                     let (x, y) = coordinates(ev.position);
                     callback("move", x, y, window, cx);
                 }

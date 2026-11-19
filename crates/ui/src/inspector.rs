@@ -4070,6 +4070,8 @@ fn lone_picture(
         "inspect-picture",
         None,
         crate::backdrop::behind(picture.ink, theme.bg, theme),
+        // Never zoomed: nothing to drag.
+        None,
     ))
     .into_any_element()
 }

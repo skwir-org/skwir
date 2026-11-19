@@ -55,6 +55,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "more",
         "contents",
         "continuous",
+        "pan",
         "left",
         "right",
         "plus",

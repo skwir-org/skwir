@@ -844,7 +844,10 @@ impl Shell {
         ) {
             self.replace_preview_content(None, window, cx);
         }
-        self.preview.reader = crate::reader::ReaderState::new(crate::settings::reader_mode(self));
+        self.preview.reader = crate::reader::ReaderState::new(
+            crate::settings::reader_mode(self),
+            crate::settings::reader_drags(self),
+        );
     }
 
     /// An explicit visit renders a failed page again.
@@ -1236,7 +1239,10 @@ pub fn continuous_element(
     let after_list = list.clone();
     let bar_list = list.clone();
     let wheel_list = list.clone();
+    let pan_list = list.clone();
     let sideways = scroll.sideways.clone();
+    let (grab, drag_moves) = (shell.preview.grab.clone(), reader.drag_moves);
+    let pan_grab = grab.clone();
     let count = list.item_count() as u32;
     let layout = scroll.layout.clone();
     let zoom_anchor = scroll.zoom_anchor.clone();
@@ -1331,6 +1337,7 @@ pub fn continuous_element(
                             &theme,
                             entity.clone(),
                             Some(row_report.clone()),
+                            (&grab, drag_moves),
                         ),
                     ));
                 } else {
@@ -1378,6 +1385,16 @@ pub fn continuous_element(
                 .relative()
                 .size_full()
                 .left_to_right()
+                // Under the pages: a drag beside or between them, or across
+                // one that drags, moves the column (ADR-143).
+                .child(crate::elements::pan::layer(
+                    &pan_grab,
+                    crate::elements::pan::Moves::Column {
+                        list: pan_list.clone(),
+                        across: sideways.clone(),
+                    },
+                    true,
+                ))
                 .child(
                     div()
                         .id("document-horizontal-scroll")

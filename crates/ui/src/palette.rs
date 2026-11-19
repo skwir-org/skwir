@@ -441,6 +441,11 @@ fn ui_command_table() -> Vec<(&'static str, &'static str, Words)> {
             words!(palette_reader_continuous = "Document: toggle continuous scrolling"),
         ),
         (
+            "ui.reader_drag",
+            "{}",
+            words!(palette_reader_drag = "Document: toggle dragging to move the page"),
+        ),
+        (
             "ui.preview_seek",
             r#"{"delta":-5}"#,
             words!(palette_preview_seek_back = "Preview: back five seconds"),

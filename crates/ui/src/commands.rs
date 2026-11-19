@@ -783,6 +783,7 @@ const SHOWS: &[&str] = &[
     "ui.full_width",
     "ui.note",
     "ui.reader_continuous",
+    "ui.reader_drag",
     "ui.reader_page",
     "ui.preview_goto",
     "ui.reader_page_submit",
@@ -3227,6 +3228,15 @@ pub fn declare_all(app: &App) {
         words!(
             commands_reader_continuous_description =
                 "Scroll a document's pages as one, or one at a time"
+        ),
+    );
+    none(
+        Topic::Preview,
+        "ui.reader_drag",
+        words!(commands_reader_drag = "Document: toggle dragging to move the page"),
+        words!(
+            commands_reader_drag_description =
+                "Drag across a page's text to move the page, or to select the text"
         ),
     );
     declare::<Pointer>(
