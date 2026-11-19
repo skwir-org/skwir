@@ -85,8 +85,10 @@ A plugin from outside speaks the reader's language, as Skwir does.
 - **Its catalogs** are `l10n/<language>.ftl` beside the manifest, `en.ftl`
   its English, written by its author. They are read with the manifest and
   held to bounds as anyone's input is: 256 KiB a catalog, 64 languages,
-  placeables nested 16 deep at most (Fluent's parser recurses), UTF-8, a
-  regular file, read whole by Fluent's parser once before any is said.
+  placeables and calls nested 16 deep at most (Fluent's parser recurses),
+  counted so that no string literal, text or line's end hides one (a
+  catalog counted too deep is refused, its plugin speaking English), UTF-8,
+  a regular file, read whole by Fluent's parser once before any is said.
   They are registered under `outside:<id>`, a name no crate of Skwir's has,
   its id their owner, while it is on, and withdrawn with its other
   contributions. Skwir says each message through its own resolver

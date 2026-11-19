@@ -252,37 +252,117 @@ pub(crate) fn checked(text: String) -> Result<String, Refused> {
     }
 }
 
-/// How deep `text`'s placeables and calls nest: each `{` and, inside one,
-/// each `(` opens a level, outside its string literals.
+/// How deep `text`'s placeables and calls may nest as Fluent's parser reads
+/// it, at most: never less than it, so that a catalog nesting deeper than
+/// [`DEPTH`] is refused before that parser, which recurses as they nest,
+/// overflows the window's stack. Counting more is safe (a catalog refused
+/// is said in English); counting less would let one `.ftl` take Skwir down
+/// at every start.
+///
+/// Every `{` opens a level, and every `(` inside one, wherever it stands,
+/// unless it is surely inside a string literal: one begun by a `"` right
+/// after a `{` (only an expression follows it). A closer closes a level only
+/// where no literal can hide it: a `"` elsewhere may begin one (in an
+/// expression) or be text (in a variant's text), so after it a `)` or `}` is
+/// not counted, until the next `"` closes either (text and literal alike, no
+/// `{`, `}` or `]` between them that could have changed which), or the line
+/// ends, which ends any literal. A `)` closes only a `(` (text holds `)` as
+/// it is), a `}` the last `{` and the `(` opened inside it. A line beginning
+/// with `#` or with an id and `=` is where Fluent's parser stands outside
+/// every placeable, whatever came before: an id followed by `=` is no
+/// expression, nor `#`, nor text at a line's start.
 fn depth(text: &str) -> usize {
-    let (mut braces, mut parens, mut deepest) = (0usize, 0usize, 0usize);
-    let (mut in_string, mut escaped) = (false, false);
-    for c in text.chars() {
-        if in_string {
-            match (escaped, c) {
-                (true, _) => escaped = false,
-                (false, '\\') => escaped = true,
-                (false, '"') => in_string = false,
-                _ => {}
-            }
-            continue;
+    /// Where a line is read, as literals go.
+    #[derive(Clone, Copy, PartialEq)]
+    enum At {
+        /// Surely in no string literal.
+        Outside,
+        /// After a `"` that began a literal or was text: closers may be the
+        /// literal's.
+        Quoted { escaped: bool },
+        /// Where which `"` began a literal cannot be told: no closer counts
+        /// until the line ends.
+        Unknown,
+        /// Surely in a string literal (begun right after a `{`).
+        Literal { escaped: bool },
+    }
+    // The levels open: `true` a placeable's `{`, `false` a call's `(`.
+    let mut open: Vec<bool> = Vec::new();
+    let mut deepest = 0;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with('#') || begins_message(line) {
+            open.clear();
         }
-        match c {
-            '{' => braces += 1,
-            '}' => {
-                braces = braces.saturating_sub(1);
-                if braces == 0 {
-                    parens = 0;
+        let mut at = At::Outside;
+        // Whether the last character read, spaces apart, was a `{` read
+        // outside any literal.
+        let mut after_brace = false;
+        for b in line.bytes() {
+            match at {
+                At::Literal { escaped: true } => at = At::Literal { escaped: false },
+                At::Literal { escaped: false } => match b {
+                    b'\\' => at = At::Literal { escaped: true },
+                    b'"' => {
+                        at = At::Outside;
+                        after_brace = false;
+                    }
+                    _ => {}
+                },
+                At::Quoted { escaped: true } if !matches!(b, b'{' | b'}' | b']') => {
+                    at = At::Quoted { escaped: false };
+                }
+                At::Quoted { .. } | At::Unknown | At::Outside => {
+                    let outside = at == At::Outside;
+                    match b {
+                        b'{' => {
+                            open.push(true);
+                            if matches!(at, At::Quoted { .. }) {
+                                at = At::Unknown;
+                            }
+                        }
+                        b'(' if !open.is_empty() => open.push(false),
+                        b')' if outside && open.last() == Some(&false) => {
+                            open.pop();
+                        }
+                        b'}' if outside => {
+                            while open.last() == Some(&false) {
+                                open.pop();
+                            }
+                            open.pop();
+                        }
+                        b'}' | b']' if matches!(at, At::Quoted { .. }) => at = At::Unknown,
+                        b'"' if outside && after_brace => at = At::Literal { escaped: false },
+                        b'"' if outside && !open.is_empty() => at = At::Quoted { escaped: false },
+                        b'"' if matches!(at, At::Quoted { .. }) => at = At::Outside,
+                        b'\\' if matches!(at, At::Quoted { .. }) => {
+                            at = At::Quoted { escaped: true };
+                        }
+                        _ => {}
+                    }
+                    if b != b' ' {
+                        after_brace = outside && b == b'{';
+                    }
                 }
             }
-            '(' if braces > 0 => parens += 1,
-            ')' if braces > 0 => parens = parens.saturating_sub(1),
-            '"' if braces > 0 => in_string = true,
-            _ => {}
+            deepest = deepest.max(open.len());
+            if deepest > DEPTH {
+                return deepest;
+            }
         }
-        deepest = deepest.max(braces + parens);
     }
     deepest
+}
+
+/// Whether `line` begins a message or a term, as Fluent writes one: at its
+/// start, an id (a letter, then letters, digits, `_` and `-`), `-` before
+/// it for a term, and `=` after it and spaces.
+fn begins_message(line: &str) -> bool {
+    let line = line.strip_prefix('-').unwrap_or(line);
+    if !line.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    let rest = line.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    rest.trim_start_matches([' ', '\t']).starts_with('=')
 }
 
 #[cfg(test)]
@@ -359,5 +439,280 @@ mod tests {
         // What Fluent cannot read is no refusal: its messages are said in
         // English.
         assert!(checked("a = { $n -> }\nb = ok\n".to_owned()).is_ok());
+    }
+
+    /// What a string literal or a line's end could hide from the count
+    /// hides nothing: each catalog here nests far deeper than Fluent's
+    /// parser can recurse, and each is refused, never parsed.
+    #[test]
+    fn literals_and_line_ends_hide_no_nesting() {
+        const DEEP: usize = 100_000;
+        let braces = |n: usize| format!("{}{}", "{ ".repeat(n), " }".repeat(n));
+        let refused = [
+            // A `"` in a variant's text is text, not a literal.
+            format!("a = {{ $n ->\n   *[other] said \"{}\n}}\n", braces(DEEP)),
+            // A literal left open at a line's end ends there.
+            format!("a = {{ \"x\nb = {}\n", braces(DEEP)),
+            // Text and a literal alternating on each line, a selector in
+            // each variant.
+            format!(
+                "a = {{ $n ->\n{}   *[z] z\n{}\n",
+                "   *[a] \"{\"}\" ->\n".repeat(DEEP / 10),
+                "}".repeat(DEEP / 10 + 1)
+            ),
+            // Closers inside the literals of calls nested in calls.
+            format!("a = {{ {}$x }}\n", "F(\")\", ".repeat(DEEP)),
+            // Text's `)` closing no call.
+            format!("a = {{ {} }}\n", "F({ $x ->\n *[a] ) ) {".repeat(DEEP / 10)),
+            // An escaped quote, then braces.
+            format!("a = {{ F(\"\\\"{}\") }}\n", braces(DEEP)),
+        ];
+        for (at, catalog) in refused.into_iter().enumerate() {
+            assert!(depth(&catalog) > DEPTH, "catalog {at}");
+            assert!(
+                matches!(checked(catalog), Err(Refused::TooDeep)),
+                "catalog {at}"
+            );
+        }
+    }
+
+    /// What plugins write is not refused: calls with named literals, empty
+    /// and braced literals, notes for translators holding braces, many
+    /// messages one after another.
+    #[test]
+    fn catalogs_as_written_are_read() {
+        let mut catalog = String::from(
+            "# { $place } is where it went: { or ( unclosed\n\
+             moved = { GENDER($place) ->\n\
+             \x20   [feminine] Déplacée dans { FORM($place, case: \"definite\") } (\"vite\")\n\
+             \x20  *[other] Déplacé dans { FORM($place, case: \"definite\") }\n\
+             }\n\
+             braces = {\"{\"}{ \"\" }{ \"}\" } and { \"a\\\"b\" }\n\
+             -term = { \"x\" }\n",
+        );
+        for n in 0..500 {
+            catalog.push_str(&["m", &n.to_string()].concat());
+            catalog.push_str(" = { FORM($p, case: \"de\") } { NUMBER($n, style: \"x\") }\n");
+        }
+        assert!(depth(&catalog) <= 3, "{}", depth(&catalog));
+        assert!(checked(catalog).is_ok());
+    }
+
+    /// The count is never less than how deep Fluent's own parser nests,
+    /// read from any line on (the window parses a message from its line):
+    /// texts made at random of what nests, closes and quotes.
+    #[test]
+    fn nesting_is_never_counted_short() {
+        use fluent_syntax::ast;
+
+        fn of_pattern(pattern: &ast::Pattern<&str>) -> usize {
+            pattern
+                .elements
+                .iter()
+                .map(|element| match element {
+                    ast::PatternElement::Placeable { expression } => 1 + of_expression(expression),
+                    ast::PatternElement::TextElement { .. } => 0,
+                })
+                .max()
+                .unwrap_or(0)
+        }
+        fn of_expression(expression: &ast::Expression<&str>) -> usize {
+            match expression {
+                ast::Expression::Inline(inline) => of_inline(inline),
+                ast::Expression::Select { selector, variants } => variants
+                    .iter()
+                    .map(|variant| of_pattern(&variant.value))
+                    .chain([of_inline(selector)])
+                    .max()
+                    .unwrap_or(0),
+            }
+        }
+        fn of_arguments(arguments: &ast::CallArguments<&str>) -> usize {
+            1 + arguments
+                .positional
+                .iter()
+                .chain(arguments.named.iter().map(|named| &named.value))
+                .map(of_inline)
+                .max()
+                .unwrap_or(0)
+        }
+        fn of_inline(inline: &ast::InlineExpression<&str>) -> usize {
+            match inline {
+                ast::InlineExpression::Placeable { expression } => 1 + of_expression(expression),
+                ast::InlineExpression::FunctionReference { arguments, .. } => {
+                    of_arguments(arguments)
+                }
+                ast::InlineExpression::TermReference {
+                    arguments: Some(arguments),
+                    ..
+                } => of_arguments(arguments),
+                _ => 0,
+            }
+        }
+        fn of_text(text: &str) -> usize {
+            let resource = match fluent_syntax::parser::parse_runtime(text) {
+                Ok(resource) | Err((resource, _)) => resource,
+            };
+            resource
+                .body
+                .iter()
+                .map(|entry| match entry {
+                    ast::Entry::Message(message) => message
+                        .value
+                        .iter()
+                        .chain(message.attributes.iter().map(|attribute| &attribute.value))
+                        .map(of_pattern)
+                        .max()
+                        .unwrap_or(0),
+                    ast::Entry::Term(term) => term
+                        .attributes
+                        .iter()
+                        .map(|attribute| &attribute.value)
+                        .chain([&term.value])
+                        .map(of_pattern)
+                        .max()
+                        .unwrap_or(0),
+                    _ => 0,
+                })
+                .max()
+                .unwrap_or(0)
+        }
+
+        const PIECES: [&str; 24] = [
+            "a = ", "b=", "-t = ", "{ ", "{", "}", "\n}", "$n", " ->\n", "\n *[x] ", "\n [y] ",
+            "F(", "-t(", ")", ", ", "c: ", "\"", "\\", "]", "x", " ", "\n", "\n# ", "\n  ",
+        ];
+        let mut random = Random(0x5eed_cafe);
+        let counted_short = |text: &str| {
+            let counted = depth(text);
+            let mut from = 0;
+            loop {
+                let nested = of_text(&text[from..]);
+                assert!(
+                    nested <= counted,
+                    "{nested} deep, counted {counted}, from {from}: {text:?}"
+                );
+                match text[from..].find('\n') {
+                    Some(at) => from += at + 1,
+                    None => break,
+                }
+            }
+        };
+        // Pieces at random: mostly what Fluent cannot read whole.
+        for _ in 0..20_000 {
+            let mut text = String::from("a = ");
+            for _ in 0..random.below(60) {
+                text.push_str(PIECES[random.below(PIECES.len())]);
+            }
+            if depth(&text) <= DEPTH {
+                counted_short(&text);
+            }
+        }
+        // Messages Fluent reads whole, nesting as deep as Fluent's grammar
+        // lets them: literals and text holding every closer and quote.
+        for _ in 0..5_000 {
+            let mut text = String::from("a = ");
+            random.pattern(&mut text, 4);
+            text.push('\n');
+            assert!(
+                fluent_syntax::parser::parse_runtime(text.as_str()).is_ok(),
+                "{text:?}"
+            );
+            counted_short(&text);
+        }
+    }
+
+    /// A test's random choices, the same at every run.
+    struct Random(u64);
+
+    impl Random {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            usize::try_from(self.0 % n as u64).unwrap()
+        }
+
+        /// A pattern on one line (a select's variants on lines of their
+        /// own), placeables nested at most `deep`.
+        fn pattern(&mut self, out: &mut String, deep: usize) {
+            for _ in 0..=self.below(2) {
+                if deep == 0 || self.below(2) == 0 {
+                    const TEXT: [&str; 8] = ["x", " ", "\"", "(", ")", "]", "\\", "*["];
+                    out.push('x');
+                    for _ in 0..self.below(4) {
+                        out.push_str(TEXT[self.below(TEXT.len())]);
+                    }
+                } else {
+                    out.push_str("{ ");
+                    self.expression(out, deep - 1);
+                }
+            }
+        }
+
+        /// A placeable's expression, and the `}` that closes it.
+        fn expression(&mut self, out: &mut String, deep: usize) {
+            if deep > 0 && self.below(3) == 0 {
+                match self.below(3) {
+                    0 => out.push_str("$n"),
+                    1 => self.literal(out),
+                    _ => out.push_str("F($n)"),
+                }
+                out.push_str(" ->\n");
+                for key in ["    [one] ", "    [two] "].iter().take(self.below(3)) {
+                    out.push_str(key);
+                    self.pattern(out, deep - 1);
+                    out.push('\n');
+                }
+                out.push_str("   *[other] ");
+                self.pattern(out, deep - 1);
+                out.push_str("\n}");
+            } else {
+                self.inline(out, deep);
+                out.push_str(" }");
+            }
+        }
+
+        fn inline(&mut self, out: &mut String, deep: usize) {
+            match if deep == 0 {
+                self.below(2)
+            } else {
+                self.below(4)
+            } {
+                0 => out.push_str("$x"),
+                1 => self.literal(out),
+                2 => {
+                    out.push_str("F(");
+                    let positional = self.below(3);
+                    for at in 0..positional {
+                        if at > 0 {
+                            out.push_str(", ");
+                        }
+                        self.inline(out, deep - 1);
+                    }
+                    if self.below(2) == 0 {
+                        if positional > 0 {
+                            out.push_str(", ");
+                        }
+                        out.push_str("k: ");
+                        self.literal(out);
+                    }
+                    out.push(')');
+                }
+                _ => {
+                    out.push_str("{ ");
+                    self.expression(out, deep - 1);
+                }
+            }
+        }
+
+        fn literal(&mut self, out: &mut String) {
+            const HELD: [&str; 9] = ["x", "{", "}", "(", ")", "]", "\\\\", "\\\"", "\\{"];
+            out.push('"');
+            for _ in 0..self.below(4) {
+                out.push_str(HELD[self.below(HELD.len())]);
+            }
+            out.push('"');
+        }
     }
 }
