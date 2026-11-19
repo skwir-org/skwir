@@ -1699,6 +1699,13 @@ impl Plugin for OpenWithPlugin {
         );
     }
 
+    /// A window came to the front: a default chosen elsewhere meanwhile
+    /// (the desktop's settings) is read again, which the next menu names
+    /// and Settings' default file manager says (`file_manager::looked_at`).
+    fn on_looked_at(&self, app: &App) {
+        file_manager::looked_at(app, &self.catalog);
+    }
+
     fn on_disable(&self, _app: &App) {
         if let Some(work) = self.catalog.work.lock().take() {
             work.cancel();

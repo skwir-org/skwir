@@ -141,6 +141,23 @@ fn list(app: &App, cache: &Cached) -> serde_json::Value {
     answer(catalog.as_deref(), shower.as_ref())
 }
 
+/// A window came to the front (`Plugin::on_looked_at`): what the row says
+/// is asked again, as no watch tells it: the catalog, where its stamp
+/// moved (a default chosen in the desktop's settings), and who shows files
+/// for other programs, once the row asked it and while Skwir is chosen.
+/// Each answer that moves the row has the dialog list it again.
+pub(crate) fn looked_at(app: &App, cache: &Cached) {
+    super::refresh(cache, app);
+    let chosen = cache
+        .remembered()
+        .as_deref()
+        .and_then(|catalog| catalog.default_for(FOLDERS))
+        .is_some_and(|application| application.id == own());
+    if chosen && cache.file_manager.shower.lock().is_some() {
+        ask_shower(app, cache);
+    }
+}
+
 /// Ask who shows files on a worker, once at a time; an answer that moves
 /// what the row says has the dialog list it again. While another program
 /// holds it, its holder is followed (`file_manager::follow_shower`), each
@@ -502,5 +519,54 @@ mod tests {
 
         app.plugins.set_enabled(ID, false, &app);
         assert!(!app.settings.schema().iter().any(|spec| spec.key == KEY));
+    }
+
+    /// A default chosen elsewhere (the desktop's settings) while Settings
+    /// is open is read once a window comes to the front, and the row says
+    /// it (UA-5).
+    #[test]
+    fn a_default_chosen_elsewhere_is_said_once_looked_at() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (apps, lists) = folders(tmp.path(), true, Some("org.skwir.skwir.desktop"));
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = crate::OpenWithPlugin {
+            catalog: Arc::new(crate::CatalogCache {
+                sources: Some((apps, lists.clone())),
+                ..crate::CatalogCache::default()
+            }),
+        };
+        let row = Arc::clone(&plugin.catalog);
+        app.plugins.add(Arc::new(plugin), &app);
+        let listed = |app: &App| -> serde_json::Value {
+            match app.dispatch(&Invocation::new(LIST)).unwrap() {
+                Outcome::Value(value) => value,
+                other => panic!("a value, not {other:?}"),
+            }
+        };
+        let until = |what: &str, done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !done() {
+                assert!(std::time::Instant::now() < deadline, "{what}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        listed(&app);
+        until("read", &|| {
+            listed(&app)["value"] == "org.skwir.skwir.desktop"
+        });
+        // Dolphin chosen in the desktop's settings: a list written anew,
+        // with another stamp.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(
+            &lists[0],
+            "[Default Applications]\ninode/directory=org.kde.dolphin.desktop;\n",
+        )
+        .unwrap();
+        let before = row.file_manager.source.revision();
+        crate::file_manager::looked_at(&app, &row);
+        until("listed again", &|| {
+            row.file_manager.source.revision() != before
+        });
+        assert_eq!(listed(&app)["value"], "org.kde.dolphin.desktop");
     }
 }
