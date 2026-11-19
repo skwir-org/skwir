@@ -246,10 +246,11 @@ A name that says nothing is not a binary file.
   each component, except at an eighth: there it keeps and reads only
   every block's DC coefficient, all an eighth draws, to the first scans
   that bring them, a DC's bits still to come drawn halfway
-  (`vendor/jpeg-decoder`, its README.skwir.md). A decode starts no
-  thread of its own. The preview's own decodes take turns
-  (`preview::Turn`): one at a time, and a request whose turn came after
-  the panel moved on gives it up.
+  (`vendor/jpeg-decoder`, its README.skwir.md). A decode at an eighth or
+  a quarter (thumbnails, many at once) starts no thread of its own; one
+  at a half or whole, waited for alone, takes a thread a component. The
+  preview's own decodes take turns (`preview::Turn`): one at a time, and
+  a request whose turn came after the panel moved on gives it up.
 - **The next picture is read ahead** (`Shell::read_ahead_next`,
   `read_ahead`), `reading.read_ahead` on (the default). On the whole
   screen, the next picture the way the last step went; in the panel and

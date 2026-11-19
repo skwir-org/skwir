@@ -101,13 +101,18 @@ same changes.
     every DC whole first, or the luma's AC before the colours' DC, draws
     exactly the sequential one; libjpeg's progression stays within 6
     levels, and half a level on average.
-- `0004-a-decode-starts-no-thread.patch`: a decode runs on the thread
-  that asked for it. The crate started a thread for each component for
-  every picture wider than 128 pixels once decoded (its threshold read
-  the width twice): three or four threads a thumbnail, with one decode a
+- `0004-a-small-decode-starts-no-thread.patch`: at an eighth and a
+  quarter, a decode runs on the thread that asked for it. The crate
+  started a thread for each component for every picture wider than 128
+  pixels once decoded (its threshold read the width twice, now the width
+  and the height): three or four threads a thumbnail, with one decode a
   scheduler worker already, which leaves room for listings and previews.
-  A standard JPEG of 5464×8192, alternated with the crate's threads: at
-  an eighth and a quarter as long (99–125 ms against 101–117), 10–20 %
-  less processor time; at a half, one decode alone takes 15–20 % longer
-  (122–136 ms against 141–163), in 20 % less processor time, holding
-  80 MB against 106.
+  At a half and whole, a decode is waited for alone (the preview's own,
+  which take turns), and keeps its components' threads.
+  - **Measured** on a standard JPEG of 5464×8192, release, against the
+    crate's threads, alternated three times: at an eighth and a quarter
+    on the caller's thread as long (84–91 ms, with threads 84–90, the
+    machine's load 2–5), in 15–20 % less processor time. At a half, on
+    the caller's thread, one decode took 15–20 % longer (141–163 ms,
+    with threads 122–136, load 4–11), which the preview waits for: there
+    the threads stay (105–112 ms either way).

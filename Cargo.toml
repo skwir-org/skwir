@@ -160,10 +160,10 @@ rustix = { version = "1", features = ["fs"] }
 rayon = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # A JPEG decoded at a reduced scale for its thumbnail (zune-jpeg, image's
-# own, decodes it whole). Vendored (`[patch.crates-io]` below): a decode
-# starts no thread of its own, the thumbnails running one a scheduler
-# worker, and a progressive one at an eighth keeps and reads only its DC
-# coefficients.
+# own, decodes it whole). Vendored (`[patch.crates-io]` below): at an
+# eighth and a quarter a decode starts no thread of its own, the
+# thumbnails running one a scheduler worker, and a progressive one at an
+# eighth keeps and reads only its DC coefficients.
 jpeg-decoder = { version = "0.3", default-features = false }
 png = "0.18"
 crossbeam-channel = "0.5"
