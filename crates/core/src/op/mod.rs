@@ -142,17 +142,19 @@ fn said_of<'a>(links: impl Iterator<Item = &'a (dyn std::error::Error + 'static)
 }
 
 /// What a step could not do to the file it acts on, in its own words
-/// ("“a.txt” could not be copied"): the context a step gives its error
-/// where its words name that file (`.with_context(|| Couldnt::new(…))`),
-/// what stopped it the error inside, whose kind a downcast still finds
-/// (`Cancelled`, an `io::Error`). What tells of the failure in words of its
-/// own (the toast's "Couldn't copy “a.txt” to Docs") says the reason after
-/// them alone ([`reason_after`]), told by the context's make and the file
-/// it names, never by its words (ADR-139, 8).
+/// ("“a.txt” could not be copied"), put around the error that stopped it
+/// (`.couldnt(|| …)`, [`Couldnt::because`]): the error's outermost link, its
+/// kind still found inside by a downcast (`Cancelled`, an `io::Error`).
+/// What tells of the failure in words of its own (the toast's "Couldn't
+/// copy “a.txt” to Docs") says the reason after them alone
+/// ([`reason_after`]), told by the link's make, where it stands and the
+/// file it names, never by its words (ADR-139, 8). It is put around an
+/// error only so: it is no context of its own (no `Display`), so that
+/// where it stands is always known.
 #[derive(Debug)]
 pub struct Couldnt {
     /// The file its words name.
-    pub subject: PathBuf,
+    subject: PathBuf,
     words: Words,
 }
 
@@ -164,13 +166,49 @@ impl Couldnt {
             words: words.into(),
         }
     }
+
+    /// `error`, these words put around it: its outermost link.
+    pub fn because(self, error: impl Into<anyhow::Error>) -> anyhow::Error {
+        let error = error.into();
+        let below = error.chain().count();
+        error.context(CouldntLink {
+            subject: self.subject,
+            words: self.words,
+            below,
+        })
+    }
 }
 
-impl fmt::Display for Couldnt {
+/// A [`Couldnt`] put around an error ([`Couldnt::because`]): a link of its
+/// chain, the links it was put around counted.
+#[derive(Debug)]
+struct CouldntLink {
+    subject: PathBuf,
+    words: Words,
+    below: usize,
+}
+
+impl fmt::Display for CouldntLink {
     /// Its words: English, or the reader's language while an error's chain
     /// is said (`Words`' `Display`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.words, f)
+    }
+}
+
+/// A step's result, what it could not do put around its error
+/// ([`Couldnt::because`]).
+pub trait CouldntExt<T> {
+    /// `Err(couldnt().because(error))` for an error.
+    ///
+    /// # Errors
+    /// The error, its step's words put around it.
+    fn couldnt(self, couldnt: impl FnOnce() -> Couldnt) -> anyhow::Result<T>;
+}
+
+impl<T, E: Into<anyhow::Error>> CouldntExt<T> for Result<T, E> {
+    fn couldnt(self, couldnt: impl FnOnce() -> Couldnt) -> anyhow::Result<T> {
+        self.map_err(|error| couldnt().because(error))
     }
 }
 
@@ -180,11 +218,12 @@ impl fmt::Display for Couldnt {
 /// `None` where the error begins otherwise.
 pub fn reason_after(error: &Arc<anyhow::Error>, change: &Change) -> Option<Words> {
     // A downcast finds the outermost of its kind wherever it stands in the
-    // chain; it is the first link where the error's own text is its text,
-    // the same value said twice (which link, not what it says).
-    let own = error
-        .downcast_ref::<Couldnt>()
-        .filter(|own| own.to_string() == error.to_string())?;
+    // chain; it is the error's first link where nothing was put around it
+    // since: the chain is the links it was put around, and it.
+    let own = error.downcast_ref::<CouldntLink>()?;
+    if error.chain().count() != own.below + 1 {
+        return None;
+    }
     // By name: a copy's words name it where it lands, an item of a trash
     // by the trash's name, the same as the step's.
     let named = change.subject().and_then(Path::file_name);
@@ -1624,10 +1663,7 @@ mod tests {
             to: PathBuf::from("/a/b.txt"),
         };
         let own = |path: &str, words: &str, error: anyhow::Error| {
-            error.context(Couldnt::new(
-                Path::new(path),
-                Words::as_written(words.to_owned()),
-            ))
+            Couldnt::new(Path::new(path), Words::as_written(words.to_owned())).because(error)
         };
         let denied =
             || anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
@@ -1679,6 +1715,30 @@ mod tests {
             anyhow::Error::new(Cancelled),
         );
         assert!(cancelled.is::<Cancelled>());
+        // Its words around another step's: the outer ones are the first.
+        let twice = own(
+            "/a/it's a.txt",
+            "“it's a.txt” could not be renamed “b.txt”",
+            own("/a/other.txt", "“other.txt” could not be read", denied()),
+        );
+        assert_eq!(
+            reason(twice, &step).as_deref(),
+            Some("“other.txt” could not be read: permission denied")
+        );
+        // A result's error, its words put around it.
+        let failed: std::io::Result<()> = Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        let failed = super::CouldntExt::couldnt(failed, || {
+            Couldnt::new(
+                Path::new("/a/it's a.txt"),
+                Words::as_written("gone".to_owned()),
+            )
+        })
+        .unwrap_err();
+        assert!(failed.is::<std::io::Error>());
+        assert_eq!(
+            reason(failed, &step).as_deref(),
+            Some("it is not there any more")
+        );
     }
 
     /// A transfer's title names what it takes and the folder by its name,

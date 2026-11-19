@@ -721,39 +721,31 @@ pub(super) fn open_to_owner(current: &Permissions) -> bool {
 /// can tell (macOS: `trashItemAtURL`'s resulting path, kept for undo, the
 /// Mac's trash keeping no record of where an item came from); `None`
 /// where the trash's own records say it (Windows). Linux's is the plan's
-/// own (`builtin::trash_item`).
+/// own (`builtin::trash_item`). An error is words, or holds the trash's
+/// own: said where it is shown, in its reader's language (ADR-139).
 #[cfg(not(target_os = "linux"))]
-pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, trash::Error> {
+pub(super) fn trash_item(path: &Path) -> anyhow::Result<Option<std::path::PathBuf>> {
     #[cfg(target_os = "macos")]
     {
         use objc2_foundation::{NSFileManager, NSString, NSURL};
-        let unknown = |description: String| trash::Error::Unknown { description };
-        let text = path
-            .to_str()
-            .ok_or_else(|| {
-                unknown(
-                    crate::words!(
-                        sys_path_not_utf8 = "{ $path } is no UTF-8 path",
-                        path = path.display().to_string(),
-                        note = "Why a file is not put in the trash on macOS: its path is not text the system's trash takes."
-                    )
-                    .say(),
-                )
-            })?;
+        let text = path.to_str().ok_or_else(|| {
+            anyhow::Error::new(crate::words!(
+                sys_path_not_utf8 = "{ $path } is no UTF-8 path",
+                path = path,
+                note = "Why a file is not put in the trash on macOS: its path is not text the system's trash takes."
+            ))
+        })?;
         let url = NSURL::fileURLWithPath(&NSString::from_str(text));
         let mut landed = None;
         NSFileManager::defaultManager()
             .trashItemAtURL_resultingItemURL_error(&url, Some(&mut landed))
             .map_err(|e| {
-                unknown(
-                    crate::words!(
-                        sys_trash_refused = "trash { $path }: { $error }",
-                        path = path.display().to_string(),
-                        error = e.to_string(),
-                        note = "Why a file is not put in the trash on macOS, terse: its path, then what the system said."
-                    )
-                    .say(),
-                )
+                anyhow::Error::new(crate::words!(
+                    sys_trash_refused = "trash { $path }: { $error }",
+                    path = path,
+                    error = e.to_string(),
+                    note = "Why a file is not put in the trash on macOS, terse: its path, then what the system said."
+                ))
             })?;
         Ok(landed
             .and_then(|url| url.path())
@@ -761,7 +753,7 @@ pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, tras
     }
     #[cfg(not(target_os = "macos"))]
     {
-        trash::delete(path).map(|()| None)
+        Ok(trash::delete(path).map(|()| None)?)
     }
 }
 
@@ -782,21 +774,19 @@ pub(super) fn mode_kept(set: io::Result<()>) -> io::Result<()> {
 /// What the system's trash holds, as the `trash` crate lists it; Linux's
 /// is the plan's own (`trash_list`), which reads no server unasked.
 #[cfg(not(target_os = "linux"))]
-pub(super) fn trash_list() -> Result<Vec<trash::TrashItem>, trash::Error> {
+pub(super) fn trash_list() -> anyhow::Result<Vec<trash::TrashItem>> {
     #[cfg(not(target_os = "macos"))]
     {
-        trash::os_limited::list()
+        Ok(trash::os_limited::list()?)
     }
     #[cfg(target_os = "macos")]
     {
-        Err(trash::Error::Unknown {
-            description: crate::words!(
-                sys_trash_list_not_yet = "Listing the trash is not available on { $system } yet",
-                system = crate::system::named(),
-                note = "Why the trash shows nothing. system: the system's name (macOS)."
-            )
-            .say(),
-        })
+        Err(crate::system::not_yet_words(crate::words!(
+            sys_trash_list_not_yet = "Listing the trash is not available on { $system } yet",
+            system = crate::system::named(),
+            note = "Why the trash shows nothing. system: the system's name (macOS)."
+        ))
+        .into())
     }
 }
 
@@ -804,24 +794,21 @@ pub(super) fn trash_list() -> Result<Vec<trash::TrashItem>, trash::Error> {
 /// plan's own (`builtin::restore_listed`).
 #[cfg(not(target_os = "linux"))]
 #[cfg_attr(target_os = "macos", allow(clippy::needless_pass_by_value))]
-pub(super) fn trash_restore(items: Vec<trash::TrashItem>) -> Result<(), trash::Error> {
+pub(super) fn trash_restore(items: Vec<trash::TrashItem>) -> anyhow::Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
-        trash::os_limited::restore_all(items)
+        Ok(trash::os_limited::restore_all(items)?)
     }
     #[cfg(target_os = "macos")]
     {
         let _ = items;
-        Err(trash::Error::Unknown {
-            description: crate::words!(
-                sys_trash_restore_not_yet =
-                    "Restoring from the trash is not available on { $system } yet",
-                system = crate::system::named(),
-                note =
-                    "Why a file is not put back from the trash. system: the system's name (macOS)."
-            )
-            .say(),
-        })
+        Err(crate::system::not_yet_words(crate::words!(
+            sys_trash_restore_not_yet =
+                "Restoring from the trash is not available on { $system } yet",
+            system = crate::system::named(),
+            note = "Why a file is not put back from the trash. system: the system's name (macOS)."
+        ))
+        .into())
     }
 }
 

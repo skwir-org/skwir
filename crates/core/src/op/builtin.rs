@@ -16,8 +16,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::context::Kernel;
 use super::pace::Pace;
 use super::{
-    Change, Couldnt, EntryRef, OpRegistry, Operation, ResolveError, StepContext, StepStatus, sys,
-    valid_file_name,
+    Change, Couldnt, CouldntExt, EntryRef, OpRegistry, Operation, ResolveError, StepContext,
+    StepStatus, sys, valid_file_name,
 };
 use crate::fs::stat::{id_of, named};
 use crate::os_path::PathArg;
@@ -233,11 +233,11 @@ fn there_by_earlier_step(path: &Path) -> Words {
 }
 
 /// Why a step on the trash does not go on: the trash could not be read
-/// (`error`, as its library says it).
-fn trash_unread(error: &trash::Error) -> Words {
+/// (`error`, said link by link where it is shown).
+fn trash_unread(error: anyhow::Error) -> Words {
     words!(
         op_trash_unread = "the trash could not be read: { $error }",
-        error = error.to_string(),
+        error = error,
         note = "Why a step on the trash does not go on. error: why, as the system's trash said it."
     )
 }
@@ -483,7 +483,7 @@ fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
 /// user's words, what could not be done: a rename within a folder, or a
 /// move to another.
 fn rename_noreplace(from: &Path, to: &Path) -> anyhow::Result<()> {
-    sys::rename_noreplace(from, to).with_context(|| {
+    sys::rename_noreplace(from, to).couldnt(|| {
         let name = name_of(from);
         let folder = || Name(to.parent().map(display_name).unwrap_or_default());
         let words = if from.parent() == to.parent() {
@@ -715,7 +715,7 @@ impl super::Effect for Rename {
                         ),
                     )
                 };
-                sys::rename_noreplace(&src, &parked).with_context(respelled)?;
+                sys::rename_noreplace(&src, &parked).couldnt(respelled)?;
                 if let Err(e) = sys::rename_noreplace(&parked, &target) {
                     sys::rename_noreplace(&parked, &src).with_context(|| {
                         words!(
@@ -726,7 +726,7 @@ impl super::Effect for Rename {
                         )
                     })?;
                     ctx.forget_listed(dir);
-                    return Err(anyhow::Error::new(e).context(respelled()));
+                    return Err(respelled().because(e));
                 }
             }
             RenameTarget::Spelled => {}
@@ -1468,7 +1468,7 @@ pub fn remove_made(
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     let companions = beside_now(path, was_at, beside, ctx.companions());
-    remove_recursive(path).with_context(|| {
+    remove_recursive(path).couldnt(|| {
         Couldnt::new(
             path,
             words!(
@@ -2194,7 +2194,7 @@ fn copy_staged(
                 attributes: false,
             });
         }
-        sys::rename_noreplace(&staged, target).with_context(|| not_placed(target, dest_dir))?;
+        sys::rename_noreplace(&staged, target).couldnt(|| not_placed(target, dest_dir))?;
         ctx.placed(&staged, target, mark);
         // The companions placed, or the copy taken back to be removed
         // from the staging folder.
@@ -2269,10 +2269,7 @@ fn copy_in_place(
 ) -> anyhow::Result<Vec<PathBuf>> {
     let placed_in = || not_placed(target, dest_dir);
     if std::fs::symlink_metadata(target).is_ok() {
-        return Err(
-            anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
-                .context(placed_in()),
-        );
+        return Err(placed_in().because(std::io::Error::from(std::io::ErrorKind::AlreadyExists)));
     }
     // The companion that holds attributes, written beside the copy where
     // the volume keeps none: one there before it (left on the card by
@@ -2410,7 +2407,7 @@ fn copy_file(
         if copied.is_err() {
             ctx.check_cancelled()?;
         }
-        let made = copied.with_context(|| not_copied(src))?;
+        let made = copied.couldnt(|| not_copied(src))?;
         // Counted whole, whatever the system said as it went: Wine's copy
         // says nothing, and its bytes were never counted, nor the plan
         // paused between its files. A clone's moved none (ADR-113).
@@ -2501,8 +2498,8 @@ fn copy_file(
         // Should it fail partway, what it wrote may be gone on from.
         ctx.copying(dst, &m);
         let began = std::time::Instant::now();
-        let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx)
-            .with_context(|| not_copied(src))?;
+        let end =
+            copy_contents(&sf, &df, (&m, devices), from, pace, ctx).couldnt(|| not_copied(src))?;
         // From a server, how fast it reads (its thumbnails' Automatic).
         crate::fs::reach::note_read(src, dst, end.saturating_sub(from), began.elapsed());
         // A mount may answer the end of a file its server stopped serving,
@@ -2510,7 +2507,7 @@ fn copy_file(
         // was, the copy was cut (or the source changed), not done. Retry
         // goes on, or starts again on a source changed.
         if end < m.len() {
-            return Err(anyhow::Error::new(words!(
+            return Err(not_copied(src).because(anyhow::Error::new(words!(
                 op_read_short = "{ $read ->
                     [one] only { $read } byte of { $bytes } could be read
                    *[other] only { $read } bytes of { $bytes } could be read
@@ -2518,8 +2515,7 @@ fn copy_file(
                 read = end,
                 bytes = m.len(),
                 note = "Why a copy failed: its source ended early (a server stopped serving it). read: how many bytes were read; bytes: how many it holds. Begins in lower case."
-            ))
-            .context(not_copied(src)));
+            ))));
         }
     }
     // Whole once closing it says so: a FUSE remote sends there what it
@@ -2558,7 +2554,7 @@ pub(super) fn finish(df: std::fs::File, src: &Path) -> anyhow::Result<()> {
         } else {
             anyhow::Error::new(error).context(refused())
         };
-        refused.context(not_copied(src))
+        not_copied(src).because(refused)
     })
 }
 
@@ -3259,7 +3255,7 @@ impl super::Effect for Trash {
             .into_iter()
             .map(|f| f.path)
             .collect();
-        let put = trash_item(ctx, &src).with_context(|| {
+        let put = trash_item(ctx, &src).couldnt(|| {
             Couldnt::new(
                 &src,
                 words!(
@@ -3400,7 +3396,7 @@ fn restore_listed(ctx: &StepContext, item: trash::TrashItem) -> anyhow::Result<(
     #[cfg(not(target_os = "linux"))]
     {
         let _ = ctx;
-        Ok(sys::trash_restore(vec![item])?)
+        sys::trash_restore(vec![item])
     }
 }
 
@@ -3893,12 +3889,12 @@ impl super::Effect for Restore {
         match ctx.with_trash_near(&self.near(), |listing| self.find(listing)) {
             Ok(Some(_)) => pending(true),
             Ok(None) => conflict(not_in_trash(&self.path)),
-            Err(e) => conflict(trash_unread(&e)),
+            Err(e) => conflict(trash_unread(e)),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         if let Some(item) = self.landed_item() {
-            rename_noreplace(item, &self.path).with_context(|| not_restored(&self.path))?;
+            rename_noreplace(item, &self.path).couldnt(|| not_restored(&self.path))?;
             for companion in &self.landed {
                 if !exists(&companion.from) {
                     let _ = rename_noreplace(&companion.at, &companion.from);
@@ -3937,7 +3933,7 @@ impl super::Effect for Restore {
             .with_context(trash_unread_here)?
             .ok_or_else(|| anyhow::Error::new(not_in_trash(&self.path)))?;
         let when = item.time_deleted;
-        restore_listed(ctx, item).with_context(|| not_restored(&self.path))?;
+        restore_listed(ctx, item).couldnt(|| not_restored(&self.path))?;
         restore_trashed_with(ctx, &self.path, when);
         let r = EntryRef::from_path(&self.path)
             .ok_or_else(|| anyhow::Error::new(went_missing_restored(&self.path)))?;
@@ -4102,7 +4098,7 @@ fn merge_restore(
         for inner in merged.moved.iter().rev() {
             let _ = move_entry(ctx, &path.join(inner), &item.join(inner), &[]);
         }
-        return Err(e.context(not_restored(path)));
+        return Err(not_restored(path).because(e));
     }
     let info_text = read_record(info).unwrap_or_default();
     let mut folders = Vec::new();
@@ -4384,7 +4380,7 @@ impl super::Effect for RestorePart {
             Ok(moved) => moved,
             Err(e) => {
                 undo_folders(&folders);
-                return Err(e.context(not_restored(&self.path)));
+                return Err(not_restored(&self.path).because(e));
             }
         };
         if item {
@@ -4589,7 +4585,7 @@ impl super::Effect for Delete {
             return Ok(None);
         }
         let companions = ctx.companions().existing(&src);
-        remove_recursive(&src).with_context(|| {
+        remove_recursive(&src).couldnt(|| {
             Couldnt::new(
                 &src,
                 words!(
@@ -4964,7 +4960,7 @@ impl super::Effect for NewFile {
             .write(true)
             .create_new(true)
             .open(&self.path)
-            .with_context(|| {
+            .couldnt(|| {
                 Couldnt::new(
                     &self.path,
                     words!(
@@ -5021,7 +5017,7 @@ impl super::Effect for RemoveEmptyFile {
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        std::fs::remove_file(&self.path).with_context(|| not_removed(&self.path))?;
+        std::fs::remove_file(&self.path).couldnt(|| not_removed(&self.path))?;
         Ok(Some(Box::new(NewFile {
             path: self.path.clone(),
         })))
@@ -5110,7 +5106,7 @@ impl super::Effect for Link {
         }
         let src = self.entry.resolve()?;
         let link = self.target(&src);
-        sys::symlink_to(&src, &link, src.is_dir()).with_context(|| {
+        sys::symlink_to(&src, &link, src.is_dir()).couldnt(|| {
             Couldnt::new(
                 &src,
                 words!(
@@ -5170,7 +5166,7 @@ impl super::Effect for Unlink {
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        sys::remove_link(&self.path).with_context(|| not_removed(&self.path))?;
+        sys::remove_link(&self.path).couldnt(|| not_removed(&self.path))?;
         let name = file_name(&self.path);
         Ok(Some(Box::new(Link {
             entry: self.entry.clone(),

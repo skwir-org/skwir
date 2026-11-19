@@ -16,8 +16,8 @@ use anyhow::Context;
 use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::{
-    self, Cancelled, Change, EntryRef, Made, MadeItem, MadeTree, Operation, Placing, Plan,
-    StepContext, StepStatus, Tenses, Unanswered,
+    self, Cancelled, Change, CouldntExt as _, EntryRef, Made, MadeItem, MadeTree, Operation,
+    Placing, Plan, StepContext, StepStatus, Tenses, Unanswered,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
@@ -493,7 +493,7 @@ impl op::Effect for Extract {
                     }
                     None => staging
                         .place_within(&root, &target)
-                        .with_context(|| crate::not_placed(&target, &self.dest_dir)),
+                        .couldnt(|| crate::not_placed(&target, &self.dest_dir)),
                 }
             });
         // Whatever happened, the staging folder goes now, with what it
@@ -770,7 +770,7 @@ fn place_merged(
             staging
                 .place_within(&root.join(&item.from), &to)
                 .err()
-                .map(|error| anyhow::Error::from(error).context(crate::not_placed(&to, target)))
+                .map(|error| crate::not_placed(&to, target).because(error))
         };
         if let Some(error) = failed {
             // What cannot be taken back stays placed, and in `placed`:

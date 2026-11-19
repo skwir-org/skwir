@@ -27,6 +27,7 @@ use skwir_core::App;
 use skwir_core::app::NotifyLevel;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome, Topic};
+use skwir_core::op::CouldntExt as _;
 use skwir_core::op::{
     self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Tenses,
 };
@@ -715,7 +716,7 @@ impl op::Effect for ShrinkCopy {
         let kept = copied(copy.file, &staged);
         let result = kept.map_err(anyhow::Error::from).and_then(|()| {
             ctx.check_cancelled()?;
-            staging.place(&staged, &target).with_context(|| {
+            staging.place(&staged, &target).couldnt(|| {
                 skwir_core::op::Couldnt::new(
                     &target,
                     words!(

@@ -2217,7 +2217,7 @@ impl StepContext {
         &self,
         near: &[&Path],
         f: impl FnOnce(&mut super::builtin::TrashListing) -> T,
-    ) -> Result<T, trash::Error> {
+    ) -> anyhow::Result<T> {
         let mut cached = self.trash.borrow_mut();
         #[cfg(target_os = "linux")]
         {

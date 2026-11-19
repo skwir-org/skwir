@@ -31,6 +31,7 @@ use skwir_core::app::NotifyLevel;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::location::Location;
+use skwir_core::op::CouldntExt as _;
 use skwir_core::op::{
     self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Tenses,
 };
@@ -2097,7 +2098,7 @@ impl op::Effect for MakePdf {
         });
         let result = kept.and_then(|()| {
             ctx.check_cancelled()?;
-            staging.place(&made, &target).with_context(|| {
+            staging.place(&made, &target).couldnt(|| {
                 skwir_core::op::Couldnt::new(
                     &target,
                     words!(

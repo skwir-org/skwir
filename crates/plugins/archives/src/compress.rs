@@ -15,8 +15,8 @@ use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::{EntryKind, FileId};
 use skwir_core::fs::{Dir, stat, xattr};
 use skwir_core::op::{
-    self, Cancelled, Change, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Tenses,
-    Unanswered, clash,
+    self, Cancelled, Change, CouldntExt as _, EntryRef, Made, Operation, Plan, StepContext,
+    StepStatus, Tenses, Unanswered, clash,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
@@ -393,7 +393,7 @@ impl op::Effect for Compress {
         .and_then(|()| {
             staging
                 .place(&made, &target)
-                .with_context(|| crate::not_placed(&target, &self.dest_dir))
+                .couldnt(|| crate::not_placed(&target, &self.dest_dir))
         });
         // Whatever happened, the staging folder goes now, with what it
         // holds. Should it stay, a later run sweeps it.
