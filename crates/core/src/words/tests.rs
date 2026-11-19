@@ -619,6 +619,66 @@ fn words_that_are_a_name_show_their_controls() {
     assert_eq!(back.say(), named.say());
 }
 
+/// Words that name something (a plan's title) are quoted as a name is:
+/// by the sentence's language, their controls shown, isolated whole where
+/// the window draws them; as data, the words they are.
+#[test]
+fn named_words_are_quoted_as_a_name_is() {
+    const FSI: char = '\u{2068}';
+    const PDI: char = '\u{2069}';
+    let title = || crate::words!(test_named_title = "copy { $n } items", n = 3);
+    let held = |title: Words| {
+        crate::words!(
+            test_named_held = "Held by { $title } until it ends",
+            title = super::Named(title)
+        )
+    };
+    assert_eq!(
+        held(title()).english(),
+        "Held by “copy 3 items” until it ends"
+    );
+    assert_eq!(
+        held(title()).say(),
+        format!("Held by “{FSI}copy 3 items{PDI}” until it ends")
+    );
+    // An agent's title: its controls shown, never obeyed.
+    let spoof = held(Words::as_written("copy\u{202e}smeti"));
+    assert_eq!(spoof.english(), "Held by “copy⟨RLO⟩smeti” until it ends");
+    // A name inside: isolated once, whole, its own marks left out.
+    let inside = held(crate::words!(
+        test_named_inside = "copy { $name }",
+        name = Name("a.txt".into())
+    ));
+    assert_eq!(
+        inside.say(),
+        format!("Held by “{FSI}copy “a.txt”{PDI}” until it ends")
+    );
+    // Quoted by the sentence's language, the title said in it first.
+    register(
+        "words-test",
+        env!("CARGO_PKG_NAME"),
+        Catalog::new(
+            "fr",
+            "name_quote_open = «{ \"\\u202F\" }\nname_quote_close = { \"\\u202F\" }»\ntest_named_held = Retenu par { $title } jusqu’à sa fin\ntest_named_title = copier { $n } éléments\n",
+        ),
+    );
+    assert_eq!(
+        held(title()).say_in(&langs(&["fr", "en"])),
+        "Retenu par «\u{202f}copier 3 éléments\u{202f}» jusqu’à sa fin"
+    );
+    let back: Words = serde_json::from_value(held(title()).to_data()).unwrap();
+    assert_eq!(
+        back.say_in(&langs(&["fr", "en"])),
+        held(title()).say_in(&langs(&["fr", "en"]))
+    );
+    withdraw("words-test");
+    // Cut around, it leaves its quotes, as a name does.
+    assert_eq!(
+        held(title()).say_around("title"),
+        Some(("Held by “".to_owned(), "” until it ends".to_owned()))
+    );
+}
+
 #[test]
 fn a_folder_is_named_bare_its_controls_shown() {
     use super::Folder;

@@ -180,7 +180,10 @@ sentence, never a sentence assembled from pieces.
   « 42 % », a narrow no-break space).
 - **Words in words are a `Words` argument** (a plan's title in a
   toast). A message never receives another message already said as a
-  string.
+  string. Words that name something, quoted as a name is (a plan's
+  title, an action, in “…”), are a `Named`: the sentence's language's
+  quotes around them, their controls shown, isolated whole where the
+  window draws them, said in the sentence's language first.
 - **What is not Skwir's to translate** (a command line, a regular
   expression, a query, an identifier, what the system or an agent wrote)
   is `Words::as_written`, or an argument of that kind: shown as it is in
@@ -347,7 +350,7 @@ sentence, never a sentence assembled from pieces.
     refused, and says `*[other]`;
   - no id has two Englishes in one crate;
   - no English writes quotes around an argument (`“{ $path }”`): it is a
-    `Name`, a `Folder` or a `Path`, or said unquoted (`just words
+    `Name`, a `Named`, a `Folder` or a `Path`, or said unquoted (`just words
     --check`; those written before the check are listed in
     `tools/words/quoted`, which only shrinks);
   - no catalog keeps an id the code no longer says;

@@ -47,8 +47,8 @@ joins them (`{ $n }\u{a0}MB`, `{ $width }\u{a0}×\u{a0}{ $height }`); and an
 English that writes a space before a percent sign, which standard
 English writes right after its number (`{ $n }%`); and an English that
 writes quotes around an argument itself (`“{ $path }”`): a name's quotes
-are its language's (ADR-139, 5), so the argument is a `Name`, a `Folder`
-or a `Path`, or is said unquoted. Those the English quoted when this check
+are its language's (ADR-139, 5), so the argument is a `Name`, `Named`
+words, a `Folder` or a `Path`, or is said unquoted. Those the English quoted when this check
 came are listed in `tools/words/quoted`, for a sweep to take out: the list
 never grows, and a line there that quotes nothing any more is refused too.
 Messages of tests (in a tests.rs or a tests/ folder, or whose id begins
@@ -148,8 +148,8 @@ def quoted_problems(found, listed):
                 if key not in listed:
                     problems.append(
                         f"{key[0]}: `{id_}` writes quotes around `{{ ${argument} }}` itself: a name's"
-                        " quotes are its language's (ADR-139, 5): give it as a `Name` (a `Folder`,"
-                        " a `Path`), or say it unquoted"
+                        " quotes are its language's (ADR-139, 5): give it as a `Name` (`Named` words,"
+                        " a `Folder`, a `Path`), or say it unquoted"
                     )
     problems += [
         f"{shown(QUOTED)}: `{' '.join(key)}` quotes nothing any more: take its line out"

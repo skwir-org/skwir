@@ -220,7 +220,8 @@ says it is a draft (13).
        its line in `tools/words/grammar`.
    - **A path** (`Path`) is made of names: said as a folder is, unquoted,
      its controls shown, isolated from the sentence where a window draws
-     it.
+     it. Words that name something (`Named`: a plan's title, an action)
+     are quoted as a name is, by the sentence's language.
    - **A name's bidirectional controls are shown, never obeyed** (the
      user's choice). The overrides, embeddings and isolates (U+202A to
      U+202E, U+2066 to U+2069) are each drawn as a small muted tag

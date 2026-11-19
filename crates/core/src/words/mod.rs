@@ -169,6 +169,11 @@ pub enum Arg {
     Kind(&'static str),
     /// Words in words: a plan's title in a toast.
     Words(Box<Words>),
+    /// Words that name something, quoted as a name is (`Named`: a plan's
+    /// title, an action, a plugin's title in “…”): the reader's language's
+    /// quotes, their bidirectional controls shown, never obeyed, isolated
+    /// where the window draws them, said in the sentence's language first.
+    Named(Box<Words>),
     /// An error, said link by link in the reader's language (what a step
     /// could not do, then why).
     Error(Failure),
@@ -218,6 +223,16 @@ impl Name {
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         ))
+    }
+}
+
+/// Words that name something, for `Arg::Named`: quoted as a name is, by the
+/// sentence's language ("Held by “copy 3 items” until it ends").
+pub struct Named(pub Words);
+
+impl From<Named> for Arg {
+    fn from(named: Named) -> Self {
+        Arg::Named(Box::new(named.0))
     }
 }
 
@@ -1096,7 +1111,7 @@ fn nested<'a>(
 ) -> &'a [String] {
     let holds_words = matches!(
         value,
-        Arg::Words(_) | Arg::Size(_) | Arg::Error(_) | Arg::List(..)
+        Arg::Words(_) | Arg::Named(_) | Arg::Size(_) | Arg::Error(_) | Arg::List(..)
     );
     if !holds_words || marked || languages.first().is_some_and(|first| first == language) {
         return languages;
@@ -1160,6 +1175,12 @@ fn said_arg(arg: &Arg, language: &str, languages: &[String], out: &mut String) {
     match arg {
         Arg::Text(text) => out.push_str(text),
         Arg::Name(name) => quoted(language, &shown_controls(name), out),
+        Arg::Named(words) => {
+            // Said without the marks of what they hold, which their
+            // controls shown would show too: isolated once, whole.
+            let said = formats::unmarked(|| words.say_in(languages));
+            quoted(language, &shown_controls(&said), out);
+        }
         Arg::Folder(name) | Arg::Path(name) => isolated(&shown_controls(name), out),
         Arg::Keys(keys) => left_to_right(keys, out),
         Arg::Count(n) => out.push_str(&numbers::grouped(&formats::numbers(), *n)),
@@ -1299,7 +1320,7 @@ const CUT_ONE: char = '\u{F8FF}';
 /// to the sentence, as they do around a name said in it), else bare.
 fn cut_mark(arg: &Arg, mark: char) -> Arg {
     match arg {
-        Arg::Name(_) => Arg::Name(mark.to_string()),
+        Arg::Name(_) | Arg::Named(_) => Arg::Name(mark.to_string()),
         _ => Arg::Text(Cow::Owned(mark.to_string())),
     }
 }
@@ -2012,6 +2033,7 @@ pub mod data {
         match arg {
             Arg::Text(text) => json!({ "text": text }),
             Arg::Name(name) => json!({ "name": name }),
+            Arg::Named(words) => json!({ "named": of(words) }),
             Arg::Folder(folder) => json!({ "folder": folder }),
             Arg::Path(path) => json!({ "path": path }),
             Arg::Keys(keys) => json!({ "keys": keys }),
@@ -2159,6 +2181,7 @@ pub mod data {
     pub(super) enum ArgData {
         Text(String),
         Name(String),
+        Named(Data),
         Folder(String),
         Path(String),
         Keys(String),
@@ -2202,6 +2225,7 @@ pub mod data {
             match self {
                 ArgData::Text(text) => Arg::Text(text.into()),
                 ArgData::Name(name) => Arg::Name(name),
+                ArgData::Named(data) => Arg::Named(Box::new(data.into_words())),
                 ArgData::Folder(folder) => Arg::Folder(folder),
                 ArgData::Path(path) => Arg::Path(path),
                 ArgData::Keys(keys) => Arg::Keys(keys),
