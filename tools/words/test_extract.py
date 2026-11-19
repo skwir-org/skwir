@@ -14,6 +14,18 @@ import extract  # noqa: E402
 
 
 class Messages(unittest.TestCase):
+    def test_an_argument_inside_quotes_is_found_in_every_quoting(self):
+        self.assertEqual(extract.quoted_arguments("“{ $path }” could not be made"), ["path"])
+        self.assertEqual(
+            extract.quoted_arguments("“{ $scheme }:” is no protocol, nor ‘{ $other }’ or \"{ $x }\" or «{ $y }»"),
+            ["scheme", "other", "x", "y"],
+        )
+        self.assertEqual(extract.quoted_arguments("{ $file } has no “#{ $anchor }”, “{ $file }”"), ["anchor", "file"])
+        # Quotes without an argument, an argument without quotes, an
+        # apostrophe: nothing.
+        self.assertEqual(extract.quoted_arguments("the “Trash” of { $name }’s"), [])
+        self.assertEqual(extract.quoted_arguments("“{ $a }\n{ $b }”"), [], "quotes on one line")
+
     def test_a_draft_is_a_message_whose_own_comment_says_so(self):
         source = "\n".join(
             [
@@ -235,9 +247,11 @@ class Offering(unittest.TestCase):
         (self.root / "tools" / "words").mkdir(parents=True)
         self.offered = self.root / "tools" / "words" / "offered"
         self.offered.write_text("# The languages offered.\n")
+        self.quoted = self.root / "tools" / "words" / "quoted"
         for name, value in {
             "ROOT": self.root,
             "OFFERED": self.offered,
+            "QUOTED": self.quoted,
             "CATALOGS_RS": self.root / "crates" / "skwir" / "src" / "catalogs.rs",
         }.items():
             patch = mock.patch.object(extract, name, value)
@@ -382,6 +396,32 @@ class Offering(unittest.TestCase):
         code, said = self.run_tool()
         self.assertEqual(code, 1)
         self.assertIn("`fr maybe`: a line is a tag, then `draft` or nothing", said)
+
+    def test_an_english_quoting_its_argument_is_refused_unless_listed(self):
+        def write(*calls):
+            (self.core / "src" / "lib.rs").write_text("fn f() {\n" + "".join(f"{call};\n" for call in calls) + "}\n")
+
+        write('words!(gone = "“{ $path }” is gone", path = p)')
+        code, said = self.run_tool()
+        self.assertEqual(code, 1)
+        self.assertIn("crates/core: `gone` writes quotes around `{ $path }` itself", said)
+        # Listed, as those the English quoted when the check came.
+        self.quoted.write_text("# Left to convert.\ncrates/core gone path\n")
+        self.assertEqual(self.run_tool()[0], 0)
+        self.assertEqual(self.run_tool("--check"), (0, ""))
+        # Converted: its line quotes nothing, and the list only shrinks.
+        write('words!(gone = "{ $path } is gone", path = Name(p))')
+        code, said = self.run_tool("--check")
+        self.assertEqual(code, 1)
+        self.assertIn("tools/words/quoted: `crates/core gone path` quotes nothing any more", said)
+        self.quoted.write_text("# Left to convert.\n")
+        self.assertEqual(self.run_tool()[0], 0)
+        self.assertEqual(self.run_tool("--check"), (0, ""))
+        # A line that is not three words is said so.
+        self.quoted.write_text("crates/core gone\n")
+        code, said = self.run_tool("--check")
+        self.assertEqual(code, 1)
+        self.assertIn("a line is a crate's folder, an id and an argument", said)
 
     def test_the_record_names_only_languages_a_catalog_is_in(self):
         self.say(2)

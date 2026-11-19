@@ -45,9 +45,14 @@ English that parts a number from its unit, or a dimension's numbers from
 their `×`, by a plain space, where a line may break: a no-break space
 joins them (`{ $n }\u{a0}MB`, `{ $width }\u{a0}×\u{a0}{ $height }`); and an
 English that writes a space before a percent sign, which standard
-English writes right after its number (`{ $n }%`). Messages
-of tests (in a tests.rs or a tests/ folder, or whose id begins with
-`test_`) are not a crate's. Also refused: a plugin whose
+English writes right after its number (`{ $n }%`); and an English that
+writes quotes around an argument itself (`“{ $path }”`): a name's quotes
+are its language's (ADR-139, 5), so the argument is a `Name`, a `Folder`
+or a `Path`, or is said unquoted. Those the English quoted when this check
+came are listed in `tools/words/quoted`, for a sweep to take out: the list
+never grows, and a line there that quotes nothing any more is refused too.
+Messages of tests (in a tests.rs or a tests/ folder, or whose id begins
+with `test_`) are not a crate's. Also refused: a plugin whose
 `enabled_by_default` answers anything but a literal, and a record naming a
 language no catalog is in.
 """
@@ -91,6 +96,63 @@ UNIT = (
 PARTED = re.compile(rf"{NUMBER} (?:{UNIT})|\d \{{ *\$|{NUMBER} ×|× {NUMBER}")
 # A space of any kind before a percent sign: English writes `42%`.
 SPACED_PERCENT = re.compile(rf"{NUMBER}[ \u00a0\u202f]%")
+
+# The arguments an English quoted itself when the check came, each line a
+# crate's folder, a message's id and the argument: never more.
+QUOTED = ROOT / "tools" / "words" / "quoted"
+# Quotes the English writes, on one line, and an argument inside them.
+QUOTES = re.compile(r'“[^”\n]*”|‘[^’\n]*’|"[^"\n]*"|«[^»\n]*»')
+ARGUMENT = re.compile(r"\{ *\$([a-z0-9_]+) *\}")
+
+
+def quoted_arguments(english):
+    """The arguments `english` writes quotes around itself (`“{ $path }”`,
+    `“{ $scheme }:”`), each once, in the order written."""
+    found = []
+    for quoted in QUOTES.finditer(english):
+        for argument in ARGUMENT.findall(quoted.group(0)):
+            if argument not in found:
+                found.append(argument)
+    return found
+
+
+def read_quoted(path):
+    """The arguments `path` lets an English quote itself, as (crate folder,
+    id, argument); and the problems met."""
+    if not path.exists():
+        return set(), []
+    listed, problems = set(), []
+    for line in path.read_text().splitlines():
+        words = line.split()
+        if not words or words[0].startswith("#"):
+            continue
+        if len(words) != 3:
+            problems.append(f"{shown(path)}: `{line.strip()}`: a line is a crate's folder, an id and an argument")
+            continue
+        listed.add(tuple(words))
+    return listed, problems
+
+
+def quoted_problems(found, listed):
+    """Each argument an English of `found` quotes itself that `listed`
+    lets not, and each line of `listed` that quotes nothing any more."""
+    problems, seen = [], set()
+    for folder, messages in sorted(found.items()):
+        for id_, (english, _, _) in sorted(messages.items()):
+            for argument in quoted_arguments(english):
+                key = (str(shown(folder)), id_, argument)
+                seen.add(key)
+                if key not in listed:
+                    problems.append(
+                        f"{key[0]}: `{id_}` writes quotes around `{{ ${argument} }}` itself: a name's"
+                        " quotes are its language's (ADR-139, 5): give it as a `Name` (a `Folder`,"
+                        " a `Path`), or say it unquoted"
+                    )
+    problems += [
+        f"{shown(QUOTED)}: `{' '.join(key)}` quotes nothing any more: take its line out"
+        for key in sorted(listed - seen)
+    ]
+    return problems
 
 
 def string_literal(text, at):
@@ -562,6 +624,8 @@ def main():
     problems += share_problems
     record, record_problems = read_offered(OFFERED)
     problems += record_problems
+    listed, listed_problems = read_quoted(QUOTED)
+    problems += listed_problems + quoted_problems(found, listed)
     known = {share["language"] for share in language_shares}
     problems += [
         f"{shown(OFFERED)}: {tag} is no language a catalog is in" for tag in record if tag not in known

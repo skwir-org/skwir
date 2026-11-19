@@ -342,6 +342,10 @@ sentence, never a sentence assembled from pieces.
     checks cannot see an argument's type: a `GENDER` on a name is not
     refused, and says `*[other]`;
   - no id has two Englishes in one crate;
+  - no English writes quotes around an argument (`“{ $path }”`): it is a
+    `Name`, a `Folder` or a `Path`, or said unquoted (`just words
+    --check`; those written before the check are listed in
+    `tools/words/quoted`, which only shrinks);
   - no catalog keeps an id the code no longer says;
   - the languages' shares counted and the record current; for a
     release, no language offered under 75% reviewed.
