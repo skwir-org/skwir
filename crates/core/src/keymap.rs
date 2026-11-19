@@ -262,9 +262,8 @@ pub fn valid_keys(keys: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             !key.is_empty(),
             crate::words!(
-                keymap_no_key =
-                    "“{ $stroke }” names no key: write ctrl-- for Ctrl and the minus key",
-                stroke = stroke,
+                keymap_no_key = "{ $stroke } names no key: write ctrl-- for Ctrl and the minus key",
+                stroke = crate::words::Name(stroke.to_owned()),
                 note = "A shortcut refused: what was written. ctrl-- is how it is written: never translated."
             )
         );
@@ -273,9 +272,9 @@ pub fn valid_keys(keys: &str) -> anyhow::Result<()> {
                 anyhow::ensure!(
                     MODIFIERS.iter().any(|m| m.eq_ignore_ascii_case(modifier)),
                     crate::words!(
-                        keymap_no_modifier = "“{ $modifier }” in “{ $stroke }” is not a modifier: use ctrl, alt, shift or super",
-                        modifier = modifier,
-                        stroke = stroke,
+                        keymap_no_modifier = "{ $modifier } in { $stroke } is not a modifier: use ctrl, alt, shift or super",
+                        modifier = crate::words::Name(modifier.to_owned()),
+                        stroke = crate::words::Name(stroke.to_owned()),
                         note = "A shortcut refused: both as written. ctrl, alt, shift and super are written so: never translated."
                     )
                 );

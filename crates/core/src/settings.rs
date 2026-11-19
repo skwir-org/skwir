@@ -2162,8 +2162,8 @@ pub(crate) fn register(app: &crate::App) {
                         // settings file, nor is one larger than any.
                         let text = crate::fs::file::read_regular_text(path, FILE_LIMIT).map_err(|error| {
                             anyhow::Error::new(crate::words!(
-                                settings_check_unreadable = "“{ $path }” cannot be read: { $why }",
-                                path = path.display().to_string(),
+                                settings_check_unreadable = "{ $path } cannot be read: { $why }",
+                                path = crate::words::Arg::Path(path.display().to_string()),
                                 why = crate::op::io_words(&error),
                                 note = "A settings file to check: its path, then why it cannot be read."
                             ))
@@ -2171,8 +2171,8 @@ pub(crate) fn register(app: &crate::App) {
                         text.parse()
                             .map_err(|error: toml::de::Error| {
                                 anyhow::Error::new(crate::words!(
-                                    settings_check_invalid = "“{ $path }” is not valid: { $problem }",
-                                    path = path.display().to_string(),
+                                    settings_check_invalid = "{ $path } is not valid: { $problem }",
+                                    path = crate::words::Arg::Path(path.display().to_string()),
                                     problem = toml_problem(&text, &error),
                                     note = "A settings file to check that is no TOML: its path, then what is wrong and where."
                                 ))
@@ -2804,12 +2804,12 @@ impl Settings {
             Err(error) => {
                 let problem = crate::words!(
                     settings_unreadable_kept = "{ $file ->
-                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
-                       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+                        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there until { $path } is fixed or removed ({ $error }).
+                       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there until { $path } is fixed or removed ({ $error }).
                     }",
                     file = whose,
                     why = why,
-                    path = path.display().to_string(),
+                    path = crate::words::Arg::Path(path.display().to_string()),
                     error = crate::op::io_words(&error),
                     note = "Told at startup: a file of Skwir's could not be read (why) nor renamed (its path, and why not)."
                 );
@@ -3164,14 +3164,14 @@ impl Settings {
             renamed.get(key).map(|new| {
                 if Self::lookup(table, new).is_some() {
                     crate::words!(
-                        settings_renamed_both = "not read: “{ $new }” is set, which Skwir reads",
-                        new = new.as_str(),
+                        settings_renamed_both = "not read: { $new } is set, which Skwir reads",
+                        new = crate::words::Name(new.clone()),
                         note = "A settings file's key that has a new name, set too: the new key."
                     )
                 } else {
                     crate::words!(
-                        settings_renamed = "now “{ $new }”: Skwir moves it there",
-                        new = new.as_str(),
+                        settings_renamed = "now { $new }: Skwir moves it there",
+                        new = crate::words::Name(new.clone()),
                         note = "A settings file's key that has a new name: the new key."
                     )
                 }
@@ -3274,8 +3274,8 @@ impl Settings {
                                 None => (
                                     key,
                                     crate::words!(
-                                        settings_no_plugin = "no plugin “{ $id }” here: one from outside, or not built in, may take it",
-                                        id = id.as_str(),
+                                        settings_no_plugin = "no plugin { $id } here: one from outside, or not built in, may take it",
+                                        id = crate::words::Name(id.clone()),
                                         note = "A settings file names a plugin Skwir does not have: its id."
                                     ),
                                 ),
@@ -3306,8 +3306,8 @@ impl Settings {
                     checked.notes.push((
                         key.clone(),
                         crate::words!(
-                            settings_owner_unknown = "nothing here declares “{ $owner }”: a plugin turned off, or from outside, may",
-                            owner = owner_of(&key),
+                            settings_owner_unknown = "nothing here declares { $owner }: a plugin turned off, or from outside, may",
+                            owner = crate::words::Name(owner_of(&key).to_owned()),
                             note = "A settings file's key under an owner nothing here declares: the owner's id."
                         ),
                     ));
@@ -3442,22 +3442,22 @@ impl Settings {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
             Err(e) => anyhow::bail!(crate::words!(
-                settings_file_unreadable = "“{ $path }” could not be read: { $why }",
-                path = path.display().to_string(),
+                settings_file_unreadable = "{ $path } could not be read: { $why }",
+                path = crate::words::Arg::Path(path.display().to_string()),
                 why = crate::op::io_words(&e),
                 note = "A file of the settings: its path, then why it could not be read."
             )),
         };
         let text = std::str::from_utf8(&bytes).map_err(|_| {
             anyhow::Error::new(crate::words!(
-                settings_file_not_text = "“{ $path }” is not text",
-                path = path.display().to_string()
+                settings_file_not_text = "{ $path } is not text",
+                path = crate::words::Arg::Path(path.display().to_string())
             ))
         })?;
         text.parse::<toml::Table>().map_err(|e| {
             anyhow::Error::new(crate::words!(
-                settings_file_invalid = "“{ $path }” is not valid ({ $problem }): nothing is saved over it until it is fixed",
-                path = path.display().to_string(),
+                settings_file_invalid = "{ $path } is not valid ({ $problem }): nothing is saved over it until it is fixed",
+                path = crate::words::Arg::Path(path.display().to_string()),
                 problem = toml_problem(text, &e),
                 note = "A file of the settings that is no TOML (a hand edit under way): its path, and what is wrong where."
             ))

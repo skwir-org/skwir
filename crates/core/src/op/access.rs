@@ -120,8 +120,8 @@ impl Mode {
         let wrong = || {
             anyhow::Error::from(words!(
                 access_not_a_mode =
-                    "“{ $text }” is not a mode: write it as chmod does, as 644, u+x or go-w",
-                text = text,
+                    "{ $text } is not a mode: write it as chmod does, as 644, u+x or go-w",
+                text = crate::words::Name(text.to_owned()),
                 note = "Why what was typed in Properties' Access field is refused. text: what was typed."
             ))
         };
@@ -191,9 +191,10 @@ impl Mode {
                 .any(|(op, perms)| *op != '-' && perms.gives_rwx())
             {
                 anyhow::bail!(words!(
-                    access_no_class = "“{ $part }” names no class, and this system does not say what its umask leaves out, as chmod would: name the classes, as u{ $part } for the owner or a{ $part } for everyone",
-                    part = part,
-                    note = "Why a clause of a mode is refused where the system does not say its umask (macOS). part: the clause as typed (+x); u and a before it name the owner and everyone, as chmod writes them."
+                    access_no_class = "{ $part } names no class, and this system does not say what its umask leaves out, as chmod would: name the classes, as u{ $clause } for the owner or a{ $clause } for everyone",
+                    part = Name(part.to_owned()),
+                    clause = part,
+                    note = "Why a clause of a mode is refused where the system does not say its umask (macOS). part: the clause as typed (+x), quoted; clause: the same, written after u and a, which name the owner and everyone, as chmod writes them."
                 ));
             } else {
                 0
@@ -1034,8 +1035,8 @@ fn not_there(path: &Path) -> Words {
 /// What reading a folder or an item inside one failed on, by its path.
 fn unreadable(path: &Path) -> Words {
     words!(
-        access_unreadable = "“{ $path }” could not be read",
-        path = path.display().to_string(),
+        access_unreadable = "{ $path } could not be read",
+        path = crate::words::Arg::Path(path.display().to_string()),
         note = "What a change of who may use files failed on. path: where the folder or file is; why follows."
     )
 }
@@ -1482,8 +1483,8 @@ impl SetAccess {
         if let Some(Theirs(item)) = theirs {
             return conflict(&words!(
                 access_inside_not_yours =
-                    "“{ $path }” inside is not yours: only its owner can change who may use it",
-                path = item.display().to_string(),
+                    "{ $path } inside is not yours: only its owner can change who may use it",
+                path = crate::words::Arg::Path(item.display().to_string()),
                 note = "Why who may use a folder and what it holds cannot be changed: something inside belongs to someone else. path: where it is."
             ));
         }
@@ -1518,8 +1519,8 @@ struct Theirs(PathBuf);
 impl std::fmt::Display for Theirs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let words = words!(
-            access_not_yours = "“{ $path }” is not yours",
-            path = self.0.display().to_string(),
+            access_not_yours = "{ $path } is not yours",
+            path = crate::words::Arg::Path(self.0.display().to_string()),
             note = "What a dry run met inside a folder: something of someone else's. path: where it is."
         );
         std::fmt::Display::fmt(&words, f)
@@ -1562,8 +1563,8 @@ impl Visit for Changer<'_> {
         }
         let failed = || {
             words!(
-                access_not_changed = "who may use “{ $path }” could not be changed",
-                path = path.display().to_string(),
+                access_not_changed = "who may use { $path } could not be changed",
+                path = crate::words::Arg::Path(path.display().to_string()),
                 note = "What a change of who may use files failed on; why follows. path: where the file is."
             )
         };
@@ -1582,8 +1583,8 @@ impl Visit for Changer<'_> {
         if let Some(gid) = regroup {
             held.set_group(gid).with_context(|| {
                 words!(
-                    access_not_given_group = "“{ $path }” could not be given to the group { $group }",
-                    path = path.display().to_string(),
+                    access_not_given_group = "{ $path } could not be given to the group { $group }",
+                    path = crate::words::Arg::Path(path.display().to_string()),
                     group = gid.to_string(),
                     note = "What a change of a file's group failed on; why follows. path: where the file is; group: the group's number."
                 )
@@ -1719,11 +1720,11 @@ fn not_put_back(failed: Vec<(PathBuf, anyhow::Error)>) -> Option<Words> {
     let (path, error) = failed.into_iter().next()?;
     Some(words!(
         access_not_put_back = "{ $more ->
-                [0] who may use “{ $path }” could not be put back: { $error }
-               *[other] who may use “{ $path }” could not be put back (and { $more } more): { $error }
+                [0] who may use { $path } could not be put back: { $error }
+               *[other] who may use { $path } could not be put back (and { $more } more): { $error }
             }",
         more = more,
-        path = path.display().to_string(),
+        path = crate::words::Arg::Path(path.display().to_string()),
         error = error,
         note = "What putting back who may use files failed on. path: where the first file is; more: how many others could not be put back either; error: why the first could not."
     ))

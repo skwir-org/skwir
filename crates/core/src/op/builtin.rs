@@ -146,8 +146,8 @@ fn folder_not_made(path: &Path) -> Words {
 /// What a folder a step makes, at `path`, could not be, its why after it.
 fn folder_path_not_made(path: &Path) -> Words {
     words!(
-        op_folder_path_not_made = "the folder “{ $path }” could not be made",
-        path = path.display().to_string(),
+        op_folder_path_not_made = "the folder { $path } could not be made",
+        path = crate::words::Arg::Path(path.display().to_string()),
         note = "What a step could not do: make a folder, by its path; why follows."
     )
 }
@@ -1038,9 +1038,9 @@ fn move_entry(
                 remove_original(src).with_context(|| OriginalStays {
                     whole: state_of(src) == *before,
                     said: words!(
-                        op_original_stays = "{ $name } was copied whole to “{ $folder }”, but its original could not all be removed",
+                        op_original_stays = "{ $name } was copied whole to { $folder }, but its original could not all be removed",
                         name = name_of(src),
-                        folder = dest_dir.display().to_string(),
+                        folder = crate::words::Arg::Path(dest_dir.display().to_string()),
                         note = "Why a move across drives ended with its original still there: the copy is whole. folder: the path of the folder it was moved to."
                     ),
                 })?;
@@ -1098,9 +1098,9 @@ pub(super) fn changed_since(path: &Path, dest_dir: &Path) -> anyhow::Error {
     anyhow::Error::msg(OriginalStays {
         whole: true,
         said: words!(
-            op_changed_after_copy = "{ $name } changed after it was copied to “{ $folder }”: its original stays where it was",
+            op_changed_after_copy = "{ $name } changed after it was copied to { $folder }: its original stays where it was",
             name = name_of(path),
-            folder = dest_dir.display().to_string(),
+            folder = crate::words::Arg::Path(dest_dir.display().to_string()),
             note = "Why a move across drives ended with its original still there: it was changed while it was copied. folder: the path of the folder it was moved to."
         ),
     })
@@ -2246,8 +2246,8 @@ fn not_placed(target: &Path, dest_dir: &Path) -> Couldnt {
 /// (`cleanup`).
 fn part_left(path: &Path, cleanup: &std::io::Error) -> Words {
     words!(
-        op_part_left = "a part of the copy is left in “{ $path }” ({ $why })",
-        path = path.display().to_string(),
+        op_part_left = "a part of the copy is left in { $path } ({ $why })",
+        path = crate::words::Arg::Path(path.display().to_string()),
         why = super::io_words(cleanup),
         note = "Said after why a copy failed: what it had made could not all be removed. path: where it is; why: why it stayed."
     )
@@ -2918,8 +2918,8 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
             }
             Err(e) => {
                 return Err(e).context(words!(
-                    op_attributes_refused = "keep tags and other attributes while copying: check that the destination keeps extended attributes and lets you write them, or turn off “{ $setting }” in Settings",
-                    setting = crate::settings::keep_attributes_title(),
+                    op_attributes_refused = "keep tags and other attributes while copying: check that the destination keeps extended attributes and lets you write them, or turn off { $setting } in Settings",
+                    setting = crate::words::Named(crate::settings::keep_attributes_title()),
                     note = "What a copy could not do, its why after it: write a file's tags and other extended attributes where it goes. setting: the setting's title. Begins in lower case."
                 ));
             }
@@ -2937,9 +2937,9 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
     }
     if (aside.is_empty() || !own.is_empty()) && !rules.keep_attributes(dst, &own)? {
         anyhow::bail!(words!(
-            op_attributes_not_kept = "keep tags and other attributes while copying: { $folder } keeps no attributes, and nothing is set to keep them beside it; turn off “{ $setting }” in Settings to copy without them",
+            op_attributes_not_kept = "keep tags and other attributes while copying: { $folder } keeps no attributes, and nothing is set to keep them beside it; turn off { $setting } in Settings to copy without them",
             folder = dst.parent().unwrap_or(dst).display().to_string(),
-            setting = crate::settings::keep_attributes_title(),
+            setting = crate::words::Named(crate::settings::keep_attributes_title()),
             note = "Why a copy failed: the drive it goes to keeps no tags or attributes, and no companion file is set to keep them. folder: the path copied into; setting: the setting's title. Begins in lower case."
         ));
     }
@@ -3028,10 +3028,10 @@ fn remove_recursive(p: &Path) -> anyhow::Result<()> {
                 .to_string();
             error.context(words!(
                 op_left_after_removal = "{ $more ->
-                    [0] “{ $path }” is left
-                   *[other] “{ $path }” and { $more } more are left
+                    [0] { $path } is left
+                   *[other] { $path } and { $more } more are left
                 }",
-                path = shown,
+                path = crate::words::Arg::Path(shown),
                 more = count.saturating_sub(1),
                 note = "What a folder removed in part left: the first file still there (its path from the folder above) and how many more besides it."
             ))
@@ -3057,13 +3057,16 @@ fn mounted_there(path: &Path) -> Option<Words> {
         )
     } else {
         words!(
-            op_holds_mount_point = "{ $name } holds “{ $point }”, where a drive or a remote is mounted: eject it first",
+            op_holds_mount_point =
+                "{ $name } holds { $point }, where a drive or a remote is mounted: eject it first",
             name = name_of(path),
-            point = point
-                .strip_prefix(path)
-                .unwrap_or(point)
-                .display()
-                .to_string(),
+            point = crate::words::Arg::Path(
+                point
+                    .strip_prefix(path)
+                    .unwrap_or(point)
+                    .display()
+                    .to_string()
+            ),
             note = "Why a folder is not deleted or put in the trash: a drive or a server's files are shown in a folder inside it. point: that folder's path from it."
         )
     })
@@ -3365,8 +3368,8 @@ fn failed_across(error: anyhow::Error, item: &Path, info: &Path) -> anyhow::Erro
         && let Err(cleanup) = super::staging::remove_tree(item)
     {
         return error.context(words!(
-            op_trash_copy_left = "a copy of it is left in “{ $path }” ({ $why })",
-            path = item.display().to_string(),
+            op_trash_copy_left = "a copy of it is left in { $path } ({ $why })",
+            path = crate::words::Arg::Path(item.display().to_string()),
             why = super::io_words(&cleanup),
             note = "Said after why a move into the trash on another drive failed: its copy in the trash could not be removed. path: where it is; why: why it stayed."
         ));
@@ -4644,15 +4647,15 @@ impl super::Kind for Mkdir {
 fn refuse_new(path: &Path) -> Option<StepStatus> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Some(conflict(words!(
-            op_path_climbs = "“{ $path }” contains “..”",
-            path = path.display().to_string(),
+            op_path_climbs = "{ $path } contains “..”",
+            path = crate::words::Arg::Path(path.display().to_string()),
             note = "Why a new folder or file is not made: its path climbs out of the folder it is made in."
         )));
     }
     match path.file_name().map(invalid_name) {
         None => Some(conflict(words!(
-            op_path_no_name = "“{ $path }” has no name",
-            path = path.display().to_string(),
+            op_path_no_name = "{ $path } has no name",
+            path = crate::words::Arg::Path(path.display().to_string()),
             note = "Why a new folder or file is not made: its path ends without a name."
         ))),
         Some(invalid) => invalid,
@@ -4802,8 +4805,8 @@ impl RestoreDirectory {
         for attribute in &self.attributes {
             crate::fs::xattr::set(path, &attribute.name, &attribute.value).with_context(|| {
                 words!(
-                    op_folder_attribute_not_restored = "the folder's attribute “{ $attribute }” could not be restored",
-                    attribute = attribute.name.display().to_string(),
+                    op_folder_attribute_not_restored = "the folder's attribute { $attribute } could not be restored",
+                    attribute = crate::words::Name(attribute.name.display().to_string()),
                     note = "What the undo of a folder's removal could not do: give it back an extended attribute it had. attribute: the attribute's name (user.xdg.tags); why follows."
                 )
             })?;
@@ -4887,8 +4890,8 @@ impl super::Effect for RestoreDirectory {
                     error
                 } else {
                     error.context(words!(
-                        op_partly_restored_folder = "the partially restored folder remains at “{ $path }”",
-                        path = self.path.display().to_string(),
+                        op_partly_restored_folder = "the partially restored folder remains at { $path }",
+                        path = crate::words::Arg::Path(self.path.display().to_string()),
                         note = "Said after why the undo of a folder's removal failed: the folder it began to make could not be removed. path: where it is."
                     ))
                 });

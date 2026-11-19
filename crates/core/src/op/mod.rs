@@ -325,8 +325,8 @@ pub(crate) fn windows_name_problem(name: &str) -> Option<Words> {
         .find(|c| matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
     {
         return Some(words!(
-            op_name_character = "a name cannot contain “{ $character }”",
-            character = c.to_string(),
+            op_name_character = "a name cannot contain { $character }",
+            character = crate::words::Name(c.to_string()),
             note = "Why a name typed for a file is refused on Windows: it holds a character Windows keeps for itself (\\ : * ? \" < > |)."
         ));
     }

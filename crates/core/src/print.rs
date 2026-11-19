@@ -126,8 +126,8 @@ pub fn parse(text: &str) -> Result<Vec<Range>, Words> {
 /// What was typed for a page and is none, as typed.
 fn not_a_page(text: &str) -> Words {
     crate::words!(
-        print_not_a_page = "“{ $text }” is not a page",
-        text = text,
+        print_not_a_page = "{ $text } is not a page",
+        text = crate::words::Name(text.to_owned()),
         note = "Pages to print typed with something not a page number: what was typed."
     )
 }

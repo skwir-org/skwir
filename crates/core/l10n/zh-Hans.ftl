@@ -196,7 +196,7 @@ access_group_already = { $inside ->
 access_in_trash = { $name }在回收站中：请先恢复它
 
 # draft
-access_inside_not_yours = 其中的“{ $path }”不属于您：只有其所有者才能更改其使用权限
+access_inside_not_yours = 其中的{ $path }不属于您：只有其所有者才能更改其使用权限
 
 # draft
 access_mode_already = { $inside ->
@@ -208,19 +208,19 @@ access_mode_already = { $inside ->
 access_mode_comes_to = { $mode }：{ $who }
 
 # draft
-access_no_class = “{ $part }”未指定类别，而此系统不会像 chmod 那样说明其 umask 屏蔽了哪些权限：请指定类别，如 u{ $part } 表示所有者，a{ $part } 表示所有人
+access_no_class = { $part }未指定类别，而此系统不会像 chmod 那样说明其 umask 屏蔽了哪些权限：请指定类别，如 u{ $clause } 表示所有者，a{ $clause } 表示所有人
 
 # draft
-access_not_a_mode = “{ $text }”不是权限模式：请按 chmod 的写法输入，如 644、u+x 或 go-w
+access_not_a_mode = { $text }不是权限模式：请按 chmod 的写法输入，如 644、u+x 或 go-w
 
 # draft
-access_not_changed = 无法更改“{ $path }”的使用权限
+access_not_changed = 无法更改{ $path }的使用权限
 
 # draft
 access_not_given_back = 无法将其所属组恢复为 { $group }
 
 # draft
-access_not_given_group = 无法将“{ $path }”的所属组设为 { $group }
+access_not_given_group = 无法将{ $path }的所属组设为 { $group }
 
 # draft
 access_not_in_group = 您不在组 { $group } 中
@@ -233,15 +233,15 @@ access_not_owner = 只有其所有者才能更改其使用权限
 
 # draft
 access_not_put_back = { $more ->
-        [0] 无法恢复“{ $path }”的使用权限：{ $error }
-       *[other] 无法恢复“{ $path }”（及另外 { $more } 个项目）的使用权限：{ $error }
+        [0] 无法恢复{ $path }的使用权限：{ $error }
+       *[other] 无法恢复{ $path }（及另外 { $more } 个项目）的使用权限：{ $error }
     }
 
 # draft
 access_not_read_only = 非只读
 
 # draft
-access_not_yours = “{ $path }”不属于您
+access_not_yours = { $path }不属于您
 
 # draft
 access_nothing_asked = 没有要更改的内容：请提供权限模式或组
@@ -430,7 +430,7 @@ access_suid_folder_gone = 移除其 set-user-ID 位（文件夹会忽略此位�
 access_then = { $said }；{ $then }
 
 # draft
-access_unreadable = 无法读取“{ $path }”
+access_unreadable = 无法读取{ $path }
 
 # draft
 access_windows_each_stays = 各项保持原样：此处仅保留所有者的 w 位
@@ -895,7 +895,7 @@ command_nothing_selected = 未选择任何内容
 command_nothing_to_paste = 没有可粘贴的内容
 
 # draft
-command_panicked = “{ $command }”因自身故障而停止（日志中记录了位置）
+command_panicked = { $command }因自身故障而停止（日志中记录了位置）
 
 # draft
 command_unknown = 未知命令 `{ $command }`
@@ -1189,22 +1189,22 @@ exclusions_what_cache_home = 您的缓存文件夹（XDG_CACHE_HOME）
 exclusions_what_legacy = 私密（来自 0.3.1 版的列表）
 
 # draft
-exec_being_redone = “{ $title }”已在重做中
+exec_being_redone = { $title }已在重做中
 
 # draft
-exec_being_undone = “{ $title }”已在撤销中
+exec_being_undone = { $title }已在撤销中
 
 # draft
-exec_cannot_be_undone = “{ $title }”无法撤销
+exec_cannot_be_undone = { $title }无法撤销
 
 # draft
-exec_chain_cancelled = “{ $title }”已取消
+exec_chain_cancelled = { $title }已取消
 
 # draft
-exec_chain_did_not_run = “{ $title }”未运行
+exec_chain_did_not_run = { $title }未运行
 
 # draft
-exec_chain_stopped = “{ $title }”已停止：{ $error }
+exec_chain_stopped = { $title }已停止：{ $error }
 
 # draft
 exec_gone_from_history_redo = 该操作已不在历史记录中：没有可重做的内容
@@ -1213,10 +1213,10 @@ exec_gone_from_history_redo = 该操作已不在历史记录中：没有可重�
 exec_gone_from_history_undo = 该操作已不在历史记录中：没有可撤销的内容
 
 # draft
-exec_not_undone = “{ $title }”未撤销：{ $why }
+exec_not_undone = { $title }未撤销：{ $why }
 
 # draft
-exec_not_undone_nothing = “{ $title }”未被撤销：没有可重做的内容
+exec_not_undone_nothing = { $title }未被撤销：没有可重做的内容
 
 # draft
 exec_nothing_to_redo = 没有可重做的内容
@@ -1228,10 +1228,10 @@ exec_nothing_to_undo = 没有可撤销的内容
 exec_redo = 重做
 
 # draft
-exec_redo_held = 无法单独重做“{ $title }”：在它之后撤销的“{ $other }”触及了它所做的更改；请先重做后者
+exec_redo_held = 无法单独重做{ $title }：在它之后撤销的{ $other }触及了它所做的更改；请先重做后者
 
 # draft
-exec_redo_held_for_good = 无法重做“{ $title }”：在它之后撤销的“{ $other }”触及了它所做的更改，且其本身无法重做
+exec_redo_held_for_good = 无法重做{ $title }：在它之后撤销的{ $other }触及了它所做的更改，且其本身无法重做
 
 # draft
 exec_that_not_undone = 该操作未撤销：{ $why }
@@ -1240,19 +1240,19 @@ exec_that_not_undone = 该操作未撤销：{ $why }
 exec_undo = 撤销
 
 # draft
-exec_undo_held = 无法单独撤销“{ $title }”：在它之后请求的“{ $other }”触及了它所做的更改；请先撤销后者
+exec_undo_held = 无法单独撤销{ $title }：在它之后请求的{ $other }触及了它所做的更改；请先撤销后者
 
 # draft
-exec_undo_held_for_good = 无法撤销“{ $title }”：在它之后请求的“{ $other }”触及了它所做的更改，且其本身无法撤销
+exec_undo_held_for_good = 无法撤销{ $title }：在它之后请求的{ $other }触及了它所做的更改，且其本身无法撤销
 
 # draft
-exec_undo_held_running = 无法单独撤销“{ $title }”：在它之后请求、正在运行的“{ $other }”正在更改它所做的内容；请先撤销后者
+exec_undo_held_running = 无法单独撤销{ $title }：在它之后请求、正在运行的{ $other }正在更改它所做的内容；请先撤销后者
 
 # draft
-exec_undo_held_waiting = 无法单独撤销“{ $title }”：在它之后请求、正在等待运行的“{ $other }”将会更改它所做的内容；请先撤销后者
+exec_undo_held_waiting = 无法单独撤销{ $title }：在它之后请求、正在等待运行的{ $other }将会更改它所做的内容；请先撤销后者
 
 # draft
-exec_undone_already = “{ $title }”已撤销
+exec_undone_already = { $title }已撤销
 
 # draft
 folders_not_private = { $path } 并非仅归该用户所有
@@ -1420,10 +1420,10 @@ keymap_keys_description = 一个键加上其修饰键，或依次按下的多个
 keymap_needs_keys = 快捷键需要指定按键
 
 # draft
-keymap_no_key = “{ $stroke }”不是任何按键：Ctrl 加减号键应写作 ctrl--
+keymap_no_key = { $stroke }不是任何按键：Ctrl 加减号键应写作 ctrl--
 
 # draft
-keymap_no_modifier = “{ $stroke }”中的“{ $modifier }”不是修饰键：请使用 ctrl、alt、shift 或 super
+keymap_no_modifier = { $stroke }中的{ $modifier }不是修饰键：请使用 ctrl、alt、shift 或 super
 
 # draft
 keymap_refused = { $keys }：{ $error }
@@ -1648,10 +1648,10 @@ op_already_there = { $name }已在该处
 op_attribute_name_not_utf8 = { $name }的某个属性名称不是 UTF-8，复制所用的属性接口无法保留它
 
 # draft
-op_attributes_not_kept = 复制时无法保留标签和其他属性：{ $folder } 不保存属性，也未设置在其旁边保存属性；若要不带属性复制，请在“设置”中关闭“{ $setting }”
+op_attributes_not_kept = 复制时无法保留标签和其他属性：{ $folder } 不保存属性，也未设置在其旁边保存属性；若要不带属性复制，请在“设置”中关闭{ $setting }
 
 # draft
-op_attributes_refused = 复制时无法保留标签和其他属性：请检查目标位置是否保存扩展属性并允许您写入，或在“设置”中关闭“{ $setting }”
+op_attributes_refused = 复制时无法保留标签和其他属性：请检查目标位置是否保存扩展属性并允许您写入，或在“设置”中关闭{ $setting }
 
 # draft
 op_attributes_unread = 无法读取{ $name }的标签和属性
@@ -1663,10 +1663,10 @@ op_batch_cancelled = 已取消
 op_batch_copying = { $transfer } 正在复制 { $count } 个项目
 
 # draft
-op_batch_link = “{ $path }”是链接
+op_batch_link = { $path }是链接
 
 # draft
-op_batch_read_short = “{ $path }”：只读取了 { $bytes } 字节中的 { $read } 字节
+op_batch_read_short = { $path }：只读取了 { $bytes } 字节中的 { $read } 字节
 
 # draft
 op_change_copy = 复制 { $from } -> { $to }
@@ -1705,7 +1705,7 @@ op_change_swap = 交换 { $a } <-> { $b }
 op_change_trash = 移到回收站 { $path }
 
 # draft
-op_changed_after_copy = { $name }在复制到“{ $folder }”后发生了更改：其原件留在原处
+op_changed_after_copy = { $name }在复制到{ $folder }后发生了更改：其原件留在原处
 
 # draft
 op_copied_into_itself = 文件夹不能复制到其自身中
@@ -1735,7 +1735,7 @@ op_entry_gone = { $name }已不存在
 op_entry_replaced = { $name }现在是另一个文件
 
 # draft
-op_folder_attribute_not_restored = 无法恢复文件夹的属性“{ $attribute }”
+op_folder_attribute_not_restored = 无法恢复文件夹的属性{ $attribute }
 
 # draft
 op_folder_attributes_differ = { $name }已存在，但文件夹属性不同
@@ -1747,13 +1747,13 @@ op_folder_not_made = 无法创建文件夹{ $name }
 op_folder_not_removed = 无法移除文件夹{ $name }
 
 # draft
-op_folder_path_not_made = 无法创建文件夹“{ $path }”
+op_folder_path_not_made = 无法创建文件夹{ $path }
 
 # draft
 op_foreign_folder = 此文件夹属于其他用户，其权限会使“撤销”无法恢复其中的内容
 
 # draft
-op_holds_mount_point = { $name }中含有“{ $point }”，那里挂载着驱动器或远程位置：请先弹出它
+op_holds_mount_point = { $name }中含有{ $point }，那里挂载着驱动器或远程位置：请先弹出它
 
 # draft
 op_holes_not_yet = { $system } 上尚不支持复制含空洞的文件（稀疏文件）
@@ -1769,8 +1769,8 @@ op_in_trash_restore_first = { $name }在回收站中：请先恢复它
 
 # draft
 op_left_after_removal = { $more ->
-        [0] 还剩下“{ $path }”
-       *[other] 还剩下“{ $path }”及另外 { $more } 个项目
+        [0] 还剩下{ $path }
+       *[other] 还剩下{ $path }及另外 { $more } 个项目
     }
 
 # draft
@@ -1816,7 +1816,7 @@ op_moved_stays = 已移动的内容仍留在原处
 op_moves_nothing = 此设备（相机）无法在其文件夹之间移动文件：只能在其中创建副本
 
 # draft
-op_name_character = 名称不能包含“{ $character }”
+op_name_character = 名称不能包含{ $character }
 
 # draft
 op_name_control = 名称不能包含控制字符
@@ -1927,28 +1927,28 @@ op_not_trashed = 无法将{ $name }移到回收站
 op_not_written_out = 无法将副本写入驱动器
 
 # draft
-op_original_stays = { $name }已完整复制到“{ $folder }”，但其原件未能全部移除
+op_original_stays = { $name }已完整复制到{ $folder }，但其原件未能全部移除
 
 # draft
-op_original_stays_path = “{ $path }”已完整复制到“{ $folder }”，但其原件未能全部移除
+op_original_stays_path = { $path }已完整复制到{ $folder }，但其原件未能全部移除
 
 # draft
 op_panicked = 它意外失败了
 
 # draft
-op_part_left = 副本的一部分留在了“{ $path }”中（{ $why }）
+op_part_left = 副本的一部分留在了{ $path }中（{ $why }）
 
 # draft
-op_partly_restored_folder = 部分恢复的文件夹仍在“{ $path }”
+op_partly_restored_folder = 部分恢复的文件夹仍在{ $path }
 
 # draft
-op_path_climbs = “{ $path }”包含“..”
+op_path_climbs = { $path }包含“..”
 
 # draft
 op_path_missing = { $path } 不存在
 
 # draft
-op_path_no_name = “{ $path }”没有名称
+op_path_no_name = { $path }没有名称
 
 # draft
 op_pipe_not_made = 无法创建管道{ $name }
@@ -2002,10 +2002,10 @@ op_there_by_earlier_step = { $name }已在该处，由之前的步骤放置
 op_there_not_a_folder = { $name }已在该处，且不是文件夹
 
 # draft
-op_time_not_given = 无法为“{ $path }”设置时间
+op_time_not_given = 无法为{ $path }设置时间
 
 # draft
-op_trash_copy_left = 它的一个副本留在了“{ $path }”中（{ $why }）
+op_trash_copy_left = 它的一个副本留在了{ $path }中（{ $why }）
 
 # draft
 op_trash_copy_not_removed = 无法完全移除回收站中{ $name }的副本
@@ -2122,7 +2122,7 @@ preview_changed = { $path } 在显示时被更改
 print_no_page = 未指定页码
 
 # draft
-print_not_a_page = “{ $text }”不是页码
+print_not_a_page = { $text }不是页码
 
 # draft
 print_pages_backwards = { $range } 的顺序颠倒了
@@ -2293,7 +2293,7 @@ settings_check = 检查设置
 settings_check_description = 将设置文件或以表形式给出的设置与此版本 Skwir 声明的设置进行核对：若有错误（设置不接受的值、没有对应设置的键）则失败并说明问题，并注明其不认识的所有者的键
 
 # draft
-settings_check_invalid = “{ $path }”无效：{ $problem }
+settings_check_invalid = { $path }无效：{ $problem }
 
 # draft
 settings_check_not_settings = 不是设置：{ $error }
@@ -2302,7 +2302,7 @@ settings_check_not_settings = 不是设置：{ $error }
 settings_check_one = 请提供文件或设置，两者之一
 
 # draft
-settings_check_unreadable = 无法读取“{ $path }”：{ $why }
+settings_check_unreadable = 无法读取{ $path }：{ $why }
 
 # draft
 settings_choice_now = { $choice }（{ $now }）
@@ -2402,13 +2402,13 @@ settings_field_value_needs_name = { $title }：值需要有名称
 settings_field_whole_number = { $title }应为整数
 
 # draft
-settings_file_invalid = “{ $path }”无效（{ $problem }）：修复之前不会保存任何内容覆盖它
+settings_file_invalid = { $path }无效（{ $problem }）：修复之前不会保存任何内容覆盖它
 
 # draft
-settings_file_not_text = “{ $path }”不是文本
+settings_file_not_text = { $path }不是文本
 
 # draft
-settings_file_unreadable = 无法读取“{ $path }”：{ $why }
+settings_file_unreadable = 无法读取{ $path }：{ $why }
 
 # draft
 settings_folders_first = 文件夹优先
@@ -2468,7 +2468,7 @@ settings_last_location = 窗口上次关闭时显示的文件夹
 settings_managed = { $key } 由其所属的命令管理
 
 # draft
-settings_no_plugin = 此处没有插件“{ $id }”：可能由外部插件或未内置的插件使用
+settings_no_plugin = 此处没有插件{ $id }：可能由外部插件或未内置的插件使用
 
 # draft
 settings_no_such = 没有这个设置
@@ -2483,7 +2483,7 @@ settings_not_text = 它不是文本
 settings_other_choice = 不是 Skwir 在此处已知的选项：可能属于 { $which }
 
 # draft
-settings_owner_unknown = 此处没有任何内容声明“{ $owner }”：可能是已关闭的插件或外部插件
+settings_owner_unknown = 此处没有任何内容声明{ $owner }：可能是已关闭的插件或外部插件
 
 # draft
 settings_parent_not_table = { $key }：上级不是表
@@ -2523,10 +2523,10 @@ settings_record_needs_id = 每条记录都需要一个 ID
 settings_records_share_id = 两条记录使用了相同的 ID { $id }
 
 # draft
-settings_renamed = 现为“{ $new }”：Skwir 会将其移到那里
+settings_renamed = 现为{ $new }：Skwir 会将其移到那里
 
 # draft
-settings_renamed_both = 未读取：已设置“{ $new }”，Skwir 读取的是它
+settings_renamed_both = 未读取：已设置{ $new }，Skwir 读取的是它
 
 # draft
 settings_save_did_not_run = 设置保存未运行
@@ -2692,8 +2692,8 @@ settings_unknown = 未知设置：{ $key }
 
 # draft
 settings_unreadable_kept = { $file ->
-        [data] 无法读取您已保存的搜索、固定的标签和标签颜色（{ $why }），因此 Skwir 启动时未加载它们；在修复或删除“{ $path }”之前，不会向其中保存任何内容（{ $error }）。
-       *[settings] 无法读取您的设置（{ $why }），因此 Skwir 以默认设置启动；在修复或删除“{ $path }”之前，不会向其中保存任何内容（{ $error }）。
+        [data] 无法读取您已保存的搜索、固定的标签和标签颜色（{ $why }），因此 Skwir 启动时未加载它们；在修复或删除{ $path }之前，不会向其中保存任何内容（{ $error }）。
+       *[settings] 无法读取您的设置（{ $why }），因此 Skwir 以默认设置启动；在修复或删除{ $path }之前，不会向其中保存任何内容（{ $error }）。
     }
 
 # draft
@@ -3027,7 +3027,7 @@ tabs_close_window = 关闭窗口
 tabs_close_window_description = 关闭一个窗口（默认为活动窗口）及其标签页，“重新打开关闭的标签页”可将其恢复；最后一个窗口只能通过其自身的关闭按钮或“退出”关闭
 
 # draft
-tabs_closed = 已关闭标签页“{ $title }”
+tabs_closed = 已关闭标签页{ $title }
 
 # draft
 tabs_closed_undo = 撤销

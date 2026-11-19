@@ -1305,27 +1305,27 @@ fn held_back(direction: Direction, title: &Words, other: &Words, for_good: bool)
     let (title, other) = (title.clone(), other.clone());
     match (direction, for_good) {
         (Direction::Undo, true) => words!(
-            exec_undo_held_for_good = "“{ $title }” cannot be undone: “{ $other }”, asked after it, touched what it did and cannot be undone",
-            title = title,
-            other = other,
+            exec_undo_held_for_good = "{ $title } cannot be undone: { $other }, asked after it, touched what it did and cannot be undone",
+            title = crate::words::Named(title),
+            other = crate::words::Named(other),
             note = "Why an action cannot be undone: another action, asked after it, changed the same files and cannot be undone itself. title, other: the two actions' titles."
         ),
         (Direction::Undo, false) => words!(
-            exec_undo_held = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it, touched what it did; undo that first",
-            title = title,
-            other = other,
+            exec_undo_held = "{ $title } cannot be undone alone: { $other }, asked after it, touched what it did; undo that first",
+            title = crate::words::Named(title),
+            other = crate::words::Named(other),
             note = "Why an action cannot be undone by itself: another action, asked after it, changed the same files. title, other: the two actions' titles."
         ),
         (Direction::Redo, true) => words!(
-            exec_redo_held_for_good = "“{ $title }” cannot be redone: “{ $other }”, undone after it, touched what it did and cannot be redone",
-            title = title,
-            other = other,
+            exec_redo_held_for_good = "{ $title } cannot be redone: { $other }, undone after it, touched what it did and cannot be redone",
+            title = crate::words::Named(title),
+            other = crate::words::Named(other),
             note = "Why an undone action cannot be redone: another action, undone after it, changed the same files and cannot be redone itself. title, other: the two actions' titles."
         ),
         (Direction::Redo, false) => words!(
-            exec_redo_held = "“{ $title }” cannot be redone alone: “{ $other }”, undone after it, touched what it did; redo that first",
-            title = title,
-            other = other,
+            exec_redo_held = "{ $title } cannot be redone alone: { $other }, undone after it, touched what it did; redo that first",
+            title = crate::words::Named(title),
+            other = crate::words::Named(other),
             note = "Why an undone action cannot be redone by itself: another action, undone after it, changed the same files. title, other: the two actions' titles."
         ),
     }
@@ -3543,8 +3543,8 @@ impl Executor {
             let title = entry.map(|e| e.title.clone());
             let reason = match &title {
                 Some(title) => crate::words!(
-                    exec_not_undone = "“{ $title }” was not undone: { $why }",
-                    title = title.clone(),
+                    exec_not_undone = "{ $title } was not undone: { $why }",
+                    title = crate::words::Named(title.clone()),
                     why = why,
                     note = "Why an action of a chain of undos was left: an undo before it stopped. title: the action's title; why: what stopped."
                 ),
@@ -3611,13 +3611,13 @@ impl Executor {
                     let title = found.title.clone();
                     let reason = match direction {
                         Direction::Undo => crate::words!(
-                            exec_undone_already = "“{ $title }” is undone already",
-                            title = title,
+                            exec_undone_already = "{ $title } is undone already",
+                            title = crate::words::Named(title),
                             note = "Why an undo asked of an action does nothing: it was undone before. title: the action's title."
                         ),
                         Direction::Redo => crate::words!(
-                            exec_not_undone_nothing = "“{ $title }” is not undone: nothing to redo",
-                            title = title,
+                            exec_not_undone_nothing = "{ $title } is not undone: nothing to redo",
+                            title = crate::words::Named(title),
                             note = "Why a redo asked of an action does nothing: it is not undone. title: the action's title."
                         ),
                     };
@@ -3644,13 +3644,13 @@ impl Executor {
         if lane.targeted.contains(&(direction, entry.stacked)) {
             return refused(match direction {
                 Direction::Undo => crate::words!(
-                    exec_being_undone = "“{ $title }” is being undone already",
-                    title = entry.title.clone(),
+                    exec_being_undone = "{ $title } is being undone already",
+                    title = crate::words::Named(entry.title.clone()),
                     note = "Why an undo asked of an action waits for nothing: an undo of it already runs or waits. title: the action's title."
                 ),
                 Direction::Redo => crate::words!(
-                    exec_being_redone = "“{ $title }” is being redone already",
-                    title = entry.title.clone(),
+                    exec_being_redone = "{ $title } is being redone already",
+                    title = crate::words::Named(entry.title.clone()),
                     note = "Why a redo asked of an action waits for nothing: a redo of it already runs or waits. title: the action's title."
                 ),
             });
@@ -3701,16 +3701,16 @@ impl Executor {
             if let Some((other, running)) = under_way {
                 return refused(if running {
                     crate::words!(
-                        exec_undo_held_running = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it and running now, is changing what it did; undo that first",
-                        title = entry.title.clone(),
-                        other = other.clone(),
+                        exec_undo_held_running = "{ $title } cannot be undone alone: { $other }, asked after it and running now, is changing what it did; undo that first",
+                        title = crate::words::Named(entry.title.clone()),
+                        other = crate::words::Named(other.clone()),
                         note = "Why an action cannot be undone by itself: another action, asked after it and running now, changed the same files. title, other: the two actions' titles."
                     )
                 } else {
                     crate::words!(
-                        exec_undo_held_waiting = "“{ $title }” cannot be undone alone: “{ $other }”, asked after it and waiting to run, will change what it did; undo that first",
-                        title = entry.title.clone(),
-                        other = other.clone(),
+                        exec_undo_held_waiting = "{ $title } cannot be undone alone: { $other }, asked after it and waiting to run, will change what it did; undo that first",
+                        title = crate::words::Named(entry.title.clone()),
+                        other = crate::words::Named(other.clone()),
                         note = "Why an action cannot be undone by itself: another action, asked after it and waiting to run, will change the same files. title, other: the two actions' titles."
                     )
                 });
@@ -3861,19 +3861,19 @@ impl Executor {
         if let Some((chain, named)) = chain {
             let why = match &result {
                 None => Some(crate::words!(
-                    exec_chain_did_not_run = "“{ $title }” did not run",
-                    title = named,
+                    exec_chain_did_not_run = "{ $title } did not run",
+                    title = crate::words::Named(named),
                     note = "Why Undo with what came after it stopped: one of its undos did not run. title: what that undo is called (undo, then the action)."
                 )),
                 Some(r) if r.cancelled => Some(crate::words!(
-                    exec_chain_cancelled = "“{ $title }” was cancelled",
-                    title = named,
+                    exec_chain_cancelled = "{ $title } was cancelled",
+                    title = crate::words::Named(named),
                     note = "Why Undo with what came after it stopped: one of its undos was cancelled. title: what that undo is called (undo, then the action)."
                 )),
                 Some(r) => r.error.as_ref().map(|error| {
                     crate::words!(
-                        exec_chain_stopped = "“{ $title }” stopped: { $error }",
-                        title = named,
+                        exec_chain_stopped = "{ $title } stopped: { $error }",
+                        title = crate::words::Named(named),
                         error = error.clone(),
                         note = "Why Undo with what came after it stopped: one of its undos stopped. title: what that undo is called (undo, then the action); error: why it stopped."
                     )
@@ -4420,8 +4420,8 @@ impl Executor {
                     Direction::Redo => entry.title.clone(),
                 };
                 let error = crate::words!(
-                    exec_cannot_be_undone = "“{ $title }” cannot be undone",
-                    title = entry.title.clone(),
+                    exec_cannot_be_undone = "{ $title } cannot be undone",
+                    title = crate::words::Named(entry.title.clone()),
                     note = "Why an undo did nothing: nothing the action did can be taken back (a file deleted for good). title: the action's title."
                 );
                 self.told(seq);

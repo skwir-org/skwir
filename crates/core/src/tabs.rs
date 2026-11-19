@@ -1552,8 +1552,8 @@ pub(crate) fn register(app: &App) {
                 app.notify_with_action(
                     NotifyLevel::Done,
                     crate::words!(
-                        tabs_closed = "Closed tab “{ $title }”",
-                        title = title,
+                        tabs_closed = "Closed tab { $title }",
+                        title = crate::words::Named(title),
                         note = "A notification once a tab is closed, with an Undo button: the tab's title."
                     ),
                     crate::words!(

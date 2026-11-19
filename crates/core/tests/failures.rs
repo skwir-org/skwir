@@ -272,9 +272,9 @@ fn move_with_unremovable_source(notes_first: bool) {
         files.len()
     );
     assert!(
-        files.iter().any(|(path, _)| {
-            error.contains(&format!("“project/{}” {suffix}", path.display()))
-        }),
+        files
+            .iter()
+            .any(|(path, _)| { error.contains(&format!("project/{} {suffix}", path.display())) }),
         "names and counts the actual files left: {error}"
     );
 }
@@ -302,7 +302,7 @@ fn a_folder_deleted_in_part_says_what_is_left() {
     let r = app.executor.execute_blocking(&plan, app.lifetime());
     let error = r.error.expect("refused").english();
     assert!(
-        error.contains("“old” could not all be deleted: “old/kept/data.txt” is left"),
+        error.contains("“old” could not all be deleted: old/kept/data.txt is left"),
         "{error}"
     );
     assert!(src.join("kept/data.txt").exists());

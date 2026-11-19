@@ -196,7 +196,7 @@ access_group_already = { $inside ->
 access_in_trash = { $name } est dans la corbeille : restaurez-le d’abord
 
 # draft
-access_inside_not_yours = « { $path } », à l’intérieur, ne vous appartient pas : seul son propriétaire peut modifier ses droits d’accès
+access_inside_not_yours = { $path }, à l’intérieur, ne vous appartient pas : seul son propriétaire peut modifier ses droits d’accès
 
 # draft
 access_mode_already = { $inside ->
@@ -208,19 +208,19 @@ access_mode_already = { $inside ->
 access_mode_comes_to = { $mode } : { $who }
 
 # draft
-access_no_class = « { $part } » ne nomme aucune classe, et ce système ne dit pas ce que son umask retire, comme chmod le ferait : nommez les classes, par exemple u{ $part } pour le propriétaire ou a{ $part } pour tout le monde
+access_no_class = { $part } ne nomme aucune classe, et ce système ne dit pas ce que son umask retire, comme chmod le ferait : nommez les classes, par exemple u{ $clause } pour le propriétaire ou a{ $clause } pour tout le monde
 
 # draft
-access_not_a_mode = « { $text } » n’est pas un mode : écrivez-le comme chmod, par exemple 644, u+x ou go-w
+access_not_a_mode = { $text } n’est pas un mode : écrivez-le comme chmod, par exemple 644, u+x ou go-w
 
 # draft
-access_not_changed = les droits d’accès de « { $path } » n’ont pas pu être modifiés
+access_not_changed = les droits d’accès de { $path } n’ont pas pu être modifiés
 
 # draft
 access_not_given_back = il n’a pas pu être rendu au groupe { $group }
 
 # draft
-access_not_given_group = « { $path } » n’a pas pu être attribué au groupe { $group }
+access_not_given_group = { $path } n’a pas pu être attribué au groupe { $group }
 
 # draft
 access_not_in_group = vous n’êtes pas dans le groupe { $group }
@@ -233,16 +233,16 @@ access_not_owner = seul son propriétaire peut modifier ses droits d’accès
 
 # draft
 access_not_put_back = { $more ->
-        [0] les droits d’accès de « { $path } » n’ont pas pu être rétablis : { $error }
-        [one] les droits d’accès de « { $path } » n’ont pas pu être rétablis (ni ceux de { $more } autre élément) : { $error }
-       *[other] les droits d’accès de « { $path } » n’ont pas pu être rétablis (ni ceux de { $more } autres éléments) : { $error }
+        [0] les droits d’accès de { $path } n’ont pas pu être rétablis : { $error }
+        [one] les droits d’accès de { $path } n’ont pas pu être rétablis (ni ceux de { $more } autre élément) : { $error }
+       *[other] les droits d’accès de { $path } n’ont pas pu être rétablis (ni ceux de { $more } autres éléments) : { $error }
     }
 
 # draft
 access_not_read_only = Pas en lecture seule
 
 # draft
-access_not_yours = « { $path } » ne vous appartient pas
+access_not_yours = { $path } ne vous appartient pas
 
 # draft
 access_nothing_asked = rien à modifier : donnez un mode ou un groupe
@@ -434,7 +434,7 @@ access_suid_folder_gone = son bit set-user-ID, qu’un dossier ignore, est retir
 access_then = { $said } ; { $then }
 
 # draft
-access_unreadable = « { $path } » n’a pas pu être lu
+access_unreadable = { $path } n’a pas pu être lu
 
 # draft
 access_windows_each_stays = Chacun reste tel quel : seul le w du propriétaire est conservé ici
@@ -902,7 +902,7 @@ command_nothing_selected = rien n’est sélectionné
 command_nothing_to_paste = rien à coller
 
 # draft
-command_panicked = la commande « { $command } » s’est arrêtée sur une erreur qui lui est propre (le journal dit où)
+command_panicked = la commande { $command } s’est arrêtée sur une erreur qui lui est propre (le journal dit où)
 
 # draft
 command_unknown = commande inconnue `{ $command }`
@@ -1200,22 +1200,22 @@ exclusions_what_cache_home = Votre dossier de cache (XDG_CACHE_HOME)
 exclusions_what_legacy = Privé (de la liste de la version 0.3.1)
 
 # draft
-exec_being_redone = « { $title } » est déjà en cours de rétablissement
+exec_being_redone = { $title } est déjà en cours de rétablissement
 
 # draft
-exec_being_undone = « { $title } » est déjà en cours d’annulation
+exec_being_undone = { $title } est déjà en cours d’annulation
 
 # draft
-exec_cannot_be_undone = « { $title } » ne peut pas être annulé
+exec_cannot_be_undone = { $title } ne peut pas être annulé
 
 # draft
-exec_chain_cancelled = « { $title } » a été abandonné
+exec_chain_cancelled = { $title } a été abandonné
 
 # draft
-exec_chain_did_not_run = « { $title } » ne s’est pas exécuté
+exec_chain_did_not_run = { $title } ne s’est pas exécuté
 
 # draft
-exec_chain_stopped = « { $title } » s’est arrêté : { $error }
+exec_chain_stopped = { $title } s’est arrêté : { $error }
 
 # draft
 exec_gone_from_history_redo = cette action n’est plus dans l’historique : rien à rétablir
@@ -1224,10 +1224,10 @@ exec_gone_from_history_redo = cette action n’est plus dans l’historique : r
 exec_gone_from_history_undo = cette action n’est plus dans l’historique : rien à annuler
 
 # draft
-exec_not_undone = « { $title } » n’a pas été annulé : { $why }
+exec_not_undone = { $title } n’a pas été annulé : { $why }
 
 # draft
-exec_not_undone_nothing = « { $title } » n’est pas annulé : rien à rétablir
+exec_not_undone_nothing = { $title } n’est pas annulé : rien à rétablir
 
 # draft
 exec_nothing_to_redo = rien à rétablir
@@ -1239,10 +1239,10 @@ exec_nothing_to_undo = rien à annuler
 exec_redo = rétablir
 
 # draft
-exec_redo_held = « { $title } » ne peut pas être rétabli seul : « { $other } », annulé après, a touché à ce qu’il a fait ; rétablissez-le d’abord
+exec_redo_held = { $title } ne peut pas être rétabli seul : { $other }, annulé après, a touché à ce qu’il a fait ; rétablissez-le d’abord
 
 # draft
-exec_redo_held_for_good = « { $title } » ne peut pas être rétabli : « { $other } », annulé après, a touché à ce qu’il a fait et ne peut pas être rétabli
+exec_redo_held_for_good = { $title } ne peut pas être rétabli : { $other }, annulé après, a touché à ce qu’il a fait et ne peut pas être rétabli
 
 # draft
 exec_that_not_undone = cette action n’a pas été annulée : { $why }
@@ -1251,19 +1251,19 @@ exec_that_not_undone = cette action n’a pas été annulée : { $why }
 exec_undo = annuler
 
 # draft
-exec_undo_held = « { $title } » ne peut pas être annulé seul : « { $other } », demandé après, a touché à ce qu’il a fait ; annulez-le d’abord
+exec_undo_held = { $title } ne peut pas être annulé seul : { $other }, demandé après, a touché à ce qu’il a fait ; annulez-le d’abord
 
 # draft
-exec_undo_held_for_good = « { $title } » ne peut pas être annulé : « { $other } », demandé après, a touché à ce qu’il a fait et ne peut pas être annulé
+exec_undo_held_for_good = { $title } ne peut pas être annulé : { $other }, demandé après, a touché à ce qu’il a fait et ne peut pas être annulé
 
 # draft
-exec_undo_held_running = « { $title } » ne peut pas être annulé seul : « { $other } », demandé après et en cours, modifie ce qu’il a fait ; annulez-le d’abord
+exec_undo_held_running = { $title } ne peut pas être annulé seul : { $other }, demandé après et en cours, modifie ce qu’il a fait ; annulez-le d’abord
 
 # draft
-exec_undo_held_waiting = « { $title } » ne peut pas être annulé seul : « { $other } », demandé après et en attente, modifiera ce qu’il a fait ; annulez-le d’abord
+exec_undo_held_waiting = { $title } ne peut pas être annulé seul : { $other }, demandé après et en attente, modifiera ce qu’il a fait ; annulez-le d’abord
 
 # draft
-exec_undone_already = « { $title } » est déjà annulé
+exec_undone_already = { $title } est déjà annulé
 
 # draft
 folders_not_private = { $path } n’appartient pas qu’à vous
@@ -1437,10 +1437,10 @@ keymap_keys_description = Une touche avec ses modificateurs, ou plusieurs l’un
 keymap_needs_keys = un raccourci a besoin de ses touches
 
 # draft
-keymap_no_key = « { $stroke } » ne désigne aucune touche : écrivez ctrl-- pour Ctrl et la touche moins
+keymap_no_key = { $stroke } ne désigne aucune touche : écrivez ctrl-- pour Ctrl et la touche moins
 
 # draft
-keymap_no_modifier = « { $modifier } » dans « { $stroke } » n’est pas un modificateur : utilisez ctrl, alt, shift ou super
+keymap_no_modifier = { $modifier } dans { $stroke } n’est pas un modificateur : utilisez ctrl, alt, shift ou super
 
 # draft
 keymap_refused = { $keys } : { $error }
@@ -1681,10 +1681,10 @@ op_already_there = { $name } est déjà là
 op_attribute_name_not_utf8 = un attribut de { $name } a un nom qui n’est pas en UTF-8, que l’interface d’attributs de la copie ne peut pas conserver
 
 # draft
-op_attributes_not_kept = conserver les étiquettes et autres attributs lors de la copie : { $folder } ne conserve aucun attribut, et rien n’est réglé pour les conserver à côté ; désactivez « { $setting } » dans Paramètres pour copier sans eux
+op_attributes_not_kept = conserver les étiquettes et autres attributs lors de la copie : { $folder } ne conserve aucun attribut, et rien n’est réglé pour les conserver à côté ; désactivez { $setting } dans Paramètres pour copier sans eux
 
 # draft
-op_attributes_refused = conserver les étiquettes et autres attributs lors de la copie : vérifiez que la destination garde les attributs étendus et vous permet de les écrire, ou désactivez « { $setting } » dans Paramètres
+op_attributes_refused = conserver les étiquettes et autres attributs lors de la copie : vérifiez que la destination garde les attributs étendus et vous permet de les écrire, ou désactivez { $setting } dans Paramètres
 
 # draft
 op_attributes_unread = les étiquettes et attributs de { $name } n’ont pas pu être lus
@@ -1699,12 +1699,12 @@ op_batch_copying = copie de { $count ->
     } par { $transfer }
 
 # draft
-op_batch_link = « { $path } » est un lien
+op_batch_link = { $path } est un lien
 
 # draft
 op_batch_read_short = { $read ->
-        [one] « { $path } » : seul { $read } octet sur { $bytes } a pu être lu
-       *[other] « { $path } » : seuls { $read } octets sur { $bytes } ont pu être lus
+        [one] { $path } : seul { $read } octet sur { $bytes } a pu être lu
+       *[other] { $path } : seuls { $read } octets sur { $bytes } ont pu être lus
     }
 
 # draft
@@ -1744,7 +1744,7 @@ op_change_swap = échanger { $a } <-> { $b }
 op_change_trash = mettre à la corbeille { $path }
 
 # draft
-op_changed_after_copy = { $name } a changé après sa copie dans « { $folder } » : son original reste où il était
+op_changed_after_copy = { $name } a changé après sa copie dans { $folder } : son original reste où il était
 
 # draft
 op_copied_into_itself = un dossier ne peut pas être copié dans lui-même
@@ -1775,7 +1775,7 @@ op_entry_gone = { $name } n’est plus là
 op_entry_replaced = { $name } est maintenant un autre fichier
 
 # draft
-op_folder_attribute_not_restored = l’attribut « { $attribute } » du dossier n’a pas pu être restauré
+op_folder_attribute_not_restored = l’attribut { $attribute } du dossier n’a pas pu être restauré
 
 # draft
 op_folder_attributes_differ = { $name } est là avec d’autres attributs de dossier
@@ -1787,13 +1787,13 @@ op_folder_not_made = le dossier { $name } n’a pas pu être créé
 op_folder_not_removed = le dossier { $name } n’a pas pu être supprimé
 
 # draft
-op_folder_path_not_made = le dossier « { $path } » n’a pas pu être créé
+op_folder_path_not_made = le dossier { $path } n’a pas pu être créé
 
 # draft
 op_foreign_folder = ce dossier appartient à un autre utilisateur, et ses permissions empêcheraient Annuler de restaurer son contenu
 
 # draft
-op_holds_mount_point = { $name } contient « { $point } », où un disque ou un dossier distant est monté : éjectez-le d’abord
+op_holds_mount_point = { $name } contient { $point }, où un disque ou un dossier distant est monté : éjectez-le d’abord
 
 # draft
 op_holes_not_yet = Copier un fichier à trous (un fichier creux) n’est pas encore disponible sous { $system }
@@ -1809,9 +1809,9 @@ op_in_trash_restore_first = { $name } est dans la corbeille : restaurez-le d’
 
 # draft
 op_left_after_removal = { $more ->
-        [0] il reste « { $path } »
-        [one] il reste « { $path } » et { $more } autre
-       *[other] il reste « { $path } » et { $more } autres
+        [0] il reste { $path }
+        [one] il reste { $path } et { $more } autre
+       *[other] il reste { $path } et { $more } autres
     }
 
 # draft
@@ -1859,7 +1859,7 @@ op_moved_stays = ce qui a été déplacé reste où il était
 op_moves_nothing = cet appareil (un appareil photo) ne peut pas déplacer de fichiers entre ses dossiers : seules des copies peuvent y être faites
 
 # draft
-op_name_character = un nom ne peut pas contenir « { $character } »
+op_name_character = un nom ne peut pas contenir { $character }
 
 # draft
 op_name_control = un nom ne peut pas contenir de caractère de contrôle
@@ -1970,28 +1970,28 @@ op_not_trashed = { $name } n’a pas pu être mis à la corbeille
 op_not_written_out = la copie n’a pas pu être écrite jusqu’au bout sur le disque
 
 # draft
-op_original_stays = { $name } a été copié en entier dans « { $folder } », mais son original n’a pas pu être entièrement supprimé
+op_original_stays = { $name } a été copié en entier dans { $folder }, mais son original n’a pas pu être entièrement supprimé
 
 # draft
-op_original_stays_path = « { $path } » a été copié en entier dans « { $folder } », mais son original n’a pas pu être entièrement supprimé
+op_original_stays_path = { $path } a été copié en entier dans { $folder }, mais son original n’a pas pu être entièrement supprimé
 
 # draft
 op_panicked = échec inattendu
 
 # draft
-op_part_left = une partie de la copie reste dans « { $path } » ({ $why })
+op_part_left = une partie de la copie reste dans { $path } ({ $why })
 
 # draft
-op_partly_restored_folder = le dossier restauré en partie reste dans « { $path } »
+op_partly_restored_folder = le dossier restauré en partie reste dans { $path }
 
 # draft
-op_path_climbs = « { $path } » contient « .. »
+op_path_climbs = { $path } contient « .. »
 
 # draft
 op_path_missing = { $path } n’existe pas
 
 # draft
-op_path_no_name = « { $path } » ne se termine pas par un nom
+op_path_no_name = { $path } ne se termine pas par un nom
 
 # draft
 op_pipe_not_made = le tube nommé { $name } n’a pas pu être créé
@@ -2048,10 +2048,10 @@ op_there_by_earlier_step = { $name } est déjà là, placé par une étape préc
 op_there_not_a_folder = { $name } est là, et ce n’est pas un dossier
 
 # draft
-op_time_not_given = « { $path } » n’a pas pu recevoir sa date de modification
+op_time_not_given = { $path } n’a pas pu recevoir sa date de modification
 
 # draft
-op_trash_copy_left = une copie en reste dans « { $path } » ({ $why })
+op_trash_copy_left = une copie en reste dans { $path } ({ $why })
 
 # draft
 op_trash_copy_not_removed = la copie de { $name } dans la corbeille n’a pas pu être entièrement supprimée
@@ -2168,7 +2168,7 @@ preview_changed = { $path } a été modifié pendant son affichage
 print_no_page = aucune page indiquée
 
 # draft
-print_not_a_page = « { $text } » n’est pas une page
+print_not_a_page = { $text } n’est pas une page
 
 # draft
 print_pages_backwards = { $range } est à l’envers
@@ -2339,7 +2339,7 @@ settings_check = Vérifier les paramètres
 settings_check_description = Vérifier un fichier de paramètres, ou des paramètres donnés sous forme de table, au regard des paramètres que cette version de Skwir déclare : échoue en disant ce qui ne va pas (une valeur qu’un paramètre n’accepte pas, une clé qu’aucun paramètre n’a), et signale les clés dont il ne connaît pas le propriétaire
 
 # draft
-settings_check_invalid = « { $path } » n’est pas valide : { $problem }
+settings_check_invalid = { $path } n’est pas valide : { $problem }
 
 # draft
 settings_check_not_settings = ce ne sont pas des paramètres : { $error }
@@ -2348,7 +2348,7 @@ settings_check_not_settings = ce ne sont pas des paramètres : { $error }
 settings_check_one = donnez un fichier ou des paramètres, l’un des deux
 
 # draft
-settings_check_unreadable = « { $path } » ne peut pas être lu : { $why }
+settings_check_unreadable = { $path } ne peut pas être lu : { $why }
 
 # draft
 settings_choice_now = { $choice } ({ $now })
@@ -2448,13 +2448,13 @@ settings_field_value_needs_name = { $title } : une valeur doit avoir un nom
 settings_field_whole_number = { $title } est un nombre entier
 
 # draft
-settings_file_invalid = « { $path } » n’est pas valide ({ $problem }) : rien n’est enregistré par-dessus tant qu’il n’est pas corrigé
+settings_file_invalid = { $path } n’est pas valide ({ $problem }) : rien n’est enregistré par-dessus tant qu’il n’est pas corrigé
 
 # draft
-settings_file_not_text = « { $path } » n’est pas du texte
+settings_file_not_text = { $path } n’est pas du texte
 
 # draft
-settings_file_unreadable = « { $path } » n’a pas pu être lu : { $why }
+settings_file_unreadable = { $path } n’a pas pu être lu : { $why }
 
 # draft
 settings_folders_first = Dossiers en premier
@@ -2514,7 +2514,7 @@ settings_last_location = Le dossier affiché à la dernière fermeture de la fen
 settings_managed = { $key } est géré par les commandes dont il relève
 
 # draft
-settings_no_plugin = aucun module « { $id } » ici : un module externe, ou un module que cette version n’intègre pas, peut s’en servir
+settings_no_plugin = aucun module { $id } ici : un module externe, ou un module que cette version n’intègre pas, peut s’en servir
 
 # draft
 settings_no_such = ce paramètre n’existe pas
@@ -2529,7 +2529,7 @@ settings_not_text = ce n’est pas du texte
 settings_other_choice = pas un choix que Skwir connaît ici : il peut figurer parmi { $which }
 
 # draft
-settings_owner_unknown = rien ici ne déclare « { $owner } » : un module désactivé, ou externe, peut le faire
+settings_owner_unknown = rien ici ne déclare { $owner } : un module désactivé, ou externe, peut le faire
 
 # draft
 settings_parent_not_table = { $key } : le parent n’est pas une table
@@ -2569,10 +2569,10 @@ settings_record_needs_id = chaque enregistrement doit avoir un identifiant
 settings_records_share_id = deux enregistrements ont le même identifiant { $id }
 
 # draft
-settings_renamed = désormais « { $new } » : Skwir l’y déplace
+settings_renamed = désormais { $new } : Skwir l’y déplace
 
 # draft
-settings_renamed_both = non lu : « { $new } » est défini, et c’est lui que Skwir lit
+settings_renamed_both = non lu : { $new } est défini, et c’est lui que Skwir lit
 
 # draft
 settings_save_did_not_run = l’enregistrement des paramètres n’a pas eu lieu
@@ -2738,8 +2738,8 @@ settings_unknown = paramètre inconnu : { $key }
 
 # draft
 settings_unreadable_kept = { $file ->
-        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : Skwir a démarré sans elles et n’y enregistre rien tant que « { $path } » n’est pas corrigé ou supprimé ({ $error }).
-       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : Skwir a démarré avec ses valeurs par défaut et n’y enregistre rien tant que « { $path } » n’est pas corrigé ou supprimé ({ $error }).
+        [data] Vos recherches enregistrées, vos étiquettes épinglées et les couleurs des étiquettes n’ont pas pu être lues ({ $why }) : Skwir a démarré sans elles et n’y enregistre rien tant que { $path } n’est pas corrigé ou supprimé ({ $error }).
+       *[settings] Vos paramètres n’ont pas pu être lus ({ $why }) : Skwir a démarré avec ses valeurs par défaut et n’y enregistre rien tant que { $path } n’est pas corrigé ou supprimé ({ $error }).
     }
 
 # draft
@@ -3073,7 +3073,7 @@ tabs_close_window = Fermer la fenêtre
 tabs_close_window_description = Fermer une fenêtre (la fenêtre active, par défaut) et ses onglets, que Rouvrir l’onglet fermé fait revenir ; la dernière fenêtre ne se ferme que par son propre bouton de fermeture ou par Quitter
 
 # draft
-tabs_closed = Onglet « { $title } » fermé
+tabs_closed = Onglet { $title } fermé
 
 # draft
 tabs_closed_undo = Annuler

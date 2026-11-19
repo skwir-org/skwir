@@ -827,8 +827,8 @@ impl CommandError {
             ),
             CommandError::Panicked(name) => words!(
                 command_panicked =
-                    "“{ $command }” stopped on a fault of its own (the log says where)",
-                command = name.to_string(),
+                    "{ $command } stopped on a fault of its own (the log says where)",
+                command = crate::words::Name(name.to_string()),
                 note = "An action failed through a fault of Skwir's or of a plugin's: its name (an identifier, as written)."
             ),
         }

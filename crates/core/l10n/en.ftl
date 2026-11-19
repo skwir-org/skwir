@@ -196,7 +196,7 @@ access_group_already = { $inside ->
 access_in_trash = { $name } is in the trash: restore it first
 
 # Why who may use a folder and what it holds cannot be changed: something inside belongs to someone else. path: where it is.
-access_inside_not_yours = “{ $path }” inside is not yours: only its owner can change who may use it
+access_inside_not_yours = { $path } inside is not yours: only its owner can change who may use it
 
 # A step of a plan found already done. inside: yes where it covers everything a folder holds too. Begins in lower case.
 access_mode_already = { $inside ->
@@ -207,20 +207,20 @@ access_mode_already = { $inside ->
 # What a mode typed in Properties' Access field comes to. mode: its bits, as ls writes them (rw-r--r-- (644)); who: who may do what (the owner may read and write, the group and others may read).
 access_mode_comes_to = { $mode }: { $who }
 
-# Why a clause of a mode is refused where the system does not say its umask (macOS). part: the clause as typed (+x); u and a before it name the owner and everyone, as chmod writes them.
-access_no_class = “{ $part }” names no class, and this system does not say what its umask leaves out, as chmod would: name the classes, as u{ $part } for the owner or a{ $part } for everyone
+# Why a clause of a mode is refused where the system does not say its umask (macOS). part: the clause as typed (+x), quoted; clause: the same, written after u and a, which name the owner and everyone, as chmod writes them.
+access_no_class = { $part } names no class, and this system does not say what its umask leaves out, as chmod would: name the classes, as u{ $clause } for the owner or a{ $clause } for everyone
 
 # Why what was typed in Properties' Access field is refused. text: what was typed.
-access_not_a_mode = “{ $text }” is not a mode: write it as chmod does, as 644, u+x or go-w
+access_not_a_mode = { $text } is not a mode: write it as chmod does, as 644, u+x or go-w
 
 # What a change of who may use files failed on; why follows. path: where the file is.
-access_not_changed = who may use “{ $path }” could not be changed
+access_not_changed = who may use { $path } could not be changed
 
 # What putting back a file's group failed on; why follows. group: the group's number.
 access_not_given_back = it could not be given back to the group { $group }
 
 # What a change of a file's group failed on; why follows. path: where the file is; group: the group's number.
-access_not_given_group = “{ $path }” could not be given to the group { $group }
+access_not_given_group = { $path } could not be given to the group { $group }
 
 # Why a file cannot be given to a group. group: the group's number. Begins in lower case: said after the file's name too.
 access_not_in_group = you are not in the group { $group }
@@ -233,15 +233,15 @@ access_not_owner = only its owner can change who may use it
 
 # What putting back who may use files failed on. path: where the first file is; more: how many others could not be put back either; error: why the first could not.
 access_not_put_back = { $more ->
-        [0] who may use “{ $path }” could not be put back: { $error }
-       *[other] who may use “{ $path }” could not be put back (and { $more } more): { $error }
+        [0] who may use { $path } could not be put back: { $error }
+       *[other] who may use { $path } could not be put back (and { $more } more): { $error }
     }
 
 # What a mode typed in Properties' Access field comes to on Windows.
 access_not_read_only = Not read-only
 
 # What a dry run met inside a folder: something of someone else's. path: where it is.
-access_not_yours = “{ $path }” is not yours
+access_not_yours = { $path } is not yours
 
 # Why a change of who may use files cannot run: neither a mode nor a group was given.
 access_nothing_asked = nothing to change: give a mode or a group
@@ -391,7 +391,7 @@ access_suid_folder_gone = its set-user-ID bit, which a folder ignores, goes
 access_then = { $said }; { $then }
 
 # What a change of who may use files failed on. path: where the folder or file is; why follows.
-access_unreadable = “{ $path }” could not be read
+access_unreadable = { $path } could not be read
 
 # What a mode typed in Properties' Access field does on Windows, which keeps only the owner's write bit (w, as chmod writes it), where the mode leaves it as each item has it.
 access_windows_each_stays = Each stays as it is: only the owner's w is kept here
@@ -806,7 +806,7 @@ command_nothing_selected = nothing selected
 command_nothing_to_paste = nothing to paste
 
 # An action failed through a fault of Skwir's or of a plugin's: its name (an identifier, as written).
-command_panicked = “{ $command }” stopped on a fault of its own (the log says where)
+command_panicked = { $command } stopped on a fault of its own (the log says where)
 
 # Said to an agent, a script or a key bound by the user: no action has this name (an identifier, as written).
 command_unknown = unknown command `{ $command }`
@@ -1103,22 +1103,22 @@ exclusions_what_cache_home = Your cache folder (XDG_CACHE_HOME)
 exclusions_what_legacy = Private (from 0.3.1's list)
 
 # Why a redo asked of an action waits for nothing: a redo of it already runs or waits. title: the action's title.
-exec_being_redone = “{ $title }” is being redone already
+exec_being_redone = { $title } is being redone already
 
 # Why an undo asked of an action waits for nothing: an undo of it already runs or waits. title: the action's title.
-exec_being_undone = “{ $title }” is being undone already
+exec_being_undone = { $title } is being undone already
 
 # Why an undo did nothing: nothing the action did can be taken back (a file deleted for good). title: the action's title.
-exec_cannot_be_undone = “{ $title }” cannot be undone
+exec_cannot_be_undone = { $title } cannot be undone
 
 # Why Undo with what came after it stopped: one of its undos was cancelled. title: what that undo is called (undo, then the action).
-exec_chain_cancelled = “{ $title }” was cancelled
+exec_chain_cancelled = { $title } was cancelled
 
 # Why Undo with what came after it stopped: one of its undos did not run. title: what that undo is called (undo, then the action).
-exec_chain_did_not_run = “{ $title }” did not run
+exec_chain_did_not_run = { $title } did not run
 
 # Why Undo with what came after it stopped: one of its undos stopped. title: what that undo is called (undo, then the action); error: why it stopped.
-exec_chain_stopped = “{ $title }” stopped: { $error }
+exec_chain_stopped = { $title } stopped: { $error }
 
 # Why a redo asked of an action does nothing: the history keeps it no more. Begins in lower case.
 exec_gone_from_history_redo = that action is no longer in the history: nothing to redo
@@ -1127,10 +1127,10 @@ exec_gone_from_history_redo = that action is no longer in the history: nothing t
 exec_gone_from_history_undo = that action is no longer in the history: nothing to undo
 
 # Why an action of a chain of undos was left: an undo before it stopped. title: the action's title; why: what stopped.
-exec_not_undone = “{ $title }” was not undone: { $why }
+exec_not_undone = { $title } was not undone: { $why }
 
 # Why a redo asked of an action does nothing: it is not undone. title: the action's title.
-exec_not_undone_nothing = “{ $title }” is not undone: nothing to redo
+exec_not_undone_nothing = { $title } is not undone: nothing to redo
 
 # Why a redo did nothing: when its turn came, nothing was left to apply again. Begins in lower case.
 exec_nothing_to_redo = nothing to redo
@@ -1142,10 +1142,10 @@ exec_nothing_to_undo = nothing to undo
 exec_redo = redo
 
 # Why an undone action cannot be redone by itself: another action, undone after it, changed the same files. title, other: the two actions' titles.
-exec_redo_held = “{ $title }” cannot be redone alone: “{ $other }”, undone after it, touched what it did; redo that first
+exec_redo_held = { $title } cannot be redone alone: { $other }, undone after it, touched what it did; redo that first
 
 # Why an undone action cannot be redone: another action, undone after it, changed the same files and cannot be redone itself. title, other: the two actions' titles.
-exec_redo_held_for_good = “{ $title }” cannot be redone: “{ $other }”, undone after it, touched what it did and cannot be redone
+exec_redo_held_for_good = { $title } cannot be redone: { $other }, undone after it, touched what it did and cannot be redone
 
 # Why an action of a chain of undos was left (its title is not known any more): an undo before it stopped. why: what stopped. Begins in lower case.
 exec_that_not_undone = that action was not undone: { $why }
@@ -1154,19 +1154,19 @@ exec_that_not_undone = that action was not undone: { $why }
 exec_undo = undo
 
 # Why an action cannot be undone by itself: another action, asked after it, changed the same files. title, other: the two actions' titles.
-exec_undo_held = “{ $title }” cannot be undone alone: “{ $other }”, asked after it, touched what it did; undo that first
+exec_undo_held = { $title } cannot be undone alone: { $other }, asked after it, touched what it did; undo that first
 
 # Why an action cannot be undone: another action, asked after it, changed the same files and cannot be undone itself. title, other: the two actions' titles.
-exec_undo_held_for_good = “{ $title }” cannot be undone: “{ $other }”, asked after it, touched what it did and cannot be undone
+exec_undo_held_for_good = { $title } cannot be undone: { $other }, asked after it, touched what it did and cannot be undone
 
 # Why an action cannot be undone by itself: another action, asked after it and running now, changed the same files. title, other: the two actions' titles.
-exec_undo_held_running = “{ $title }” cannot be undone alone: “{ $other }”, asked after it and running now, is changing what it did; undo that first
+exec_undo_held_running = { $title } cannot be undone alone: { $other }, asked after it and running now, is changing what it did; undo that first
 
 # Why an action cannot be undone by itself: another action, asked after it and waiting to run, will change the same files. title, other: the two actions' titles.
-exec_undo_held_waiting = “{ $title }” cannot be undone alone: “{ $other }”, asked after it and waiting to run, will change what it did; undo that first
+exec_undo_held_waiting = { $title } cannot be undone alone: { $other }, asked after it and waiting to run, will change what it did; undo that first
 
 # Why an undo asked of an action does nothing: it was undone before. title: the action's title.
-exec_undone_already = “{ $title }” is undone already
+exec_undone_already = { $title } is undone already
 
 # Why Skwir will not keep its session's files (its sockets, its mounts) in a folder: someone else owns it. The folder's path.
 folders_not_private = { $path } is not the user's alone
@@ -1317,10 +1317,10 @@ keymap_keys_description = One key with its modifiers, or several one after anoth
 keymap_needs_keys = a shortcut needs its keys
 
 # A shortcut refused: what was written. ctrl-- is how it is written: never translated.
-keymap_no_key = “{ $stroke }” names no key: write ctrl-- for Ctrl and the minus key
+keymap_no_key = { $stroke } names no key: write ctrl-- for Ctrl and the minus key
 
 # A shortcut refused: both as written. ctrl, alt, shift and super are written so: never translated.
-keymap_no_modifier = “{ $modifier }” in “{ $stroke }” is not a modifier: use ctrl, alt, shift or super
+keymap_no_modifier = { $modifier } in { $stroke } is not a modifier: use ctrl, alt, shift or super
 
 # A shortcut refused: its keys as written, then why its action refused it.
 keymap_refused = { $keys }: { $error }
@@ -1534,10 +1534,10 @@ op_already_there = { $name } is already there
 op_attribute_name_not_utf8 = an attribute of { $name } has a non-UTF-8 name, which the copy's attribute interface cannot preserve
 
 # Why a copy failed: the drive it goes to keeps no tags or attributes, and no companion file is set to keep them. folder: the path copied into; setting: the setting's title. Begins in lower case.
-op_attributes_not_kept = keep tags and other attributes while copying: { $folder } keeps no attributes, and nothing is set to keep them beside it; turn off “{ $setting }” in Settings to copy without them
+op_attributes_not_kept = keep tags and other attributes while copying: { $folder } keeps no attributes, and nothing is set to keep them beside it; turn off { $setting } in Settings to copy without them
 
 # What a copy could not do, its why after it: write a file's tags and other extended attributes where it goes. setting: the setting's title. Begins in lower case.
-op_attributes_refused = keep tags and other attributes while copying: check that the destination keeps extended attributes and lets you write them, or turn off “{ $setting }” in Settings
+op_attributes_refused = keep tags and other attributes while copying: check that the destination keeps extended attributes and lets you write them, or turn off { $setting } in Settings
 
 # What a step could not do: read a file's extended attributes (its tags among them); why follows.
 op_attributes_unread = the tags and attributes of { $name } could not be read
@@ -1552,12 +1552,12 @@ op_batch_copying = { $transfer } copying { $count ->
     }
 
 # Why a batch of copies failed on Windows: it met a link, which it does not copy. path: the link's path.
-op_batch_link = “{ $path }” is a link
+op_batch_link = { $path } is a link
 
 # Why a batch of copies failed: a source ended early (a server stopped serving it). path: its path; read, bytes: how many bytes were read, how many it holds.
 op_batch_read_short = { $read ->
-        [one] “{ $path }”: only { $read } byte of { $bytes } could be read
-       *[other] “{ $path }”: only { $read } bytes of { $bytes } could be read
+        [one] { $path }: only { $read } byte of { $bytes } could be read
+       *[other] { $path }: only { $read } bytes of { $bytes } could be read
     }
 
 # A line of a plan's review, terse as a listing: a file copied, its path then its copy's. Begins in lower case.
@@ -1597,7 +1597,7 @@ op_change_swap = swap { $a } <-> { $b }
 op_change_trash = trash { $path }
 
 # Why a move across drives ended with its original still there: it was changed while it was copied. folder: the path of the folder it was moved to.
-op_changed_after_copy = { $name } changed after it was copied to “{ $folder }”: its original stays where it was
+op_changed_after_copy = { $name } changed after it was copied to { $folder }: its original stays where it was
 
 # Why a copy does not go on: the folder it goes to is inside the one copied.
 op_copied_into_itself = a folder cannot be copied into itself
@@ -1627,7 +1627,7 @@ op_entry_gone = { $name } is not there any more
 op_entry_replaced = { $name } is now another file
 
 # What the undo of a folder's removal could not do: give it back an extended attribute it had. attribute: the attribute's name (user.xdg.tags); why follows.
-op_folder_attribute_not_restored = the folder's attribute “{ $attribute }” could not be restored
+op_folder_attribute_not_restored = the folder's attribute { $attribute } could not be restored
 
 # Why the undo of a folder's removal does not go on: a folder of its name is there again, with other permissions or attributes.
 op_folder_attributes_differ = { $name } is there with different folder attributes
@@ -1639,13 +1639,13 @@ op_folder_not_made = the folder { $name } could not be made
 op_folder_not_removed = the folder { $name } could not be removed
 
 # What a step could not do: make a folder, by its path; why follows.
-op_folder_path_not_made = the folder “{ $path }” could not be made
+op_folder_path_not_made = the folder { $path } could not be made
 
 # Why a step does not remove a folder: it is another user's, and Undo could not put back what it holds.
 op_foreign_folder = this folder belongs to another user and its permissions would prevent Undo from restoring its contents
 
 # Why a folder is not deleted or put in the trash: a drive or a server's files are shown in a folder inside it. point: that folder's path from it.
-op_holds_mount_point = { $name } holds “{ $point }”, where a drive or a remote is mounted: eject it first
+op_holds_mount_point = { $name } holds { $point }, where a drive or a remote is mounted: eject it first
 
 # Why a copy failed: a file some parts of which were never written (a sparse file) is copied as such only on Unix. system: the system's name (Windows).
 op_holes_not_yet = Copying a file with holes (a sparse file) is not available on { $system } yet
@@ -1661,8 +1661,8 @@ op_in_trash_restore_first = { $name } is in the trash: restore it first
 
 # What a folder removed in part left: the first file still there (its path from the folder above) and how many more besides it.
 op_left_after_removal = { $more ->
-        [0] “{ $path }” is left
-       *[other] “{ $path }” and { $more } more are left
+        [0] { $path } is left
+       *[other] { $path } and { $more } more are left
     }
 
 # What a rename that changes only the case of a name left behind when it failed halfway: the file under a name of its own making; why follows.
@@ -1708,7 +1708,7 @@ op_moved_stays = what was moved stays where it was
 op_moves_nothing = this device (a camera) cannot move files between its folders: only copies can be made there
 
 # Why a name typed for a file is refused on Windows: it holds a character Windows keeps for itself (\ : * ? " < > |).
-op_name_character = a name cannot contain “{ $character }”
+op_name_character = a name cannot contain { $character }
 
 # Why a name typed for a file is refused on Windows: it holds an invisible control character.
 op_name_control = a name cannot contain a control character
@@ -1819,28 +1819,28 @@ op_not_trashed = { $name } could not be moved to the trash
 op_not_written_out = the copy could not be written out to the drive
 
 # Why a move across drives ended with its original still there: the copy is whole. folder: the path of the folder it was moved to.
-op_original_stays = { $name } was copied whole to “{ $folder }”, but its original could not all be removed
+op_original_stays = { $name } was copied whole to { $folder }, but its original could not all be removed
 
 # Why a move across drives ended with its original still there: the copy is whole. path, folder: the original's path and the folder it was moved to.
-op_original_stays_path = “{ $path }” was copied whole to “{ $folder }”, but its original could not all be removed
+op_original_stays_path = { $path } was copied whole to { $folder }, but its original could not all be removed
 
 # Why a step of an action stopped: it failed in a way Skwir did not foresee. Begins in lower case: said after the step's own words.
 op_panicked = it failed unexpectedly
 
 # Said after why a copy failed: what it had made could not all be removed. path: where it is; why: why it stayed.
-op_part_left = a part of the copy is left in “{ $path }” ({ $why })
+op_part_left = a part of the copy is left in { $path } ({ $why })
 
 # Said after why the undo of a folder's removal failed: the folder it began to make could not be removed. path: where it is.
-op_partly_restored_folder = the partially restored folder remains at “{ $path }”
+op_partly_restored_folder = the partially restored folder remains at { $path }
 
 # Why a new folder or file is not made: its path climbs out of the folder it is made in.
-op_path_climbs = “{ $path }” contains “..”
+op_path_climbs = { $path } contains “..”
 
 # Why an entry given to a command (by an agent or a script) is refused: nothing is at its path. path: the path given.
 op_path_missing = { $path } does not exist
 
 # Why a new folder or file is not made: its path ends without a name.
-op_path_no_name = “{ $path }” has no name
+op_path_no_name = { $path } has no name
 
 # What a copy of a named pipe could not do: make a new pipe in its place; why follows.
 op_pipe_not_made = the pipe { $name } could not be made
@@ -1897,10 +1897,10 @@ op_there_by_earlier_step = { $name } is already there, by an earlier step
 op_there_not_a_folder = { $name } is there, and is not a folder
 
 # What a batch of copies could not do: give a copy its original's modification time; why follows. path: the copy's path.
-op_time_not_given = “{ $path }” could not be given its time
+op_time_not_given = { $path } could not be given its time
 
 # Said after why a move into the trash on another drive failed: its copy in the trash could not be removed. path: where it is; why: why it stayed.
-op_trash_copy_left = a copy of it is left in “{ $path }” ({ $why })
+op_trash_copy_left = a copy of it is left in { $path } ({ $why })
 
 # What the undo of a move into the trash on another drive could not do: remove the copy the trash held; why follows.
 op_trash_copy_not_removed = the copy of { $name } in the trash could not all be removed
@@ -2006,7 +2006,7 @@ preview_changed = { $path } changed while it was shown
 print_no_page = no page named
 
 # Pages to print typed with something not a page number: what was typed.
-print_not_a_page = “{ $text }” is not a page
+print_not_a_page = { $text } is not a page
 
 # Pages to print typed as a range whose end is before its start: the range as typed (5-3).
 print_pages_backwards = { $range } goes backwards
@@ -2175,7 +2175,7 @@ settings_check = Check settings
 settings_check_description = Check a settings file, or settings given as a table, against the settings this build of Skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know
 
 # A settings file to check that is no TOML: its path, then what is wrong and where.
-settings_check_invalid = “{ $path }” is not valid: { $problem }
+settings_check_invalid = { $path } is not valid: { $problem }
 
 # Settings given as a table that a settings file cannot hold; the writer's own words follow.
 settings_check_not_settings = not settings: { $error }
@@ -2184,7 +2184,7 @@ settings_check_not_settings = not settings: { $error }
 settings_check_one = give a file or settings, one of them
 
 # A settings file to check: its path, then why it cannot be read.
-settings_check_unreadable = “{ $path }” cannot be read: { $why }
+settings_check_unreadable = { $path } cannot be read: { $why }
 
 # A setting's default choice and what it comes to here and now: Automatic (Dark).
 settings_choice_now = { $choice } ({ $now })
@@ -2272,12 +2272,12 @@ settings_field_value_needs_name = { $title }: a value needs a name
 settings_field_whole_number = { $title } is a whole number
 
 # A file of the settings that is no TOML (a hand edit under way): its path, and what is wrong where.
-settings_file_invalid = “{ $path }” is not valid ({ $problem }): nothing is saved over it until it is fixed
+settings_file_invalid = { $path } is not valid ({ $problem }): nothing is saved over it until it is fixed
 
-settings_file_not_text = “{ $path }” is not text
+settings_file_not_text = { $path } is not text
 
 # A file of the settings: its path, then why it could not be read.
-settings_file_unreadable = “{ $path }” could not be read: { $why }
+settings_file_unreadable = { $path } could not be read: { $why }
 
 settings_folders_first = Folders first
 
@@ -2333,7 +2333,7 @@ settings_last_location = The folder shown when the window was last closed
 settings_managed = { $key } is managed by its owning commands
 
 # A settings file names a plugin Skwir does not have: its id.
-settings_no_plugin = no plugin “{ $id }” here: one from outside, or not built in, may take it
+settings_no_plugin = no plugin { $id } here: one from outside, or not built in, may take it
 
 settings_no_such = no such setting
 
@@ -2347,7 +2347,7 @@ settings_not_text = it is not text
 settings_other_choice = not one Skwir knows here: it may be among { $which }
 
 # A settings file's key under an owner nothing here declares: the owner's id.
-settings_owner_unknown = nothing here declares “{ $owner }”: a plugin turned off, or from outside, may
+settings_owner_unknown = nothing here declares { $owner }: a plugin turned off, or from outside, may
 
 # A setting's key whose part before it holds a value, not a table of settings.
 settings_parent_not_table = { $key }: parent is not a table
@@ -2384,10 +2384,10 @@ settings_record_needs_id = every record needs an id
 settings_records_share_id = two records share the id { $id }
 
 # A settings file's key that has a new name: the new key.
-settings_renamed = now “{ $new }”: Skwir moves it there
+settings_renamed = now { $new }: Skwir moves it there
 
 # A settings file's key that has a new name, set too: the new key.
-settings_renamed_both = not read: “{ $new }” is set, which Skwir reads
+settings_renamed_both = not read: { $new } is set, which Skwir reads
 
 settings_save_did_not_run = settings save did not run
 
@@ -2542,8 +2542,8 @@ settings_unknown = unknown setting: { $key }
 
 # Told at startup: a file of Skwir's could not be read (why) nor renamed (its path, and why not).
 settings_unreadable_kept = { $file ->
-        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
-       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there until “{ $path }” is fixed or removed ({ $error }).
+        [data] Your saved searches, pinned tags and tags’ colours could not be read ({ $why }), so Skwir started without them, and saves nothing there until { $path } is fixed or removed ({ $error }).
+       *[settings] Your settings could not be read ({ $why }), so Skwir started with its defaults, and saves nothing there until { $path } is fixed or removed ({ $error }).
     }
 
 # Told at startup: a file of Skwir's could not be read (why, in a few words) and was renamed (its new name).
@@ -2874,7 +2874,7 @@ tabs_close_window = Close window
 tabs_close_window_description = Close a window (the active one by default) and its tabs, which Reopen closed tab brings back; the last window closes only by its own close button or Quit
 
 # A notification once a tab is closed, with an Undo button: the tab's title.
-tabs_closed = Closed tab “{ $title }”
+tabs_closed = Closed tab { $title }
 
 # The button of the notification a closed tab shows: opens it again.
 tabs_closed_undo = Undo

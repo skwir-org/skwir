@@ -1631,9 +1631,9 @@ pub(super) fn remove_deferred(ctx: &StepContext) -> anyhow::Result<()> {
             match super::builtin::remove_original(&src) {
                 Err(error) if !gone(&error) => {
                     failed.get_or_insert(error.context(crate::words!(
-                        op_original_stays_path = "“{ $path }” was copied whole to “{ $folder }”, but its original could not all be removed",
-                        path = src.display().to_string(),
-                        folder = dest_dir.display().to_string(),
+                        op_original_stays_path = "{ $path } was copied whole to { $folder }, but its original could not all be removed",
+                        path = crate::words::Arg::Path(src.display().to_string()),
+                        folder = crate::words::Arg::Path(dest_dir.display().to_string()),
                         note = "Why a move across drives ended with its original still there: the copy is whole. path, folder: the original's path and the folder it was moved to."
                     )));
                 }
@@ -2039,8 +2039,8 @@ pub fn give_times(pairs: &[(PathBuf, PathBuf)]) -> anyhow::Result<()> {
                         })
                         .with_context(|| {
                             crate::words!(
-                                op_time_not_given = "“{ $path }” could not be given its time",
-                                path = dst.display().to_string(),
+                                op_time_not_given = "{ $path } could not be given its time",
+                                path = crate::words::Arg::Path(dst.display().to_string()),
                                 note = "What a batch of copies could not do: give a copy its original's modification time; why follows. path: the copy's path."
                             )
                         });
@@ -2108,8 +2108,8 @@ fn copy_one(
         }
         #[cfg(not(unix))]
         anyhow::bail!(crate::words!(
-            op_batch_link = "“{ $path }” is a link",
-            path = src.display().to_string(),
+            op_batch_link = "{ $path } is a link",
+            path = crate::words::Arg::Path(src.display().to_string()),
             note = "Why a batch of copies failed on Windows: it met a link, which it does not copy. path: the link's path."
         ));
     }
@@ -2160,10 +2160,10 @@ fn copy_one(
         copied >= meta.len(),
         crate::words!(
             op_batch_read_short = "{ $read ->
-                [one] “{ $path }”: only { $read } byte of { $bytes } could be read
-               *[other] “{ $path }”: only { $read } bytes of { $bytes } could be read
+                [one] { $path }: only { $read } byte of { $bytes } could be read
+               *[other] { $path }: only { $read } bytes of { $bytes } could be read
             }",
-            path = src.display().to_string(),
+            path = crate::words::Arg::Path(src.display().to_string()),
             read = copied,
             bytes = meta.len(),
             note = "Why a batch of copies failed: a source ended early (a server stopped serving it). path: its path; read, bytes: how many bytes were read, how many it holds."
