@@ -248,29 +248,53 @@ impl ThumbCache {
             .prefix(".skwir-")
             .suffix(".png")
             .tempfile_in(&dir)?;
-        {
-            let w = std::io::BufWriter::new(staged.as_file());
-            let mut enc = png::Encoder::new(w, image.width, image.height);
-            enc.set_color(png::ColorType::Rgba);
-            enc.set_depth(png::BitDepth::Eight);
-            // A photo's thumbnail of 256 px: 0.25 ms against 13 ms for the
-            // default compression, its file a few percent larger.
-            enc.set_compression(png::Compression::Fast);
-            enc.add_text_chunk("Thumb::URI".into(), crate::uri::file_uri(path))?;
-            enc.add_text_chunk("Thumb::MTime".into(), secs.to_string())?;
-            enc.add_text_chunk("Thumb::Size".into(), meta.len().to_string())?;
-            enc.add_text_chunk("Software".into(), "skwir".into())?;
-            if let Some(tools) = tools {
-                enc.add_text_chunk(TOOLS_CHUNK.into(), tools.into())?;
-            }
-            let mut writer = enc.write_header()?;
-            writer.write_image_data(&image.rgba)?;
-            writer.finish()?;
+        let mut chunks = vec![
+            ("Thumb::URI", crate::uri::file_uri(path)),
+            ("Thumb::MTime", secs.to_string()),
+            ("Thumb::Size", meta.len().to_string()),
+            ("Software", "skwir".to_owned()),
+        ];
+        if let Some(tools) = tools {
+            chunks.push((TOOLS_CHUNK, tools.to_owned()));
         }
+        std::io::Write::write_all(&mut staged.as_file(), &encoded(image, &chunks)?)?;
         let dest = dir.join(format!("{key}.png"));
         crate::file::take_place(staged, &dest)?;
         Ok(dest)
     }
+}
+
+/// `image` as the PNG the cache keeps, `chunks` its text: the smaller of
+/// two quick encodings. fdeflate's (`Compression::Fast`) codes a photo as
+/// small as zlib's default does, in a fiftieth of its time, but finds no
+/// repeat farther than a run: a document's page, a drawing, a screenshot
+/// came out up to twice as large. zlib's second level finds those in a
+/// millisecond or so. Thumbnails of 256 px, fdeflate's, zlib's second
+/// level's and zlib's default, release: a photo's 88, 96 and 91 KB in
+/// 0.3, 2 and 11 ms; a text page's 58, 30 and 28 KB in 0.3, 0.8 and 4 ms.
+fn encoded(image: &Image, chunks: &[(&str, String)]) -> anyhow::Result<Vec<u8>> {
+    let encode = |deflate| -> anyhow::Result<Vec<u8>> {
+        let mut png = Vec::new();
+        let mut enc = png::Encoder::new(&mut png, image.width, image.height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_filter(png::Filter::Adaptive);
+        enc.set_deflate_compression(deflate);
+        for (keyword, text) in chunks {
+            enc.add_text_chunk((*keyword).to_owned(), text.clone())?;
+        }
+        let mut writer = enc.write_header()?;
+        writer.write_image_data(&image.rgba)?;
+        writer.finish()?;
+        Ok(png)
+    };
+    let fast = encode(png::DeflateCompression::FdeflateUltraFast)?;
+    let matched = encode(png::DeflateCompression::Level(2))?;
+    Ok(if matched.len() < fast.len() {
+        matched
+    } else {
+        fast
+    })
 }
 
 #[cfg(unix)]
@@ -425,6 +449,86 @@ mod tests {
             .set_modified(mtime + std::time::Duration::from_secs(5))
             .unwrap();
         assert!(thumbs.lookup(&src, ThumbSize::Normal).is_none());
+    }
+
+    /// A picture of repeats far apart (a page's lines of text) is kept
+    /// far smaller than fdeflate alone writes it, and one of noise (a
+    /// photo's grain) no larger.
+    #[test]
+    fn a_thumbnail_is_kept_in_the_smaller_of_two_encodings() {
+        let cache = tempfile::tempdir().unwrap();
+        let thumbs = ThumbCache::at(cache.path().join("thumbnails"));
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("page.pdf");
+        std::fs::write(&src, b"only its mtime matters").unwrap();
+        let mtime = std::fs::metadata(&src).unwrap().modified().unwrap();
+        let (width, height) = (181u32, 256u32);
+        // Words of a few glyphs, each a 4 x 6 cell of a dozen, in lines
+        // 8 pixels apart; and noise, from a fixed seed.
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let glyphs: Vec<u32> = (0..12).map(|_| next() & 0x00ff_ffff).collect();
+        let cells = width.div_ceil(4);
+        let words: Vec<usize> = (0..cells * height.div_ceil(8))
+            .map(|_| next() as usize % 13)
+            .collect();
+        let page: Vec<u8> = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .flat_map(|(x, y)| {
+                let (cell, row) = ((y / 8 * cells + x / 4) as usize, y % 8);
+                // The thirteenth is a space between words.
+                let ink = words[cell] < 12
+                    && row < 6
+                    && (glyphs[words[cell]] >> (row * 4 + x % 4)) & 1 == 1;
+                if ink {
+                    [40, 40, 40, 255]
+                } else {
+                    [255, 255, 255, 255]
+                }
+            })
+            .collect();
+        let noise: Vec<u8> = (0..width * height)
+            .flat_map(|_| {
+                let [r, g, b, _] = next().to_le_bytes();
+                [r, g, b, 255]
+            })
+            .collect();
+        let fast = |rgba: &[u8]| {
+            let mut png = Vec::new();
+            let mut enc = png::Encoder::new(&mut png, width, height);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_compression(png::Compression::Fast);
+            let mut writer = enc.write_header().unwrap();
+            writer.write_image_data(rgba).unwrap();
+            writer.finish().unwrap();
+            png.len() as u64
+        };
+        let kept = |rgba: Vec<u8>| {
+            let image = Image {
+                width,
+                height,
+                rgba: rgba.into(),
+            };
+            let dest = thumbs.store(&src, ThumbSize::Large, &image, mtime).unwrap();
+            std::fs::metadata(dest).unwrap().len()
+        };
+        let (page_fast, noise_fast) = (fast(&page), fast(&noise));
+        let page_kept = kept(page);
+        assert!(
+            page_kept * 4 < page_fast * 3,
+            "{page_kept} bytes kept, {page_fast} fast"
+        );
+        let noise_kept = kept(noise);
+        // Its text chunks aside.
+        assert!(
+            noise_kept <= noise_fast + 512,
+            "{noise_kept} bytes kept, {noise_fast} fast"
+        );
     }
 
     #[test]
