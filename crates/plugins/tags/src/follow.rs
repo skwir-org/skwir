@@ -281,7 +281,7 @@ impl Operation for Follow {
                 &self.root,
                 words!(
                     tags_follow_pin_will = "pin { $to } where { $count ->
-                        [one] { $from } was
+                        [1] { $from } was
                        *[other] { $from } were
                     }",
                     to = named(new),
@@ -291,7 +291,7 @@ impl Operation for Follow {
                 ),
                 words!(
                     tags_follow_pin_did = "pinned { $to } where { $count ->
-                        [one] { $from } was
+                        [1] { $from } was
                        *[other] { $from } were
                     }",
                     to = named(new),
@@ -301,7 +301,7 @@ impl Operation for Follow {
                 ),
                 words!(
                     tags_follow_pin_already = "{ $to } was already pinned where { $count ->
-                        [one] { $from } was
+                        [1] { $from } was
                        *[other] { $from } were
                     }",
                     to = named(new),
@@ -314,7 +314,7 @@ impl Operation for Follow {
                 &self.root,
                 words!(
                     tags_follow_color_will = "give { $to } the color { $count ->
-                        [one] { $from } had
+                        [1] { $from } had
                        *[other] { $from } had
                     }",
                     to = named(new),
@@ -324,7 +324,7 @@ impl Operation for Follow {
                 ),
                 words!(
                     tags_follow_color_did = "gave { $to } the color { $count ->
-                        [one] { $from } had
+                        [1] { $from } had
                        *[other] { $from } had
                     }",
                     to = named(new),
@@ -334,7 +334,7 @@ impl Operation for Follow {
                 ),
                 words!(
                     tags_follow_color_already = "{ $to } already had the color { $count ->
-                        [one] { $from } had
+                        [1] { $from } had
                        *[other] { $from } had
                     }",
                     to = named(new),
@@ -347,7 +347,7 @@ impl Operation for Follow {
                 &self.root,
                 words!(
                     tags_follow_both_will = "keep { $to } pinned and colored as { $count ->
-                        [one] { $from } was
+                        [1] { $from } was
                        *[other] { $from } were
                     }",
                     to = named(new),
@@ -357,7 +357,7 @@ impl Operation for Follow {
                 ),
                 words!(
                     tags_follow_both_did = "kept { $to } pinned and colored as { $count ->
-                        [one] { $from } was
+                        [1] { $from } was
                        *[other] { $from } were
                     }",
                     to = named(new),
@@ -368,7 +368,7 @@ impl Operation for Follow {
                 words!(
                     tags_follow_both_already =
                         "{ $to } was already pinned and colored as { $count ->
-                        [one] { $from } was
+                        [1] { $from } was
                        *[other] { $from } were
                     }",
                     to = named(new),
@@ -381,7 +381,7 @@ impl Operation for Follow {
                 &self.root,
                 words!(
                     tags_follow_unpin_will = "unpin { $count ->
-                        [one] { $from }
+                        [1] { $from }
                        *[other] { $from }
                     }",
                     from = from(),
@@ -390,7 +390,7 @@ impl Operation for Follow {
                 ),
                 words!(
                     tags_follow_unpin_did = "unpinned { $count ->
-                        [one] { $from }
+                        [1] { $from }
                        *[other] { $from }
                     }",
                     from = from(),
@@ -399,7 +399,7 @@ impl Operation for Follow {
                 ),
                 words!(
                     tags_follow_unpin_already = "{ $count ->
-                        [one] { $from } was already unpinned
+                        [1] { $from } was already unpinned
                        *[other] { $from } were already unpinned
                     }",
                     from = from(),

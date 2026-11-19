@@ -199,73 +199,73 @@ tags_finder_limits = a rating, or a tag color other than the Finder's seven
 
 # As tags_follow_both_will, found done already.
 tags_follow_both_already = { $to } was already pinned and colored as { $count ->
-        [one] { $from } was
+        [1] { $from } was
        *[other] { $from } were
     }
 
 # As tags_follow_both_will, done.
 tags_follow_both_did = kept { $to } pinned and colored as { $count ->
-        [one] { $from } was
+        [1] { $from } was
        *[other] { $from } were
     }
 
 # A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many.
 tags_follow_both_will = keep { $to } pinned and colored as { $count ->
-        [one] { $from } was
+        [1] { $from } was
        *[other] { $from } were
     }
 
 # As tags_follow_color_will, found done already.
 tags_follow_color_already = { $to } already had the color { $count ->
-        [one] { $from } had
+        [1] { $from } had
        *[other] { $from } had
     }
 
 # As tags_follow_color_will, done.
 tags_follow_color_did = gave { $to } the color { $count ->
-        [one] { $from } had
+        [1] { $from } had
        *[other] { $from } had
     }
 
 # A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many.
 tags_follow_color_will = give { $to } the color { $count ->
-        [one] { $from } had
+        [1] { $from } had
        *[other] { $from } had
     }
 
 # As tags_follow_pin_will, found done already.
 tags_follow_pin_already = { $to } was already pinned where { $count ->
-        [one] { $from } was
+        [1] { $from } was
        *[other] { $from } were
     }
 
 # As tags_follow_pin_will, done.
 tags_follow_pin_did = pinned { $to } where { $count ->
-        [one] { $from } was
+        [1] { $from } was
        *[other] { $from } were
     }
 
 # A step of renaming tags. to: the tag's new name; from: the tags renamed, a list; count: how many.
 tags_follow_pin_will = pin { $to } where { $count ->
-        [one] { $from } was
+        [1] { $from } was
        *[other] { $from } were
     }
 
 # As tags_follow_unpin_will, found done already.
 tags_follow_unpin_already = { $count ->
-        [one] { $from } was already unpinned
+        [1] { $from } was already unpinned
        *[other] { $from } were already unpinned
     }
 
 # As tags_follow_unpin_will, done.
 tags_follow_unpin_did = unpinned { $count ->
-        [one] { $from }
+        [1] { $from }
        *[other] { $from }
     }
 
 # A step of removing tags from every file. from: the tags, a list; count: how many.
 tags_follow_unpin_will = unpin { $count ->
-        [one] { $from }
+        [1] { $from }
        *[other] { $from }
     }
 

@@ -263,13 +263,13 @@ tags_follow_pin_will = épingler l’étiquette { $to } à la position de { $fro
 
 # draft
 tags_follow_unpin_already = { $count ->
-        [one] l’épinglage de { $from } était déjà retiré
+        [1] l’épinglage de { $from } était déjà retiré
        *[other] les épinglages de { $from } étaient déjà retirés
     }
 
 # draft
 tags_follow_unpin_did = { $count ->
-        [one] épinglage de { $from } retiré
+        [1] épinglage de { $from } retiré
        *[other] épinglages de { $from } retirés
     }
 
