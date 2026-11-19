@@ -220,6 +220,17 @@ impl PreviewProvider for Provider {
         let list = tracks(&held, format, bounds, cancel)?;
         let mut rows = Vec::with_capacity(list.tracks.len());
         let (mut total, mut missing, mut remote) = (0., 0, 0);
+        // Said once, for every track they are said of.
+        let elsewhere = words!(
+            playlists_row_remote = "remote",
+            note = "The last cell of a playlist's track that is somewhere else (a server, a stream), never fetched. In lower case."
+        )
+        .say();
+        let gone = words!(
+            playlists_row_missing = "missing",
+            note = "The last cell of a playlist's track whose file is not there. In lower case."
+        )
+        .say();
         for (index, track) in list.tracks.iter().enumerate() {
             inspection::check(cancel)?;
             let place = place(base, &track.location, list.uri);
@@ -227,19 +238,11 @@ impl PreviewProvider for Provider {
             let note = match (&place, here) {
                 (Place::Remote, _) => {
                     remote += 1;
-                    words!(
-                        playlists_row_remote = "remote",
-                        note = "The last cell of a playlist's track that is somewhere else (a server, a stream), never fetched. In lower case."
-                    )
-                    .say()
+                    elsewhere.clone()
                 }
                 (Place::Local(_), false) => {
                     missing += 1;
-                    words!(
-                        playlists_row_missing = "missing",
-                        note = "The last cell of a playlist's track whose file is not there. In lower case."
-                    )
-                    .say()
+                    gone.clone()
                 }
                 (Place::Local(_), true) => String::new(),
             };

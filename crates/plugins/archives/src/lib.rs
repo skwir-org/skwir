@@ -319,6 +319,17 @@ fn facts(members: &[archive::Member], rows: &[Row]) -> Vec<skwir_core::inspectio
 
 fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Result<Vec<Row>> {
     let mut rows = BTreeMap::new();
+    // Said once, for every member they are said of.
+    let encrypted = words!(
+        archives_status_encrypted = "Encrypted",
+        note = "A member's status in an archive's listing."
+    )
+    .say();
+    let link = words!(
+        archives_status_link = "Link / special",
+        note = "A member's status in an archive's listing: a link, a device or a pipe, which is not previewed."
+    )
+    .say();
     for member in members {
         inspection::check(cancel)?;
         let parts: Vec<_> = member.name.split('/').filter(|p| !p.is_empty()).collect();
@@ -346,17 +357,9 @@ fn member_rows(members: &[archive::Member], cancel: &CancelToken) -> anyhow::Res
                     if directory || (member.regular && !member.encrypted) {
                         String::new()
                     } else if member.encrypted {
-                        words!(
-                            archives_status_encrypted = "Encrypted",
-                            note = "A member's status in an archive's listing."
-                        )
-                        .say()
+                        encrypted.clone()
                     } else {
-                        words!(
-                            archives_status_link = "Link / special",
-                            note = "A member's status in an archive's listing: a link, a device or a pipe, which is not previewed."
-                        )
-                        .say()
+                        link.clone()
                     },
                 ],
                 bytes,
