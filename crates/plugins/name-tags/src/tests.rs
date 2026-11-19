@@ -167,14 +167,23 @@ fn tagspaces_names_are_read_where_it_is_used_and_moved_in_and_out_of_names() {
     );
 
     // Into the name: those it can hold, the rest said to be left out.
-    skwir_core::fs::xattr::set(&tagged, "user.test.tags", b"alps,new,two words").unwrap();
+    skwir_core::fs::xattr::set(
+        &tagged,
+        "user.test.tags",
+        b"alps,new,two words,Places/France",
+    )
+    .unwrap();
     let entries = serde_json::json!([EntryRef::from_path(&tagged).unwrap()]);
     let into = plan(
         &app,
         "names.tag",
         &serde_json::json!({ "entries": entries }),
     );
-    assert!(into.note.as_ref().unwrap().english().contains("two words"));
+    // A list of their names, joined as the language joins one.
+    assert_eq!(
+        into.note.as_ref().unwrap().english(),
+        "Left out, as a name cannot hold them: “two words” and “Places/France”."
+    );
     let r = app.executor.execute_blocking(&into, app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);
     assert!(used.join("sub/IMG[vacation alps new].jpg").exists());

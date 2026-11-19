@@ -3,7 +3,7 @@
 # What tags written in a file's name as filetags writes them cannot hold, placed after "What it cannot hold:" in its settings.
 name_tags_filetags_limits = a tag with spaces or a category, a rating or a comment
 
-# A note in the review of a plan putting tags in names. tags: the tags left out, as written, separated by commas.
+# A note in the review of a plan putting tags in names. tags: the tags left out, their names, a list.
 name_tags_left_out = Left out, as a name cannot hold them: { $tags }.
 
 name_tags_name_taken = { $name } would be named { $target }, which already exists

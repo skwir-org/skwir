@@ -13,6 +13,7 @@
 //! `TagSpaces` location covers (a `.ts` folder there or above); filetags'
 //! only when turned on (Tags and notes page).
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use skwir_core::op::{EntryRef, Plan, Rename, RenameOrderError, RenameRequest, or
 use skwir_core::plugin::{Category, Plugin};
 use skwir_core::registry::MenuItem;
 use skwir_core::words;
-use skwir_core::words::{Name, Words};
+use skwir_core::words::{List, Name, Words};
 use skwir_core::workspace::PaneId;
 
 pub(crate) const ID: &str = "name-tags";
@@ -366,7 +367,10 @@ fn tag_names(
         note = "A plan's title, in its review and in what is said after it (Undid: …)."
     ));
     let mut renames: Vec<RenameRequest> = Vec::new();
+    // Each tag left out once, in the order met, known by its folded name
+    // (`same_tag`): a selection of any size is gone through once.
     let mut left_out: Vec<String> = Vec::new();
+    let mut met: HashSet<String> = HashSet::new();
     let policy = app.notes.policy();
     for (r, known) in refs.into_iter().zip(known) {
         let Some(name) = r.path.file_name().and_then(OsStr::to_str) else {
@@ -378,7 +382,7 @@ fn tag_names(
             .into_iter()
             .filter(|t| {
                 let held = convention.holds(t);
-                if !held && !left_out.iter().any(|l| same_tag(l, t)) {
+                if !held && met.insert(folded(t)) {
                     left_out.push(t.clone());
                 }
                 held
@@ -399,12 +403,17 @@ fn tag_names(
         plan = plan.with_note(
             words!(
                 name_tags_left_out = "Left out, as a name cannot hold them: { $tags }.",
-                tags = left_out.join(", "),
-                note = "A note in the review of a plan putting tags in names. tags: the tags left out, as written, separated by commas."
+                tags = List::and(left_out.into_iter().map(Name)),
+                note = "A note in the review of a plan putting tags in names. tags: the tags left out, their names, a list."
             ),
         );
     }
     Ok(plan)
+}
+
+/// A tag as `same_tag` compares it: what tells two tags apart.
+fn folded(tag: &str) -> String {
+    tag.chars().flat_map(char::to_lowercase).collect()
 }
 
 /// "Tags out of Name": each entry renamed without its tags, which the
