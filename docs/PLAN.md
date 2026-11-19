@@ -1169,6 +1169,21 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
+**A new version told** (ADR-142, accepted 2026-11-19): designed, not
+built. Its steps, each tried before the next:
+1. The channel file (`share/skwir/channel`) and What's new.
+2. HTTP moved to `skwir-platform`, then the `updates` plugin: the
+   question asked once, the daily check, the toasts.
+3. The site's `updates/1.json` and redirects.
+4. AppImage's update information, tried with Gear Lever and
+   AppImageUpdate: whether they follow the site's redirect.
+5. A winget manifest.
+6. The signed apt and dnf repositories, `skwir-repository` and
+   `try.sh`'s upgrade.
+
+The repositories' key is the user's to make. A release's new steps go
+in `docs/RELEASING.md` as they are built.
+
 **Show in folder for other programs** (ADR-140, 2026-11-18): built on
 Linux and checked against a private dbus-daemon on Xvfb. Left: a real
 session's dbus-broker (its rules read in its source, not run: whether a

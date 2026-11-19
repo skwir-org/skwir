@@ -3,6 +3,9 @@
 Status: accepted, 2026-09-27. Built: previews on a map, their backgrounds
 and the Map view (steps A, B and C of `docs/PLAN.md`, "Maps"). Amended
 2026-09-27 (tile servers, loading, the Map view, more formats).
+Amended 2026-11-19 by ADR-142 (designed, not built): a second plugin,
+`updates`, makes requests, and HTTP moves to `skwir-platform` as the
+decision below foresaw.
 
 ## Context
 
