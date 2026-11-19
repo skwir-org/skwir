@@ -1058,6 +1058,7 @@ mod tests {
             label: Words::as_written("Undo"),
             command: "undo".into(),
             args: serde_json::json!({ "plan": plan }),
+            answers: true,
         }
     }
 
@@ -1173,6 +1174,7 @@ mod tests {
             label: Words::as_written("Retry"),
             command: "retry".into(),
             args: serde_json::json!({ "plan": ids[3] }),
+            answers: true,
         };
         assert_eq!(undo_held(&retry, &by_plan), None);
         // An Undo naming no plan (the last asked) is the core's to answer.
@@ -1180,6 +1182,7 @@ mod tests {
             label: Words::as_written("Undo"),
             command: "undo".into(),
             args: serde_json::json!({}),
+            answers: true,
         };
         assert_eq!(undo_held(&last, &by_plan), None);
     }

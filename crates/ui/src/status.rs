@@ -95,6 +95,7 @@ impl Shell {
                     ),
                     command: "ui.settings".into(),
                     args: serde_json::json!({ "key": setting }),
+                    answers: true,
                 }],
             ),
             cx,

@@ -223,6 +223,7 @@ impl Shell {
                         ),
                         command: "ui.settings".into(),
                         args: serde_json::json!({ "page": "plugins" }),
+                        answers: true,
                     }],
                 ),
                 cx,

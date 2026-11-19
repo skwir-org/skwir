@@ -239,6 +239,7 @@ impl Shell {
                             ),
                             command: "ui.plan_cancel".to_owned(),
                             args: json!({}),
+                            answers: true,
                         }],
                     ),
                     cx,

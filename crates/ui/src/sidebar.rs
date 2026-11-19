@@ -1863,6 +1863,7 @@ impl Shell {
                             args: serde_json::json!({
                                 "group": group, "key": key, "hidden": false,
                             }),
+                            answers: true,
                         }],
                     ),
                     cx,

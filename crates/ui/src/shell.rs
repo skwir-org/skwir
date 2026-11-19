@@ -4360,6 +4360,7 @@ impl Shell {
                         label: action.label,
                         command: action.command.name.to_string(),
                         args: action.command.args,
+                        answers: action.answers,
                     })
                     .collect(),
             );

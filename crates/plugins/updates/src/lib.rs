@@ -479,6 +479,7 @@ impl Inner {
                     note = "The button saying yes to being told of new versions."
                 ),
                 command: answer(true),
+                answers: true,
             },
             NotifyAction {
                 label: words!(
@@ -486,6 +487,7 @@ impl Inner {
                     note = "The button saying no to being told of new versions."
                 ),
                 command: answer(false),
+                answers: true,
             },
         ];
         if channel.has_repository() {
@@ -495,6 +497,8 @@ impl Inner {
                     note = "A button of the question about new versions, for a .deb or an .rpm: opens the website's page on adding Skwir's repository, so the system updates it."
                 ),
                 command: open_url(&format!("{}/download#repository", self.setup.site)),
+                // A page to read: the question stays up.
+                answers: false,
             });
         }
         app.ask_quietly(

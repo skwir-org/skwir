@@ -392,6 +392,12 @@ fn a_copy_something_else_updates_is_never_checked() {
     let question = f.said().pop().unwrap();
     let labels: Vec<String> = question.actions.iter().map(|a| a.label.english()).collect();
     assert_eq!(labels, ["Yes", "No", "Update with your system…"]);
+    let answers: Vec<bool> = question.actions.iter().map(|a| a.answers).collect();
+    assert_eq!(
+        answers,
+        [true, true, false],
+        "the link leaves the question up"
+    );
     let repository = &question.actions[2].command;
     assert_eq!(
         repository.args["url"],

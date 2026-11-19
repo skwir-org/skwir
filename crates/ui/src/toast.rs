@@ -33,13 +33,18 @@ pub enum Tone {
     Error,
 }
 
-/// A button on a toast: a label and the command it runs.
+/// A button on a toast: a label, the command it runs, and whether it
+/// answers the toast.
 #[derive(Clone, Debug)]
 pub struct Action {
     /// Said where it is drawn, in the window's language.
     pub label: Words,
     pub command: String,
     pub args: serde_json::Value,
+    /// Whether pressing it answers the toast, which then goes: every
+    /// button but a link that answers nothing (`NotifyAction::answers`), which
+    /// leaves it up.
+    pub answers: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -267,6 +272,23 @@ impl ToastState {
         let seconds = shown_for(self.current.as_ref()?);
         self.timed = true;
         Some((self.generation, seconds))
+    }
+
+    /// The current one goes (its Close, its caller done with it).
+    fn dismiss(&mut self) {
+        self.current = None;
+        self.generation += 1;
+    }
+
+    /// One of the current one's buttons is pressed: it goes where the
+    /// button answers it, and a link that answers nothing leaves it up, a
+    /// question to be answered once the page is read (ADR-142 5). Whether
+    /// it went.
+    fn pressed(&mut self, action: &Action) -> bool {
+        if action.answers {
+            self.dismiss();
+        }
+        action.answers
     }
 
     /// The time of the one said at `generation` is over: it goes, unless
@@ -850,8 +872,7 @@ impl Shell {
     }
 
     pub fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
-        self.toasts.current = None;
-        self.toasts.generation += 1;
+        self.toasts.dismiss();
         cx.notify();
     }
 
@@ -1316,6 +1337,7 @@ pub(crate) fn finished_actions(
             ),
             command: "retry".into(),
             args: serde_json::json!({ "plan": plan }),
+            answers: true,
         });
     }
     if run == RunKind::Undo {
@@ -1326,6 +1348,7 @@ pub(crate) fn finished_actions(
             ),
             command: "redo".into(),
             args: serde_json::json!({}),
+            answers: true,
         }));
     } else if undoes {
         actions.push(Action {
@@ -1335,6 +1358,7 @@ pub(crate) fn finished_actions(
             ),
             command: "undo".into(),
             args: serde_json::json!({ "plan": plan }),
+            answers: true,
         });
     }
     actions
@@ -1373,6 +1397,7 @@ pub(crate) fn show_action(made: &Path) -> Action {
             "location": PathArg::from(made.parent().unwrap_or(made)),
             "select": made.file_name().map(|name| PathArg::from(Path::new(name))),
         }),
+        answers: true,
     }
 }
 
@@ -1685,7 +1710,9 @@ pub fn render_answer(
             .aria_live(gpui::Live::Off)
             .text_color(theme.accent_text)
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.dismiss_toast(cx);
+                if this.toasts.pressed(&action) {
+                    cx.notify();
+                }
                 this.run(&action.command, action.args.clone(), window, cx);
             })),
         );
@@ -2166,6 +2193,7 @@ mod tests {
                 label: Words::as_written("Undo"),
                 command: "undo".into(),
                 args: serde_json::json!({}),
+                answers: true,
             }]
         };
         assert_eq!(
@@ -2723,6 +2751,35 @@ mod tests {
         assert_eq!(toasts.drawn(), None, "nothing to time");
     }
 
+    /// A question's link leaves it up, to be answered once its page is
+    /// read; its answers end it.
+    #[test]
+    fn a_link_leaves_its_question_up() {
+        let button = |label: &str, answers: bool| Action {
+            label: Words::as_written(label.to_owned()),
+            command: "updates.answer".into(),
+            args: serde_json::json!({}),
+            answers,
+        };
+        let (yes, link) = (
+            button("Yes", true),
+            button("Update with your system…", false),
+        );
+        let mut toasts = ToastState::default();
+        toasts.say(
+            Toast::new(
+                Words::as_written("Tell you when a new version is out?".to_owned()),
+                Tone::Info,
+                vec![yes.clone(), link.clone()],
+            ),
+            false,
+        );
+        assert!(!toasts.pressed(&link));
+        assert!(toasts.current.is_some(), "the question stays up");
+        assert!(toasts.pressed(&yes));
+        assert!(toasts.current.is_none(), "answered, it goes");
+    }
+
     /// What a reveal says joins the answer still shown, its Undo kept, and
     /// is said again whole: a new toast, timed for what it says now (a
     /// screen reader hears a new live region). Another toast shown since,
@@ -2737,6 +2794,7 @@ mod tests {
                 label: Words::as_written("Undo"),
                 command: "undo".into(),
                 args: serde_json::json!({ "plan": 7 }),
+                answers: true,
             }],
         );
         let (shown, _) = toasts.say(answer, false);

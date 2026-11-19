@@ -1337,7 +1337,9 @@ asks the direction.
   panel draws it), where the list shows sizes and dates rather than
   names; over the preview on the whole screen. Not while the History is
   open: one said meanwhile is held back and drawn once it closes, for
-  its time.
+  its time. A button answers its toast, which goes once it is pressed;
+  a link that answers nothing (`NotifyAction::answers` false: a
+  question's page to read first, ADR-142 5) leaves it up.
   A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its

@@ -269,8 +269,10 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   decision 6 says.
 - **The question** (5) is a notification with several buttons that stays
   until answered or closed (`App::ask_quietly`; a `Notification` holds
-  `actions` and whether it `stays`). Only Yes, No or the setting answer
-  it (`updates.answer`, a person's alone, `Effect::UserOnly`): closed, or
+  `actions`, each saying whether it answers, and whether it `stays`).
+  Only Yes, No or the setting answer it (`updates.answer`, a person's
+  alone, `Effect::UserOnly`); the link leaves it up
+  (`NotifyAction::answers` false): closed, or
   replaced by another toast, it is asked again another day, on three days
   at most. Skwir asks nothing while the user has not seen it. A
   downloaded copy alone declares `updates.tell`.

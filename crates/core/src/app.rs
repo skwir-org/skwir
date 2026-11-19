@@ -237,12 +237,23 @@ pub struct Notification {
     pub stays: bool,
 }
 
-/// A button on a [`Notification`]: its label and the command it runs.
+/// A button on a [`Notification`]: its label, the command it runs, and
+/// whether pressing it answers the notification.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct NotifyAction {
     /// Its button's label, said where it is drawn.
     pub label: Words,
     pub command: Invocation,
+    /// Whether pressing it answers its notification, which then goes (an
+    /// Undo, a question's Yes): a link that answers nothing (a page to
+    /// read before answering, ADR-142 5) leaves it up.
+    #[serde(default = "answers")]
+    pub answers: bool,
+}
+
+/// What a [`NotifyAction`] does unless it says otherwise: it answers.
+fn answers() -> bool {
+    true
 }
 
 /// Construction options.
@@ -3113,6 +3124,7 @@ impl App {
             actions: vec![NotifyAction {
                 label: label.into(),
                 command,
+                answers: true,
             }],
             stays: false,
         });
@@ -3121,7 +3133,8 @@ impl App {
 
     /// Ask something that may wait for the user (ADR-142: whether to be
     /// told of new versions) in a toast that stays until one of `answers`
-    /// is pressed or it is closed: never a dialog, nothing timed. Closed
+    /// that answers it is pressed (a link, `NotifyAction::answers` false,
+    /// leaves it up) or it is closed: never a dialog, nothing timed. Closed
     /// or replaced unanswered, nothing ran: its owner may ask again
     /// another time.
     pub fn ask_quietly(&self, text: impl Into<Words>, answers: Vec<NotifyAction>) {
