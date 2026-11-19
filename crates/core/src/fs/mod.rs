@@ -118,6 +118,12 @@ pub fn size_words(bytes: u64) -> crate::words::Words {
 
 /// A size as words in `units`, whatever the setting.
 pub fn size_words_in(bytes: u64, units: SizeUnits) -> crate::words::Words {
+    size_words_to(bytes, units, 1)
+}
+
+/// A size as words in `units`, its number rounded to `digits` after the
+/// point: none for what is sold in whole units, a disk's `4 TB`.
+pub fn size_words_to(bytes: u64, units: SizeUnits, digits: u8) -> crate::words::Words {
     use crate::words;
     use crate::words::Decimal;
     if bytes < units.base() {
@@ -133,7 +139,14 @@ pub fn size_words_in(bytes: u64, units: SizeUnits) -> crate::words::Words {
         value /= base;
         power += 1;
     }
-    let n = Decimal::of(value, 1);
+    // Rounded as it is said: what rounds up to a whole next unit is said in
+    // it (999,990 B is 1.0 MB, never 1,000.0 kB).
+    let mut n = Decimal::of(value, digits);
+    if power < 5 && n.value >= Decimal::of(base, digits).value {
+        value /= base;
+        power += 1;
+        n = Decimal::of(value, digits);
+    }
     match (units, power) {
         (SizeUnits::Decimal, 1) => words!(
             fs_size_kb = "{ $n }\u{a0}kB",

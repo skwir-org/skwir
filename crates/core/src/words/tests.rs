@@ -1365,6 +1365,25 @@ fn numbers_are_written_as_the_language_writes_them() {
         crate::fs::size_words_in(1_536, crate::fs::SizeUnits::Binary).english(),
         "1.5\u{a0}KiB"
     );
+    // What rounds up to a whole next unit is said in it, never as a
+    // thousand of the one below.
+    assert_eq!(size(999_949).english(), "999.9\u{a0}kB");
+    assert_eq!(size(999_950).english(), "1.0\u{a0}MB");
+    assert_eq!(size(999_990).english(), "1.0\u{a0}MB");
+    assert_eq!(size(999_999_999).english(), "1.0\u{a0}GB");
+    assert_eq!(
+        crate::fs::size_words_in(1_048_570, crate::fs::SizeUnits::Binary).english(),
+        "1.0\u{a0}MiB"
+    );
+    assert_eq!(
+        crate::fs::size_words_to(999_999_999_999, crate::fs::SizeUnits::Decimal, 0).english(),
+        "1\u{a0}TB"
+    );
+    assert_eq!(
+        size(u64::MAX).english(),
+        "18,446.7\u{a0}PB",
+        "past the last unit"
+    );
     // A message French has not is said whole in English, its numbers too:
     // never an English sentence with French numbers.
     let moved = crate::words!(test_moved_n = "Moved { $count } files", count = 12_345);
