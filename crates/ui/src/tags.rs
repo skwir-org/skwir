@@ -1838,7 +1838,7 @@ mod tests {
         let tags = [("Places/Paris".to_owned(), 0), ("print".to_owned(), 1)];
         assert_eq!(
             said(&tags, Some(7)).as_deref(),
-            Some("Tagged Paris, print; 3½ stars")
+            Some("Tagged Paris and print; 3½ stars")
         );
         assert_eq!(said(&[], Some(2)).as_deref(), Some("1 star"));
         assert_eq!(said(&[], Some(0)), None, "unrated");

@@ -3387,7 +3387,7 @@ mod tests {
         let tags = find("Notes", "Tags").unwrap();
         assert_eq!(
             (tags.value.as_ref(), tags.source.as_ref().map(AsRef::as_ref)),
-            ("work, draft", None),
+            ("work and draft", None),
             "notes are the user's: no need to say so"
         );
         assert_eq!(
