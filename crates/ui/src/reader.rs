@@ -67,11 +67,21 @@ pub struct ReaderState {
     pub(crate) active_hit: Option<usize>,
     /// The search the find field asked for.
     pub(crate) search: Latest<Result<Vec<SearchHit>, Words>>,
-    pub down: Option<(f32, f32)>,
+    /// The left press on the page of the selection, until its release.
+    pub down: Option<Down>,
     /// A drag across a page's text moves the page, as one across what has
     /// no text does, rather than selecting (`ui.reader_drag`, ADR-143).
     pub drag_moves: bool,
 }
+
+/// A left press on a page, held: where it was, and whether it selects the
+/// page's text or holds the pages (`elements::document::selects_at`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Down {
+    pub at: (f32, f32),
+    pub selects: bool,
+}
+
 impl ReaderState {
     /// A reader for the next file, reading as `continuous` says before its
     /// document opens: its first page is drawn that way from the start. A
@@ -132,9 +142,11 @@ impl ReaderState {
     }
 }
 
-/// Whether a left drag on `page` moves the pages rather than selecting its
-/// text: the user chose it (`drag_moves`), or it has no text to select
-/// (ADR-143). The page's element and `Shell::reader_pointer` both ask it.
+/// Whether a left drag across `page`'s text moves the pages rather than
+/// selecting it: the user chose it (`drag_moves`), or it has no text to
+/// select (ADR-143). A press on no character of it moves them either way
+/// (`elements::document::selects_at`). The page's element and
+/// `Shell::reader_pointer` both ask it.
 pub(crate) fn drags(drag_moves: bool, page: &PageContent) -> bool {
     drag_moves || page.chars.is_empty()
 }
@@ -306,26 +318,31 @@ impl Shell {
         let Some(page) = page(self).cloned() else {
             return;
         };
-        let drags = drags(self.preview.reader.drag_moves, &page);
         if phase == "down" {
             if let Some(focus) = &self.preview.reader.focus {
                 window.focus(focus, cx);
             }
             let reader = &mut self.preview.reader;
-            reader.down = Some((x, y));
-            // A press that holds the pages selects nothing and keeps what
-            // is selected on them, as the middle button's does (ADR-143);
-            // on another page, where its release and its link are read, it
-            // takes the selection's page.
-            if !drags {
-                reader.selection = nearest(&page, x, y)
-                    .filter(|&i| page.chars[i].bounds.contains(x, y))
-                    .map(|i| (i, i));
+            // A press on a character selects from it; one anywhere else, or
+            // across text whose drag moves the pages, holds them, selects
+            // nothing and keeps what is selected on them, as the middle
+            // button's does (ADR-143); on another page, where its release
+            // and its link are read, it takes the selection's page.
+            let from =
+                crate::elements::document::selects_at(drags(reader.drag_moves, &page), &page, x, y);
+            reader.down = Some(Down {
+                at: (x, y),
+                selects: from.is_some(),
+            });
+            if let Some(from) = from {
+                reader.selection = Some((from, from));
             } else if !on_selection {
                 reader.selection = None;
             }
-        } else if self.preview.reader.down.is_some() {
-            if let Some((a, _)) = self.preview.reader.selection.filter(|_| !drags) {
+        } else if let Some(down) = self.preview.reader.down {
+            if down.selects
+                && let Some((a, _)) = self.preview.reader.selection
+            {
                 self.preview.reader.selection = nearest(&page, x, y).map(|b| (a, b));
             }
             if phase == "up" {
@@ -333,11 +350,12 @@ impl Shell {
                 // them: the page follows the pointer, so where on it the
                 // release falls tells nothing. One that selects clicks where
                 // it stayed on the page.
-                let down = self.preview.reader.down.take();
-                let clicked = if drags {
-                    down.is_some() && !self.preview.grab.dragged()
+                self.preview.reader.down = None;
+                let clicked = if down.selects {
+                    let (a, b) = down.at;
+                    (a - x).abs() + (b - y).abs() < 0.006
                 } else {
-                    down.is_some_and(|(a, b)| (a - x).abs() + (b - y).abs() < 0.006)
+                    !self.preview.grab.dragged()
                 };
                 if clicked
                     && let Some((index, _)) = page
@@ -820,11 +838,19 @@ pub(crate) fn surface(
                     // Every page shown hears every left drag in the window:
                     // one that began elsewhere is none of its business, and
                     // running the command drew the window again for each.
-                    let reader = &shell.preview.reader;
-                    if phase != "down"
-                        && (reader.selection_page != Some(number) || reader.down.is_none())
-                    {
-                        return;
+                    let reader = &mut shell.preview.reader;
+                    if phase != "down" {
+                        if reader.selection_page != Some(number) || reader.down.is_none() {
+                            return;
+                        }
+                        // Its press was let go where it did not hear it (the
+                        // page left the list as the pages moved under it, or
+                        // the wheel took it away): what it hears now is
+                        // another press's, never its drag or its click.
+                        if !shell.preview.grab.held_over() {
+                            reader.down = None;
+                            return;
+                        }
                     }
                     shell.run(
                         "ui.reader_pointer",

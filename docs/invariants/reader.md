@@ -133,19 +133,34 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   waiting while a turn is on its way, so a held key starts the next page
   at its top).
 - **A drag moves the pages** (ADR-143, the rule in `previews.md`'s
-  "One of each"): a press on a page's text selects there and is taken
-  there, unless `reader::drags` says the page moves (the user's
+  "One of each"): a page takes every left press on it, and decides by
+  where it falls (`document::selects_at`, asked by the element and
+  `Shell::reader_pointer` alike). On a character of its text it selects
+  from there (`Grab::select`: the layer moves nothing and shows no hand
+  meanwhile), unless `reader::drags` says the page moves (the user's
   `reading.drag_moves`, `ui.reader_drag`, read when the reader is made;
-  or a page with no text). Then the page holds the `pan::Grab` itself
-  and still takes the press; it sends no move (nothing to select as it
-  goes), and its release follows a link only where the press did not
-  move the pages (`Grab::dragged`): the page follows the pointer, so
-  where on it the release falls tells nothing. Such a press keeps what
-  is selected on its page. A page's hitbox is the page drawn, not the
-  letterbox around it: a press there is the layer's. While a press holds
-  the pages, no page sets a cursor (the layer's closed hand shows); where
-  a drag would move them the page's is the open hand, a link's the
-  pointing hand.
+  or a page with no text). Anywhere else on the page (a margin, between
+  paragraphs, a picture), and across its text where it drags, the page
+  holds the `pan::Grab` itself (`Grab::hold`, even where nothing can
+  move, for its click); it sends no move (nothing to select as it goes),
+  and its release follows a link only where the press did not move the
+  pages (`Grab::dragged`): the page follows the pointer, so where on it
+  the release falls tells nothing. Such a press keeps what is selected
+  on its page. A page's hitbox is the page drawn, not the letterbox
+  around it: a press there is the layer's. While a press holds the
+  pages, no page sets a cursor (the layer's closed hand shows); while
+  one selects, the I-beam shows over every page; else a link's is the
+  pointing hand, a character's the I-beam, and the rest of the page the
+  open hand where the pages can move.
+- **A page's press is its own only while the grab holds it**
+  (`Grab::held_over`). A page is a row of a virtual list: one the pages
+  moved out from under the press (or the wheel took away) no longer
+  hears its release, which only the layer, never virtual, does. What
+  such a page hears later with no press of its own held (a release
+  after a click on the toolbar) lets its press go (`ReaderState::down`),
+  never a drag or a click on its link. It is told where the pointer's
+  events come in (`reader::surface`), not in `ui.reader_pointer`, which
+  a script may send with no pointer.
 - **A line of the wheel moves pages `WHEEL_LINE` (40 px)**, read
   continuously or a page at a time, so a notch (three lines on Linux)
   goes 120 px, as Chromium's does there (its PDF viewer's). gpui's list

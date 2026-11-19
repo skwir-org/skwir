@@ -3,13 +3,13 @@
 //! A view that scrolls both ways (a picture zoomed in, a document's pages)
 //! lays a [`layer`] under what it shows, as wide as its room. A press of the
 //! left button that nothing above it took (the picture, the room around and
-//! between pages, a page with no text), or of the middle button anywhere,
-//! holds what is shown: each move of the pointer then moves it as far, the
-//! point grabbed staying under the pointer, until the button is let go.
-//! What has something to select (a page's text) takes the press itself and
-//! selects, unless the user chose the drag for it too: then it holds the
-//! [`Grab`] itself ([`Grab::press`]) and tells a click from a drag by it
-//! ([`Grab::dragged`]).
+//! between pages), or of the middle button anywhere, holds what is shown:
+//! each move of the pointer then moves it as far, the point grabbed staying
+//! under the pointer, until the button is let go. A page takes its left
+//! presses itself: one on a character of its text selects ([`Grab::select`]),
+//! unless the user chose the drag for it too; anywhere else on it (a margin,
+//! a picture, a page with no text) it holds the [`Grab`] itself
+//! ([`Grab::hold`]) and tells a click from a drag by it ([`Grab::dragged`]).
 //!
 //! It moves the handles the arrows and the scrollbars move, so a drag goes
 //! no further than they do. It never throws what it moves on after the
@@ -56,6 +56,7 @@ struct Shared {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Held {
     button: MouseButton,
+    by: By,
     /// Where the press was.
     from: Point<Pixels>,
     /// Where the pointer was when what is shown last moved.
@@ -64,16 +65,56 @@ struct Held {
     dragged: bool,
 }
 
+/// Who took the press the grab holds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum By {
+    /// The layer: a press around and between what it moves, or the middle
+    /// button's anywhere.
+    Layer,
+    /// What is drawn over the layer and takes its left press itself, where
+    /// its drag moves what is shown (a page, [`Grab::hold`]).
+    Over,
+    /// What is drawn over the layer selecting its text with the press
+    /// ([`Grab::select`]): nothing moves.
+    Selecting,
+}
+
 impl Grab {
-    /// Hold what is shown from `at`, with `button`: what is drawn over the
-    /// layer and takes the press itself (a page whose drag moves it).
-    pub fn press(&self, at: Point<Pixels>, button: MouseButton) {
+    fn press(&self, at: Point<Pixels>, button: MouseButton, by: By) {
         self.0.held.set(Some(Held {
             button,
+            by,
             from: at,
             last: at,
             dragged: false,
         }));
+    }
+
+    /// Hold what is shown from `at` with the left button: what is drawn
+    /// over the layer and takes the press itself, where its drag moves the
+    /// view (a page). It holds the grab even where nothing can move, to tell
+    /// its click by it ([`Grab::dragged`]).
+    pub fn hold(&self, at: Point<Pixels>) {
+        self.press(at, MouseButton::Left, By::Over);
+    }
+
+    /// The left press at `at` selects what is drawn over the layer (a
+    /// page's text): nothing moves, and the layer shows no hand, until it is
+    /// let go.
+    pub fn select(&self, at: Point<Pixels>) {
+        self.press(at, MouseButton::Left, By::Selecting);
+    }
+
+    /// Whether a press that what is drawn over the layer took ([`hold`],
+    /// [`select`]) is still held. The layer, never virtual, hears every
+    /// release; a page in a virtual list does not once it has left it (the
+    /// pages moved under the press, the wheel took them away): what such a
+    /// page hears without its press held is left over, never its click.
+    ///
+    /// [`hold`]: Grab::hold
+    /// [`select`]: Grab::select
+    pub fn held_over(&self) -> bool {
+        self.0.held.get().is_some_and(|held| held.by != By::Layer)
     }
 
     /// Whether the press held has gone far enough to be a drag: its release
@@ -85,7 +126,20 @@ impl Grab {
     /// Whether a press holds something that can move: its hand is closed,
     /// and what is drawn over the layer leaves the pointer to it.
     pub fn grabbing(&self) -> bool {
-        self.0.held.get().is_some() && self.movable()
+        self.0
+            .held
+            .get()
+            .is_some_and(|held| held.by != By::Selecting)
+            && self.movable()
+    }
+
+    /// Whether what is drawn over the layer selects with the press held: no
+    /// hand shows, as the drag moves nothing.
+    pub fn selecting(&self) -> bool {
+        self.0
+            .held
+            .get()
+            .is_some_and(|held| held.by == By::Selecting)
     }
 
     /// Whether what the layer moves is larger than its room, as last
@@ -95,17 +149,22 @@ impl Grab {
         self.0.movable.get()
     }
 
-    fn let_go(&self) {
+    /// Let the press go: whether the cursor it showed (a hand closed, a
+    /// selection's) must be drawn again.
+    fn let_go(&self) -> bool {
+        let showed = self.grabbing() || self.selecting();
         self.0.held.set(None);
+        showed
     }
 
     /// The pointer at `at` with the press held: how far what is shown moves.
-    /// Nothing until the pointer leaves a click's reach, then the whole way
-    /// from the press, so the point grabbed lands under the pointer. Taken
-    /// once: a second layer over the same grab (a picture drawn in the panel
-    /// and in peek) finds nothing left to move.
+    /// Nothing while it selects, nor until the pointer leaves a click's
+    /// reach, then the whole way from the press, so the point grabbed lands
+    /// under the pointer. Each move is taken once: a guard, as no two
+    /// layers share a grab (the panel behind peek or the whole screen has
+    /// none).
     fn follow(&self, at: Point<Pixels>) -> Option<Point<Pixels>> {
-        let mut held = self.0.held.get()?;
+        let mut held = self.0.held.get().filter(|held| held.by != By::Selecting)?;
         if !held.dragged {
             let gone = at - held.from;
             if f32::from(gone.x).hypot(f32::from(gone.y)) <= CLICK_SLOP {
@@ -133,16 +192,63 @@ pub enum Moves {
     },
 }
 
+/// `offset` moved `delta`, held within `most` as gpui holds a box's offset
+/// as it lays it out (`Interactivity::clamp_scroll_position`): from 0 down
+/// to `-most`, but sideways from 0 up to `most` where the box is laid out
+/// right to left.
+fn within(
+    offset: Point<Pixels>,
+    delta: Point<Pixels>,
+    most: Point<Pixels>,
+    rtl: bool,
+) -> Point<Pixels> {
+    let (x, y) = (f32::from(offset.x + delta.x), f32::from(offset.y + delta.y));
+    let (across, down) = (f32::from(most.x).max(0.), f32::from(most.y).max(0.));
+    let x = if rtl {
+        x.clamp(0., across)
+    } else {
+        x.clamp(-across, 0.)
+    };
+    point(px(x), px(y.clamp(-down, 0.)))
+}
+
+/// How far down a list is scrolled once moved `distance` from `top`, held
+/// within `most`, as the list holds it at its next layout.
+fn down_within(top: Pixels, distance: Pixels, most: Pixels) -> Pixels {
+    px(f32::from(top + distance).clamp(0., f32::from(most).max(0.)))
+}
+
 impl Moves {
-    /// Move what is shown `delta` along with the pointer. gpui holds each
-    /// offset within its bounds as it lays the box out, so a drag past an
-    /// edge goes no further.
-    fn by(&self, delta: Point<Pixels>) {
+    /// Move what is shown `delta` along with the pointer, held within its
+    /// bounds as gpui will hold it when it lays it out: whether it moved,
+    /// so a drag against an edge, or over what fits, draws nothing. (Two
+    /// offsets are told apart in numbers: `Pixels`' `==` is its `f32`'s,
+    /// -0 and 0 one, though it orders -0 below 0.)
+    fn by(&self, delta: Point<Pixels>, rtl: bool) -> bool {
         match self {
-            Moves::Offset(handle) => handle.set_offset(handle.offset() + delta),
+            Moves::Offset(handle) => {
+                let (was, most) = (handle.offset(), handle.max_offset());
+                let to = within(was, delta, most, rtl);
+                let moved = to != was;
+                if moved {
+                    handle.set_offset(to);
+                }
+                moved
+            }
             Moves::Column { list, across } => {
-                list.scroll_by(-delta.y);
-                across.set_offset(point(across.offset().x + delta.x, px(0.)));
+                let top = -list.scroll_px_offset_for_scrollbar().y;
+                let to = down_within(top, -delta.y, list.max_offset_for_scrollbar().y);
+                let down = to != top;
+                if down {
+                    list.scroll_by(to - top);
+                }
+                let (was, most) = (across.offset(), across.max_offset());
+                let sideways = within(was, point(delta.x, px(0.)), point(most.x, px(0.)), rtl);
+                let aside = sideways != was;
+                if aside {
+                    across.set_offset(sideways);
+                }
+                down || aside
             }
         }
     }
@@ -167,7 +273,9 @@ impl Moves {
 /// the view's room: drawn first in it, so what is drawn over it (a page, a
 /// scrollbar, a drawer) hears a press before it does and keeps the presses
 /// it takes. `left` says whether the left button drags here too (not on a
-/// film, whose click is the player's); the middle button always does.
+/// film, whose click is the player's); the middle button always does. It
+/// takes a press only where what it moves can move, and draws again only
+/// for a hand to show or what moved.
 pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
     let grab = grab.clone();
     gpui::canvas(
@@ -175,9 +283,11 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
         move |_, hitbox, window, _| {
             let movable = moves.movable();
             grab.0.movable.set(movable);
+            // The direction the box it moves is laid out in, its sibling's.
+            let rtl = window.layout_direction().is_rtl();
             if grab.grabbing() {
                 window.set_cursor_style(CursorStyle::ClosedHand, &hitbox);
-            } else if left && movable {
+            } else if left && movable && !grab.selecting() {
                 window.set_cursor_style(CursorStyle::OpenHand, &hitbox);
             }
             let (pressed, hit) = (grab.clone(), hitbox.clone());
@@ -189,8 +299,9 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
                 };
                 // What is under the press (a double click, the focus) hears
                 // it too: nothing here stops it.
-                if phase.bubble() && takes && hit.is_hovered(window) {
-                    pressed.press(event.position, event.button);
+                if phase.bubble() && takes && pressed.movable() && hit.is_hovered(window) {
+                    pressed.press(event.position, event.button, By::Layer);
+                    // The hand closes.
                     window.refresh();
                 }
             });
@@ -204,12 +315,14 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
                 };
                 // A release outside the window is never told here.
                 if event.pressed_button != Some(held.button) {
-                    followed.let_go();
-                    window.refresh();
+                    if followed.let_go() {
+                        window.refresh();
+                    }
                     return;
                 }
-                if let Some(delta) = followed.follow(event.position) {
-                    moves.by(delta);
+                if let Some(delta) = followed.follow(event.position)
+                    && moves.by(delta, rtl)
+                {
                     window.refresh();
                 }
             });
@@ -221,8 +334,9 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
                         .held
                         .get()
                         .is_some_and(|held| held.button == event.button)
+                    && released.let_go()
                 {
-                    released.let_go();
+                    // The hand opens, or the selection's cursor goes.
                     window.refresh();
                 }
             });
@@ -245,7 +359,7 @@ mod tests {
     #[test]
     fn a_press_moves_nothing_within_a_click() {
         let grab = Grab::default();
-        grab.press(at(100., 100.), MouseButton::Left);
+        grab.press(at(100., 100.), MouseButton::Left, By::Layer);
         assert_eq!(grab.follow(at(102., 103.)), None);
         assert!(!grab.dragged(), "a click's tremble is no drag");
     }
@@ -253,7 +367,7 @@ mod tests {
     #[test]
     fn past_a_click_the_point_grabbed_follows_the_pointer() {
         let grab = Grab::default();
-        grab.press(at(100., 100.), MouseButton::Left);
+        grab.press(at(100., 100.), MouseButton::Left, By::Layer);
         // The first move past the slop goes the whole way from the press.
         assert_eq!(grab.follow(at(110., 100.)), Some(at(10., 0.)));
         assert!(grab.dragged());
@@ -264,11 +378,71 @@ mod tests {
     }
 
     #[test]
-    fn a_move_is_taken_once_by_every_layer_over_the_grab() {
+    fn a_move_is_taken_once() {
         let grab = Grab::default();
-        grab.press(at(0., 0.), MouseButton::Middle);
+        grab.press(at(0., 0.), MouseButton::Middle, By::Layer);
         assert_eq!(grab.follow(at(0., 20.)), Some(at(0., 20.)));
-        assert_eq!(grab.follow(at(0., 20.)), None, "the second layer's turn");
+        // A guard: no two layers share a grab.
+        assert_eq!(grab.follow(at(0., 20.)), None);
+    }
+
+    #[test]
+    fn a_selection_moves_nothing_and_shows_no_hand() {
+        let grab = Grab::default();
+        grab.0.movable.set(true);
+        grab.select(at(0., 0.));
+        assert_eq!(grab.follow(at(40., 40.)), None, "a selection's drag");
+        assert!(grab.selecting() && !grab.grabbing() && !grab.dragged());
+        assert!(grab.let_go(), "its cursor goes with it");
+        assert!(!grab.selecting());
+    }
+
+    #[test]
+    fn a_page_press_is_its_own_while_held() {
+        let grab = Grab::default();
+        grab.hold(at(0., 0.));
+        assert!(grab.held_over());
+        // Nothing to move: the page still tells its click by the grab, and
+        // nothing is drawn again for it.
+        assert_eq!(grab.follow(at(30., 0.)), Some(at(30., 0.)));
+        assert!(grab.dragged() && !grab.grabbing());
+        assert!(!grab.let_go());
+        // Let go where the page did not hear it: what it hears next is
+        // another press's, the layer's or none.
+        assert!(!grab.held_over());
+        grab.press(at(0., 0.), MouseButton::Left, By::Layer);
+        assert!(!grab.held_over());
+        grab.select(at(0., 0.));
+        assert!(grab.held_over());
+    }
+
+    #[test]
+    fn a_move_is_held_where_gpui_holds_the_offset() {
+        let most = at(100., 50.);
+        // Within: as far as the pointer.
+        assert_eq!(
+            within(at(-10., -10.), at(-5., 5.), most, false),
+            at(-15., -5.)
+        );
+        // Past an edge: no further, both ways.
+        assert_eq!(
+            within(at(-95., -2.), at(-20., 10.), most, false),
+            at(-100., 0.)
+        );
+        assert_eq!(within(at(0., 0.), at(30., 30.), most, false), at(0., 0.));
+        // Right to left, sideways runs from 0 up.
+        assert_eq!(within(at(10., 0.), at(20., 0.), most, true), at(30., 0.));
+        assert_eq!(within(at(10., 0.), at(-20., 0.), most, true), at(0., 0.));
+        // What fits moves nowhere.
+        assert_eq!(
+            within(at(0., 0.), at(7., -7.), at(0., 0.), false),
+            at(0., 0.)
+        );
+        assert_eq!(at(-0., 0.), at(0., -0.), "-0 is 0 to `==`");
+        // A list: from its top down to the most it goes.
+        assert_eq!(down_within(px(10.), px(-30.), px(500.)), px(0.));
+        assert_eq!(down_within(px(490.), px(30.), px(500.)), px(500.));
+        assert_eq!(down_within(px(100.), px(30.), px(500.)), px(130.));
     }
 
     #[test]
@@ -308,7 +482,7 @@ mod tests {
     fn nothing_held_moves_nothing() {
         let grab = Grab::default();
         assert_eq!(grab.follow(at(50., 50.)), None);
-        grab.press(at(0., 0.), MouseButton::Left);
+        grab.press(at(0., 0.), MouseButton::Left, By::Layer);
         grab.let_go();
         assert_eq!(grab.follow(at(50., 50.)), None);
         assert!(!grab.dragged() && !grab.grabbing());

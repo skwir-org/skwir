@@ -1564,19 +1564,25 @@ is still to come are in `docs/preview-frame.md`.
   zoom keys keep their place.
 - **A drag moves a picture or pages larger than their room** (ADR-143):
   the left button where nothing is selected by it (a picture, the room
-  around and between pages, a page with no text, its text too while the
-  reader's Drag to move the page is on), the middle button anywhere. One
-  layer under what is shown does it (`elements::pan::layer`, drawn first
-  in the view's room, so what is over it hears a press first and keeps
-  what it takes), moving the handles the arrows and the scrollbars move
-  (`pan::Moves`), never by an offset of its own: a drag goes no further
-  than they do, and never turns a page. A copy drawn only as a picture
-  of the preview (behind peek) has none (`picture`'s `grab`). A press is
-  one `pan::Grab` for the window, each move taken once whatever shares
-  it. A film's click is the player's: only the middle button drags it.
-  Nothing is thrown after the pointer stops. gpui tells a click at a
-  drag's release too: what a click does over what moves asks whether
-  the pointer stayed (`pan::double_click`, the picture's whole screen).
+  around and between pages, a page where no character of its text is
+  under the press, its text too while the reader's Drag to move the page
+  is on), the middle button anywhere. One layer under what is shown does
+  it (`elements::pan::layer`, drawn first in the view's room, so what is
+  over it hears a press first and keeps what it takes), moving the
+  handles the arrows and the scrollbars move (`pan::Moves`), never by an
+  offset of its own: a drag goes no further than they do, and never
+  turns a page. A copy drawn only as a picture of the preview (behind
+  peek) has none (`picture`'s `grab`). A press is one `pan::Grab` for
+  the window, each move taken once (a guard: no two layers share it). A
+  film's click is the player's: only the middle button drags it.
+  Nothing is thrown after the pointer stops. The layer takes a press
+  only where what it moves can move, and draws again only for a hand to
+  show or for a move that changes an offset, held within its bounds as
+  gpui will hold it in prepaint (`pan::within`; the list's against
+  `max_offset_for_scrollbar`): a drag against an edge, or over what
+  fits, draws nothing. gpui tells a click at a drag's release too: what
+  a click does over what moves asks whether the pointer stayed
+  (`pan::double_click`, the picture's whole screen).
 - What a zoom key does follows from what is shown, never from a
   per-format switch; the user asks for bigger or smaller and never
   chooses the mechanism. Text in reading mode changes size (the

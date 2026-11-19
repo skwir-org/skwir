@@ -102,7 +102,7 @@ contributors). The rules for working on preview code are in
 | `F` | Picture, reader, text, peek | Fullscreen, or back |
 | `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Reader, picture, map, text | Zoom in, out, reset; text larger, smaller, as it was |
 | `Ctrl` and the wheel | Over a page, a picture or text | Zoom in or out around the pointer; text larger or smaller (a map zooms with the wheel alone) |
-| A drag; a drag with the middle button | Over a picture or pages zoomed in | Move them: a drag where there is nothing to select (a picture, beside and between pages, a page without text), the middle button anywhere |
+| A drag; a drag with the middle button | Over a picture or pages zoomed in | Move them: a drag where there is nothing to select (a picture, beside and between pages, a page's margins and pictures, a page without text), the middle button anywhere |
 | `H` | Reader | Drag to move the page: a drag across a page's text moves the page, or selects the text again |
 | Arrows | Map | Pan |
 | Up, Down; Left, Right | Archive or message | Walk its files; fold or unfold |
@@ -255,7 +255,8 @@ The player, in the panel or pinned at its foot:
 - **PDF** in the document reader: continuous or a page at a time, zoom,
   search, contents, links, text selection and copy. Zoomed in, a drag
   moves the pages wherever it has nothing to select (beside and between
-  them, a page without text), and the middle button's drag anywhere;
+  them, a page's margins and pictures, a page without text), and the
+  middle button's drag anywhere;
   **Drag to move the page** in the bar (`H`, or Settings › Reading)
   makes a drag across the text move the page too, a click still
   following a link. **Document engine**:

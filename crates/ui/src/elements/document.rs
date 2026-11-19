@@ -38,9 +38,10 @@ pub struct DocumentElement {
     /// The press holding the pages, shared with the layer under them that
     /// moves them (`elements::pan`, ADR-143).
     pub grab: crate::elements::pan::Grab,
-    /// A left drag here moves the pages rather than selecting its text
-    /// (`reader::drags`): the page holds the grab itself, and a release
-    /// that did not move them is a click.
+    /// A left drag across its text moves the pages rather than selecting it
+    /// (`reader::drags`). Wherever a press selects nothing (`selects_at`),
+    /// the page holds the grab itself, and a release that did not move the
+    /// pages is a click.
     pub drags: bool,
 }
 impl IntoElement for DocumentElement {
@@ -53,6 +54,22 @@ impl IntoElement for DocumentElement {
 pub struct Prepaint {
     image: Bounds<Pixels>,
     hitbox: Hitbox,
+}
+
+/// The character a left press at `(x, y)` on `page` (its share of the
+/// page's width and height) begins a selection on: the one under it,
+/// unless a drag across the text moves the pages (`drags`). Anywhere else
+/// (a margin, between paragraphs, a picture, a page with no text) the
+/// press selects nothing, so it holds the pages, as one beside the page
+/// does (ADR-143). The page's element and `Shell::reader_pointer` both ask
+/// it, at the press and for the cursor over the page.
+pub fn selects_at(drags: bool, page: &PageContent, x: f32, y: f32) -> Option<usize> {
+    if drags {
+        return None;
+    }
+    page.chars
+        .iter()
+        .position(|ch| ch.bounds.height > 0. && ch.bounds.contains(x, y))
 }
 
 pub fn fitted_rect(
@@ -146,9 +163,16 @@ impl Element for DocumentElement {
         let y = f32::from(mouse.y - image_bounds.origin.y)
             / f32::from(image_bounds.size.height).max(1.);
         // While a press holds the pages, the hand closed on them is the
-        // layer's, over a link or text too; where a drag moves them, its
-        // hand is open, where they can move.
+        // layer's, over a link or text too; while one selects, the I-beam
+        // shows wherever it goes. Else a link's pointing hand, the I-beam
+        // over a character a press selects from, and elsewhere the open
+        // hand, where the pages can move. Only the page under the pointer
+        // looks for what is under it.
         let cursor = if self.grab.grabbing() {
+            None
+        } else if self.grab.selecting() {
+            Some(gpui::CursorStyle::IBeam)
+        } else if !image_bounds.contains(&mouse) {
             None
         } else if self
             .page
@@ -157,7 +181,7 @@ impl Element for DocumentElement {
             .any(|link| link.bounds.contains(x, y))
         {
             Some(gpui::CursorStyle::PointingHand)
-        } else if !self.drags {
+        } else if selects_at(self.drags, &self.page, x, y).is_some() {
             Some(gpui::CursorStyle::IBeam)
         } else {
             self.grab.movable().then_some(gpui::CursorStyle::OpenHand)
@@ -203,7 +227,7 @@ impl Element for DocumentElement {
         };
         let callback = self.on_pointer.clone();
         let hitbox = prepaint.hitbox.clone();
-        let (grab, drags) = (self.grab.clone(), self.drags);
+        let (grab, drags, page) = (self.grab.clone(), self.drags, self.page.clone());
         window.on_mouse_event(
             move |ev: &MouseDownEvent, phase: DispatchPhase, window, cx| {
                 if phase.bubble()
@@ -211,21 +235,29 @@ impl Element for DocumentElement {
                     && hitbox.is_hovered(window)
                     && image_bounds.contains(&ev.position)
                 {
-                    if drags {
-                        grab.press(ev.position, MouseButton::Left);
-                    }
                     let (x, y) = coordinates(ev.position);
+                    // On a character it selects; anywhere else it holds the
+                    // pages, and the page keeps it to tell its click.
+                    if selects_at(drags, &page, x, y).is_some() {
+                        grab.select(ev.position);
+                    } else {
+                        grab.hold(ev.position);
+                    }
                     callback("down", x, y, window, cx);
                     cx.stop_propagation();
                 }
             },
         );
         let callback = self.on_pointer.clone();
+        let selecting = self.grab.clone();
         // A drag that moves the pages is the layer's: the page has nothing
         // to select as it goes.
         window.on_mouse_event(
             move |ev: &MouseMoveEvent, phase: DispatchPhase, window, cx| {
-                if phase.bubble() && !drags && ev.pressed_button == Some(MouseButton::Left) {
+                if phase.bubble()
+                    && ev.pressed_button == Some(MouseButton::Left)
+                    && selecting.selecting()
+                {
                     let (x, y) = coordinates(ev.position);
                     callback("move", x, y, window, cx);
                 }
@@ -308,6 +340,34 @@ impl Element for DocumentViewport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_press_selects_only_on_a_character() {
+        use skwir_core::document::TextChar;
+        let char_at = |x, width, height| TextChar {
+            text: "a".into(),
+            bounds: Rect {
+                x,
+                y: 0.1,
+                width,
+                height,
+            },
+        };
+        let page = PageContent {
+            page: 1,
+            width: 600.,
+            height: 800.,
+            chars: vec![char_at(0.1, 0.02, 0.02), char_at(0.5, 0.02, 0.)],
+            links: Vec::new(),
+        };
+        assert_eq!(selects_at(false, &page, 0.11, 0.11), Some(0));
+        // A margin, and a character with no height, select nothing: the
+        // press holds the pages.
+        assert_eq!(selects_at(false, &page, 0.9, 0.5), None);
+        assert_eq!(selects_at(false, &page, 0.51, 0.1), None);
+        // Where the drag across text moves the pages, nothing selects.
+        assert_eq!(selects_at(true, &page, 0.11, 0.11), None);
+    }
+
     #[test]
     fn fit_keeps_selection_and_pixels_in_the_same_letterboxed_area() {
         assert_eq!(fitted_rect(400., 600., 200., 200.), (0., 100., 400., 400.));
