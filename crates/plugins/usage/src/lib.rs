@@ -25,6 +25,7 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::ViewSpec;
 use skwir_core::words;
+use skwir_core::words::Words;
 use skwir_core::workspace::PaneId;
 
 const ID: &str = "usage";
@@ -129,7 +130,12 @@ pub struct Status {
     pub size: u64,
     pub elapsed_ms: u64,
     pub tree: Option<Node>,
-    pub error: Option<String>,
+    /// Why the measure is missing or partial, as data (`Words::to_data`):
+    /// the window says it where it draws it, in its language as it stands;
+    /// an agent reads its English.
+    #[serde(default, with = "skwir_core::words::data::optional")]
+    #[schemars(with = "Option<Words>")]
+    pub error: Option<Words>,
     /// True when recursive monitoring is unavailable; periodic revalidation is used.
     pub stale: bool,
     /// Directories actually read for this request (zero on a cache hit).
@@ -250,13 +256,10 @@ impl Status {
     fn not_measured(root: PathBuf) -> Status {
         Status {
             root: Some(root),
-            error: Some(
-                words!(
-                    usage_network_folder = "A network folder: Refresh (F5) measures it, reading every folder of it across the network",
-                    note = "Said in the Usage view of a folder on a server, measured only when asked."
-                )
-                .say(),
-            ),
+            error: Some(words!(
+                usage_network_folder = "A network folder: Refresh (F5) measures it, reading every folder of it across the network",
+                note = "Said in the Usage view of a folder on a server, measured only when asked."
+            )),
             ..Status::default()
         }
     }
@@ -432,13 +435,10 @@ impl Plugin for UsagePlugin {
                             } else if let Some(s) = r.shared.statuses.lock().get_mut(&pane) {
                                 s.scanning = false;
                                 s.updating = false;
-                                s.error = Some(
-                                    words!(
-                                        usage_cancelled = "Scan cancelled",
-                                        note = "Said in the Usage view once its measuring was stopped."
-                                    )
-                                    .say(),
-                                );
+                                s.error = Some(words!(
+                                    usage_cancelled = "Scan cancelled",
+                                    note = "Said in the Usage view once its measuring was stopped."
+                                ));
                             }
                             let _ = r.tx.send(Message::Release(pane));
                             Some(Arc::clone(&r.shared))
@@ -727,6 +727,34 @@ mod tests {
         let missing = scan(&app, pane, &root.join("missing"), false);
         assert!(missing.error.is_some());
         assert!(missing.tree.is_none());
+    }
+
+    /// Why a measure is missing is words as data (PA-2): an agent reads
+    /// its English, the window says it in its language where it draws it,
+    /// never words already said in the language the window spoke then.
+    #[test]
+    fn the_status_answers_its_words_as_data() {
+        let (_tmp, app, _, root) = setup();
+        let pane = app.workspace.read().active_id();
+        scan(&app, pane, &root.join("missing"), false);
+        let Outcome::Value(answer) = app
+            .dispatch(&Invocation::with_args(
+                "usage.status",
+                &serde_json::json!({ "pane": pane }),
+            ))
+            .unwrap()
+        else {
+            panic!("usage.status answers a value");
+        };
+        assert!(answer["error"].is_object(), "{answer}");
+        assert_eq!(answer["error"]["english"], "Unable to read this directory");
+        let error = status(&app, pane).error.unwrap();
+        assert_eq!(error.english(), "Unable to read this directory");
+        assert_ne!(
+            error.say_in(&[words::PSEUDO.to_owned()]),
+            error.english(),
+            "the window says it as the message it is"
+        );
     }
     #[test]
     fn cancelled_requests_and_plugin_lifetime_cannot_publish_stale_results() {

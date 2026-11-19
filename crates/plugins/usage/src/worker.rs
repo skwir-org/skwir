@@ -1660,13 +1660,14 @@ impl Worker {
                 .err()
                 .map(|error| {
                     if error.downcast_ref::<std::io::Error>().is_some() {
-                        words!(usage_unreadable = "Unable to read this directory").say()
+                        words!(usage_unreadable = "Unable to read this directory")
                     } else {
-                        // Words said in the reader's language; any other
-                        // error as it is.
-                        error
-                            .downcast_ref::<Words>()
-                            .map_or_else(|| error.to_string(), Words::say)
+                        // Words said where they are drawn, in the reader's
+                        // language; any other error as it is.
+                        error.downcast_ref::<Words>().map_or_else(
+                            || Words::as_written(error.to_string()),
+                            Clone::clone,
+                        )
                     }
                 })
                 .or_else(|| {
@@ -1679,7 +1680,6 @@ impl Worker {
                             count = errors,
                             note = "Said in the Usage view: entries of the folder could not be read."
                         )
-                        .say()
                     })
                 })
                 .or_else(|| {
@@ -1687,7 +1687,6 @@ impl Worker {
                         words!(
                             usage_changed_during = "Directory changed during scan; totals are incomplete"
                         )
-                        .say()
                     })
                 })
                 .or_else(|| match coverage {
@@ -1696,15 +1695,13 @@ impl Worker {
                         words!(
                             usage_partly_watched = "Some folders cannot be monitored; rechecking periodically",
                             note = "Said in the Usage view: some folders' changes cannot be followed as they happen."
-                        )
-                        .say(),
+                        ),
                     ),
                     Coverage::None => Some(
                         words!(
                             usage_unwatched = "Live monitoring unavailable; rechecking periodically",
                             note = "Said in the Usage view: no folder's changes can be followed as they happen."
-                        )
-                        .say(),
+                        ),
                     ),
                 });
             let node = tree.ok();
@@ -2340,7 +2337,7 @@ mod tests {
                 let s = statuses.get_mut(&request.pane).unwrap();
                 s.scanning = true;
                 s.tree.as_mut().unwrap().incomplete = incomplete;
-                s.error = incomplete.then(|| "Some entries could not be read".into());
+                s.error = incomplete.then(|| Words::as_written("Some entries could not be read"));
             }
             let before = shared.statuses.lock()[&request.pane].clone();
             updates.try_iter().for_each(drop);
@@ -3108,6 +3105,7 @@ mod tests {
             status
                 .error
                 .unwrap()
+                .english()
                 .starts_with("1 entry could not be read")
         );
         assert_eq!(worker.active[&PaneId(0)].coverage, Coverage::Full);
@@ -3384,7 +3382,7 @@ mod tests {
         let status = shared.statuses.lock()[&PaneId(0)].clone();
         assert!(status.tree.is_none());
         assert_eq!(
-            status.error.as_deref(),
+            status.error.map(|error| error.english()).as_deref(),
             Some("Disk usage is not available for virtual filesystems")
         );
         assert!(!descend(
