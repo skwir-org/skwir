@@ -3282,6 +3282,9 @@ form_waiting_keys = 按 Esc 取消
 format_dimensions = { $width } × { $height }
 
 # draft
+format_facts = { $first } · { $then }
+
+# draft
 format_left_few_seconds = 剩余几秒
 
 # draft
@@ -8753,6 +8756,9 @@ usage_default_levels_tip = 默认层级
 usage_delete_keys = 按 { $keys } 永久删除
 
 # draft
+usage_detail = { $said }
+
+# draft
 usage_detail_cache = { $said } · 缓存
 
 # draft
@@ -8850,6 +8856,12 @@ usage_scanning_read = 正在扫描… 已读取 { $count } 个文件夹
 
 # draft
 usage_see_all = 双击以在列表视图中查看所有项目
+
+# draft
+usage_share = { $percent }%
+
+# draft
+usage_share_below = <{ $percent }%
 
 # draft
 usage_share_of = 占 { $folder } 的 { $share }

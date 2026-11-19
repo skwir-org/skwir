@@ -524,9 +524,9 @@ enum Row {
 
 /// A side of a clash in words: "12 KB, Today 14:02", "folder, 1 Oct".
 fn said(side: &Side, now: &jiff::Zoned) -> Words {
-    // Transitional: a moment said as text until moments are arguments of
-    // their own (ADR-139).
-    let time = side.modified.map(|t| crate::format::friendly_time(t, now));
+    // Words where it is said in words, a moment where it is a date: placed
+    // by the message, never said before.
+    let time = side.modified.map(|t| crate::format::friendly_arg(t, now));
     match (side.folder, side.size, time) {
         (true, _, None) => words!(
             clashes_side_folder = "folder",

@@ -297,7 +297,8 @@ pub struct Status {
     pub alloc: u64,
     pub size: u64,
     pub tree: Option<Node>,
-    pub error: Option<String>,
+    /// Its words as data, said where they are drawn.
+    pub error: Option<Words>,
     pub scanned_dirs: u64,
 }
 #[derive(Default)]
@@ -522,10 +523,9 @@ struct Block {
 }
 
 /// `480 MB`, or `480 MB · 120 MB on disk` when the two differ as said.
-fn sizes(size: u64, alloc: u64) -> String {
-    let said = format::size(size);
-    if said == format::size(alloc) {
-        said
+fn sizes(size: u64, alloc: u64) -> Words {
+    if format::size(size) == format::size(alloc) {
+        skwir_core::fs::size_words(size)
     } else {
         words!(
             usage_sizes = "{ $size } · { $alloc } on disk",
@@ -533,14 +533,13 @@ fn sizes(size: u64, alloc: u64) -> String {
             alloc = Size(alloc),
             note = "Usage: how much a file or a folder holds, then the room it takes on the disk, where they differ (480 MB · 120 MB on disk)."
         )
-        .say()
     }
 }
 
 /// What deleting `node` would free, where its names say it is less than
 /// it takes (ADR-049): a folder holding files with names outside it, a
 /// file with other names.
-fn names_said(node: &Node) -> Option<String> {
+fn names_said(node: &Node) -> Option<Words> {
     if node.is_dir {
         (node.shared > 0).then(|| freed(node))
     } else {
@@ -552,20 +551,18 @@ fn names_said(node: &Node) -> Option<String> {
                 count = node.nlink,
                 note = "Usage, pointing at a file with several names (hard links): deleting this name frees nothing while the others stay."
             )
-            .say()
         })
     }
 }
 
 /// What deleting a folder frees: what it takes on disk but for its files
 /// with names outside it.
-fn freed(node: &Node) -> String {
+fn freed(node: &Node) -> Words {
     words!(
         usage_freed = "{ $size } freed if deleted",
         size = Size(node.alloc.saturating_sub(node.shared)),
         note = "Usage: the room deleting a folder frees, less than it takes where its files have names outside it too."
     )
-    .say()
 }
 
 /// Where a double click on a block drawn inside another goes.
@@ -576,16 +573,29 @@ fn go_there() -> Words {
     )
 }
 
-/// `24%` of `whole`; `<1%` for a speck.
-fn share(part: u64, whole: u64) -> String {
-    if whole == 0 {
-        return "0%".into();
-    }
-    let percent = part as f64 * 100. / whole as f64;
-    if percent > 0. && percent < 1. {
-        "<1%".into()
+/// `24%` of `whole`; `<1%` for a speck: its count placed by a message, as
+/// the reader's language writes a percent (« 24 % »).
+fn share(part: u64, whole: u64) -> Words {
+    let percent = if whole == 0 {
+        0.
     } else {
-        format!("{percent:.0}%")
+        part as f64 * 100. / whole as f64
+    };
+    if percent > 0. && percent < 1. {
+        words!(
+            usage_share_below = "<{ $percent }%",
+            percent = 1,
+            note = "Usage: a share of a folder of less than one percent (<1%)."
+        )
+    } else {
+        // Rounded first, and at most a hundred.
+        #[allow(clippy::cast_possible_truncation)]
+        let percent = percent.round() as i64;
+        words!(
+            usage_share = "{ $percent }%",
+            percent = percent,
+            note = "Usage: a share of a folder or a block, in percent (24%)."
+        )
     }
 }
 
@@ -654,32 +664,29 @@ fn kind_title(kind: Option<Kind>) -> Words {
 
 /// `Videos 62% · Images 30%`: the kinds that take a tenth of `node` or
 /// more, the heaviest first; `Videos` alone when one takes it all.
-fn kinds_said(node: &Node) -> String {
+fn kinds_said(node: &Node) -> Words {
     let kinds = node.kinds();
     let total: u64 = kinds.iter().map(|(_, bytes)| bytes).sum();
     match kinds.as_slice() {
-        [] => String::new(),
-        [(kind, _)] => kind_title(*kind).say(),
-        _ => kinds
-            .iter()
-            .filter(|(_, bytes)| bytes * 10 >= total)
-            .map(|(kind, bytes)| {
+        [] => Words::default(),
+        [(kind, _)] => kind_title(*kind),
+        _ => format::facts(kinds.iter().filter(|(_, bytes)| bytes * 10 >= total).map(
+            |(kind, bytes)| {
                 words!(
                     usage_kind_share = "{ $kind } { $share }",
                     kind = kind_title(*kind),
                     share = share(*bytes, total),
                     note = "Usage, pointing at a block: a kind of files and its share of the block (Videos 62%)."
                 )
-                .say()
-            })
-            .collect::<Vec<_>>()
-            .join(" · "),
+            },
+        ))
+        .unwrap_or_default(),
     }
 }
 
 /// What a block whose room can be had back says of it, or of what lies
 /// in it (`within`: a cache or a trash it lies in).
-fn reclaim_said(node: &Node, within: Option<Reclaim>) -> Option<String> {
+fn reclaim_said(node: &Node, within: Option<Reclaim>) -> Option<Words> {
     match node.reclaim.or(within) {
         Some(Reclaim::Cache) if node.reclaim.is_some() => Some(words!(
             usage_is_cache = "a cache, which its program makes again when needed",
@@ -700,7 +707,6 @@ fn reclaim_said(node: &Node, within: Option<Reclaim>) -> Option<String> {
         )),
         None => None,
     }
-    .map(|said| said.say())
 }
 
 /// The entries of a folder drawn together: the hidden ones.
@@ -903,21 +909,23 @@ impl Build<'_> {
             }
             _ => {}
         }
-        let said = match self.mode {
-            Mode::Size | Mode::Types => format::size(measure),
-            Mode::Files => format::files(usize::try_from(measure).unwrap_or(usize::MAX)),
+        let said: skwir_core::words::Arg = match self.mode {
+            Mode::Size | Mode::Types => Size(measure).into(),
+            Mode::Files => {
+                format::files_words(usize::try_from(measure).unwrap_or(usize::MAX)).into()
+            }
             Mode::Age => Self::modified_at(node.modified).map_or_else(
-                || format::size(measure),
-                |t| format::friendly_time(t, self.zoned),
+                || Size(measure).into(),
+                |t| format::friendly_arg(t, self.zoned),
             ),
         };
-        let said = if node.incomplete {
+        let said: skwir_core::words::Arg = if node.incomplete {
             words!(
                 usage_at_least = "≥ { $said }",
                 said = said,
                 note = "Under a block's name in Usage: at least this much, what it holds being still counted or partly unreadable."
             )
-            .say()
+            .into()
         } else {
             said
         };
@@ -926,36 +934,40 @@ impl Build<'_> {
                 usage_detail_cache = "{ $said } · cache",
                 said = said,
                 note = "Under the name of a cache folder's block in Usage: its size, then that it is a cache."
-            )
-            .say(),
+            ),
             Some(Reclaim::Trash) => words!(
                 usage_detail_trash = "{ $said } · trash",
                 said = said,
                 note = "Under the name of the Trash's block in Usage: its size, then that it is the trash."
-            )
-            .say(),
-            None => said,
+            ),
+            None => words!(
+                usage_detail = "{ $said }",
+                said = said,
+                note = "Under a block's name in Usage: what it holds (480 MB, 3 files), or when it changed (Today 14:02)."
+            ),
         }
+        .say()
     }
 
     /// What the line under the map says of `node`, in `parent`.
     fn hint(&self, node: &Node, trail: &str, parent: &Node, outer: Option<&Outer>) -> String {
-        let counted = |said: String| {
+        let counted = |said: Words| {
             if node.incomplete {
                 words!(
                     usage_counted_so_far = "counted so far: { $said }",
                     said = said,
                     note = "Usage, pointing at a block still counted: what it holds so far (3 files, 480 MB)."
                 )
-                .say()
             } else {
                 said
             }
         };
-        let mut parts = vec![trail.to_owned()];
+        // Its folders' names as they are, then its facts, each words of
+        // its own, set apart as the reader's language sets them.
+        let mut parts = vec![Words::as_written(trail.to_owned())];
         match self.mode {
             Mode::Files => {
-                parts.push(counted(format::files(
+                parts.push(counted(format::files_words(
                     usize::try_from(node.files).unwrap_or(usize::MAX),
                 )));
                 parts.push(
@@ -964,8 +976,7 @@ impl Build<'_> {
                         share = share(node.files, parent.files),
                         folder = Folder(parent.name.clone()),
                         note = "Usage, pointing at a block: its share of the files of the folder holding it (24%)."
-                    )
-                    .say(),
+                    ),
                 );
             }
             Mode::Size | Mode::Age | Mode::Types => {
@@ -976,8 +987,7 @@ impl Build<'_> {
                         share = share(node.alloc, parent.alloc),
                         folder = Folder(parent.name.clone()),
                         note = "Usage, pointing at a block: its share of the room the folder holding it takes (24%)."
-                    )
-                    .say(),
+                    ),
                 );
             }
         }
@@ -989,7 +999,6 @@ impl Build<'_> {
                     note =
                         "Usage, pointing at a block: when it last changed (Today 14:02, 12 Mar)."
                 )
-                .say()
             })),
             Mode::Types => parts.push(kinds_said(node)),
             Mode::Size | Mode::Files => {}
@@ -997,27 +1006,25 @@ impl Build<'_> {
         parts.extend(reclaim_said(node, outer.and_then(|o| o.within)));
         parts.extend(names_said(node));
         if outer.is_some() {
-            parts.push(go_there().say());
+            parts.push(go_there());
         }
-        parts.retain(|part| !part.is_empty());
-        parts.join(" · ")
+        format::facts(parts)
+            .map(|line| line.say())
+            .unwrap_or_default()
     }
 
     /// The blocks of what `node` holds, `depth` folders inside the one shown.
     fn level(&mut self, node: &Node, depth: usize, outer: Option<&Outer>) -> Vec<TreemapItem> {
         // Each block is drawn at least this large, so each can be pointed at.
         let floor = (node.measure(self.mode) as f64 / 200.).max(1.);
-        let within = |what: String| {
-            match outer {
+        let within = |what: Words| match outer {
             Some(outer) => words!(
                 usage_within = "{ $what } in { $trail }",
                 what = what,
                 trail = outer.trail.clone(),
                 note = "Usage, pointing at a block of several entries inside a folder: what it holds (3 hidden items), then the folders it is in (Photos › 2024)."
-            )
-            .say(),
+            ),
             None => what,
-        }
         };
         let mut items = Vec::new();
         let mut hidden = Gathered::default();
@@ -1100,8 +1107,7 @@ impl Build<'_> {
                 }",
                 count = hidden.count,
                 note = "Usage: a block standing for the hidden files of a folder, while hidden files are not shown."
-            )
-            .say();
+            );
             let key = self.blocks.len();
             self.blocks.push(Block {
                 part: Part::Hidden(node.path.clone()),
@@ -1111,22 +1117,22 @@ impl Build<'_> {
                 size: hidden.size,
                 is_dir: false,
                 path: self.shown(&node.path),
-                hint: [
+                hint: format::facts([
                     within(what.clone()),
                     self.rest_said(hidden.size, hidden.alloc, hidden.files),
                     words!(
                         usage_show_hidden = "double-click to show hidden files",
                         note = "Usage, pointing at the block of a folder's hidden files."
-                    )
-                    .say(),
-                ]
-                .join(" · "),
+                    ),
+                ])
+                .map(|line| line.say())
+                .unwrap_or_default(),
             });
             let measure = match self.mode {
                 Mode::Files => hidden.files,
                 Mode::Size | Mode::Age | Mode::Types => hidden.alloc,
             };
-            items.push(self.rest(key, what, measure, floor, hidden.incomplete));
+            items.push(self.rest(key, what.say(), measure, floor, hidden.incomplete));
         }
         if node.other_count > 0 {
             let count = usize::try_from(node.other_count).unwrap_or(usize::MAX);
@@ -1139,18 +1145,15 @@ impl Build<'_> {
                 size: node.other_size,
                 is_dir: false,
                 path: self.shown(&node.path),
-                hint: [
-                    within(
-                        words!(
-                            usage_smaller_items = "{ $count ->
+                hint: format::facts([
+                    within(words!(
+                        usage_smaller_items = "{ $count ->
                                 [one] { $count } smaller item
                                *[other] { $count } smaller items
                             }",
-                            count = count,
-                            note = "Usage, pointing at the block standing for entries too small to draw each."
-                        )
-                        .say(),
-                    ),
+                        count = count,
+                        note = "Usage, pointing at the block standing for entries too small to draw each."
+                    )),
                     self.rest_said(node.other_size, node.other_alloc, node.other_files),
                     if depth == 0 {
                         words!(
@@ -1159,10 +1162,10 @@ impl Build<'_> {
                         )
                     } else {
                         go_there()
-                    }
-                    .say(),
-                ]
-                .join(" · "),
+                    },
+                ])
+                .map(|line| line.say())
+                .unwrap_or_default(),
             });
             let measure = match self.mode {
                 Mode::Files => node.other_files,
@@ -1188,9 +1191,9 @@ impl Build<'_> {
     }
 
     /// What several entries drawn together hold, as the mode counts.
-    fn rest_said(&self, size: u64, alloc: u64, files: u64) -> String {
+    fn rest_said(&self, size: u64, alloc: u64, files: u64) -> Words {
         match self.mode {
-            Mode::Files => format::files(usize::try_from(files).unwrap_or(usize::MAX)),
+            Mode::Files => format::files_words(usize::try_from(files).unwrap_or(usize::MAX)),
             Mode::Size | Mode::Age | Mode::Types => sizes(size, alloc),
         }
     }
@@ -1613,7 +1616,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     let status = state.status.as_ref();
     let hint = hover.and_then(|key| blocks.get(key)).map_or_else(
         || {
-            status.and_then(|s| s.error.clone()).unwrap_or_else(|| {
+            status.and_then(|s| s.error.as_ref()).map_or_else(|| {
                 if status.is_some_and(|s| s.scanning && s.tree.as_ref().is_some_and(|n| n.incomplete)) {
                     words!(
                         usage_striped = "Striped blocks are still being counted · proportions will change as sizes arrive",
@@ -1641,7 +1644,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                     )
                     .say()
                 }
-            })
+            }, Words::say)
         },
         |b| b.hint.clone(),
     );
@@ -1749,21 +1752,19 @@ fn summary(state: &UsageState) -> String {
                     size = size,
                     note = "Usage's toolbar while it counts: what the folder holds so far (480 MB)."
                 )
-                .say()
             } else {
                 size
             };
             let facts = [
                 Some(size),
-                Some(format::files(usize::try_from(s.files).unwrap_or(usize::MAX))),
-                Some(format::folders(usize::try_from(s.dirs).unwrap_or(usize::MAX))),
+                Some(format::files_words(usize::try_from(s.files).unwrap_or(usize::MAX))),
+                Some(format::folders_words(usize::try_from(s.dirs).unwrap_or(usize::MAX))),
                 (reclaimable > 0).then(|| {
                     words!(
                         usage_summary_reclaimable = "{ $size } in caches and the Trash",
                         size = Size(reclaimable),
                         note = "Usage's toolbar: how much of the folder is caches and the Trash, which can be had back."
                     )
-                    .say()
                 }),
                 s.tree.as_ref().filter(|n| n.shared > 0).map(freed),
                 s.updating.then(|| {
@@ -1771,10 +1772,11 @@ fn summary(state: &UsageState) -> String {
                         usage_updating = "updating…",
                         note = "Usage's toolbar, last, while it counts again what changed."
                     )
-                    .say()
                 }),
             ];
-            facts.into_iter().flatten().collect::<Vec<_>>().join(" · ")
+            format::facts(facts.into_iter().flatten())
+                .map(|line| line.say())
+                .unwrap_or_default()
         },
     )
 }
@@ -1936,14 +1938,8 @@ fn deleting_frees(shell: &Shell) -> Option<String> {
             keys = skwir_core::words::Keys(keys),
             note = "The line under Usage's map while something is selected, after what the Trash frees. keys: the keys that delete it for good (Shift+Delete)."
         )
-        .say()
     });
-    Some(
-        std::iter::once(trash.say())
-            .chain(delete)
-            .collect::<Vec<_>>()
-            .join(" · "),
-    )
+    format::facts(std::iter::once(trash).chain(delete)).map(|line| line.say())
 }
 
 /// What the colors say, a row above the line under the map, where the
@@ -2562,7 +2558,7 @@ mod tests {
             ..Node::default()
         };
         assert_eq!(
-            names_said(&folder),
+            names_said(&folder).map(|said| said.english()),
             Some(format!("{} freed if deleted", format::size(5904)))
         );
         let alone = Node {
@@ -2570,27 +2566,28 @@ mod tests {
             alloc: 10_000,
             ..Node::default()
         };
-        assert_eq!(names_said(&alone), None);
+        assert!(names_said(&alone).is_none());
         let file = Node {
             nlink: 3,
             ..Node::default()
         };
         assert_eq!(
-            names_said(&file).as_deref(),
+            names_said(&file).map(|said| said.english()).as_deref(),
             Some("one of 3 names of its file")
         );
     }
 
     #[test]
     fn a_size_is_said_once_unless_the_disk_holds_another() {
-        assert_eq!(sizes(2048, 2048), "2.0\u{a0}kB");
+        assert_eq!(sizes(2048, 2048).english(), "2.0\u{a0}kB");
         assert_eq!(
-            sizes(10_000_000, 4096),
+            sizes(10_000_000, 4096).english(),
             "10.0\u{a0}MB · 4.1\u{a0}kB on disk"
         );
-        assert_eq!(share(1, 1000), "<1%");
-        assert_eq!(share(0, 1000), "0%");
-        assert_eq!(share(500, 1000), "50%");
+        assert_eq!(share(1, 1000).english(), "<1%");
+        assert_eq!(share(0, 1000).english(), "0%");
+        assert_eq!(share(500, 1000).english(), "50%");
+        assert_eq!(share(0, 0).english(), "0%");
     }
 
     #[test]
@@ -2667,7 +2664,7 @@ mod tests {
             modified: NOW - 3600,
             ..node("/r/film", 1000, true, vec![])
         };
-        assert_eq!(kinds_said(&film), "Videos 62% · Images 30%");
+        assert_eq!(kinds_said(&film).english(), "Videos 62% · Images 30%");
         let tree = node("/r", 1000, true, vec![film]);
         let theme = Theme::light();
         let (items, blocks) = build_in(&tree, true, 1, Mode::Types);
@@ -2713,11 +2710,15 @@ mod tests {
             blocks[0].hint
         );
         assert_eq!(
-            reclaim_said(&tree, None).as_deref(),
+            reclaim_said(&tree, None)
+                .map(|said| said.english())
+                .as_deref(),
             Some("300\u{a0}B of it in caches and the Trash")
         );
         assert_eq!(
-            reclaim_said(&tree.children[1], Some(Reclaim::Trash)).as_deref(),
+            reclaim_said(&tree.children[1], Some(Reclaim::Trash))
+                .map(|said| said.english())
+                .as_deref(),
             Some("in the Trash: emptying it frees this")
         );
     }

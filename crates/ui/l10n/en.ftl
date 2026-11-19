@@ -2891,6 +2891,9 @@ form_waiting_keys = Escape to cancel
 # A picture's size in pixels, width by height, alone: the list's Dimensions column, a preview's caption (4032 × 3024).
 format_dimensions = { $width } × { $height }
 
+# Two facts side by side on one line (a block's size, then its share), each its own words; a line of several says the first, then the rest the same way (480 MB · 24% of Photos · changed Today).
+format_facts = { $first } · { $then }
+
 # How long an action has left, under its bar. Begins in lower case.
 format_left_few_seconds = a few seconds left
 
@@ -8284,6 +8287,9 @@ usage_default_levels_tip = Default levels
 # The line under Usage's map while something is selected, after what the Trash frees. keys: the keys that delete it for good (Shift+Delete).
 usage_delete_keys = { $keys } deletes for good
 
+# Under a block's name in Usage: what it holds (480 MB, 3 files), or when it changed (Today 14:02).
+usage_detail = { $said }
+
 # Under the name of a cache folder's block in Usage: its size, then that it is a cache.
 usage_detail_cache = { $said } · cache
 
@@ -8396,6 +8402,12 @@ usage_scanning_read = Scanning… { $count ->
 
 # Usage, pointing at the block of entries too small to draw each. List is the name of a view.
 usage_see_all = double-click to see all items in List
+
+# Usage: a share of a folder or a block, in percent (24%).
+usage_share = { $percent }%
+
+# Usage: a share of a folder of less than one percent (<1%).
+usage_share_below = <{ $percent }%
 
 # Usage, pointing at a block: its share of the room the folder holding it takes (24%).
 usage_share_of = { $share } of { $folder }

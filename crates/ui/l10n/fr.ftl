@@ -3420,6 +3420,9 @@ form_waiting_keys = Échap pour annuler
 format_dimensions = { $width } × { $height }
 
 # draft
+format_facts = { $first } · { $then }
+
+# draft
 format_left_few_seconds = encore quelques secondes
 
 # draft
@@ -9154,6 +9157,9 @@ usage_default_levels_tip = Niveaux par défaut
 usage_delete_keys = { $keys } supprime définitivement
 
 # draft
+usage_detail = { $said }
+
+# draft
 usage_detail_cache = { $said } · cache
 
 # draft
@@ -9265,6 +9271,12 @@ usage_scanning_read = Analyse… { $count ->
 
 # draft
 usage_see_all = double-cliquez pour voir tous les éléments dans la vue Liste
+
+# draft
+usage_share = { $percent } %
+
+# draft
+usage_share_below = < { $percent } %
 
 # draft
 usage_share_of = { $share } de { $folder }

@@ -147,6 +147,11 @@ pub fn items(n: usize) -> String {
 
 /// `1 file`, `3 files`, said in the user's language.
 pub fn files(n: usize) -> String {
+    files_words(n).say()
+}
+
+/// `files` as words, for a message to place.
+pub fn files_words(n: usize) -> skwir_core::words::Words {
     skwir_core::words!(
         count_files = "{ $count ->
         [one] { $count } file
@@ -154,11 +159,36 @@ pub fn files(n: usize) -> String {
     }",
         count = n
     )
-    .say()
+}
+
+/// Facts said on one line, each words of its own (a block's size, its
+/// share, when it changed), set apart as the reader's language sets them
+/// (" · "), never joined in code; those that say nothing left out. `None`
+/// for none.
+pub fn facts(
+    facts: impl IntoIterator<Item = skwir_core::words::Words>,
+) -> Option<skwir_core::words::Words> {
+    let mut facts: Vec<skwir_core::words::Words> =
+        facts.into_iter().filter(|fact| !fact.is_empty()).collect();
+    let mut line = facts.pop()?;
+    while let Some(before) = facts.pop() {
+        line = skwir_core::words!(
+            format_facts = "{ $first } · { $then }",
+            first = before,
+            then = line,
+            note = "Two facts side by side on one line (a block's size, then its share), each its own words; a line of several says the first, then the rest the same way (480 MB · 24% of Photos · changed Today)."
+        );
+    }
+    Some(line)
 }
 
 /// `1 folder`, `3 folders`, said in the user's language.
 pub fn folders(n: usize) -> String {
+    folders_words(n).say()
+}
+
+/// `folders` as words, for a message to place.
+pub fn folders_words(n: usize) -> skwir_core::words::Words {
     skwir_core::words!(
         count_folders = "{ $count ->
         [one] { $count } folder
@@ -166,7 +196,6 @@ pub fn folders(n: usize) -> String {
     }",
         count = n
     )
-    .say()
 }
 
 /// A speed, as words to place in a message: `23.4 MB/s`.
