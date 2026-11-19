@@ -251,6 +251,24 @@ def macos_sdk():
     return Path(data) / "skwir-build/macos-sdk"
 
 
+def rpm_key():
+    """The fingerprint that signs the release's `.rpm` packages (ADR-142,
+    amended): the repositories' key, `tools/package/repository/skwir.asc`,
+    whose secret part must be in GnuPG's keyring. Skwir's dnf repository
+    checks each package, and PackageKit (GNOME Software, Discover) takes
+    only what a key it trusts signed."""
+    public = ROOT / "tools/package/repository/skwir.asc"
+    require(public.is_file(), "No repositories' key (tools/package/repository/skwir.asc): docs/RELEASING.md")
+    listing = run("gpg", "--batch", "--with-colons", "--show-keys", str(public), capture=True)
+    fingerprints = [line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:")]
+    require(fingerprints, f"{public.relative_to(ROOT)} holds no key")
+    secret = subprocess.run(["gpg", "--batch", "--list-secret-keys", fingerprints[0]], cwd=ROOT,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    require(secret, f"The repositories' key {fingerprints[0]} has no secret part in GnuPG's keyring,"
+                    " and it signs the release's .rpm packages (docs/RELEASING.md)")
+    return fingerprints[0]
+
+
 def patterns(version):
     """Derive split package names from their owning manifests, not a second list."""
     package = tomllib.loads((ROOT / "crates/skwir/Cargo.toml").read_text())["package"]
@@ -337,6 +355,9 @@ def build(tag, destination, commit, version, date, notes):
     # now, not after the hour of checks.
     require((macos_sdk() / "env.sh").is_file(),
             "No macOS SDK for its build: run `just macos-sdk` first (Apple's licence is yours to accept)")
+    # The key that signs Fedora's packages, said now too; gpg asks for its
+    # passphrase once they are built.
+    key = rpm_key()
     run("just", "release-check")
     require(source(tag) == commit, "Source changed during release checks")
     # A failed build never replaces a previous bundle or leaves an uploadable one.
@@ -347,7 +368,7 @@ def build(tag, destination, commit, version, date, notes):
         for distro, command in PACKAGES:
             output = work / distro
             output.mkdir()
-            run("just", *command, env={**os.environ, "SKWIR_PACKAGE_OUT": str(output)})
+            run("just", *command, env={**os.environ, "SKWIR_PACKAGE_OUT": str(output), "SKWIR_RPM_KEY": key})
             for asset in select(output, expected[distro]):
                 shutil.copy2(asset, bundle / asset.name)
         require(source(tag) == commit, "Source changed during packaging")

@@ -6,8 +6,10 @@
   repositories then offer it as an update. Until then it is made again
   the same, byte for byte, dated by this folder's last commit.
 - `skwir.asc`: the repositories' public key, once made (`docs/RELEASING.md`,
-  Repositories), which signs the indexes. Its secret part never enters the
-  repository: it stays in the keyring of whoever publishes a release.
+  Repositories), which signs the indexes and each `.rpm`: Fedora's
+  packages, which `release-build` signs, and `skwir-repository`'s. Its
+  secret part never enters the repository: it stays in the keyring of
+  whoever publishes a release.
 - `next.asc`, only while the key changes (`docs/RELEASING.md`, A new key):
   the key coming, which `skwir-repository` carries beside the one that
   signs until it takes that one's place.

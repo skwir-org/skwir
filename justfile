@@ -337,7 +337,7 @@ repositories tag site="../skwir-site/static":
     #!/usr/bin/env bash
     set -euo pipefail
     nixpkgs() { nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' "nixpkgs#$1^out" | head -1; }
-    PATH="$(nixpkgs apt)/bin:$(nixpkgs createrepo_c)/bin:$(nixpkgs gnupg)/bin:$(nixpkgs nfpm)/bin:$PATH" \
+    PATH="$(nixpkgs apt)/bin:$(nixpkgs createrepo_c)/bin:$(nixpkgs gnupg)/bin:$(nixpkgs nfpm)/bin:$(nixpkgs rpm)/bin:$PATH" \
         python3 tools/package/repository.py target/releases/{{quote(tag)}} --site {{quote(site)}}
 
 # With a throwaway key against a stand-in for the site, the newest bundle in
@@ -347,7 +347,7 @@ repository-check bundle="":
     #!/usr/bin/env bash
     set -euo pipefail
     nixpkgs() { nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' "nixpkgs#$1^out" | head -1; }
-    PATH="$(nixpkgs apt)/bin:$(nixpkgs createrepo_c)/bin:$(nixpkgs gnupg)/bin:$(nixpkgs nfpm)/bin:$PATH" \
+    PATH="$(nixpkgs apt)/bin:$(nixpkgs createrepo_c)/bin:$(nixpkgs gnupg)/bin:$(nixpkgs nfpm)/bin:$(nixpkgs rpm)/bin:$PATH" \
         tools/package/repository-check.sh {{quote(bundle)}}
 
 # Beside its bundle in target/releases/<tag>-winget, for a pull request to
@@ -357,9 +357,15 @@ winget tag:
 
 # A Linux package built in a distribution's own root and installed in a
 # fresh one, from any Linux with bubblewrap (ADR-040): debian, ubuntu, fedora,
-# arch.
+# arch. With SKWIR_RPM_KEY (a fingerprint, as release-build sets it), Fedora's
+# signed by that key, rpmsign from the flake's nixpkgs (ADR-142).
 package-try distribution:
-    tools/package/try.sh {{distribution}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "${SKWIR_RPM_KEY:-}" ]; then
+        PATH="$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' 'nixpkgs#rpm^out' | head -1)/bin:$PATH"
+    fi
+    exec tools/package/try.sh {{quote(distribution)}}
 
 # Windows' build to try, made on Linux (ADR-074): skwir and its helpers
 # that carry no library, as a zip and a per-user installer (wixl), into

@@ -13,13 +13,18 @@
 # change of key, as docs/RELEASING.md makes it: `skwir-repository` 2
 # carries the new key beside the old, which still signs, and 3 the new
 # alone, which signs; and removing `skwir-repository` takes the repository
-# and its key away, the system's own sources read as before. A release's bundle is
-# read, never changed: by default the newest in target/releases.
+# and its key away, the system's own sources read as before. dnf checks
+# each package's signature (`gpgcheck`) with the key `skwir-repository`
+# brought, and repository.py refuses a release whose `.rpm` the key that
+# signs did not sign. A release's bundle is read, never changed: by default
+# the newest in target/releases. What is served as the release is its
+# packages, each `.rpm` signed again by the key the step names.
 #
 #     tools/package/repository-check.sh [target/releases/v0.6.0]
 #
-# Needs apt-ftparchive, createrepo_c, gpg and nfpm (`just repository-check`
-# finds them in the flake's nixpkgs), bwrap, curl and python3; Debian's and
+# Needs apt-ftparchive, createrepo_c, gpg, nfpm, rpmkeys and rpmsign (`just
+# repository-check` finds them in the flake's nixpkgs), bwrap, curl and
+# python3; Debian's and
 # Ubuntu's mirrors, for the system's own sources.
 set -eu
 tree="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -63,12 +68,34 @@ done
 gpg --batch --yes --delete-secret-keys "$(fingerprint gone)"
 
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+# What is served as the release: the bundle's packages and its manifest,
+# each `.rpm` signed again by the key $1, as release-build signs them with
+# the repositories' (the manifest saying what they are now).
+released="$work/release"
+signed_by() {
+    rm -rf "$released"
+    mkdir -p "$released"
+    for package in "$bundle"/*.deb "$bundle"/*.rpm; do
+        cp "$package" "$released/"
+    done
+    "$tree/tools/package/rpm-sign.sh" "$(fingerprint "$1")" "$released"/*.rpm >/dev/null
+    python3 - "$bundle/manifest.json" "$released" <<'PYTHON'
+import hashlib, json, pathlib, sys
+manifest, released = json.loads(pathlib.Path(sys.argv[1]).read_text()), pathlib.Path(sys.argv[2])
+for path in released.iterdir():
+    if path.name in manifest["assets"]:
+        manifest["assets"][path.name] = {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                                         "bytes": path.stat().st_size}
+(released / "manifest.json").write_text(json.dumps(manifest))
+PYTHON
+}
 # The repositories made again: skwir-repository's version $1, signed by
 # the key $2, the key $3 coming beside it.
 make() {
-    python3 "$tree/tools/package/repository.py" "$bundle" --site "$work/site" --key "$work/$2.asc" \
+    python3 "$tree/tools/package/repository.py" "$released" --site "$work/site" --key "$work/$2.asc" \
         --next "${3:+$work/$3.asc}" --base "http://127.0.0.1:$port" --version "$1" >/dev/null
 }
+signed_by old
 for key in soon gone; do
     if make 1 "$key" 2>"$work/refused"; then
         fail "repository.py signed with the key '$key'"
@@ -76,8 +103,16 @@ for key in soon gone; do
     [ ! -e "$work/site" ] || fail "repository.py wrote the site, refusing the key '$key'"
     echo "ok: the key '$key' refused: $(head -1 "$work/refused")"
 done
+# A release whose packages another key signed: dnf would refuse them.
+signed_by stranger
+if make 1 old 2>"$work/refused"; then
+    fail "repository.py listed packages the key that signs did not sign"
+fi
+[ ! -e "$work/site" ] || fail "repository.py wrote the site, refusing packages another key signed"
+echo "ok: packages another key signed refused: $(head -1 "$work/refused" | cut -c1-120)"
+signed_by old
 make 1 old
-python3 "$tree/tools/package/repository/serve.py" "$work/site" "$bundle" "$port" 2>"$work/serve.log" &
+python3 "$tree/tools/package/repository/serve.py" "$work/site" "$released" "$port" 2>"$work/serve.log" &
 server=$!
 
 # A distribution's image, once, checked against its sum (as try.sh).
@@ -155,8 +190,16 @@ for distribution in debian ubuntu fedora; do
         enter "$root" sh -c "dnf -y -q --disablerepo='*' install /site/rpm/fedora/own/skwir-repository.rpm" >/dev/null
         # shellcheck disable=SC2086 # the options are words
         enter "$root" sh -c "dnf -y -q $dnf_skwir makecache" >/dev/null
-        enter "$root" sh -c "dnf -y -q $dnf_skwir download --destdir /tmp skwir >/dev/null && ls /tmp/skwir-[0-9]*.rpm"
+        # Downloaded, then read with the key skwir-repository brought alone
+        # (each entry has a /tmp of its own: both in one).
+        said="$(enter "$root" sh -c "dnf -y -q $dnf_skwir download --destdir /tmp skwir >/dev/null &&
+            mkdir /tmp/keys && rpmkeys --dbpath /tmp/keys --import /etc/pki/rpm-gpg/RPM-GPG-KEY-skwir &&
+            LC_ALL=C rpmkeys --dbpath /tmp/keys --checksig /tmp/skwir-[0-9]*.rpm")"
         echo "ok: the signed index read, skwir downloaded through the redirect, its checksum the index's"
+        case "$said" in
+        *" signatures OK") echo "ok: skwir signed by the key skwir-repository brought ($said)" ;;
+        *) fail "fedora: skwir not signed by the key skwir-repository brought: $said" ;;
+        esac
         ;;
     esac
 done
@@ -164,6 +207,7 @@ done
 # Indexes a stranger's key signed, offering skwir-repository 9: no system
 # reads them. That the next step reads the same server's indexes shows the
 # signature was what each refused.
+signed_by stranger
 make 9 stranger
 for distribution in debian ubuntu fedora; do
     root="$work/root-$distribution"
@@ -186,12 +230,34 @@ for distribution in debian ubuntu fedora; do
     echo "ok: $distribution refuses the index a stranger signed"
 done
 
+# An update a stranger signed, listed by an index the key signs (its
+# checksum the index's): dnf checks the package itself (`gpgcheck`) and
+# refuses it.
+signed_by old
+make 8 old
+"$tree/tools/package/rpm-sign.sh" "$(fingerprint stranger)" "$work/site/rpm/fedora/own/skwir-repository.rpm" >/dev/null
+createrepo_c --quiet --general-compress-type=zstd "$work/site/rpm/fedora"
+gpg --batch --yes --local-user "$(fingerprint old)" --armor --detach-sign \
+    --output "$work/site/rpm/fedora/repodata/repomd.xml.asc" "$work/site/rpm/fedora/repodata/repomd.xml"
+if enter "$work/root-fedora" sh -c "dnf -y -q $dnf_skwir --refresh upgrade skwir-repository" >"$work/said" 2>&1; then
+    fail "fedora installed skwir-repository 8, which a stranger signed"
+fi
+case "$(installed fedora)" in
+1 | 1-1) ;;
+*) fail "fedora: skwir-repository is $(installed fedora), from an update a stranger signed" ;;
+esac
+# Refused for its signature, not for anything else.
+refusal="$(grep -i -E 'fail|error|not ' "$work/said" | grep -i -E 'openpgp|signature|signed' | head -1)"
+[ -n "$refusal" ] || fail "fedora refused skwir-repository 8, but not for its signature: $(tail -3 "$work/said")"
+echo "ok: fedora refuses an update a stranger signed: $(echo "$refusal" | cut -c1-140)"
+
 # A change of key: skwir-repository 2 carries the new key beside the old,
 # which signs its indexes; 3 the new alone, which signs them. Each system
 # upgrades from the repository to each.
 for step in 2:old:new 3:new; do
     version="${step%%:*}"
     keys="${step#*:}"
+    signed_by "${keys%%:*}"
     # shellcheck disable=SC2046 # the keys are words
     make "$version" $(echo "$keys" | tr : ' ')
     for distribution in debian ubuntu fedora; do

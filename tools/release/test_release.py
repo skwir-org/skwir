@@ -42,6 +42,9 @@ elif args == ['package-try', 'ubuntu']:
     for name in ['skwir', 'skwir-media']:
         (out / f'{name}_1.2.3-1ubuntu24.04_amd64.deb').write_bytes(b'synthetic ubuntu deb')
 elif args == ['package-try', 'fedora']:
+    # Signed by the repositories' key, which the release hands it (ADR-142).
+    if os.getenv('SKWIR_RPM_KEY') != 'F6EB0DC17B1A3E878C482DB30CF3A0EA48004329':
+        sys.exit('fedora: not told which key signs')
     for name in ['skwir', 'skwir-media']:
         (out / f'{name}-1.2.3-1.x86_64.rpm').write_bytes(b'synthetic rpm')
 elif args == ['package-try', 'arch']:
@@ -66,6 +69,21 @@ if os.getenv('CHANGE_SOURCE'):
 if os.getenv('WRONG_COMPANION') and args == ['package-appimage']:
     (out / 'skwir-1.2.3-linux-x86_64.tar.gz.sha256').write_text(
         f"{'0' * 64}  skwir-1.2.3-linux-x86_64.tar.gz\n")
+'''
+
+# The repositories' key, as gpg lists the file that holds it, its secret
+# part in the keyring unless NO_SECRET_KEY: never this machine's keyring.
+FAKE_GPG = r'''#!/usr/bin/env python3
+import os, sys
+args = sys.argv[1:]
+FINGERPRINT = 'F6EB0DC17B1A3E878C482DB30CF3A0EA48004329'
+if '--show-keys' in args and args[-1].endswith('tools/package/repository/skwir.asc'):
+    print(f'pub:-:255:22:{FINGERPRINT[-16:]}:1795126213:1952806213::-:::scSC:::::ed25519:::0:')
+    print(f'fpr:::::::::{FINGERPRINT}:')
+elif '--list-secret-keys' in args and args[-1] == FINGERPRINT:
+    sys.exit(2 if os.getenv('NO_SECRET_KEY') else 0)
+else:
+    sys.exit('unexpected gpg command')
 '''
 
 FAKE_GH = r'''#!/usr/bin/env python3
@@ -165,6 +183,7 @@ name = "skwir-media"
                 "pkgver=1.2.2.r4.g0000000\npkgrel=2\npkgdesc='Synthetic package'\narch=('x86_64' 'aarch64')\n"
                 "license=('Apache-2.0')\nsource=('skwir::git+https://github.com/example/skwir.git')\n"
                 "sha256sums=('SKIP')\npackage_skwir-git() { :; }\npackage_skwir-mermaid-git() { :; }\n",
+            "tools/package/repository/skwir.asc": "-----BEGIN PGP PUBLIC KEY BLOCK-----\nsynthetic\n",
             "tools/package/linux/org.skwir.skwir.metainfo.xml": '<component><releases><release version="1.2.3" date="2026-10-11"/></releases></component>',
         }
         for name, content in files.items():
@@ -178,7 +197,7 @@ name = "skwir-media"
         self.script = script
         self.bin = Path(self.temp.name) / "bin"
         self.bin.mkdir()
-        for name, text in (("just", FAKE_JUST), ("gh", FAKE_GH)):
+        for name, text in (("just", FAKE_JUST), ("gh", FAKE_GH), ("gpg", FAKE_GPG)):
             program = self.bin / name
             program.write_text(text)
             program.chmod(0o755)
@@ -476,6 +495,12 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
     def test_no_macos_sdk_stops_before_the_checks(self):
         (Path(self.env["XDG_DATA_HOME"]) / "skwir-build/macos-sdk/env.sh").unlink()
         self.assertIn("just macos-sdk", self.cli("build", ok=False))
+        self.assertEqual(self.calls("just"), [])
+        self.assertFalse(self.bundle.exists())
+
+    def test_no_secret_key_for_the_packages_stops_before_the_checks(self):
+        said = self.cli("build", ok=False, NO_SECRET_KEY="1")
+        self.assertIn("F6EB0DC17B1A3E878C482DB30CF3A0EA48004329 has no secret part", said)
         self.assertEqual(self.calls("just"), [])
         self.assertFalse(self.bundle.exists())
 

@@ -8,8 +8,9 @@ sends each request for to (`skwir-site/static/_redirects`: `/apt/pool/` and
 
     tools/package/repository.py target/releases/v0.6.0 --site ../skwir-site/static
 
-needs apt-ftparchive, createrepo_c, gpg and nfpm (the recipe `just
-repositories` finds them in the flake's nixpkgs), the repositories' public
+needs apt-ftparchive, createrepo_c, gpg, nfpm, rpmkeys and rpmsign (the
+recipe `just repositories` finds them in the flake's nixpkgs), the
+repositories' public
 key in `tools/package/repository/skwir.asc` (or `--key`) and its secret
 part in GnuPG's keyring (`GNUPGHOME`), whose passphrase gpg asks for; while
 the key changes, the key coming in `tools/package/repository/next.asc` (or
@@ -32,12 +33,16 @@ package that adds the repository and its key (`sources.list.d`,
 `yum.repos.d`), which the site's download page has the visitor install, and
 whose update brings a new key: never Skwir's packages, never Skwir.
 
-The packages are not signed one by one: their index is, and it names
-their checksums (`repo_gpgcheck`, `Signed-By`). Signing an `.rpm` would
-change the file after the release checked and uploaded it. A bundle whose
-packages are not those its manifest records is refused, as `release-verify`
-refuses it: an index would name another file than the one the release
-serves.
+Each index is signed and names its packages' checksums (`Signed-By`,
+`repo_gpgcheck`). Each `.rpm` is signed too, by the key that signs the
+indexes, and dnf checks it (`gpgcheck=1`): PackageKit, under GNOME Software
+and Discover, installs only what a key it trusts signed. `release-build`
+signs the release's (`SKWIR_RPM_KEY`, tools/package/rpm-sign.sh) before it
+tries and uploads them, and a release whose `.rpm` that key did not sign is
+refused here. apt trusts a package by its signed index, and a `.deb` stays
+as built. A bundle whose packages are not those its manifest records is
+refused, as `release-verify` refuses it: an index would name another file
+than the one the release serves.
 
 The indexes are signed by the key of `skwir.asc` alone (dnf refuses a
 signature beside another), whose secret part must be in the keyring.
@@ -48,9 +53,9 @@ one that signs, then, a grace period later, the new key signing alone
 on a system refuses every index, the update that would extend it included.
 
 `skwir-repository` is dated by the last commit of `tools/package/repository`
-(or `SOURCE_DATE_EPOCH`), so it is made again identical until what it holds
-changes and its version with it. Both repositories are made before either
-is written into the site.
+(or `SOURCE_DATE_EPOCH`), its `.rpm`'s signature too, so it is made again
+identical until what it holds changes and its version with it. Both
+repositories are made before either is written into the site.
 """
 
 import argparse
@@ -79,8 +84,8 @@ RPMS = re.compile(r".*-[^-]+-[0-9]+\.x86_64\.rpm")
 LEAD = datetime.timedelta(days=180)
 
 
-def run(*command, **kwargs):
-    return subprocess.run([str(c) for c in command], check=True, **kwargs)
+def run(*command, check=True, **kwargs):
+    return subprocess.run([str(c) for c in command], check=check, **kwargs)
 
 
 def homepage():
@@ -154,6 +159,16 @@ def unfit(signing, coming, secret, now):
                             " tools/package/repository/version and commit both, so that every system has"
                             " it before it expires (docs/RELEASING.md)")
     return said
+
+
+def unsigned(rpms, public):
+    """The `.rpm` files of `rpms` that the key of `public` did not sign, as
+    rpm reads them with that key alone."""
+    with tempfile.TemporaryDirectory(prefix="skwir-rpmkeys-") as keyring:
+        run("rpmkeys", "--dbpath", keyring, "--import", public)
+        said = {rpm: run("rpmkeys", "--dbpath", keyring, "--checksig", rpm, capture_output=True, text=True,
+                         check=False, env={**os.environ, "LC_ALL": "C"}).stdout for rpm in rpms}
+    return [rpm for rpm, line in said.items() if not line.rstrip().endswith(" signatures OK")]
 
 
 def key_of(public):
@@ -313,15 +328,17 @@ def rpm_repository(work, bundle, tag, base, carried, key, version):
     repo.write_text(
         "# Skwir's repository (https://skwir.org/download#repository), added by\n"
         "# the package skwir-repository: removing it removes the repository.\n"
-        "# Its index is signed and names each package's checksum (repo_gpgcheck).\n"
+        "# Its index is signed (repo_gpgcheck), and so is each package (gpgcheck).\n"
         f"[skwir]\nname=Skwir\nbaseurl={base}/rpm/fedora\nenabled=1\n"
-        "repo_gpgcheck=1\ngpgcheck=0\ngpgkey=" + " ".join(f"file://{dest}" for _, dest, _ in keys) + "\n")
+        "repo_gpgcheck=1\ngpgcheck=1\ngpgkey=" + " ".join(f"file://{dest}" for _, dest, _ in keys) + "\n")
     own = root / "own" / "skwir-repository.rpm"
     own.parent.mkdir(parents=True)
     # A configuration file, which rpm erases with the package all the same
     # (or keeps as `.rpmsave`, which dnf never reads).
     package(work, "skwir-repository", "rpm", version, [(repo, "/etc/yum.repos.d/skwir.repo", True), *keys],
             "Skwir's repository for Fedora, so the system updates Skwir", own)
+    # Signed as the release's are, dated as its files are: made again the same.
+    run(ROOT / "tools/package/rpm-sign.sh", key, "--at", epoch(), own, stdout=subprocess.DEVNULL)
     run("createrepo_c", "--quiet", "--general-compress-type=zstd", root)
     repomd = root / "repodata/repomd.xml"
     run("gpg", "--batch", "--yes", "--local-user", key, "--armor", "--detach-sign", "--output", f"{repomd}.asc", repomd)
@@ -381,6 +398,12 @@ def main():
     else:
         coming = pathlib.Path(args.next) if args.next else None
     key = signer(args.key, coming)
+    # Before anything is signed: dnf checks each package (`gpgcheck`).
+    rpms = sorted(p for p in bundle.iterdir() if RPMS.fullmatch(p.name))
+    if refused := unsigned(rpms, args.key):
+        sys.exit(f"{', '.join(p.name for p in refused)}: not signed by the key that signs the indexes"
+                 f" ({key}), and dnf checks each package: `release-build` signs them with the"
+                 " repositories' key in GnuPG's keyring (docs/RELEASING.md)")
     carried = [args.key, coming] if coming else [args.key]
     site = args.site.resolve()
     with tempfile.TemporaryDirectory(prefix="skwir-repositories-") as work:

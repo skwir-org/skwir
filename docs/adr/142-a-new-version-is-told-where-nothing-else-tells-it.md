@@ -7,7 +7,8 @@ never by a package or by Skwir; no Copr and no OBS; a check once a day;
 a mark for an important release; What's new after an update, with a
 setting that turns it off. Built 2026-11-19 on Linux (the plugin and the
 platform's parts compiled for Windows and macOS), amended as built
-(Amendments). Amends ADR-020 (a second plugin makes requests, and HTTP
+(Amendments); amended 2026-11-20, on the user's choice: each `.rpm` is
+signed, and dnf checks it. Amends ADR-020 (a second plugin makes requests, and HTTP
 moves to `skwir-platform`) and ADR-040 (signed repositories for the
 `.deb` and the `.rpm`).
 
@@ -107,8 +108,9 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
       - Their indexes are the site's static files: `dists/trixie` and
         `dists/noble` with a signed `InRelease` (apt-ftparchive), and
         `repodata` with a signed `repomd.xml` (createrepo_c).
-        ~~The `.rpm` files are signed with rpmsign as well.~~ (Amended:
-        they are not; their index is, below.)
+        The `.rpm` files are signed with rpmsign as well. (Amended as
+        built: they were not, their index alone was; amended again
+        2026-11-20: they are, by the key that signs the indexes.)
       - The packages stay the release's. One `_redirects` line for each
         format sends `pool/:tag/:file` to the release's file (302). The
         SHA-256 in the signed indexes checks what arrives, wherever it
@@ -234,7 +236,8 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
 
 - When built, `map-tiles` and `updates` both make requests.
   `AGENTS.md`'s "Network" rule, ADR-020 and `commands.md` name both.
-- A release gains steps: the `.zsync` file, ~~rpmsign,~~ the
+- A release gains steps: the `.zsync` file, rpmsign (struck as built,
+  back 2026-11-20), the
   repositories' indexes, the site's `updates/1.json` and its redirects
   (one deploy, after publishing), and a winget manifest (the user's).
   ~~`release-verify` checks that the indexes name the files uploaded.~~
@@ -314,10 +317,12 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   `tools/package/repository/version` says, dated by that folder's last
   commit: the same file until its version is raised. Its apt source is a
   plain file: a conffile would stay once the package is removed (dpkg
-  takes one only on purge), its key gone. dnf reads with
+  takes one only on purge), its key gone. ~~dnf reads with
   `repo_gpgcheck=1` and `gpgcheck=0`: the index is signed and names each
   package's checksum, and a package signed after the release checked it
-  would no longer be the release's. `just repositories <tag>` makes them
+  would no longer be the release's.~~ (Amended 2026-11-20, below: each
+  `.rpm` is signed before the release checks it, and dnf reads with
+  `gpgcheck=1` too.) `just repositories <tag>` makes them
   (`tools/package/repository.py`), both before writing either into the
   site, from a bundle whose packages are those its manifest records.
   - The indexes are signed by one key, `skwir.asc`'s: Fedora 44's dnf
@@ -356,3 +361,61 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
     hyper-util's `client::proxy` (the system's settings matched, a
     `CONNECT` tunnel) would carry it, with one crate more (`ipnet`) and,
     for Windows' and macOS's settings, theirs.
+
+### 2026-11-20: each `.rpm` signed
+
+The review of 2026-11-20 found that the repository's index alone being
+signed is not enough for the software centres the Context counts on.
+PackageKit, under GNOME Software and Discover, first installs only what
+a key it trusts signed (`ONLY_TRUSTED`), and libdnf fails an unsigned
+package under it whatever the repository's `gpgcheck`. GNOME Software
+then asks whether to install unsigned software, and declines by itself
+in its background downloads; Discover asks too. Read in their sources,
+not tried. dnf in a terminal took Skwir's updates, and apt is untouched:
+it trusts a package by its signed index. The user chose signing.
+
+- **What signs**: the repositories' key, the one that signs the indexes
+  (`tools/package/repository/skwir.asc`), its secret part in the
+  keyring of whoever makes the release. `tools/package/rpm-sign.sh`
+  signs (nixpkgs' rpmsign, rpm 4.20, a header signature) and reads each
+  file back with that key alone.
+- **When**: in `release-build`, which reads the key's fingerprint and
+  refuses to start without its secret part, as it refuses without
+  macOS's SDK. `try.sh fedora`, given `SKWIR_RPM_KEY`, signs what the
+  Fedora root built, on this machine, never in the root. The fresh root
+  reads every package back with Fedora's own rpm and the key alone
+  before installing it. What is checked, given its digests and uploaded
+  is the signed file, so it stays the release's (ADR-053). gpg asks for
+  the passphrase when Fedora's packages are built, past the hour of
+  checks. A package built elsewhere (CI's fallback) is unsigned, and
+  the repositories refuse it.
+- **The repositories**: `just repositories` refuses a release whose
+  `.rpm` the key that signs the indexes did not sign, before signing
+  anything. `skwir-repository.rpm` is signed too, its signature dated by
+  the folder's last commit (`--faked-system-time`, never before the
+  key's making): EdDSA signs a message the same way each time, so the
+  package is still made again identical. Its repository file reads
+  `gpgcheck=1`, and `skwir-repository` 2 brings it. A system with 1
+  updates to it, and to the release that comes with it, under the old
+  `gpgcheck=0` and, through PackageKit, with the key 1 installed in
+  `/etc/pki/rpm-gpg`, where libdnf reads keys. 0.5.1's packages,
+  published unsigned with `skwir-repository` 1, are never listed again.
+- **A change of key** (3.5) is unchanged: the packages are signed by the
+  key that signs the indexes, the key coming carried beside it.
+- **Removing `skwir-repository`** takes its repository file and key
+  file away. A key dnf imported into rpm's own keyring (`gpg-pubkey`)
+  stays there, as for any repository whose packages dnf checked: `rpm -e
+  gpg-pubkey-<id>` removes it. A package's scriptlet cannot, while the
+  transaction holds rpm's database.
+- **Checked**: `just repository-check`, its packages signed again by
+  each step's throwaway key. Fedora 44's rpm reads `skwir` downloaded
+  through the repository as signed by the key `skwir-repository`
+  brought. An update a stranger signed, listed by an index the key
+  signs, is refused ("Transaction failed: Signature verification
+  failed."). A release another key signed is refused by `just
+  repositories`, and each step of a change of key upgrades. The release
+  tools' tests: `release-build` stops before the checks without the
+  key's secret part, and hands Fedora's build the key. Not tried: a
+  Fedora build signed by `try.sh` (a full build in the root; the next
+  `release-build` is the first), and PackageKit itself (GNOME Software
+  or Discover updating Skwir on Fedora).

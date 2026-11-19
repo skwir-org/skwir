@@ -1221,13 +1221,14 @@ rows and About not (taffy measures a row kept to one line at its whole
 length, so their texts would start wider than the share): that needs
 the texts measured whole.
 
-**A new version told** (ADR-142, built 2026-11-19). Left: the
-repositories' key (the user's to make, `docs/RELEASING.md`), then the
-first repositories published and `REPOSITORY_PUBLISHED` set on the site;
-the first winget manifest submitted; the site deployed with its
-redirects and `/updates/1.json` (whether Cloudflare Pages answers its
-`If-None-Match`, and serves `_redirects`' placeholders as their
-documentation says, was not tried); an AppImage built and updated by
+**A new version told** (ADR-142, built 2026-11-19). Left: the site
+deployed with the first repositories (0.5.1's, unsigned, written into
+`skwir-site` on 2026-11-20 with `REPOSITORY_PUBLISHED` set, the key the
+user made the day before), its redirects and `/updates/1.json` (whether
+Cloudflare Pages serves `_redirects`' placeholders as its documentation
+says was not tried), then skwir installed from skwir.org in fresh roots
+with the download page's commands; the first winget manifest submitted
+(when the user chooses: nothing waits for it); an AppImage built and updated by
 AppImageUpdate and Gear Lever through `skwir.org/latest/` (the update
 information and the zsync file were checked by the AppImage's check
 against an image of a stand-in, not by an updater); a check's notice
@@ -1240,11 +1241,11 @@ and `client-proxy-system` would add `ipnet`, `windows-registry` and
 so behind a network that lets requests out only through one a copy is
 never told; two copies on one state file merge what they keep, but
 without a lock on the file a write by the other between a read and a
-save is lost to that save; the user's choice whether the `.rpm` files
-are signed (GNOME Software and Discover, through PackageKit, may take an
-unsigned package's update for untrusted: signing would be `rpmsign` in
-`release-build` before the checks and the digests, the key there, then
-`gpgcheck=1`), and an update through either tried; `skwir` installed
+save is lost to that save; an update through GNOME Software or Discover
+tried on Fedora (each `.rpm` is signed since 2026-11-20, the user's
+choice, for PackageKit, which takes only what a key it trusts signed:
+read in its sources, not tried), and the first Fedora build `try.sh`
+signs (the next `release-build`); `skwir` installed
 from the release before and upgraded through the repositories (only
 downloaded there now); the indexes compared with GitHub's stored files
 rather than the bundle's manifest; apt's by-hash.

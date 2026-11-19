@@ -114,6 +114,10 @@ it before it runs is the packages':
 Enter `nix develop` (or use the direnv shell). The macOS build needs
 Apple's SDK on this machine: run `just macos-sdk` once (ADR-075; Apple's
 licence is yours to accept); `release-build` stops at once without it.
+Fedora's packages are signed by the repositories' key (ADR-142, amended
+2026-11-20; below, "The repositories' key"): its secret part must be in
+GnuPG's keyring, or `release-build` stops at once too, and gpg asks for
+its passphrase once Fedora's packages are built, past the hour of checks.
 Then:
 
 ```sh
@@ -138,7 +142,7 @@ It then runs the existing packagers with separate fresh output directories:
 | `just package-appimage` | Ubuntu 22.04 build root; the AppImage, and its tree as a tarball, each checked in a separate runtime root: ELF/glibc checks, helpers, PDFs, audio and window commands |
 | `just package-try debian` | Debian 13 build; fresh installation of main package alone, then optional packages |
 | `just package-try ubuntu` | Ubuntu 24.04 build, its revision naming the release (`-1ubuntu24.04`); the same installations |
-| `just package-try fedora` | Fedora 44 build; fresh installation of main package alone, then optional packages |
+| `just package-try fedora` | Fedora 44 build, each `.rpm` signed here by the repositories' key (`SKWIR_RPM_KEY`, `tools/package/rpm-sign.sh`); in the fresh root, every package read back as signed by Fedora's rpm with the key alone, then the main package installed alone, then the optional packages |
 | `just package-try arch` | Arch build; fresh installation of main package alone, then optional packages |
 | `just package-windows` | Windows build to try (ADR-074), made with cargo-zigbuild: a zip and a per-user installer, tried under Wine (programs answering, the archive helper making and listing each format, the media helper playing H.264 and VP9 clips, installing and removing); GStreamer's own build is fetched and installed once into the build cache (ADR-076) |
 | `just package-macos` | macOS build to try for Apple silicon (ADR-075): skwir.app, zipped and in a disk image, looked over (architecture, libraries, seal); nothing runs it here |
@@ -283,7 +287,10 @@ tools that update a copy read what the release and the site give them.
 **Before the first release that carries the `updates` plugin**, once:
 make the repositories' key (below), publish the repositories from the
 bundle of the release before (`just repositories v0.5.1`), set
-`REPOSITORY_PUBLISHED` and deploy the site. A downloaded `.deb` or `.rpm`
+`REPOSITORY_PUBLISHED` and deploy the site. (Done for 0.5.1 on
+2026-11-20, its packages unsigned, with `skwir-repository` 1. Since then
+`just repositories` refuses a release whose `.rpm` the key did not sign,
+and `skwir-repository` 2 checks each package.) A downloaded `.deb` or `.rpm`
 copy's question links to the download page's repository section
 (`/download#repository`), which the site shows only once that is set:
 released first, the plugin would send its users to a page without it.
@@ -307,7 +314,8 @@ After the GitHub release is published:
 - **The repositories.** `just repositories v0.1.0` writes the apt and dnf
   repositories' signed indexes and `skwir-repository` into the site's
   `static/` (`../skwir-site` by default); gpg asks for the key's
-  passphrase. Review them (`git -C ../skwir-site status`), then commit and
+  passphrase. It refuses a release whose `.rpm` packages the key did not
+  sign (`release-build` signs them). Review them (`git -C ../skwir-site status`), then commit and
   deploy the site once, with the version file: an index never names a
   package before the release that holds it is published.
 - **winget.** `just winget v0.1.0` writes the release's three manifest
@@ -369,7 +377,10 @@ a new `skwir-repository` by hand):
 
 `just repositories` signs with the key of `skwir.asc`, whose secret part
 must be in the keyring, and carries the key of `next.asc` beside it while
-there is one; each file holds one key.
+there is one; each file holds one key. `release-build` signs Fedora's
+packages with the key of `skwir.asc` too, so a release's `.rpm` files are
+signed by the key that signs the indexes listing them: the old one until
+step 2, then the new.
 
 **Packagers.** A package manager that repackages a release (as the AUR's
 `skwir-bin` repackages the tarball) removes `share/skwir/channel`: what it

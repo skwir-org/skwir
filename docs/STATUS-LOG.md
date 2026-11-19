@@ -21042,3 +21042,53 @@ review, and fix what it finds.
   30a71ecd was read by a reviewer other than its author; the fixes
   (c48538bf..4db833d3) had no second review. What they left is in
   PLAN's "What is left" (ADR-142, ADR-143, Thumbnails).
+
+## 2026-11-20: the first repositories, and Fedora's packages signed (ADR-142 amended)
+
+**The first repositories.** The user made the repositories' key
+(F6EB0DC17B1A3E878C482DB30CF3A0EA48004329, ed25519, signing only, until
+2031-11-18; the public part committed in 466aa2fe) and ran `just
+repositories v0.5.1` into `skwir-site`, which sets `REPOSITORY_PUBLISHED`
+and says the repositories in `/download.md` too (skwir-site a0933d3, not
+deployed). Read before committing: the five signatures (both suites'
+`InRelease` and `Release.gpg`, dnf's `repomd.xml.asc`) good with the
+committed key alone, each index's checksums, every package's checksum
+the bundle's, all 21 files the pools name present on GitHub's v0.5.1
+(200; three compared by size). nfpm had written this machine's name into
+`skwir-repository.rpm` (`rpm:buildhost`): it now writes `localhost`
+(df2e0952), and the run made again holds no name of a machine or a
+person.
+
+**Each `.rpm` signed** (the user chose it, against PackageKit's
+`ONLY_TRUSTED`, read in its sources and GNOME Software's, not tried).
+`tools/package/rpm-sign.sh` signs with nixpkgs' rpmsign (rpm 4.20, a V4
+EdDSA header signature) by GnuPG's keyring and reads each file back with
+the key alone. `release-build` refuses to start without the key's secret
+part and gives Fedora's `package-try` the key (`SKWIR_RPM_KEY`). `try.sh`
+signs what the Fedora root built on this machine, and the fresh root
+reads every package back with Fedora's rpm before installing them.
+`just repositories` refuses a release whose `.rpm` the key that signs
+did not sign, signs `skwir-repository.rpm` at the folder's last commit's
+time (two signings, one file: EdDSA's signatures repeat), and writes
+`gpgcheck=1`. `skwir-repository` is 2.
+
+**Checked.** The signing script on 0.5.1's packages with throwaway keys:
+signed twice at one time, the same file; signed by another key, then
+again by the first, the same file again. `just repository-check` (39 s),
+each step's packages signed again by its throwaway key: the keys that
+expire soon or have no secret part refused, and a release another key
+signed refused; in Debian 13, Ubuntu 24.04 and Fedora 44, the signed
+indexes read and skwir downloaded through the redirect; on Fedora,
+skwir read back as signed by the key `skwir-repository` brought, and an
+update a stranger signed, listed by an index the key signs, refused by
+dnf ("Transaction failed: Signature verification failed."); the
+indexes a stranger signed refused everywhere; each step of a change of
+key upgraded (1, 2, 3); `skwir-repository` removed with its files. The
+release tools' tests (41, one new: no secret part, no checks) and the
+packaging tests (14); shellcheck on the three scripts.
+
+**Not run.** A Fedora build signed by `try.sh`: a whole build in the
+root, the next `release-build` its first. PackageKit itself: GNOME
+Software or Discover updating Skwir on Fedora. A key dnf imported stays
+in rpm's own keyring once `skwir-repository` is removed (`rpm -e
+gpg-pubkey-<id>`), as for any repository whose packages dnf checked.
