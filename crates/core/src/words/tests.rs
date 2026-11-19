@@ -679,6 +679,38 @@ fn named_words_are_quoted_as_a_name_is() {
     );
 }
 
+/// A moment before 1970 is one like any other, said as its date (a scan
+/// of an old photograph, a file a tool dated 0): only a time no calendar
+/// can say is none.
+#[test]
+fn a_moment_before_1970_is_said() {
+    use std::time::{Duration, UNIX_EPOCH};
+    // Noon: the same day in every time zone a test runs in.
+    let noon = jiff::civil::date(1965, 6, 15)
+        .at(12, 0, 0, 0)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .unwrap()
+        .timestamp();
+    let when = std::time::SystemTime::from(noon);
+    let moment = super::Moment::of(when, super::Shape::Date).expect("a date");
+    assert_eq!(moment.at, noon.as_second());
+    let said = crate::words!(test_moment_old = "made { $when }", when = moment);
+    assert_eq!(said.english(), "made Jun 15, 1965");
+    // Half a second before 1970 is in its last second, not the first after.
+    let just_before = UNIX_EPOCH - Duration::from_millis(500);
+    assert_eq!(
+        super::Moment::of(just_before, super::Shape::Time).map(|m| m.at),
+        Some(-1)
+    );
+    assert_eq!(
+        super::Moment::of(UNIX_EPOCH, super::Shape::Time).map(|m| m.at),
+        Some(0)
+    );
+    // Past what a calendar says.
+    let ages_ago = UNIX_EPOCH.checked_sub(Duration::from_secs(400_000_000_000));
+    assert!(ages_ago.is_none_or(|t| super::Moment::of(t, super::Shape::Date).is_none()));
+}
+
 #[test]
 fn a_folder_is_named_bare_its_controls_shown() {
     use super::Folder;

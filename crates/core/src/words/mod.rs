@@ -373,14 +373,20 @@ impl Shape {
 }
 
 impl Moment {
-    /// `t`, written as `shape` says; `None` before 1970 or past what a
-    /// date can say.
+    /// `t`, written as `shape` says, before 1970 as after; `None` only for
+    /// a time no calendar can say (past ±9999 years).
     pub fn of(t: std::time::SystemTime, shape: Shape) -> Option<Self> {
-        let at = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-        Some(Moment {
-            at: i64::try_from(at).ok()?,
-            shape,
-        })
+        let at = match t.duration_since(std::time::UNIX_EPOCH) {
+            Ok(after) => i64::try_from(after.as_secs()).ok()?,
+            // Before 1970: the second it falls in, counted down from it.
+            Err(before) => {
+                let before = before.duration();
+                let seconds = before.as_secs() + u64::from(before.subsec_nanos() > 0);
+                i64::try_from(seconds).ok()?.checked_neg()?
+            }
+        };
+        jiff::Timestamp::from_second(at).ok()?;
+        Some(Moment { at, shape })
     }
 
     /// The civil day `year`-`month`-`day` (a period's first, a bar's, a
