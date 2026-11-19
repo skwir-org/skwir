@@ -602,8 +602,9 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .children(about.news.iter().enumerate().map(|(n, (news, focus))| {
             let command = news.command.clone();
             // The sentence beside its button, the button under it where
-            // the dialog is too narrow for both.
-            crate::elements::beside::beside(
+            // the dialog is too narrow for both; held in a block, as
+            // `beside` is a row's child, never a column's.
+            div().w_full().child(crate::elements::beside::beside(
                 controls::noted(
                     "info",
                     theme.accent,
@@ -624,7 +625,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     })),
                 ),
                 0.6,
-            )
+            ))
         }))
         .child(facts)
         .child(buttons);

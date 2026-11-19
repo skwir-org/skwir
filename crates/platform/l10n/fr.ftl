@@ -355,7 +355,7 @@ http_stopped = les requêtes se sont arrêtées
 http_timed_out = le serveur n’a pas répondu à temps
 
 # draft
-http_unread = la réponse n’a pas pu être lue : { $error }
+http_unread = la réponse n’a pas pu être lue : { $error }
 
 # draft
 inspection_blocks_notice = { $count ->

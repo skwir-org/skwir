@@ -28,6 +28,12 @@
 //! the share, a version chosen for the share that no longer fits beside
 //! it goes to the next line, where a narrower one would have stayed.
 //!
+//! It is a flex item along the width (its basis nothing, growing into
+//! the room): hold it in a row (a card's row) or a block (a `div`), never
+//! as a column's child, where that basis would be its height and a
+//! panel sized by what it holds would leave it out (About's line, until
+//! it was held in a block).
+//!
 //! The end is drawn where its place in the line falls, laid out there in
 //! `prepaint` as an adaptive row's version is: one line tall, its height
 //! does not depend on its width. Its place is as tall as the line, the

@@ -5,10 +5,10 @@
 updates_answer = Répondre s’il faut être prévenu des nouvelles versions
 
 # draft
-updates_answer_description = La réponse à la question qu’une copie téléchargée pose une fois : faut-il interroger skwir.org une fois par jour
+updates_answer_description = La réponse à la question qu’une copie téléchargée pose une fois : faut-il interroger skwir.org une fois par jour
 
 # draft
-updates_ask = Être prévenu quand une nouvelle version de Skwir paraît ? Skwir interrogerait { $site } une fois par jour ; Cloudflare, qui le sert, voit votre adresse IP.
+updates_ask = Être prévenu quand une nouvelle version de Skwir paraît ? Skwir interrogerait { $site } une fois par jour ; Cloudflare, qui le sert, voit votre adresse IP.
 
 # draft
 updates_ask_no = Non
@@ -23,10 +23,10 @@ updates_ask_yes = Oui
 updates_check = Chercher une nouvelle version
 
 # draft
-updates_check_description = Demander maintenant à skwir.org si une version plus récente de Skwir est parue, pour une copie qui en est prévenue : un message dit ce qui a été trouvé
+updates_check_description = Demander maintenant à skwir.org si une version plus récente de Skwir est parue, pour une copie qui en est prévenue : un message dit ce qui a été trouvé
 
 # draft
-updates_kept_description = Ce que garde l’extension des mises à jour : quand cette copie a été vue et interrogée pour la première fois, la dernière vérification et ce qu’elle a annoncé.
+updates_kept_description = Ce que garde l’extension des mises à jour : quand cette copie a été vue et interrogée pour la première fois, la dernière vérification et ce qu’elle a annoncé.
 
 # draft
 updates_latest = Ce que la dernière vérification a trouvé
@@ -35,16 +35,16 @@ updates_latest = Ce que la dernière vérification a trouvé
 updates_latest_description = Comment cette copie a été installée, si elle est prévenue des nouvelles versions, et la version la plus récente trouvée par la dernière vérification, de mémoire
 
 # draft
-updates_managed = Cette copie de Skwir n’est pas vérifiée : ce qui l’a installée annonce les nouvelles versions
+updates_managed = Cette copie de Skwir n’est pas vérifiée : ce qui l’a installée annonce les nouvelles versions
 
 # draft
-updates_not_ready = Skwir lit encore comment il a été installé : réessayez
+updates_not_ready = Skwir lit encore comment il a été installé : réessayez
 
 # draft
 updates_not_understood = la réponse de skwir.org n’a pas été comprise
 
 # draft
-updates_off = Cette copie n’est pas prévenue des nouvelles versions : activez-le dans Réglages › Général
+updates_off = Cette copie n’est pas prévenue des nouvelles versions : activez-le dans Réglages › Général
 
 # draft
 updates_out = Skwir { $version } est paru
@@ -71,10 +71,10 @@ updates_tell_setting = Me prévenir quand une nouvelle version paraît
 updates_tell_setting_description = Skwir demande à { $site } une fois par jour si une version plus récente est parue. Cloudflare, qui le sert, voit votre adresse IP.
 
 # draft
-updates_tell_setting_description_more = Seule une copie téléchargée sur le site le demande : celle qu’un gestionnaire de paquets met à jour en est prévenue par lui.
+updates_tell_setting_description_more = Seule une copie téléchargée sur le site le demande : celle qu’un gestionnaire de paquets met à jour en est prévenue par lui.
 
 # draft
-updates_told_no = Skwir ne le demandera plus ; les Réglages peuvent l’activer
+updates_told_no = Skwir ne le demandera plus ; les Réglages peuvent l’activer
 
 # draft
 updates_told_yes = Skwir vous préviendra quand une nouvelle version paraîtra

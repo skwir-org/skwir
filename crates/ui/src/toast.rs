@@ -742,6 +742,10 @@ pub fn quit_question(running: Option<(&Words, bool)>, others: usize, waiting: us
     )
 }
 
+/// The share of a toast's row its words keep beside its buttons, before
+/// the buttons go under them (`elements::beside`).
+const TEXTS_SHARE: f32 = 0.5;
+
 /// Characters (grapheme clusters, spaces included) read in a second,
 /// unhurried: three English words of five letters and a space, as the
 /// toast counted words before, and a count a language written without
@@ -1603,7 +1607,7 @@ pub fn render_answer(
         Tone::Error => controls::glyph("warning", theme.error, 15.),
         Tone::Info => controls::glyph("info", theme.text_muted, 15.),
     };
-    let mut card = div()
+    let card = div()
         .id(("toast-card", generation))
         .max_w(sized(480.))
         .min_w(sized(220.))
@@ -1633,23 +1637,23 @@ pub fn render_answer(
             gpui::Live::Polite
         })
         .when(a11y, |d| d.aria_label(text.clone()))
-        .child(glyph)
-        .child(
+        .child(glyph);
+    let said = div()
+        .flex_1()
+        .min_w_0()
+        .py_1()
+        .flex()
+        .flex_col()
+        .child(text)
+        // Why an Undo is held, under what was said.
+        .children(held.iter().flatten().map(|why| {
             div()
-                .flex_1()
-                .min_w_0()
-                .py_1()
-                .flex()
-                .flex_col()
-                .child(text)
-                // Why an Undo is held, under what was said.
-                .children(held.iter().flatten().map(|why| {
-                    div()
-                        .text_body()
-                        .text_color(theme.text_muted)
-                        .child(why.clone())
-                })),
-        );
+                .text_body()
+                .text_color(theme.text_muted)
+                .child(why.clone())
+        }));
+    let has_actions = !toast.actions.is_empty();
+    let mut actions = div().flex().items_center().gap_2();
     for ((n, action), held) in toast.actions.into_iter().enumerate().zip(held) {
         while shell.toasts.action_focus.len() <= n {
             shell.toasts.action_focus.push(cx.focus_handle());
@@ -1659,7 +1663,7 @@ pub fn render_answer(
         if let Some(why) = held {
             // Said, not offered: no frame but the keyboard's.
             let accent = theme.accent;
-            card = card.child(
+            actions = actions.child(
                 controls::inert_button(format!("toast-action-{n}"), label, &focus, &theme)
                     .aria_live(gpui::Live::Off)
                     .when(a11y, |d| d.aria_description(why))
@@ -1668,7 +1672,7 @@ pub fn render_answer(
             );
             continue;
         }
-        card = card.child(
+        actions = actions.child(
             controls::button(
                 format!("toast-action-{n}"),
                 label,
@@ -1686,17 +1690,30 @@ pub fn render_answer(
             })),
         );
     }
-    let card = card.child(
-        controls::icon_button(
-            "toast-close",
-            "close",
-            words!(toast_close = "Close").say(),
-            &close,
-            &theme,
-        )
-        .aria_live(gpui::Live::Off)
-        .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
-    );
+    // What it says beside its buttons, or the buttons under it where the
+    // card is too narrow for both (a question's answers, a long label in
+    // another language): never a sentence squeezed to a letter a line.
+    let card = card
+        .child(if has_actions {
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(crate::elements::beside::beside(said, actions, TEXTS_SHARE))
+                .into_any_element()
+        } else {
+            said.into_any_element()
+        })
+        .child(
+            controls::icon_button(
+                "toast-close",
+                "close",
+                words!(toast_close = "Close").say(),
+                &close,
+                &theme,
+            )
+            .aria_live(gpui::Live::Off)
+            .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
+        );
     Some(
         card.with_animation(
             ("toast", generation),
