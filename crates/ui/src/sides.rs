@@ -19,9 +19,11 @@
 //!   a clock's and logos are drawn as they are.
 //! - **The root says the direction** (`window_direction`: gpui's
 //!   `LayoutDirection`, inherited, so every row lays itself out from its
-//!   right when mirrored). What runs left to right in every language
-//!   (what a document lays out, media's controls and time, a shortcut)
-//!   says so on its root (`left_to_right`, `shortcut`).
+//!   right when mirrored), and only when mirrored: left to right is gpui's
+//!   own where nothing says one, which it then answers without looking
+//!   (`Window::layout_direction`). What runs left to right in every
+//!   language (what a document lays out, media's controls and time, a
+//!   shortcut) says so on its root (`left_to_right`, `shortcut`).
 
 use gpui::{
     AbsoluteLength, Bounds, DefiniteLength, Length, Pixels, Point, Styled, Svg, Transformation,
@@ -192,14 +194,18 @@ pub trait Sides: Styled + Sized {
 
     /// The window's root: laid out in the window's direction (gpui's
     /// `LayoutDirection`, which every element inherits: a row's children
-    /// from its right, mirrored), its texts aligned at their start.
+    /// from its right, mirrored), its texts aligned at their start. Left to
+    /// right it says none: that is gpui's own where nothing says one, and
+    /// while nothing does, every element's `Window::layout_direction` is
+    /// answered without a walk of the text styles above it, which a
+    /// direction said at the root would make each one take.
     fn window_direction(self) -> Self {
-        self.layout_direction(if rtl() {
-            gpui::LayoutDirection::RightToLeft
+        let root = if rtl() {
+            self.layout_direction(gpui::LayoutDirection::RightToLeft)
         } else {
-            gpui::LayoutDirection::LeftToRight
-        })
-        .text_start()
+            self
+        };
+        root.text_start()
     }
 
     /// The root of what is laid out left to right whatever the window's
@@ -378,5 +384,22 @@ mod tests {
         assert_eq!(super::from_end_edge(within, px(130.)), px(30.));
         skwir_core::locale::set_chosen(None);
         assert!(!super::rtl());
+    }
+
+    /// The window's root says a direction only when mirrored: left to right
+    /// is gpui's own where nothing says one, so it says none there, and
+    /// gpui answers every element's direction without a walk.
+    #[test]
+    fn the_root_says_a_direction_only_when_mirrored() {
+        use super::Sides as _;
+        let said = || {
+            let mut root = gpui::div().window_direction();
+            gpui::Styled::style(&mut root).text.layout_direction
+        };
+        assert_eq!(said(), None);
+        skwir_core::locale::set_chosen(Some(skwir_core::direction::PSEUDO_RTL.into()));
+        assert_eq!(said(), Some(gpui::LayoutDirection::RightToLeft));
+        skwir_core::locale::set_chosen(None);
+        assert_eq!(said(), None);
     }
 }

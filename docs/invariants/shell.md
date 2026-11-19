@@ -587,9 +587,11 @@ asks the direction.
   `Start` or `End` (the tabs', the sidebar's pills).
 - **The root says the direction** (`Sides::window_direction`: gpui's
   `LayoutDirection`, inherited as CSS's `direction`, so a flex row's
-  children start at its right, and `TextAlign::Start`). Everything in it
-  follows: a row lays itself out mirrored, so a row of the window never
-  says its own order. What runs left to right in every language says so
+  children start at its right, and `TextAlign::Start`), and only when
+  mirrored: left to right is gpui's own where nothing says one, which
+  gpui then answers for each element without a walk of the styles above
+  it. Everything in it follows: a row lays itself out mirrored, so a row
+  of the window never says its own order. What runs left to right in every language says so
   on its root (`Sides::left_to_right`): a document (the rows of a text,
   code or bytes, `elements::rows`; a read inspection, each paragraph in
   its own direction, below; the PDF reader's pages), media's controls
