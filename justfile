@@ -325,6 +325,32 @@ aur-prepare tag:
 aur-publish tag:
     python3 tools/release/aur.py publish {{quote(tag)}}
 
+# gpg asks for the repositories' key's passphrase; the packages stay the
+# release's, which the site's redirects reach; publishing is deploying the
+# site, after the release is. Into skwir-site's static folder by default:
+# a verified release's apt and dnf repositories, signed (ADR-142).
+repositories tag site="../skwir-site/static":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nixpkgs() { nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' "nixpkgs#$1^out" | head -1; }
+    PATH="$(nixpkgs apt)/bin:$(nixpkgs createrepo_c)/bin:$(nixpkgs gnupg)/bin:$(nixpkgs nfpm)/bin:$PATH" \
+        python3 tools/package/repository.py target/releases/{{tag}} --site {{site}}
+
+# With a throwaway key against a stand-in for the site, the newest bundle in
+# target/releases or the one named: the repositories tried in fresh Debian,
+# Ubuntu and Fedora roots, an upgrade included (ADR-142).
+repository-check *bundle:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nixpkgs() { nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' "nixpkgs#$1^out" | head -1; }
+    PATH="$(nixpkgs apt)/bin:$(nixpkgs createrepo_c)/bin:$(nixpkgs gnupg)/bin:$(nixpkgs nfpm)/bin:$PATH" \
+        tools/package/repository-check.sh {{bundle}}
+
+# Beside its bundle in target/releases/<tag>-winget, for a pull request to
+# microsoft/winget-pkgs: a verified release's winget manifests (ADR-142).
+winget tag:
+    python3 tools/package/winget.py target/releases/{{tag}}
+
 # A Linux package built in a distribution's own root and installed in a
 # fresh one, from any Linux with bubblewrap (ADR-040): debian, ubuntu, fedora,
 # arch.
