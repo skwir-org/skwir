@@ -1420,7 +1420,7 @@ impl TagIndex {
         }
         let mut out = Self::spelled(&state, counts);
         drop(state);
-        out.sort_by_key(|(t, _)| t.to_lowercase());
+        out.sort_by_cached_key(|(t, _)| skwir_core::collate::sort_key(std::ffi::OsStr::new(t)));
         (out, files)
     }
 

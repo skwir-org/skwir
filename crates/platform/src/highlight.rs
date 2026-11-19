@@ -466,7 +466,10 @@ fn read_user_themes(dir: &Path) -> Vec<Arc<UserTheme>> {
             }))
         })
         .collect();
-    themes.sort_by_cached_key(|theme| (theme.name.to_lowercase(), theme.name.clone()));
+    // As names are ordered (`collate`): one name's twins side by side.
+    themes.sort_by_cached_key(|theme| {
+        skwir_core::collate::sort_key(std::ffi::OsStr::new(&theme.name))
+    });
     themes.dedup_by(|a, b| a.name == b.name);
     themes
 }
@@ -508,7 +511,7 @@ pub fn choices_words(
         .filter(|(name, _, theme_dark)| *theme_dark == dark && !theirs(name))
         .map(|(name, label, _)| (name.to_owned(), label.to_owned()))
         .collect();
-    bat.sort_by_cached_key(|(_, label)| label.to_lowercase());
+    bat.sort_by_cached_key(|(_, label)| skwir_core::collate::sort_key(std::ffi::OsStr::new(label)));
     let mut choices = vec![(
         DEFAULT.to_owned(),
         skwir_core::words!(

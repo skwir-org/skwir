@@ -353,7 +353,7 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
             .collect();
         // In the order of their names, so a pill stays put while counts
         // move.
-        rows.sort_by_key(|r| r.tag.to_lowercase());
+        rows.sort_by_cached_key(|r| skwir_core::collate::sort_key(std::ffi::OsStr::new(&r.tag)));
         rows
     } else {
         pins.into_iter().filter_map(|tag| row(tag, true)).collect()

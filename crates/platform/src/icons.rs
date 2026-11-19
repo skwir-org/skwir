@@ -273,7 +273,9 @@ mod imp {
                 });
             }
         }
-        found.sort_by_key(|theme| theme.name.to_lowercase());
+        found.sort_by_cached_key(|theme| {
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(&theme.name))
+        });
         found
     }
 

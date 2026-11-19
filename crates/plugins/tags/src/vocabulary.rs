@@ -228,11 +228,13 @@ impl Vocabulary {
     pub fn known(&self) -> Vec<String> {
         let inner = self.inner.lock();
         let mut known: Vec<&Known> = inner.known.values().collect();
-        known.sort_by(|a, b| {
-            b.used
-                .cmp(&a.used)
-                .then(b.seen.cmp(&a.seen))
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        // Ties by name, as names are ordered (`collate`): one key a tag.
+        known.sort_by_cached_key(|k| {
+            (
+                std::cmp::Reverse(k.used),
+                std::cmp::Reverse(k.seen),
+                skwir_core::collate::sort_key(std::ffi::OsStr::new(&k.name)),
+            )
         });
         known.into_iter().map(|k| k.name.clone()).collect()
     }
@@ -302,6 +304,18 @@ mod tests {
         assert_eq!(v.known(), ["home", "Work"]);
         v.inner.lock().known.get_mut("work").unwrap().used = 9;
         assert_eq!(v.known(), ["Work", "home"], "first spelling kept");
+    }
+
+    /// Tags used and seen alike stand as names are ordered (`collate`): an
+    /// accented one among its letter's, case aside.
+    #[test]
+    fn tags_alike_stand_as_names_are_ordered() {
+        let v = vocabulary();
+        v.touch(&["Zeta".into(), "étoile".into(), "alpha".into()], false);
+        for known in v.inner.lock().known.values_mut() {
+            known.seen = 1;
+        }
+        assert_eq!(v.known(), ["alpha", "étoile", "Zeta"]);
     }
 
     #[test]

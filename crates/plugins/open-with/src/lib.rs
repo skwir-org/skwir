@@ -981,7 +981,12 @@ fn rank<'a>(catalog: &'a Catalog, types: &[Mime]) -> Vec<(&'a Application, Optio
         .iter()
         .filter(|app| app.shown && !ranked.iter().any(|(a, _, _)| a.id == app.id))
         .collect();
-    others.sort_by_cached_key(|app| (app.name.to_lowercase(), app.id.clone()));
+    others.sort_by_cached_key(|app| {
+        (
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(&app.name)),
+            app.id.clone(),
+        )
+    });
     ranked.extend(others.into_iter().map(|app| (app, None, false)));
     // A package may install one program under two IDs (`brave-browser` and
     // `com.brave.Browser`): the same name running the same command is one

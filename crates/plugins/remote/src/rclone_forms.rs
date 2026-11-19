@@ -266,7 +266,7 @@ pub fn signs_in(backend: &Backend) -> bool {
 fn kind_form(backends: &[Backend], chosen: Option<&str>) -> Form {
     // Storage first, then what stands on other remotes, each by rclone's
     // name for it: sorted by what they are, never by their words.
-    let mut kinds: Vec<(bool, String, Choice)> = backends
+    let mut kinds: Vec<(bool, Box<[u8]>, Choice)> = backends
         .iter()
         .filter(|b| !NOT_OFFERED.contains(&b.name.as_str()))
         .map(|b| {
@@ -297,7 +297,9 @@ fn kind_form(backends: &[Backend], chosen: Option<&str>) -> Form {
                             writes them (Amazon S3 Compliant Storage Providers (s3))."
                 ))
                 .section(section);
-            (on_remotes, b.title.to_lowercase(), choice)
+            // By title, as names are ordered (`collate`).
+            let title = skwir_core::collate::sort_key(std::ffi::OsStr::new(&b.title));
+            (on_remotes, title, choice)
         })
         .collect();
     kinds.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
@@ -645,7 +647,7 @@ impl Flow<'_> {
     fn others(&self, name: Option<&str>) -> anyhow::Result<Vec<String>> {
         let mut remotes = self.session.remotes(self.cancel)?;
         remotes.retain(|r| Some(r.as_str()) != name);
-        remotes.sort_by_key(|r| r.to_lowercase());
+        remotes.sort_by_cached_key(|r| skwir_core::collate::sort_key(std::ffi::OsStr::new(r)));
         Ok(remotes)
     }
 

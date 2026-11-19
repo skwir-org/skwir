@@ -180,7 +180,12 @@ pub fn ordered(
             (t, color)
         })
         .collect();
-    tags.sort_by_cached_key(|(t, _)| (pins.rank(t).unwrap_or(usize::MAX), t.to_lowercase()));
+    tags.sort_by_cached_key(|(t, _)| {
+        (
+            pins.rank(t).unwrap_or(usize::MAX),
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(t)),
+        )
+    });
     tags
 }
 
