@@ -2191,6 +2191,34 @@ mod linux_tests {
         drop(taking);
     }
 
+    /// Who holds the file manager's name is followed: told once listening,
+    /// then as a holder takes it and as it lets go, until stopped.
+    #[test]
+    fn the_holder_of_the_name_is_followed() {
+        use std::sync::atomic::AtomicUsize;
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let told = Arc::new(AtomicUsize::new(0));
+        let stop = skwir_core::CancelToken::new();
+        let counted = Arc::clone(&told);
+        crate::file_manager::linux::follow_shower_on(
+            connector(&bus.address)().unwrap(),
+            crate::file_manager::linux::owner_changes().unwrap(),
+            &stop,
+            move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        until("told once listening", &|| told.load(Ordering::SeqCst) >= 1);
+        let holder = connector(&bus.address)().unwrap();
+        holder.request_name(super::linux::FILE_MANAGER).unwrap();
+        until("told as it is taken", &|| told.load(Ordering::SeqCst) >= 2);
+        drop(holder);
+        until("told as it is let go", &|| told.load(Ordering::SeqCst) >= 3);
+        stop.cancel();
+    }
+
     /// Asked nothing within its wait, it hands nothing and lets go.
     #[test]
     fn a_program_asked_nothing_hands_nothing() {

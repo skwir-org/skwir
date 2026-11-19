@@ -116,6 +116,65 @@ pub fn shower() -> Shower {
 pub struct Following {
     #[cfg(target_os = "linux")]
     _watcher: Option<skwir_core::fs::Settled>,
+    #[cfg(target_os = "linux")]
+    again: linux::Again,
+}
+
+impl Following {
+    /// What asks the choice again ([`Again`]), held by no lock of the
+    /// caller's while it reads.
+    #[must_use]
+    pub fn again(&self) -> Again {
+        Again {
+            #[cfg(target_os = "linux")]
+            inner: self.again.clone(),
+        }
+    }
+}
+
+impl Drop for Following {
+    fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        self.again.stop();
+    }
+}
+
+/// Asks the choice again, as [`follow`] does at first ([`Again::check`]),
+/// until what it came from is dropped.
+#[derive(Clone)]
+pub struct Again {
+    #[cfg(target_os = "linux")]
+    inner: linux::Again,
+}
+
+impl Again {
+    /// For what no watch tells: the system's lists (`$XDG_CONFIG_DIRS`, the
+    /// data folders'), which a package or a profile switched (NixOS's, a
+    /// link above the folder) changes. Asked as a window comes to the
+    /// front. Skipped while a reading of the choice runs, which reads them
+    /// too, and once following stopped. Reads the lists and a file, and
+    /// asks the bus only where what it answers changed: on a worker.
+    /// Nothing elsewhere than on Linux.
+    pub fn check(&self) {
+        #[cfg(target_os = "linux")]
+        self.inner.check();
+    }
+}
+
+/// Follow who holds `org.freedesktop.FileManager1` (what shows other
+/// programs' files in their folder), until `stop`: `changed` is called on
+/// a thread of its own once listening (so nothing between the caller's
+/// last [`shower`] and then is missed), then each time its owner changes,
+/// and must return at once (ask [`shower`] on a worker). For what is told
+/// only while another program holds it (the Settings row saying so).
+/// Nothing elsewhere than on Linux, or without a session bus.
+pub fn follow_shower(stop: &skwir_core::CancelToken, changed: impl Fn() + Send + 'static) {
+    #[cfg(target_os = "linux")]
+    linux::follow_shower(stop, changed);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (stop, changed);
+    }
 }
 
 /// Follow the user's choice for the program `answering` belongs to: asked
@@ -139,9 +198,10 @@ pub fn follow(answering: &crate::handover::Answering) -> (bool, Following) {
 }
 
 #[cfg(target_os = "linux")]
-mod linux {
+pub(crate) mod linux {
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
     use super::{FOLDERS, Following, STARTED_BY_BUS};
     use crate::apps::Application;
@@ -196,9 +256,51 @@ mod linux {
         crate::apps::named_default(FOLDERS).filter(|app| app.id == own)
     }
 
+    /// One reading of the choice at a time, whoever asks (the watcher, a
+    /// window come to the front): one asked while another runs is that
+    /// one.
+    #[derive(Clone)]
+    pub(super) struct Again {
+        answering: Answering,
+        reading: Arc<parking_lot::Mutex<()>>,
+        /// Following goes on: once it stops, nothing is read nor kept.
+        live: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Again {
+        /// Read it, waiting for a reading under way (the watcher's: what
+        /// the lists say after it).
+        fn read(&self) -> bool {
+            let _reading = self.reading.lock();
+            self.is_live() && check(&self.answering)
+        }
+
+        /// Read it, unless one is under way.
+        pub(super) fn check(&self) {
+            if let Some(_reading) = self.reading.try_lock()
+                && self.is_live()
+            {
+                check(&self.answering);
+            }
+        }
+
+        pub(super) fn stop(&self) {
+            self.live.store(false, std::sync::atomic::Ordering::Release);
+        }
+
+        fn is_live(&self) -> bool {
+            self.live.load(std::sync::atomic::Ordering::Acquire)
+        }
+    }
+
     pub(super) fn follow(answering: &Answering) -> (bool, Following) {
-        let chosen = check(answering);
-        let answering = answering.clone();
+        let again = Again {
+            answering: answering.clone(),
+            reading: Arc::default(),
+            live: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
+        let chosen = again.read();
+        let on_change = again.clone();
         let lists = crate::apps::user_lists();
         let mut folders: Vec<PathBuf> = lists
             .iter()
@@ -215,7 +317,7 @@ mod linux {
         };
         let watcher =
             skwir_core::fs::Settled::start("skwir-defaults", SETTLE, relevant, move || {
-                check(&answering);
+                on_change.read();
                 true
             })
             .map(|mut watcher| {
@@ -224,7 +326,62 @@ mod linux {
                 }
                 watcher
             });
-        (chosen, Following { _watcher: watcher })
+        (
+            chosen,
+            Following {
+                _watcher: watcher,
+                again,
+            },
+        )
+    }
+
+    /// What says the name's owner changed.
+    pub(crate) fn owner_changes() -> zbus::Result<zbus::MatchRule<'static>> {
+        Ok(zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.DBus")?
+            .interface("org.freedesktop.DBus")?
+            .member("NameOwnerChanged")?
+            .arg(0, NAME)?
+            .build())
+    }
+
+    pub(super) fn follow_shower(
+        stop: &skwir_core::CancelToken,
+        changed: impl Fn() + Send + 'static,
+    ) {
+        let rule = match owner_changes() {
+            Ok(rule) => rule,
+            Err(error) => {
+                tracing::debug!("who shows files is asked, not followed: {error}");
+                return;
+            }
+        };
+        match crate::bus::session() {
+            Ok(bus) => follow_shower_on(bus, rule, stop, changed),
+            Err(error) => tracing::debug!("who shows files is asked, not followed: {error}"),
+        }
+    }
+
+    /// [`follow_shower`] on `bus`, with `rule`, the owner's changes of the
+    /// name.
+    pub(crate) fn follow_shower_on(
+        bus: zbus::blocking::Connection,
+        rule: zbus::MatchRule<'static>,
+        stop: &skwir_core::CancelToken,
+        changed: impl Fn() + Send + 'static,
+    ) {
+        let stop = stop.clone();
+        let followed = std::thread::Builder::new()
+            .name("skwir-shower".into())
+            .spawn(move || {
+                // Both on this thread: told once listening, then at each change.
+                let changed = &changed;
+                crate::bus::listen(&bus, vec![rule], &stop, changed, |_| changed());
+            });
+        if let Err(error) = followed {
+            tracing::debug!("who shows files is asked, not followed: {error}");
+        }
     }
 
     /// Ask whether skwir is chosen, and answer and keep the bus's file as

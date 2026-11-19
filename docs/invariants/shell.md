@@ -2112,8 +2112,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - **Other programs' "Show in folder" is a launch** (ADR-140, Linux): the
   program that takes launches over answers `org.freedesktop.FileManager1`
   while skwir is the desktop's default for folders
-  (`file_manager::follow`, asked at start and as the user's lists
-  change; no setting of skwir's own), its requests handed in through the
+  (`file_manager::follow`, asked at start, as the user's lists change,
+  and as a window comes to the front for the system's,
+  `finishing::looked_at`; no setting of skwir's own), its requests handed in through the
   same gate (`handover::Answering`), each folder a launch whose
   `Opening::select` is selected once listed (`Pane::reveal_names`) and
   whose `properties` shows Properties (`Shell::show_properties`). It

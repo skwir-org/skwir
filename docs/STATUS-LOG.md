@@ -20508,3 +20508,39 @@ now opens folders" with Undo, the row saying "Skwir also shows…", no
 revert button, Changed by you not counting it, nothing written to
 skwir's settings. Undo clicked from the notice was not reached in time
 (the notice had gone); the plugin's test runs it.
+
+## 2026-11-19: ADR-140's leftovers, the system's lists and the holder followed
+
+Asked by the user, without a cost in speed or memory:
+
+- **The system's lists of defaults** (`$XDG_CONFIG_DIRS`, the data
+  folders'), which no watch tells (a NixOS profile switched replaces a
+  link above the folder), are asked again as a window comes to the front
+  (`finishing::looked_at`, `Following::again`, on a worker at background
+  priority): a few small files read, the bus asked only when what it
+  answers changed, skipped while a reading runs; the user's lists are
+  still followed by their watch. The handle stops answering once
+  following stops, and holds no lock of the program's while it reads.
+- **The Settings row follows the holder** while it is another program
+  (`file_manager::follow_shower`: the bus's `NameOwnerChanged` for the
+  name, on a thread of its own, asked again once listening so a change
+  in between is not missed), each change asking who holds it again (a
+  change during a question asking once more after): it says the holder
+  ended the moment it does, the dialog open or not. Followed only then:
+  the thread ends once Skwir holds the name or another is chosen.
+- `just a11y-check` hears the row: a combo box named "Default file
+  manager", its description then what the value means.
+
+**Checked:** rustfmt; clippy `-D warnings` on the platform, the window,
+the plugin and the binary for Linux, and for Windows and macOS; the
+words check; a new platform test on a private dbus-daemon (told once
+listening, as a holder takes the name and lets it go); the 1523 tests of
+the platform, the plugin, the window and the binary; `just a11y-check`
+(passed, the new check among them). In a window on Xvfb with a private
+dbus-daemon: Skwir chosen while `dbus-test-tool` held the name, the row
+said so; the holder stopped with Settings open, Skwir took the name and
+the row said "Skwir also shows…" without being opened again, the
+follower's thread gone after. Skwir named in the system's list only, the
+user's naming none: nothing until the window came to the front, then the
+name taken and the service file written; the system's list emptied, at
+the next coming to the front the name let go and the file removed.

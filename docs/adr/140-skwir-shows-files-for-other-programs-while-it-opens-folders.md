@@ -63,8 +63,11 @@ row in Settings: decision 8.
    lists change (`fs::Settled` on `$XDG_CONFIG_HOME`: Open With, the
    desktop, a tool), on that watcher's thread; let go at once when skwir
    is no longer the default. The system's lists (`$XDG_CONFIG_DIRS`, the
-   data folders') are read, not followed: a package changes them rarely,
-   and decision 5 covers the while until the next start.
+   data folders'), which no watch tells (a profile switched on NixOS
+   replaces a link above the folder), are asked again as a window comes
+   to the front (`Following::again`, on a worker, skipped while a reading
+   runs): reading a few lists, the bus asked only when what it answers
+   changed (amended 2026-11-19); decision 5 covers the while before.
 3. **What another program asks is a launch.** `ShowFolders`: each folder
    a launch. `ShowItems`: the items grouped by the folder holding them,
    in the order first named, each folder a launch that selects its items
@@ -119,17 +122,22 @@ row in Settings: decision 8.
    choice's row), the open-with plugin, whose catalog and
    `open_with.set_default` (its notice offering Undo) it is: the
    applications that open folders to choose from, the default first
-   (none named: "Not chosen", with what opens them meanwhile), and, under
-   its description, what the choice means for Show in Folder: what choosing skwir gives; that
-   skwir shows them; that another program does until it ends
+   (none named: "Not chosen", with what opens them meanwhile), and,
+   under its description, what the choice means for Show in Folder:
+   what choosing skwir gives; that skwir shows them; that another
+   program does until it ends
    (`file_manager::shower`, the holder named as its desktop entry names
    it); that skwir cannot be chosen where its entry is not installed.
    Still the desktop's choice, kept nowhere else. Listed from memory,
-   the holder asked again on a worker each time the row is listed, so
-   a holder that ends while the dialog is open shows at the next
-   listing. On Linux alone, where the catalog is read. An essential, as
-   it decides what other programs see: in place of Ask what dropped
-   files do, by the user's choice (ADR-072, amended 2026-11-19).
+   the holder asked again on a worker each time the row is listed, and
+   followed while it is another program (`file_manager::follow_shower`,
+   the bus's `NameOwnerChanged` for the name, asked again once listening
+   so nothing is missed), so the row says it ended the moment it does,
+   the dialog open or not; followed only then, as nothing else changes
+   what it says. On Linux alone, where the catalog is read. An
+   essential, as it decides what other programs see: in place of Ask
+   what dropped files do, by the user's choice (ADR-072, amended
+   2026-11-19).
 
 ## Consequences
 

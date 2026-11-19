@@ -818,6 +818,8 @@ impl Shell {
                 // act (ADR-122), whose shape a new window takes.
                 this.app.workspace.write().set_active_window(this.window_id);
                 crate::finishing::raised(cx, this.window_id);
+                // The default for folders, as the system's lists say it.
+                crate::finishing::looked_at(cx);
                 this.work.borrow().shown_in(Some(window));
                 this.remember_session();
                 // An accent or a contrast changed while away (macOS).

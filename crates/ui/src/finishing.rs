@@ -933,6 +933,30 @@ pub(crate) fn settings_elsewhere(cx: &App, id: WindowId) -> Option<WindowHandle<
         .find(|handle| handle.read(cx).is_ok_and(Shell::settings_open))
 }
 
+/// A window came to the front: what follows the default for folders asks
+/// it again on a worker, for the system's lists, which no watch tells
+/// (ADR-140). A reading under way is that one.
+pub(crate) fn looked_at(cx: &mut App) {
+    if !cx.has_global::<Finishing>() {
+        return;
+    }
+    let state = cx.global::<Finishing>();
+    let again = state
+        .following
+        .lock()
+        .as_ref()
+        .map(skwir_platform::file_manager::Following::again);
+    let Some(again) = again else {
+        return;
+    };
+    state.app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Background,
+        "file-manager.again",
+        state.app.lifetime().child(),
+        move || again.check(),
+    );
+}
+
 /// Window `id` came forward by the user's hand: the program has nothing
 /// more to bring forward.
 pub(crate) fn raised(cx: &mut App, id: WindowId) {

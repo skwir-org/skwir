@@ -1124,12 +1124,12 @@ asked) when none runs; followed as the user's lists change. On
 manager" (ADR-140, 8), a choice its owner keeps
 (`SettingSpec::choice_kept_by`): the applications that open folders to
 choose from, and what the choice means for Show in Folder, the holder
-that does not let go named; an essential of General in place of Ask
-what dropped files do, by the user's choice (ADR-072 amended). With it,
-the startup folder is dimmed unless Open at startup is A chosen folder
-(`SettingSpec::under_choice`). Not built (no ADR closes it): following
-the system's lists (read at start only). Checks in `docs/STATUS-LOG.md`
-(2026-11-18, 2026-11-19).
+that does not let go named, and followed until it ends; an essential
+of General in place of Ask what dropped files do, by the user's choice
+(ADR-072 amended). With it, the startup folder is dimmed unless Open at
+startup is A chosen folder (`SettingSpec::under_choice`). The system's
+lists are asked again as a window comes to the front. Checks in
+`docs/STATUS-LOG.md` (2026-11-18, 2026-11-19).
 
 ## What is left
 
@@ -1145,9 +1145,8 @@ program it starts that ends with 3 fails the request at once, as
 dbus-daemon does); a real asker (Firefox's downloads, Chromium, the
 portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
 holding the name, seen to keep it until it ends (a test's holder, not
-Dolphin); the startup id on Wayland; the system's lists followed; the
-Settings row following a holder that ends while the dialog is open;
-the portal's FileChooser (the user's step 2).
+Dolphin); the startup id on Wayland; the portal's FileChooser (the
+user's step 2).
 
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as

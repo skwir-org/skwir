@@ -356,6 +356,19 @@ def children_of(w, role, name):
     return []
 
 
+def nodes_of(w, role):
+    """Every node of role `role` in the window, in no order."""
+    found, stack = [], [w.frame()]
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        if node.get_role_name() == role:
+            found.append(node)
+        stack.extend(node.get_child_at_index(i) for i in range(node.get_child_count()))
+    return found
+
+
 def under(w, role, name, kind):
     """The nodes of role `kind` anywhere under the node `role` `name`, in
     the order a reader meets them."""
@@ -664,6 +677,17 @@ def run(w):
     check("Ctrl+,: the settings, their page said as the selected tab",
           hears(w, "page tab 'General' selected focused")
           and within(w.focused())[:2] == ["Pages", "Settings"])
+
+    # A choice its owner keeps (ADR-140): named by its row, described by
+    # its description and then what the value means.
+    def kept(node):
+        description = node.get_description() or ""
+        return (node.get_name() == "Default file manager"
+                and description.startswith("Which application opens folders")
+                and any(said in description for said in
+                        ("cannot be chosen", "also shows the files", "still shows")))
+    check("and the default file manager, a combo box named by its row, what it means after its description",
+          until(lambda: any(kept(node) for node in nodes_of(w, "combo box"))))
     w.keys("Escape")
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 

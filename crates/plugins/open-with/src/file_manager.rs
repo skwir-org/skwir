@@ -41,6 +41,11 @@ pub(crate) struct Row {
     shower: Mutex<Option<Shower>>,
     /// A worker asks it now.
     asking: AtomicBool,
+    /// Asked again meanwhile: asked once more after.
+    again: AtomicBool,
+    /// Its holder followed, while it is another program: what the row
+    /// says then changes when it ends, the dialog open or not.
+    following: Mutex<Option<skwir_core::CancelToken>>,
 }
 
 impl Default for Row {
@@ -49,6 +54,8 @@ impl Default for Row {
             source: ChoiceSource::new(LIST),
             shower: Mutex::default(),
             asking: AtomicBool::default(),
+            again: AtomicBool::default(),
+            following: Mutex::default(),
         }
     }
 }
@@ -58,6 +65,10 @@ impl Row {
     pub(crate) fn forget(&self) {
         self.shower.lock().take();
         self.asking.store(false, Ordering::Release);
+        self.again.store(false, Ordering::Release);
+        if let Some(following) = self.following.lock().take() {
+            following.cancel();
+        }
     }
 }
 
@@ -131,10 +142,14 @@ fn list(app: &App, cache: &Cached) -> serde_json::Value {
 }
 
 /// Ask who shows files on a worker, once at a time; an answer that moves
-/// what the row says has the dialog list it again.
+/// what the row says has the dialog list it again. While another program
+/// holds it, its holder is followed (`file_manager::follow_shower`), each
+/// change asking again: the row says "until it ends", and sees it end.
 fn ask_shower(app: &App, cache: &Cached) {
     let row = &cache.file_manager;
     if row.asking.swap(true, Ordering::AcqRel) {
+        // The one under way may have read it before: once more after.
+        row.again.store(true, Ordering::Release);
         return;
     }
     let token = cache
@@ -142,16 +157,38 @@ fn ask_shower(app: &App, cache: &Cached) {
         .lock()
         .get_or_insert_with(|| app.lifetime().child())
         .clone();
-    let (cache, wake) = (Arc::clone(cache), app.waker_handle());
+    let (cache, wake, weak) = (Arc::clone(cache), app.waker_handle(), app.weak());
+    let lifetime = token.clone();
     app.scheduler
         .spawn(Priority::Background, "open-with.shower", token, move || {
             let now = skwir_platform::file_manager::shower();
+            let held = matches!(now, Shower::Program(_));
             let row = &cache.file_manager;
             let moved = row.shower.lock().replace(now.clone()) != Some(now);
             row.asking.store(false, Ordering::Release);
+            {
+                let mut following = row.following.lock();
+                if held && following.is_none() && !lifetime.is_cancelled() {
+                    let stop = lifetime.child();
+                    let (weak, cache) = (weak.clone(), Arc::clone(&cache));
+                    skwir_platform::file_manager::follow_shower(&stop, move || {
+                        if let Some(app) = weak.upgrade() {
+                            ask_shower(&app, &cache);
+                        }
+                    });
+                    *following = Some(stop);
+                } else if !held && let Some(stop) = following.take() {
+                    stop.cancel();
+                }
+            }
             if moved {
                 row.source.changed();
                 wake();
+            }
+            if row.again.swap(false, Ordering::AcqRel)
+                && let Some(app) = weak.upgrade()
+            {
+                ask_shower(&app, &cache);
             }
         });
 }
