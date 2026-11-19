@@ -128,11 +128,12 @@ sentence, never a sentence assembled from pieces.
     AccessKit (patch 0077), a text's runs apart, whose characters the
     caret counts (`accessibility.md`).
   - **Words said for the window never become a `Name` or a `Folder`**
-    (a place's title in "Could not read “…”"), nor text as written (a
-    search's title made of words, `Words::as_written`, which agents read
-    as it is): they are said with `say_plain()` there, and isolated once,
-    by the words they go in. Said with `say()`, their marks would show as
-    tags, and reach agents in `location_title`'s English.
+    (a place's title in "Could not read “…”"), nor text kept as written
+    (a saved search's name): they are said with `say_plain()` there, and
+    isolated once, by the words they go in. Said with `say()`, their marks
+    would show as tags. Words that are read again (a search's title, made
+    of what it looks for and its place) stay words, never said into text
+    as written first: that would reach agents in the window's language.
   - **What is printed or written to a file is plain** (a PDF's text and
     name, an editor's buffer, a keyring's label, a metadata value): no
     mark reaches a document, a program or the disk.

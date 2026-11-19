@@ -129,13 +129,14 @@ impl LocationProvider for QueryProvider {
         Some((shown, own))
     }
 
-    /// What the search looks for and where, as a saved one is named:
-    /// what it looks for is the query's own words, as written.
+    /// What the search looks for and where, as words a saved one is
+    /// named by (`suggested_words`): what it looks for is the query's own,
+    /// as written, its place the sidebar's words for it.
     fn title(&self, location: &Location) -> Option<Words> {
-        Some(Words::as_written(crate::suggested_name(
+        Some(crate::suggested_words(
             self.app.upgrade().as_deref(),
             &location.rest,
-        )))
+        ))
     }
 
     /// A search is in the folder it looks in, or the place it searches as
@@ -145,7 +146,7 @@ impl LocationProvider for QueryProvider {
         let query = lang::parse(&location.rest).ok()?;
         let app = self.app.upgrade();
         let own = skwir_core::location::Crumb::new(
-            Words::as_written(crate::suggested_name(app.as_deref(), &location.rest)),
+            crate::suggested_words(app.as_deref(), &location.rest),
             location.clone(),
         );
         let (base, crumbs) = match query.within {

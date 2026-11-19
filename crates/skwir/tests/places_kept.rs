@@ -213,10 +213,11 @@ fn a_saved_entry_that_does_not_read_is_kept_as_written() {
     );
 }
 
-/// A name made of words the window says (a search's title, a saved
-/// search's name) is a name, kept and read as text: no mark isolating its
-/// folder's name in it (`Words::say_plain`), neither in the window's words
-/// nor in agents' English (`App::location_title`).
+/// A name made of words the window says (a saved search's name) is a name,
+/// kept and read as text: no mark isolating its folder's name in it
+/// (`Words::say_plain`). A search's title is words (`App::location_title`):
+/// agents read its English, with no mark; the window isolates its folder's
+/// name where it draws it.
 #[test]
 fn a_name_made_of_words_carries_no_mark() {
     let marks = ['\u{2068}', '\u{2069}'];
@@ -226,8 +227,14 @@ fn a_name_made_of_words_carries_no_mark() {
     let app = app_in(&tmp.path().join("state"));
     let search = skwir_plugin_query::location_for("ext:pdf", Some(&root));
     assert_eq!(app.location_title(&search).english(), "ext:pdf in שלום 2");
+    assert!(
+        app.location_title(&search)
+            .say()
+            .ends_with("\u{2068}שלום 2\u{2069}"),
+        "drawn, its folder isolated"
+    );
     for said in [
-        app.location_title(&search).say(),
+        app.location_title(&search).say_plain(),
         skwir_plugin_query::suggested_name(Some(&app), &search.rest),
     ] {
         assert!(!said.contains(marks), "{said:?}");

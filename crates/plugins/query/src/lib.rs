@@ -312,13 +312,22 @@ fn refined_location(before: &str, after: &str) -> Location {
 }
 
 /// A name for a search saved without one: what it looks for and where
-/// (`*.pdf modified<7d in Documents`), the place named as `place_name`
-/// says. Said plainly (`Words::say_plain`): it is a name, kept as a saved
-/// search's and shown as written in other words (a search's title), where
-/// a mark isolating its place would be a character of it.
+/// (`*.pdf modified<7d in Documents`), as `suggested_words` says it. Said
+/// plainly (`Words::say_plain`): it is a name, kept as a saved search's,
+/// where a mark isolating its place would be a character of it.
 pub fn suggested_name(app: Option<&App>, expr: &str) -> String {
+    suggested_words(app, expr).say_plain()
+}
+
+/// What a search looks for and where, as words: what it looks for as the
+/// search writes it (`*.pdf modified<7d`), the place it looks in named as
+/// `place_words` says. A search's title and its own crumb, said where they
+/// are drawn, in the window's language, and in English for agents
+/// (`App::location_title`); a saved search's name is them said plainly
+/// (`suggested_name`).
+pub fn suggested_words(app: Option<&App>, expr: &str) -> Words {
     let Ok(query) = lang::parse(expr) else {
-        return expr.to_owned();
+        return Words::as_written(expr.to_owned());
     };
     let what = query.expr.as_ref().map_or_else(
         || {
@@ -326,9 +335,8 @@ pub fn suggested_name(app: Option<&App>, expr: &str) -> String {
                 query_everything = "Everything",
                 note = "What a saved search of every file is named, made from its terms: Everything in Documents."
             )
-            .say_plain()
         },
-        lang::Expr::label,
+        |expr| Words::as_written(expr.label()),
     );
     if !query.root_given {
         return what;
@@ -336,32 +344,37 @@ pub fn suggested_name(app: Option<&App>, expr: &str) -> String {
     words!(
         query_named_in = "{ $what } in { $place }",
         what = what,
-        place = Folder(place_name(app, &query.root)),
-        note = "The name made for a saved search: what it looks for, as the search writes it (*.pdf modified<7d), and the folder it looks in."
+        place = place_words(app, &query.root),
+        note = "A search's title, and the name made for a saved search: what it looks for, as the search writes it (*.pdf modified<7d) or Everything, and the place or folder it looks in."
     )
-    .say_plain()
 }
 
-/// A search's root as its name and its chip say it: as the sidebar names
-/// the place it is (`Registry::place_title`: Papers for a Documents the
-/// user renamed), else Home for the home folder, else the folder's name.
-/// Plain, as a name in other words is (`suggested_name`).
-pub fn place_name(app: Option<&App>, root: &std::path::Path) -> String {
+/// A search's root as its name and its chip say it, an argument of the
+/// words naming the search: as the sidebar names the place it is
+/// (`Registry::place_title`), its words where they are Skwir's (a noun,
+/// whose gender and forms the sentence takes: words.md, "Nouns"), a folder
+/// where they are written (Papers for a Documents the user renamed); else
+/// Home for the home folder, else the folder's name.
+pub fn place_words(app: Option<&App>, root: &std::path::Path) -> words::Arg {
     if let Some(title) = app.and_then(|app| app.registry.place_title(&Location::from_path(root))) {
-        return title.say_plain();
+        return if title.is_message() {
+            words::Arg::Words(Box::new(title))
+        } else {
+            Folder(title.english()).into()
+        };
     }
     let home = skwir_core::os_path::home();
     if home.as_deref() == Some(root) {
-        words!(
+        words::Arg::Words(Box::new(words!(
             query_home = "Home",
             note = "The home folder, as a search's chip and a saved search's name say it."
-        )
-        .say_plain()
+        )))
     } else {
-        root.file_name().map_or_else(
+        Folder(root.file_name().map_or_else(
             || root.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
-        )
+        ))
+        .into()
     }
 }
 
@@ -621,7 +634,7 @@ fn kept_name(app: &App, key: &Key) -> String {
             words!(
                 query_place_named = "{ $place } · { $filter }",
                 place = app.location_title(at),
-                filter = suggested_name(Some(app), &key.expr),
+                filter = suggested_words(Some(app), &key.expr),
                 note = "The name made for a saved place (ADR-109): the place, then what filters it (Pictures · kind:image)."
             )
             .say_plain()
@@ -3097,6 +3110,27 @@ mod tests {
         app.registry
             .set_place_titles([((place.group.clone(), place.key()), "Papers".to_owned())].into());
         assert_eq!(app.location_title(&search).english(), "ext:pdf in Papers");
+        // Words, said where they are read (PA-4): an agent reads English
+        // while the window speaks another language, which the window says
+        // them in.
+        skwir_core::locale::set_chosen(Some(words::PSEUDO.to_owned()));
+        let title = app.location_title(&search);
+        assert_eq!(title.english(), "ext:pdf in Papers");
+        assert_ne!(title.say_plain(), title.english());
+        skwir_core::locale::set_chosen(None);
+        // A place Skwir names is given as its words, whose grammar the
+        // sentence takes; a name the user wrote, as a folder.
+        assert_eq!(
+            place_words(Some(&app), Path::new("/data/Documents")),
+            Folder("Papers".to_owned()).into()
+        );
+        app.registry
+            .set_place_titles(std::collections::HashMap::new());
+        let home = skwir_core::os_path::home().unwrap();
+        assert!(matches!(
+            place_words(Some(&app), &home),
+            words::Arg::Words(words) if words.is_message()
+        ));
         let d = facets::describe(expr, false, Some(&app)).unwrap();
         assert!(
             d.chips

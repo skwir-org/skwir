@@ -508,7 +508,7 @@ query_name_contains_menu = Name contains…
 # What the field asking for words of names holds while empty; invoice *.pdf is an example as written.
 query_name_placeholder = Words or patterns: invoice *.pdf
 
-# The name made for a saved search: what it looks for, as the search writes it (*.pdf modified<7d), and the folder it looks in.
+# A search's title, and the name made for a saved search: what it looks for, as the search writes it (*.pdf modified<7d) or Everything, and the place or folder it looks in.
 query_named_in = { $what } in { $place }
 
 query_narrow = Change the lens
