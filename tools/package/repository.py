@@ -222,6 +222,10 @@ def package(work, name, packager, version, contents, description, out):
         "vendor": "Skwir",
         "homepage": "https://skwir.org",
         "license": "Apache-2.0",
+        # nfpm names the machine that made an `.rpm` (`os.Hostname()`) unless
+        # told otherwise, and the published index repeats it: a name here
+        # that is no one's.
+        "rpm": {"buildhost": "localhost"},
         "contents": [
             {"src": str(src), "dst": dst, "type": "config|noreplace" if config_file else "file",
              "file_info": {"mode": 0o644}}
