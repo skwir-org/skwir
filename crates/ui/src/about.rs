@@ -87,11 +87,15 @@ pub struct About {
     facts: Vec<(Words, Words)>,
     /// What shows the licences this installation keeps, if it keeps any.
     licences: Option<PathBuf>,
+    /// What a plugin keeps said about Skwir itself as About opened (a
+    /// newer version out, ADR-142), each with its button.
+    news: Vec<(skwir_core::registry::News, FocusHandle)>,
 }
 
 impl About {
     fn buttons(&self) -> Vec<&FocusHandle> {
-        let mut buttons = vec![&self.copy];
+        let mut buttons: Vec<&FocusHandle> = self.news.iter().map(|(_, focus)| focus).collect();
+        buttons.push(&self.copy);
         if self.licences.is_some() {
             buttons.push(&self.licences_button);
         }
@@ -359,6 +363,14 @@ impl Shell {
                     previous,
                     facts,
                     licences,
+                    news: this
+                        .app
+                        .registry
+                        .news
+                        .all()
+                        .into_iter()
+                        .map(|news| (news, cx.focus_handle()))
+                        .collect(),
                 });
                 cx.notify();
             },
@@ -587,6 +599,33 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 ),
         )
         .child(SharedString::from(summary().say()))
+        .children(about.news.iter().enumerate().map(|(n, (news, focus))| {
+            let command = news.command.clone();
+            // The sentence beside its button, the button under it where
+            // the dialog is too narrow for both.
+            crate::elements::beside::beside(
+                controls::noted(
+                    "info",
+                    theme.accent,
+                    15.,
+                    SharedString::from(news.text.say()),
+                ),
+                div().child(
+                    controls::button(
+                        format!("about-news-{n}"),
+                        news.label.say(),
+                        Some("external"),
+                        ButtonStyle::Plain,
+                        focus,
+                        &theme,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.run(&command.name, command.args.clone(), window, cx);
+                    })),
+                ),
+                0.6,
+            )
+        }))
         .child(facts)
         .child(buttons);
     Some(

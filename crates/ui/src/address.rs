@@ -1591,17 +1591,40 @@ fn more_panel(
                 ),
                 words!(address_settings = "Settings…"),
             ),
-            (
-                Button::new(
-                    "menu-about",
-                    "info",
-                    words!(address_about = "About Skwir"),
-                    "ui.about",
-                ),
-                words!(address_about = "About Skwir"),
-            ),
         ]
         .into_iter()
+        // What a plugin keeps said about Skwir itself (a newer version
+        // out, ADR-142), each a row before About, which says it too.
+        .chain(
+            shell
+                .app
+                .registry
+                .news
+                .all()
+                .into_iter()
+                .enumerate()
+                .map(|(n, news)| {
+                    (
+                        Button::new(
+                            gpui::SharedString::from(format!("menu-news-{n}")),
+                            "external",
+                            news.label,
+                            news.command.name.to_string(),
+                        )
+                        .args(news.command.args),
+                        news.text,
+                    )
+                }),
+        )
+        .chain([(
+            Button::new(
+                "menu-about",
+                "info",
+                words!(address_about = "About Skwir"),
+                "ui.about",
+            ),
+            words!(address_about = "About Skwir"),
+        )])
         .map(|(button, label)| MenuPart::Row(menu_item(button, label))),
     );
     // Quit, last: it asks while something runs; closing the window stops

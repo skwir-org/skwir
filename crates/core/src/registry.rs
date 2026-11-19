@@ -1148,6 +1148,20 @@ pub type LeadsBelow = Arc<
     dyn Fn(&str, &std::path::Path, &crate::location::OpenContext) -> Option<bool> + Send + Sync,
 >;
 
+/// What a plugin keeps said about Skwir itself until it no longer holds
+/// (ADR-142: a newer version is out): About says each under the version,
+/// with its button, and More has a row for each beside About. The window
+/// draws what it is given and names no plugin.
+#[derive(Clone, Debug)]
+pub struct News {
+    /// What it says ("Skwir 0.6.2 is out").
+    pub text: Words,
+    /// Its button's label in About ("What's new").
+    pub label: Words,
+    /// What its button and its row run.
+    pub command: Invocation,
+}
+
 /// All UI registries.
 pub struct Registry {
     pub views: Contributions<ViewSpec>,
@@ -1175,6 +1189,9 @@ pub struct Registry {
     /// query plugin's); the first registered is asked. None, and nothing
     /// is grouped.
     pub sorters: Contributions<Sorter>,
+    /// What a plugin keeps said about Skwir itself (ADR-142), for About
+    /// and More.
+    pub news: Contributions<News>,
     /// The names the user gave sidebar places (ADR-034), by group and
     /// `Place::key`: the sidebar publishes its arrangement's, so a tab, a
     /// toast and `tab.list` name a place as the sidebar does.
@@ -1200,6 +1217,7 @@ impl Default for Registry {
             suggesters: Contributions::gated(Arc::clone(&gate)),
             filter_readers: Contributions::gated(Arc::clone(&gate)),
             sorters: Contributions::gated(Arc::clone(&gate)),
+            news: Contributions::gated(Arc::clone(&gate)),
             titles: RwLock::default(),
             gate,
         }
@@ -1261,6 +1279,7 @@ impl Registry {
         self.suggesters.remove_owner(owner);
         self.filter_readers.remove_owner(owner);
         self.sorters.remove_owner(owner);
+        self.news.remove_owner(owner);
     }
 }
 
