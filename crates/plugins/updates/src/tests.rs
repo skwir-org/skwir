@@ -484,6 +484,30 @@ fn a_no_asks_nothing_until_the_setting_is_turned_on() {
     assert_eq!(f.said().pop().unwrap().text.english(), "Skwir 0.6.2 is out");
 }
 
+/// The answer is the setting: a copy whose settings say it, the state
+/// file lost (deleted, the settings carried to another machine), is never
+/// asked; told already, it checks.
+#[test]
+fn a_setting_written_is_never_asked_whatever_the_state_lost() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    for tell in [false, true] {
+        let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
+        f.app.settings.set(TELL, toml::Value::Boolean(tell));
+        for day in 20_000..20_006 {
+            f.look_on(day);
+            f.settled();
+        }
+        let questions = f.said().iter().filter(|n| n.stays).count();
+        assert_eq!(questions, 0, "tell = {tell}");
+        assert!(f.kept().answered);
+    }
+    assert_eq!(
+        site.heads().len(),
+        6,
+        "the copy told checks each day, the other never"
+    );
+}
+
 /// The question closed unanswered comes back on another day, three days
 /// at most.
 #[test]

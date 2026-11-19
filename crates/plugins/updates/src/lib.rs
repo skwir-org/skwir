@@ -484,6 +484,12 @@ impl Inner {
             let mut check = false;
             if let Some(channel) = here.and_then(Here::downloaded) {
                 kept.first_seen.get_or_insert(today);
+                // The answer is the setting: a copy that wrote it (here,
+                // in another skwir, by hand) is never asked, whatever the
+                // state file lost.
+                if app.settings.stored::<bool>(TELL).is_some() {
+                    kept.answered = true;
+                }
                 if kept.asks(today) {
                     kept.asked += 1;
                     kept.asked_on = Some(today);

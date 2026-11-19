@@ -1071,7 +1071,7 @@ Settings › General › Updates turns that off too.
 | What | Where |
 | --- | --- |
 | Settings | `~/.config/skwir/settings.toml` |
-| The window as you left it: its shape, tabs, the hints shown | `~/.local/state/skwir/state.toml` |
+| The window as you left it: its shape, tabs, the hints shown. What the Updates plugin keeps: the newest version you ran (What's new), and for a copy downloaded from the website, when it was first seen, asked and checked, and the new version it told | `~/.local/state/skwir/state.toml` |
 | What you made in Skwir: saved searches, pinned tags, tags' colours and exclusive categories | `~/.local/share/skwir/data.toml`, kept even when the settings file is read-only |
 | The cache | `~/.cache/skwir`: delete it whenever you like, Skwir rebuilds what it needs |
 | Thumbnails it makes | The desktop's cache (`~/.cache/thumbnails`), shared unless Thumbnails › Share generated thumbnails is off |

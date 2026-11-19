@@ -3081,6 +3081,16 @@ impl Settings {
         v.try_into().ok()
     }
 
+    /// The value held for `key`, its declared default aside: `None` while
+    /// nothing holds one (a choice never made, where `get` says the
+    /// default).
+    pub fn stored<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        Self::lookup(&self.values.read(), key)
+            .cloned()?
+            .try_into()
+            .ok()
+    }
+
     /// The live value as an editor shows it (strings without TOML quotes).
     pub fn text(&self, key: &str) -> Option<String> {
         self.get::<toml::Value>(key)
@@ -3843,6 +3853,32 @@ mod under_tests {
         assert_eq!(folder.under, super::STARTUP);
         assert!(folder.applies_with("folder"));
         assert!(!folder.applies_with("last"));
+    }
+}
+
+#[cfg(test)]
+mod stored_tests {
+    use super::{SettingSpec, Settings};
+    use crate::words::Words;
+
+    /// What is stored is told from the default: nothing until a value is
+    /// set, whatever the default, and nothing again once unset.
+    #[test]
+    fn a_stored_value_is_told_from_the_default() {
+        let settings = Settings::in_memory();
+        assert_eq!(settings.stored::<bool>("a.on"), None);
+        settings.declare(SettingSpec::toggle(
+            "a.on",
+            Words::as_written("On"),
+            "Does.",
+            false,
+        ));
+        assert_eq!(settings.get::<bool>("a.on"), Some(false), "the default");
+        assert_eq!(settings.stored::<bool>("a.on"), None, "not stored");
+        settings.set("a.on", toml::Value::Boolean(false));
+        assert_eq!(settings.stored::<bool>("a.on"), Some(false));
+        settings.unset("a.on");
+        assert_eq!(settings.stored::<bool>("a.on"), None);
     }
 }
 
