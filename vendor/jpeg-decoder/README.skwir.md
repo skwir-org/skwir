@@ -34,6 +34,11 @@ Left out:
 
 Skwir runs neither this crate's tests nor its benchmarks.
 
+Taken by path, the copy has no source, and `cargo deny check` matches no
+advisory to it: `tools/deny/vendored.py`, which `just deny` runs next,
+holds the published 0.3.2 to RustSec's database, an "unmaintained"
+advisory included, as it does every crate vendored here.
+
 ## Patches
 
 Diffs in `../patches/jpeg-decoder/`, in the upstream repository's layout

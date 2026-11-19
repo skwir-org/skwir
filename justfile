@@ -19,6 +19,7 @@ release-tools-check:
     python3 -B -m unittest discover -s tools/build -p 'test_*.py'
     python3 -B -m unittest discover -s tools/words -p 'test_*.py'
     python3 -B -m unittest discover -s tools/package -p 'test_*.py'
+    python3 -B -m unittest discover -s tools/deny -p 'test_*.py'
 
 # Check that tag, crates, package metadata and dated release notes agree.
 release-metadata tag:
@@ -224,9 +225,12 @@ prune *args:
     tools/build/prune.py {{args}}
 
 # The dependencies against deny.toml: their licences, known advisories
-# (read from RustSec's database, fetched), and where they come from (CI).
+# (read from RustSec's database, fetched), and where they come from (CI);
+# the crates vendored by path, which cargo-deny passes over, against the
+# advisories as the releases they were taken from.
 deny:
     cargo deny check
+    python3 tools/deny/vendored.py
 
 # Lint everything, native workers and the Windows and macOS builds included (CI).
 lint-all: && check-cross
