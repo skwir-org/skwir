@@ -8,7 +8,15 @@
 //! click selects the whole text, and a screen reader is told where each
 //! begins. Chinese, Japanese and Thai, written without spaces, are words
 //! as English is. A secret is one word: nothing tells where its words are.
+//!
+//! What it draws of its text is `Drawn`: each bidirectional control in it
+//! a muted tag naming it, never obeyed (ADR-139, 5), so a name renamed
+//! reads in its real order (`Hello_⟨RLO⟩gnp.js`, never `Hello_sj.png`),
+//! and the control stays one character of the text: the caret passes its
+//! tag whole, Backspace and Delete take it whole, and the text keeps it as
+//! it is, copied or saved.
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use gpui::{
@@ -98,6 +106,123 @@ pub fn key_bindings() -> Vec<KeyBinding> {
 }
 
 const BULLET: char = '•';
+
+/// What a field draws of its text, and where each place of the text is
+/// in it: the text with each bidirectional control shown as a tag
+/// (`words::shown_controls`: `⟨RLO⟩`), never obeyed (ADR-139, 5); a
+/// secret's a bullet a character. Offsets of the text stay the text's: a
+/// control is one character of it, its tag a stretch of what is drawn that
+/// no place of the text falls inside.
+struct Drawn {
+    /// The text as it is.
+    content: SharedString,
+    /// What is drawn.
+    text: SharedString,
+    /// Each control's bytes in the text and its tag's in `text`, in order.
+    tags: Vec<(Range<usize>, Range<usize>)>,
+    /// Bullets, a character each.
+    masked: bool,
+}
+
+impl Drawn {
+    fn of(content: &SharedString, masked: bool) -> Self {
+        let drawn = |text: SharedString, tags| Drawn {
+            content: content.clone(),
+            text,
+            tags,
+            masked,
+        };
+        if masked {
+            let bullets = BULLET.to_string().repeat(content.chars().count());
+            return drawn(bullets.into(), Vec::new());
+        }
+        if let Cow::Borrowed(_) = skwir_core::words::shown_controls(content) {
+            return drawn(content.clone(), Vec::new());
+        }
+        let mut text = String::with_capacity(content.len() + 16);
+        let mut tags = Vec::new();
+        let mut kept = 0;
+        for (at, c) in content.char_indices() {
+            let end = at + c.len_utf8();
+            if let Cow::Owned(tag) = skwir_core::words::shown_controls(&content[at..end]) {
+                text.push_str(&content[kept..at]);
+                let start = text.len();
+                text.push_str(&tag);
+                tags.push((at..end, start..text.len()));
+                kept = end;
+            }
+        }
+        text.push_str(&content[kept..]);
+        drawn(text.into(), tags)
+    }
+
+    /// Where `offset`, a place of the text, is in what is drawn.
+    fn shown(&self, offset: usize) -> usize {
+        if self.masked {
+            return self.content[..offset.min(self.content.len())]
+                .chars()
+                .count()
+                * BULLET.len_utf8();
+        }
+        let after = self.tags.partition_point(|(text, _)| text.start < offset);
+        match after.checked_sub(1).map(|at| &self.tags[at]) {
+            None => offset,
+            Some((text, tag)) if offset >= text.end => tag.end + (offset - text.end),
+            // Inside a control: no place of the text.
+            Some((_, tag)) => tag.start,
+        }
+    }
+
+    /// The place of the text at `offset` in what is drawn; inside a tag,
+    /// the nearer end of its control. Within the text, at a character.
+    fn text_offset(&self, offset: usize) -> usize {
+        if self.masked {
+            return self
+                .content
+                .char_indices()
+                .nth(offset / BULLET.len_utf8())
+                .map_or(self.content.len(), |(index, _)| index);
+        }
+        let after = self.tags.partition_point(|(_, tag)| tag.start < offset);
+        let at = match after.checked_sub(1).map(|at| &self.tags[at]) {
+            None => offset,
+            Some((text, tag)) if offset >= tag.end => text.end + (offset - tag.end),
+            Some((text, tag)) if offset - tag.start <= tag.end - offset => text.start,
+            Some((text, _)) => text.end,
+        };
+        snapped(&self.content, at)
+    }
+
+    /// `styles`, ranges of the text, as ranges of what is drawn.
+    fn styles<'a>(&self, styles: &'a [(Range<usize>, Paint)]) -> Cow<'a, [(Range<usize>, Paint)]> {
+        if self.tags.is_empty() {
+            return Cow::Borrowed(styles);
+        }
+        styles
+            .iter()
+            .map(|(range, paint)| (self.shown(range.start)..self.shown(range.end), *paint))
+            .collect()
+    }
+
+    /// The units the caret moves by in the text (`units`: `lengths`), as
+    /// what is drawn counts them for a screen reader: a control's tag one
+    /// unit, as the caret passes it.
+    fn units(&self, lengths: &[u8]) -> Vec<u8> {
+        if self.tags.is_empty() {
+            return lengths.to_vec();
+        }
+        let mut at = 0;
+        lengths
+            .iter()
+            .map(|&len| {
+                let end = at + usize::from(len);
+                let drawn = self.shown(end) - self.shown(at);
+                at = end;
+                u8::try_from(drawn).unwrap_or(u8::MAX)
+            })
+            .collect()
+    }
+}
 
 /// The UTF-8 byte offset in `text` of UTF-16 offset `offset`.
 fn utf16_to_utf8(text: &str, offset: usize) -> usize {
@@ -410,29 +535,21 @@ impl TextInput {
         self.masked = masked;
     }
 
-    /// Byte offset in the text for a byte offset in what is displayed.
+    /// What it draws of its text now (`Drawn`).
+    fn drawn(&self) -> Drawn {
+        Drawn::of(&self.content, self.masked)
+    }
+
+    /// Byte offset in the text for a byte offset in what is displayed, at
+    /// a character of the text: the layout is the last paint's, and the
+    /// text may have changed since.
     fn text_offset(&self, offset: usize) -> usize {
-        if !self.masked {
-            // The layout is the last paint's: the text may have changed
-            // since.
-            return self.snap(offset);
-        }
-        self.content
-            .char_indices()
-            .nth(offset / BULLET.len_utf8())
-            .map_or(self.content.len(), |(index, _)| index)
+        self.drawn().text_offset(offset)
     }
 
     /// Byte offset in what is displayed for a byte offset in the text.
     fn shown_offset(&self, offset: usize) -> usize {
-        if self.masked {
-            self.content[..offset.min(self.content.len())]
-                .chars()
-                .count()
-                * BULLET.len_utf8()
-        } else {
-            offset
-        }
+        self.drawn().shown(offset)
     }
 
     /// What an empty field shows.
@@ -993,41 +1110,47 @@ impl TextInput {
     }
 
     /// The line as last drawn, where it still shows the text and some of
-    /// it reads right to left: what the arrows follow as it is drawn. A
-    /// secret's bullets read left to right.
-    fn drawn_bidi(&self) -> Option<&ShapedLine> {
-        self.last_layout.as_ref().filter(|line| {
-            !self.masked
-                && line.has_right_to_left()
-                && line.text.get(..self.content.len()) == Some(self.content.as_ref())
-        })
+    /// it reads right to left: what the arrows follow as it is drawn, with
+    /// what it draws of the text. A secret's bullets read left to right.
+    fn drawn_bidi(&self) -> Option<(&ShapedLine, Drawn)> {
+        if self.masked {
+            return None;
+        }
+        let drawn = self.drawn();
+        let line = self.last_layout.as_ref().filter(|line| {
+            line.has_right_to_left()
+                && line.text.get(..drawn.text.len()) == Some(drawn.text.as_ref())
+        })?;
+        Some((line, drawn))
     }
 
     /// The place of the text next to `offset` on its left or its right as
-    /// the line is drawn, passing places inside a character: where some of
-    /// it reads right to left (`ShapedLine::index_left_of`). `None` at that
-    /// end of the line, or where all of it reads left to right.
+    /// the line is drawn, passing places inside a character, and a
+    /// control's tag whole: where some of it reads right to left
+    /// (`ShapedLine::index_left_of`). `None` at that end of the line, or
+    /// where all of it reads left to right.
     fn drawn_beside(&self, offset: usize, toward_left: bool) -> Option<usize> {
-        let line = self.drawn_bidi()?;
+        let (line, drawn) = self.drawn_bidi()?;
+        let end = drawn.text.len();
         let characters: std::collections::HashSet<usize> = self
             .content
             .grapheme_indices(true)
-            .map(|(at, _)| at)
-            .chain([self.content.len()])
+            .map(|(at, _)| drawn.shown(at))
+            .chain([end])
             .collect();
-        let mut at = offset;
-        // A step a place at most: never more than the text has.
-        for _ in 0..=self.content.len() {
+        let mut at = drawn.shown(offset);
+        // A step a place at most: never more than is drawn.
+        for _ in 0..=end {
             at = if toward_left {
                 line.index_left_of(at)?
             } else {
                 line.index_right_of(at)?
             };
-            if at > self.content.len() {
+            if at > end {
                 return None;
             }
             if characters.contains(&at) {
-                return Some(at);
+                return Some(drawn.text_offset(at));
             }
         }
         None
@@ -1058,7 +1181,7 @@ impl TextInput {
         }
         let right_to_left = self
             .drawn_bidi()
-            .is_some_and(|line| line.is_right_to_left());
+            .is_some_and(|(line, _)| line.is_right_to_left());
         word_toward(&self.content, offset, toward_left, right_to_left)
     }
 
@@ -1066,10 +1189,13 @@ impl TextInput {
     /// start, or its end where the line reads right to left there.
     fn selection_end_on(&self, left: bool) -> usize {
         let range = self.selected_range.clone();
-        let Some(line) = self.drawn_bidi() else {
+        let Some((line, drawn)) = self.drawn_bidi() else {
             return if left { range.start } else { range.end };
         };
-        let (start, end) = (line.x_for_index(range.start), line.x_for_index(range.end));
+        let (start, end) = (
+            line.x_for_index(drawn.shown(range.start)),
+            line.x_for_index(drawn.shown(range.end)),
+        );
         if (start <= end) == left {
             range.start
         } else {
@@ -1401,18 +1527,12 @@ impl Element for TextElement {
     ) -> Self::PrepaintState {
         let theme = cx.global::<Theme>().clone();
         let input = self.input.read(cx);
-        // A masked input shapes bullets; offsets into the text become
-        // offsets into the bullets (one bullet per character).
+        // What is drawn of the text (`Drawn`): a secret's bullets, a tag
+        // for each control; offsets into the text become offsets into it.
         let masked = input.masked;
-        let shown = |offset: usize| input.shown_offset(offset);
-        let content: SharedString = if masked {
-            BULLET
-                .to_string()
-                .repeat(input.content.chars().count())
-                .into()
-        } else {
-            input.content.clone()
-        };
+        let drawn = input.drawn();
+        let shown = |offset: usize| drawn.shown(offset);
+        let content = drawn.text.clone();
         let selected_range = shown(input.selected_range.start)..shown(input.selected_range.end);
         let cursor = shown(input.cursor_offset());
         let marked_range = input
@@ -1476,7 +1596,7 @@ impl Element for TextElement {
             let mut runs = if masked || input.content.is_empty() || input.styles.is_empty() {
                 vec![run.clone()]
             } else {
-                styled_runs(&run, &input.content, &input.styles)
+                styled_runs(&run, &drawn.text, &drawn.styles(&input.styles))
             };
             if hint.is_some() {
                 runs.push(TextRun {
@@ -1490,6 +1610,11 @@ impl Element for TextElement {
             runs
         };
 
+        // A control's tag is muted: it names what is there, typed by no one
+        // here.
+        let runs = drawn.tags.iter().fold(runs, |runs, (_, tag)| {
+            recolored(runs, tag, theme.text_muted, false)
+        });
         // What is selected is written in the selection's own text color, on
         // the selection painted under it (`Chosen`).
         let runs = selected_runs(runs, &selected_range, theme.selection_text);
@@ -1634,23 +1759,25 @@ impl TextInput {
     /// it can walk unit by unit, the caret and selection in those units. A
     /// secret says bullets, as the screen shows it.
     fn expose(&self, el: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
-        let shown: String = if self.masked {
-            std::iter::repeat_n(BULLET, self.content.chars().count()).collect()
+        // What is drawn, a control's tag included, its units the text's:
+        // the tag is one, as the caret passes it. A secret's words are not
+        // told: its run is one.
+        let drawn = self.drawn();
+        let shown = drawn.text.to_string();
+        let (lengths, word_starts) = if self.masked {
+            (units(&shown), None)
         } else {
-            self.content.to_string()
+            let lengths = units(&self.content);
+            let starts = word_starts(&self.content, &lengths);
+            (drawn.units(&lengths), starts)
         };
-        let lengths = units(&shown);
-        // A secret's words are not told: its run is one.
-        let word_starts = (!self.masked)
-            .then(|| word_starts(&shown, &lengths))
-            .flatten();
         let (anchor, focus) = if self.selection_reversed {
             (self.selected_range.end, self.selected_range.start)
         } else {
             (self.selected_range.start, self.selected_range.end)
         };
-        let anchor = unit_at(&lengths, self.shown_offset(anchor));
-        let focus = unit_at(&lengths, self.shown_offset(focus));
+        let anchor = unit_at(&lengths, drawn.shown(anchor));
+        let focus = unit_at(&lengths, drawn.shown(focus));
         let named = self.label.is_some();
         el.aria_label(SharedString::from(
             self.label.as_ref().unwrap_or(&self.placeholder).say(),
@@ -1797,13 +1924,21 @@ fn kept_before(styles: &mut Vec<(Range<usize>, Paint)>, at: usize) {
     styles.retain(|(range, _)| range.end <= at);
 }
 
-/// `run` cut where `styles` draw parts of `text` otherwise. The styles are
-/// taken in order of their start; one that overlaps the one before, or
-/// does not fall on character boundaries, is left out.
 /// `runs` with what lies in `range` (bytes of the text they cover) written
 /// as selected: in `color`, and on nothing but the selection painted under
 /// it (a term's tint would hide it).
 fn selected_runs(runs: Vec<TextRun>, range: &Range<usize>, color: gpui::Hsla) -> Vec<TextRun> {
+    recolored(runs, range, color, true)
+}
+
+/// `runs` with what lies in `range` written in `color`, on no tint of
+/// their own where `bare` (the selection's, painted under it).
+fn recolored(
+    runs: Vec<TextRun>,
+    range: &Range<usize>,
+    color: gpui::Hsla,
+    bare: bool,
+) -> Vec<TextRun> {
     if range.is_empty() {
         return runs;
     }
@@ -1827,7 +1962,9 @@ fn selected_runs(runs: Vec<TextRun>, range: &Range<usize>, color: gpui::Hsla) ->
                 };
                 if part == 1 {
                     piece.color = color;
-                    piece.background_color = None;
+                    if bare {
+                        piece.background_color = None;
+                    }
                 }
                 out.push(piece);
             }
@@ -1836,6 +1973,9 @@ fn selected_runs(runs: Vec<TextRun>, range: &Range<usize>, color: gpui::Hsla) ->
     out
 }
 
+/// `run` cut where `styles` draw parts of `text` otherwise. The styles are
+/// taken in order of their start; one that overlaps the one before, or
+/// does not fall on character boundaries, is left out.
 fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> Vec<TextRun> {
     let mut sorted: Vec<&(Range<usize>, Paint)> = styles.iter().collect();
     sorted.sort_by_key(|(range, _)| range.start);
@@ -1881,10 +2021,102 @@ fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> V
 #[cfg(test)]
 mod tests {
     use super::{
-        History, MOST_CHARS, Snapshot, Together, autoscroll_x, by_words, changes_nothing, fitted,
-        held, scrolled, selected_runs, snapped, typed_at, unit_at, units, utf16_to_utf8,
-        word_starts, word_toward,
+        Drawn, History, MOST_CHARS, Paint, Snapshot, Together, autoscroll_x, by_words,
+        changes_nothing, fitted, held, recolored, scrolled, selected_runs, snapped, typed_at,
+        unit_at, units, utf16_to_utf8, word_starts, word_toward,
     };
+    use gpui::SharedString;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    /// A field shows each bidirectional control of its text as a tag,
+    /// never obeys it (ADR-139, 5): the name renamed reads in its real
+    /// order. The text keeps the control as it is, one character: every
+    /// place of the text is a place of what is drawn, none inside a tag; a
+    /// place pointed at inside one is the nearer end of its control; and
+    /// the caret, Backspace and Delete go by the text's characters, which
+    /// hold the control alone.
+    #[test]
+    fn a_control_is_drawn_as_its_tag_and_stays_one_character() {
+        let text = SharedString::from("Hello_\u{202e}gnp.js");
+        let drawn = Drawn::of(&text, false);
+        assert_eq!(&*drawn.text, "Hello_⟨RLO⟩gnp.js");
+        let tag = "⟨RLO⟩".len();
+        assert_eq!((drawn.shown(6), drawn.shown(9)), (6, 6 + tag));
+        assert_eq!(drawn.shown(text.len()), drawn.text.len());
+        for (at, _) in text.char_indices().chain([(text.len(), ' ')]) {
+            assert_eq!(drawn.text_offset(drawn.shown(at)), at, "at {at}");
+        }
+        // Pointed at inside the tag: its control's nearer end.
+        assert_eq!(drawn.text_offset(7), 6);
+        assert_eq!(drawn.text_offset(6 + tag - 1), 9);
+        // The control is a character of its own, which the arrows pass and
+        // Backspace takes whole (`previous_boundary`, by graphemes).
+        let starts: Vec<usize> = text.grapheme_indices(true).map(|(at, _)| at).collect();
+        assert_eq!(starts[6..8], [6, 9]);
+        // A screen reader is told what is drawn, the tag one unit.
+        let lengths = units(&text);
+        let told: Vec<u8> = [vec![1; 6], vec![9], vec![1; 6]].concat();
+        assert_eq!(drawn.units(&lengths), told);
+        // An owner's styles, given on the text, fall where it is drawn.
+        let paint = Paint::default();
+        assert_eq!(
+            *drawn.styles(&[(9..12, paint)]),
+            [(6 + tag..9 + tag, paint)]
+        );
+    }
+
+    /// Every override, embedding and isolate is a tag, in a Hebrew name
+    /// too; the marks Hebrew and Arabic names use are drawn as they are,
+    /// and a text without a control is drawn as it is.
+    #[test]
+    fn every_control_is_a_tag_and_a_mark_is_left_as_it_is() {
+        let text = SharedString::from("שלום\u{2067}x\u{2069}\u{200f}.txt");
+        let drawn = Drawn::of(&text, false);
+        assert_eq!(&*drawn.text, "שלום⟨RLI⟩x⟨PDI⟩\u{200f}.txt");
+        assert_eq!(drawn.tags.len(), 2);
+        for (at, _) in text.char_indices().chain([(text.len(), ' ')]) {
+            assert_eq!(drawn.text_offset(drawn.shown(at)), at, "at {at}");
+        }
+        let plain = SharedString::from("שלום.txt");
+        let drawn = Drawn::of(&plain, false);
+        assert!(drawn.tags.is_empty());
+        assert_eq!(drawn.text, plain);
+        assert_eq!((drawn.shown(3), drawn.text_offset(3)), (3, 2));
+        // A secret: a bullet a character, whatever it holds.
+        let secret = SharedString::from("a\u{202e}é");
+        let drawn = Drawn::of(&secret, true);
+        assert_eq!(&*drawn.text, "•••");
+        assert_eq!(drawn.shown(4), 6);
+        assert_eq!(drawn.text_offset(6), 4);
+    }
+
+    /// A tag is muted over whatever tint an owner gives the text; the
+    /// selection drawn on its own ground.
+    #[test]
+    fn a_tag_is_muted_keeping_its_tint() {
+        let run = gpui::TextRun {
+            len: 10,
+            font: gpui::font("Inter"),
+            color: gpui::black(),
+            background_color: Some(gpui::red()),
+            underline: None,
+            strikethrough: None,
+            position: gpui::RunPosition::Baseline,
+        };
+        let muted = gpui::white();
+        let parts: Vec<_> = recolored(vec![run], &(2..5), muted, false)
+            .iter()
+            .map(|r| (r.len, r.color, r.background_color.is_some()))
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                (2, gpui::black(), true),
+                (3, muted, true),
+                (5, gpui::black(), true)
+            ]
+        );
+    }
 
     /// Ctrl and the arrows go by a script's words, spaces or none: the next
     /// word's end toward the right, the previous one's start toward the

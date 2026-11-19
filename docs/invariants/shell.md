@@ -1675,7 +1675,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   setting's value, a name to rename) is kept whole: cut, it would be
   given back cut. An edit that leaves the field as it is (a key in a
   full field, Delete at the end) is no step to take back and tells
-  nothing.
+  nothing. Each bidirectional control in its text is drawn as a muted
+  tag naming it (`input::Drawn`), never obeyed (ADR-139, 5), so a name
+  renamed reads in its real order: the control stays one character of
+  the text, the caret passing its tag whole, Backspace and Delete taking
+  it whole, a screen reader told the tag as one unit; the text keeps it
+  as it is, copied or saved.
 
 - **A click answers what a key answers.** A dialog that waits for an
   answer ends with `modal::footer`: what its keys do, muted, then Cancel
