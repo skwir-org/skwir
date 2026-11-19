@@ -37,6 +37,7 @@ pub mod bat;
 #[cfg(target_os = "linux")]
 pub mod bus;
 pub mod calendar;
+pub mod chooser;
 pub mod desktop;
 #[cfg(target_os = "linux")]
 mod desktop_settings;

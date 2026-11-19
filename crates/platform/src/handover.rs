@@ -250,6 +250,39 @@ pub fn answer_for_holder(wait: std::time::Duration) -> bool {
     }
 }
 
+/// [`answer_for_holder`] for other programs' dialogs (`--portal`,
+/// ADR-141, 3): the request the bus started this program for, and what
+/// else comes while it is answered, asked of the Skwir of this instance
+/// that takes launches over (`Finishing.Choose`), each answered as it
+/// answers, the asking program's Close passed on. Waits up to `wait` for
+/// a request, then until each is answered (the user deciding): call it
+/// on a worker. Whether a request came. Always false on other systems.
+#[must_use]
+pub fn answer_chooser_for_holder(wait: std::time::Duration) -> bool {
+    if apart() {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match crate::bus::session() {
+            Ok(bus) => crate::chooser::linux::answer_for_holder_on(
+                &bus,
+                wait,
+                &linux::name(&Instance::here()),
+            ),
+            Err(error) => {
+                tracing::debug!("no session bus: {error}");
+                false
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = wait;
+        false
+    }
+}
+
 /// Why later launches are not taken over here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotTaken {
@@ -272,29 +305,41 @@ pub enum NotTaken {
 /// Waits for the bus's answer to the name asked (Linux): call it on a
 /// worker.
 pub fn take_over(taken: impl Fn(Opening) + Send + Sync + 'static) -> Result<TakingOver, NotTaken> {
+    take_over_gate(Gate::new(taken))
+}
+
+/// [`take_over`], other programs' open and save dialogs taken too and
+/// handed to `chose` (ADR-141, 2): on Linux the portal's back end is
+/// served beside, its name asked in the queue behind a skwir the bus
+/// started. `chose` is called as `taken` is, and must return at once.
+pub fn take_over_choosing(
+    taken: impl Fn(Opening) + Send + Sync + 'static,
+    chose: impl Fn(crate::chooser::Choosing) + Send + Sync + 'static,
+) -> Result<TakingOver, NotTaken> {
+    take_over_gate(Gate::choosing(taken, chose))
+}
+
+fn take_over_gate(gate: Arc<Gate>) -> Result<TakingOver, NotTaken> {
     if apart() {
         return Err(NotTaken::Cannot);
     }
     #[cfg(target_os = "linux")]
     {
         let instance = Instance::here();
-        linux::take_over_with(
+        linux::take_over_on(
             crate::bus::session,
             linux::marker(&instance).ok_or(NotTaken::Cannot)?,
             linux::name(&instance),
-            taken,
+            gate,
         )
     }
     #[cfg(windows)]
     {
-        pipe::take_over_at(
-            pipe::name(&Instance::here()).ok_or(NotTaken::Cannot)?,
-            taken,
-        )
+        pipe::take_over_on(pipe::name(&Instance::here()).ok_or(NotTaken::Cannot)?, gate)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = taken;
+        drop(gate);
         Err(NotTaken::Cannot)
     }
 }
@@ -397,22 +442,64 @@ impl Drop for TakingOver {
 #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 struct Gate(parking_lot::Mutex<Option<Taker>>);
 
-type Taker = Box<dyn Fn(Opening) + Send + Sync>;
+/// What takes what the gate passes: launches, and other programs'
+/// dialogs where they are taken (ADR-141).
+struct Taker {
+    opening: Box<dyn Fn(Opening) + Send + Sync>,
+    // Dialogs come only through the portal (Linux, ADR-141, 11).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    choosing: Option<Box<dyn Fn(crate::chooser::Choosing) + Send + Sync>>,
+}
 
 #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 impl Gate {
     fn new(taken: impl Fn(Opening) + Send + Sync + 'static) -> Arc<Gate> {
-        Arc::new(Gate(parking_lot::Mutex::new(Some(Box::new(taken)))))
+        Arc::new(Gate(parking_lot::Mutex::new(Some(Taker {
+            opening: Box::new(taken),
+            choosing: None,
+        }))))
+    }
+
+    /// A gate that passes other programs' dialogs to `chose` too.
+    fn choosing(
+        taken: impl Fn(Opening) + Send + Sync + 'static,
+        chose: impl Fn(crate::chooser::Choosing) + Send + Sync + 'static,
+    ) -> Arc<Gate> {
+        Arc::new(Gate(parking_lot::Mutex::new(Some(Taker {
+            opening: Box::new(taken),
+            choosing: Some(Box::new(chose)),
+        }))))
+    }
+
+    /// Whether it passes dialogs: what serves them is set up then alone.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn takes_choosing(&self) -> bool {
+        self.0
+            .lock()
+            .as_ref()
+            .is_some_and(|taker| taker.choosing.is_some())
     }
 
     /// Give `opening` to the taker if it still takes: whether it took it.
     /// Held meanwhile, so [`Gate::close`] waits for it.
     fn pass(&self, opening: Opening) -> bool {
         let held = self.0.lock();
-        let Some(taken) = held.as_ref() else {
+        let Some(taker) = held.as_ref() else {
             return false;
         };
-        taken(opening);
+        (taker.opening)(opening);
+        true
+    }
+
+    /// Give a dialog to the taker if it still takes dialogs: whether it
+    /// took it. Held meanwhile, as [`Gate::pass`].
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn pass_choosing(&self, choosing: crate::chooser::Choosing) -> bool {
+        let held = self.0.lock();
+        let Some(choose) = held.as_ref().and_then(|taker| taker.choosing.as_ref()) else {
+            return false;
+        };
+        choose(choosing);
         true
     }
 
@@ -433,7 +520,7 @@ impl Gate {
 }
 
 #[cfg(target_os = "linux")]
-mod linux {
+pub(crate) mod linux {
     use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -450,9 +537,9 @@ mod linux {
     /// (ADR-140), as Nautilus and Dolphin serve them.
     pub(super) const FILE_MANAGER: &str = "org.freedesktop.FileManager1";
     const FILE_MANAGER_PATH: &str = "/org/freedesktop/FileManager1";
-    pub(super) const PATH: &str = "/org/skwir/skwir";
+    pub(crate) const PATH: &str = "/org/skwir/skwir";
     /// As [`Finishing`] is declared.
-    const INTERFACE: &str = "org.skwir.skwir.Finishing";
+    pub(crate) const INTERFACE: &str = "org.skwir.skwir.Finishing";
     /// The most a marker holds: a pid and a line's end.
     const MARKER_BOUND: u64 = 32;
 
@@ -543,6 +630,35 @@ mod linux {
 
     #[zbus::interface(name = "org.skwir.skwir.Finishing")]
     impl Finishing {
+        /// Answer another program's dialog a skwir the bus started took
+        /// (`chooser`): the request as the portal gave it (`method`: 0
+        /// open, 1 save, 2 save files), its dialog closable at `handle`
+        /// here meanwhile; answered once the user decides (ADR-141, 3).
+        #[allow(clippy::too_many_arguments)] // the portal's request, whole
+        async fn choose(
+            &self,
+            #[zbus(object_server)] server: &zbus::ObjectServer,
+            method: u32,
+            handle: zbus::zvariant::OwnedObjectPath,
+            app_id: String,
+            parent_window: String,
+            title: String,
+            options: crate::chooser::linux::Options,
+        ) -> (u32, crate::chooser::linux::Results) {
+            let raw = crate::chooser::linux::Raw {
+                method: crate::chooser::linux::Method::of(method),
+                app_id,
+                parent_window,
+                title,
+                options,
+            };
+            let gate = Arc::clone(&self.0);
+            crate::chooser::linux::ask(server, handle, raw, move |choosing| {
+                gate.pass_choosing(choosing)
+            })
+            .await
+        }
+
         /// Open `location` (its bytes; empty for what the window had),
         /// read against `cwd`, the window brought forward with `token`
         /// (empty for none), the names `select` (bytes each) selected
@@ -784,13 +900,24 @@ mod linux {
     /// [`super::take_over`] on the bus `connect` connects to (again each
     /// time it ends), its marker `marker`: once the first connection is
     /// served, or `None`.
+    #[cfg(test)]
     pub(super) fn take_over_with<E: std::fmt::Display>(
         connect: impl FnMut() -> Result<Connection, E> + Send + 'static,
         marker: PathBuf,
         name: String,
         taken: impl Fn(Opening) + Send + Sync + 'static,
     ) -> Result<TakingOver, NotTaken> {
-        let gate = Gate::new(taken);
+        take_over_on(connect, marker, name, Gate::new(taken))
+    }
+
+    /// [`take_over_with`] with what passes what is handed (launches, and
+    /// other programs' dialogs where it takes them).
+    pub(super) fn take_over_on<E: std::fmt::Display>(
+        connect: impl FnMut() -> Result<Connection, E> + Send + 'static,
+        marker: PathBuf,
+        name: String,
+        gate: Arc<Gate>,
+    ) -> Result<TakingOver, NotTaken> {
         let answer = Arc::new(Answer::new(Arc::clone(&gate)));
         let stop = CancelToken::new();
         let (first, answered) = std::sync::mpsc::sync_channel(1);
@@ -896,6 +1023,15 @@ mod linux {
                 return Err(NotTaken::Cannot);
             }
             answer.connected(bus);
+            // Other programs' dialogs, where taken (ADR-141, 2): the name
+            // is skwir's own, asked behind a skwir the bus started.
+            if gate.takes_choosing() {
+                let gate = Arc::clone(gate);
+                crate::chooser::linux::serve(
+                    bus,
+                    Arc::new(move |choosing| gate.pass_choosing(choosing)),
+                );
+            }
             Ok(served)
         }
     }
@@ -905,6 +1041,7 @@ mod linux {
             // Other programs first, then the name: a launch that finds
             // the marker meanwhile finds no one holds it.
             self.answer.disconnected();
+            crate::chooser::linux::let_go(&self.bus);
             let _ = self.bus.release_name(self.name.as_str());
             let _ = self.bus.object_server().remove::<Finishing, _>(PATH);
             let_go_of_marker(&self.marker);
@@ -1147,10 +1284,17 @@ mod pipe {
 
     /// [`super::take_over`] on `pipe`: `None` where its first instance is
     /// another's.
+    #[cfg(test)]
     pub(super) fn take_over_at(
         pipe: OsString,
         taken: impl Fn(Opening) + Send + Sync + 'static,
     ) -> Result<TakingOver, NotTaken> {
+        take_over_on(pipe, Gate::new(taken))
+    }
+
+    /// [`take_over_at`] with what passes what is handed: no dialog is
+    /// handed on Windows (ADR-141, 11).
+    pub(super) fn take_over_on(pipe: OsString, gate: Arc<Gate>) -> Result<TakingOver, NotTaken> {
         // Its first instance: refused where any is there, made by
         // another Skwir (or anyone): ERROR_ACCESS_DENIED.
         const ACCESS_DENIED: i32 = 5;
@@ -1163,7 +1307,6 @@ mod pipe {
                     NotTaken::Cannot
                 }
             })?;
-        let gate = Gate::new(taken);
         let stop = Arc::new(AtomicBool::new(false));
         let thread = {
             let (pipe, gate, stop) = (pipe.clone(), Arc::clone(&gate), Arc::clone(&stop));
@@ -2217,6 +2360,217 @@ mod linux_tests {
         drop(holder);
         until("told as it is let go", &|| told.load(Ordering::SeqCst) >= 3);
         stop.cancel();
+    }
+
+    /// What the tests' Skwir is handed of other programs' dialogs.
+    type Chosen = Arc<parking_lot::Mutex<Vec<crate::chooser::Choosing>>>;
+
+    /// A Skwir taking launches over and dialogs, on the bus at `address`.
+    fn choosing_skwir(address: &str, marker: &Path) -> (TakingOver, Chosen) {
+        let chosen = Chosen::default();
+        let into = Arc::clone(&chosen);
+        let gate = super::Gate::choosing(|_| {}, move |choosing| into.lock().push(choosing));
+        let taking =
+            super::linux::take_over_on(connector(address), marker.to_owned(), HELD.into(), gate)
+                .unwrap();
+        (taking, chosen)
+    }
+
+    const REQUEST: &str = "/org/freedesktop/portal/desktop/request/1_42/t";
+
+    /// Another program's dialog, `method` with `options`, as the portal
+    /// asks the back end, on a connection of its own: its answer.
+    fn ask_dialog(
+        address: &str,
+        method: &str,
+        options: &crate::chooser::linux::Options,
+    ) -> (u32, crate::chooser::linux::Results) {
+        let bus = connector(address)().unwrap();
+        let handle = zbus::zvariant::ObjectPath::try_from(REQUEST).unwrap();
+        bus.call_method(
+            Some(crate::chooser::BACK_END),
+            "/org/freedesktop/portal/desktop",
+            Some("org.freedesktop.impl.portal.FileChooser"),
+            method,
+            &(
+                handle,
+                "org.example.Editor",
+                "x11:1a2b",
+                "Open a map",
+                options,
+            ),
+        )
+        .unwrap()
+        .body()
+        .deserialize()
+        .unwrap()
+    }
+
+    /// The first dialog handed in, once it is.
+    fn first(chosen: &Chosen) -> crate::chooser::Choosing {
+        until("the dialog handed in", &|| !chosen.lock().is_empty());
+        chosen.lock()[0].clone()
+    }
+
+    /// While taking launches over, another program's dialog is handed in
+    /// as data and answered as the user decides: the paths chosen as
+    /// URIs; or cancelled, nothing chosen.
+    #[test]
+    fn another_programs_dialog_is_answered() {
+        use crate::chooser::{Answer, Kind};
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let (taking, chosen) = choosing_skwir(&bus.address, &folder.path().join("marker"));
+        let address = bus.address.clone();
+        let asker = std::thread::spawn(move || {
+            let options = crate::chooser::linux::Options {
+                multiple: Some(true),
+                current_folder: Some(b"/srv/Maps\0".to_vec()),
+                ..Default::default()
+            };
+            ask_dialog(&address, "OpenFile", &options)
+        });
+        let choosing = first(&chosen);
+        assert_eq!(
+            choosing.asked().kind,
+            Kind::Open {
+                multiple: true,
+                directory: false
+            }
+        );
+        assert_eq!(choosing.asked().app_id, "org.example.Editor");
+        assert_eq!(
+            choosing.asked().folder.as_deref(),
+            Some(Path::new("/srv/Maps"))
+        );
+        choosing.answer(Answer::Chosen {
+            paths: vec![
+                PathBuf::from("/srv/Maps/tröisième.png"),
+                PathBuf::from("/srv/Maps/it's north.png"),
+            ],
+            choices: Vec::new(),
+            filter: None,
+        });
+        let (response, results) = asker.join().unwrap();
+        assert_eq!(response, 0);
+        assert_eq!(
+            results.uris.unwrap(),
+            [
+                "file:///srv/Maps/tr%C3%B6isi%C3%A8me.png",
+                "file:///srv/Maps/it's%20north.png"
+            ]
+        );
+
+        chosen.lock().clear();
+        let address = bus.address.clone();
+        let asker = std::thread::spawn(move || {
+            ask_dialog(
+                &address,
+                "SaveFile",
+                &crate::chooser::linux::Options::default(),
+            )
+        });
+        first(&chosen).answer(Answer::Cancelled);
+        let (response, results) = asker.join().unwrap();
+        assert_eq!(response, 1);
+        assert!(results.uris.is_none());
+        drop(taking);
+    }
+
+    /// The asking program gives up (the portal's `Request.Close`): the
+    /// dialog is told so, and its request answered cancelled.
+    #[test]
+    fn a_dialog_its_program_closes_is_told_and_cancelled() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let (taking, chosen) = choosing_skwir(&bus.address, &folder.path().join("marker"));
+        let address = bus.address.clone();
+        let asker = std::thread::spawn(move || {
+            ask_dialog(
+                &address,
+                "OpenFile",
+                &crate::chooser::linux::Options::default(),
+            )
+        });
+        let choosing = first(&chosen);
+        let told = Arc::new(AtomicBool::new(false));
+        let hook = Arc::clone(&told);
+        choosing.when_closed(move || hook.store(true, Ordering::SeqCst));
+        let closer = connector(&bus.address)().unwrap();
+        closer
+            .call_method(
+                Some(crate::chooser::BACK_END),
+                REQUEST,
+                Some("org.freedesktop.impl.portal.Request"),
+                "Close",
+                &(),
+            )
+            .unwrap();
+        let (response, _) = asker.join().unwrap();
+        assert_eq!(response, 1);
+        assert!(choosing.is_closed() && told.load(Ordering::SeqCst));
+        drop(taking);
+    }
+
+    /// A Skwir the bus started for a dialog, finding another of its
+    /// instance taking launches over, asks that one: the dialog answered
+    /// there, its answer the asking program's; the name then goes to the
+    /// Skwir that runs, which waited in the queue.
+    #[test]
+    fn a_dialog_started_elsewhere_is_answered_by_the_skwir_that_runs() {
+        use crate::chooser::Answer;
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        // The started one holds the name first, as the bus started it.
+        let started = connector(&bus.address)().unwrap();
+        let held_by = started.unique_name().unwrap().to_string();
+        let forwarding = std::thread::spawn(move || {
+            crate::chooser::linux::answer_for_holder_on(&started, Duration::from_secs(10), HELD)
+        });
+        let owner = |address: &str| {
+            let bus = connector(address)().unwrap();
+            zbus::blocking::fdo::DBusProxy::new(&bus)
+                .unwrap()
+                .get_name_owner(crate::chooser::BACK_END.try_into().unwrap())
+                .ok()
+                .map(|owner| owner.to_string())
+        };
+        until("the started one holds the name", &|| {
+            owner(&bus.address).as_deref() == Some(held_by.as_str())
+        });
+        let (taking, chosen) = choosing_skwir(&bus.address, &folder.path().join("marker"));
+        let address = bus.address.clone();
+        let asker = std::thread::spawn(move || {
+            let options = crate::chooser::linux::Options {
+                current_name: Some("north.png".into()),
+                ..Default::default()
+            };
+            ask_dialog(&address, "SaveFile", &options)
+        });
+        let choosing = first(&chosen);
+        assert_eq!(
+            choosing.asked().kind,
+            crate::chooser::Kind::Save {
+                name: Some("north.png".into()),
+                file: None
+            }
+        );
+        choosing.answer(Answer::Chosen {
+            paths: vec![PathBuf::from("/srv/Maps/north.png")],
+            choices: Vec::new(),
+            filter: None,
+        });
+        let (response, results) = asker.join().unwrap();
+        assert_eq!(response, 0);
+        assert_eq!(results.uris.unwrap(), ["file:///srv/Maps/north.png"]);
+        assert!(forwarding.join().unwrap(), "a request came, and was handed");
+        until("the Skwir that runs holds the name", &|| {
+            owner(&bus.address).is_some_and(|owner| owner != held_by)
+        });
+        drop(taking);
     }
 
     /// Asked nothing within its wait, it hands nothing and lets go.
