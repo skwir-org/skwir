@@ -74,13 +74,14 @@ pub fn of(language: &str) -> Direction {
 /// English, a language it ships, a pseudo-language), so a system's Arabic
 /// that Skwir does not offer, or a Hebrew written into the settings file
 /// that it has no words in, leaves it left to right, in the English it
-/// speaks. Kept on each thread until the languages move
-/// (`locale::revision`): a frame asks it for every side it lays out.
+/// speaks. Kept on each thread until what is said moves (`words::revision`:
+/// the languages, and the catalogs and shares that decide which are
+/// spoken): a frame asks it for every side it lays out.
 pub fn window() -> Direction {
     thread_local! {
         static KEPT: Cell<(u64, Direction)> = const { Cell::new((u64::MAX, Direction::LeftToRight)) };
     }
-    let now = crate::locale::revision();
+    let now = crate::words::revision();
     KEPT.with(|kept| {
         let (at, direction) = kept.get();
         if at == now {
@@ -96,28 +97,14 @@ pub fn window() -> Direction {
     })
 }
 
-/// Whether Skwir says its words in `language`: English, a pseudo-language,
-/// or one of the languages its catalogs are in, looked for as it is, then
-/// by fewer subtags (`fr-FR`, then `fr`), any case.
+/// Whether Skwir says its words in `language`: English, a pseudo-language
+/// (English said so), or one of the languages its catalogs are in, found as
+/// its words are (`locale::matching`: by script, then region), so a
+/// language written in another script than a catalog's (`az-Arab` beside
+/// `az`, `sr-Latn` beside `sr`) has none, and is not laid out as though it
+/// had.
 fn has_words(language: &str, shipped: &[&str]) -> bool {
-    if [crate::words::PSEUDO, PSEUDO_RTL]
-        .iter()
-        .any(|pseudo| pseudo.eq_ignore_ascii_case(language))
-    {
-        return true;
-    }
-    let mut tag = language;
-    loop {
-        if tag.eq_ignore_ascii_case(crate::locale::ENGLISH)
-            || shipped.iter().any(|one| one.eq_ignore_ascii_case(tag))
-        {
-            return true;
-        }
-        match tag.rsplit_once('-') {
-            Some((shorter, _)) => tag = shorter,
-            None => return false,
-        }
-    }
+    !crate::locale::matching(language, shipped.iter().copied()).is_empty()
 }
 
 /// English said in the right-to-left pseudo-language: a right-to-left mark
@@ -238,12 +225,18 @@ mod tests {
         set_system(vec!["ar-EG".into(), "fr-FR".into()]);
         assert_eq!(super::window(), Direction::LeftToRight);
         set_system(Vec::new());
-        let shipped = ["fr", "he"];
+        let shipped = ["fr", "he", "az", "sr"];
         assert!(super::has_words("he-IL", &shipped));
         assert!(super::has_words("FR", &shipped));
         assert!(super::has_words("en-GB", &shipped));
         assert!(super::has_words("AR-xb", &shipped));
+        assert!(super::has_words("en-XA", &shipped));
         assert!(!super::has_words("ar", &shipped));
+        // Another script than the catalog's has none of its words: English,
+        // laid out left to right.
+        assert!(super::has_words("az-Latn", &shipped));
+        assert!(!super::has_words("az-Arab", &shipped));
+        assert!(!super::has_words("sr-Latn", &shipped));
     }
 
     #[test]
