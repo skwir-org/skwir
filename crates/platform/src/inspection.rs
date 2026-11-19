@@ -1009,7 +1009,7 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     // computes a fraction of its pixels, as a thumbnail does. Only where
     // the whole decode fits the bound with room to spare: the reduced
     // decoder holds a progressive JPEG's coefficients whole (two bytes a
-    // sample, four samples a pixel at most), whatever the scale.
+    // sample, four samples a pixel at most) at every scale but an eighth.
     let reduced = jpeg && u64::from(own.0) * u64::from(own.1) * 8 <= limits::IMAGE_ALLOC;
     let img = if reduced {
         crate::picture::decode_fitted(first, side)?

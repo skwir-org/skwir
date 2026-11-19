@@ -160,9 +160,10 @@ rustix = { version = "1", features = ["fs"] }
 rayon = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # A JPEG decoded at a reduced scale for its thumbnail (zune-jpeg, image's
-# own, decodes it whole); without rayon, one thread per decode. Vendored
-# (`[patch.crates-io]` below): a progressive one at an eighth is read only
-# to its first scans.
+# own, decodes it whole). Vendored (`[patch.crates-io]` below): a decode
+# starts no thread of its own, the thumbnails running one a scheduler
+# worker, and a progressive one at an eighth keeps and reads only its DC
+# coefficients.
 jpeg-decoder = { version = "0.3", default-features = false }
 png = "0.18"
 crossbeam-channel = "0.5"
@@ -296,7 +297,8 @@ strip = "debuginfo"
 
 # Vendored xdg-mime 0.4.0, syntect 5.3.0, two-face 0.5.2 and jpeg-decoder
 # 0.3.2 with skwir's patches (see each one's README.skwir.md). Remove an entry
-# and its directory once its patches are upstream.
+# and its directory once its README.skwir.md says it may go: once its patches
+# are upstream, or for jpeg-decoder once zune-jpeg decodes at a reduced scale.
 [patch.crates-io]
 xdg-mime = { path = "vendor/xdg-mime" }
 syntect = { path = "vendor/syntect" }

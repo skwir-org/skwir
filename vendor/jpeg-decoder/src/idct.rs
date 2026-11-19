@@ -560,8 +560,13 @@ fn dequantize_and_idct_block_1x1(
 ) {
     debug_assert_eq!(coefficients.len(), 64);
 
-    let s0 = (Wrapping(coefficients[0] as i32 * quantization_table[0] as i32) + Wrapping(128 * 8)) / Wrapping(8);
-    output[0] = stbi_clamp(s0);
+    output[0] = idct_1x1(Wrapping(coefficients[0] as i32 * quantization_table[0] as i32));
+}
+
+/// The sample of a block drawn from its DC coefficient alone, dequantized.
+pub(crate) fn idct_1x1(dc: Wrapping<i32>) -> u8 {
+    let s0 = (dc + Wrapping(128 * 8)) / Wrapping(8);
+    stbi_clamp(s0)
 }
 
 // take a -128..127 value and stbi__clamp it and convert to 0..255

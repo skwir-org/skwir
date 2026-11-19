@@ -241,9 +241,13 @@ A name that says nothing is not a binary file.
   through `picture::decode_fitted`, as a thumbnail is): a JPEG twice
   that side and more at its least reduced scale still covering it (a
   24-megapixel photo computes and holds a quarter of its pixels), any
-  other whole, then shrunk. A progressive JPEG decoded at an eighth is
-  read only to its first scans, which hold every block's DC coefficient,
-  all an eighth draws (`vendor/jpeg-decoder`, its README.skwir.md). The preview's own decodes take turns
+  other whole, then shrunk. A progressive JPEG holds besides the
+  coefficients of the whole picture, 64 a block, two bytes a pixel of
+  each component, except at an eighth: there it keeps and reads only
+  every block's DC coefficient, all an eighth draws, to the first scans
+  that bring them, a DC's bits still to come drawn halfway
+  (`vendor/jpeg-decoder`, its README.skwir.md). A decode starts no
+  thread of its own. The preview's own decodes take turns
   (`preview::Turn`): one at a time, and a request whose turn came after
   the panel moved on gives it up.
 - **The next picture is read ahead** (`Shell::read_ahead_next`,

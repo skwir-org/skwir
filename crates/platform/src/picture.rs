@@ -99,6 +99,14 @@ fn jpeg_reduced<R: BufRead + Seek>(
         jpeg.set_max_decoding_buffer_size(REDUCED_BYTES);
         jpeg.read_info().ok()?;
         let full = jpeg.info()?;
+        // Told before a pixel is decoded: one `image` reads otherwise is
+        // decoded once, whole.
+        if !matches!(
+            full.pixel_format,
+            jpeg_decoder::PixelFormat::L8 | jpeg_decoder::PixelFormat::RGB24
+        ) {
+            return None;
+        }
         let asked = u16::try_from(side).unwrap_or(u16::MAX);
         let (width, height) = jpeg.scale(asked, asked).ok()?;
         if (width, height) == (full.width, full.height) {
@@ -339,6 +347,58 @@ mod tests {
         assert!(r > 200 && b < 60, "the left is red");
         let [r, _, b] = read.get_pixel(100, 5).0;
         assert!(r < 60 && b > 200, "the top of the right is blue");
+    }
+
+    /// 800 × 600, a plasma (`magick -seed 3 -size 800x600 plasma:fractal
+    /// -blur 0x1 -quality 30 -sampling-factor 2x2`), its coefficients
+    /// written four ways by libjpeg-turbo's jpegtran, without a loss
+    /// (`-copy none`): sequential; progressive as libjpeg writes it, every
+    /// DC less its lowest bit first (`-progressive`); and by the scripts
+    /// beside the two others (`-scans`).
+    const PLASMA: &[u8] = include_bytes!("../testdata/synthetic-plasma-sequential.jpg");
+    const PLASMA_PROGRESSIVE: &[u8] =
+        include_bytes!("../testdata/synthetic-plasma-progressive.jpg");
+    /// `0,1,2: 0-0, 0, 0;`, then libjpeg's AC scans: every DC whole first.
+    const PLASMA_DC_WHOLE: &[u8] = include_bytes!("../testdata/synthetic-plasma-dc-whole.jpg");
+    /// `0: 0-0, 0, 1; 0: 1-63, 0, 1; 0: 1-63, 1, 0; 0: 0-0, 1, 0; 1: 0-0, 0,
+    /// 0; 2: 0-0, 0, 0; 1: 1-63, 0, 0; 2: 1-63, 0, 0;`: the luma's AC,
+    /// refined, and its DC's last bit, before the colours' DC.
+    const PLASMA_DC_APART: &[u8] = include_bytes!("../testdata/synthetic-plasma-dc-apart.jpg");
+
+    /// A progressive JPEG at an eighth draws what a decoder reading every
+    /// scan draws, as a sequential one, where its DC came whole. Where its
+    /// first scan left out a bit, a pixel moves a few levels either way, and
+    /// none on average: drawn as kept, the DC made it 4 levels darker on
+    /// average, 10 at most.
+    #[test]
+    fn a_progressive_jpeg_at_an_eighth_is_drawn_as_a_sequential_one() {
+        let reduced = |bytes: &[u8]| {
+            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100).unwrap().unwrap();
+            image.to_rgb8()
+        };
+        let sequential = reduced(PLASMA);
+        assert_eq!(sequential.dimensions(), (100, 75));
+        assert_eq!(reduced(PLASMA_DC_WHOLE), sequential, "a DC whole first");
+        assert_eq!(
+            reduced(PLASMA_DC_APART),
+            sequential,
+            "AC scans before the last DC"
+        );
+        let read = reduced(PLASMA_PROGRESSIVE);
+        for channel in 0..3 {
+            let differences: Vec<i32> = read
+                .pixels()
+                .zip(sequential.pixels())
+                .map(|(a, b)| i32::from(a.0[channel]) - i32::from(b.0[channel]))
+                .collect();
+            let most = differences.iter().map(|d| d.abs()).max().unwrap();
+            let mean = f64::from(differences.iter().sum::<i32>()) / differences.len() as f64;
+            assert!(most <= 6, "channel {channel}: a pixel moved {most} levels");
+            assert!(
+                mean.abs() < 0.5,
+                "channel {channel}: {mean} levels on average"
+            );
+        }
     }
 
     #[test]

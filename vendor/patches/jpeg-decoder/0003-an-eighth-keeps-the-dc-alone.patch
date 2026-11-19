@@ -1,0 +1,199 @@
+--- a/src/decoder.rs
++++ b/src/decoder.rs
+@@ -1,5 +1,6 @@
+ use crate::error::{Error, Result, UnsupportedFeature};
+ use crate::huffman::{fill_default_mjpeg_tables, HuffmanDecoder, HuffmanTable};
++use crate::idct::idct_1x1;
+ use crate::marker::Marker;
+ use crate::parser::{
+     parse_app, parse_com, parse_dht, parse_dqt, parse_dri, parse_sof, parse_sos,
+@@ -15,6 +16,7 @@ use alloc::vec::Vec;
+ use alloc::{format, vec};
+ use core::cmp;
+ use core::mem;
++use core::num::Wrapping;
+ use core::ops::Range;
+ use std::io::Read;
+ 
+@@ -124,6 +126,11 @@ pub struct Decoder<R> {
+     coefficients: Vec<Vec<i16>>,
+     // Bitmask of which coefficients has been completely decoded.
+     coefficients_finished: [u64; MAX_COMPONENTS],
++    // A progressive frame decoded at an eighth, whose blocks are drawn
++    // from their DC alone: `coefficients` holds one a block, its DC.
++    dc_only: bool,
++    // The lowest bits of each component's DC no scan has brought yet.
++    dc_bits_left: [u8; MAX_COMPONENTS],
+ 
+     // Maximum allowed size of decoded image buffer
+     decoding_buffer_size_limit: usize,
+@@ -149,6 +156,8 @@ impl<R: Read> Decoder<R> {
+             psir_data: None,
+             coefficients: Vec::new(),
+             coefficients_finished: [0; MAX_COMPONENTS],
++            dc_only: false,
++            dc_bits_left: [0; MAX_COMPONENTS],
+             decoding_buffer_size_limit: usize::MAX,
+         }
+     }
+@@ -403,18 +412,26 @@ impl<R: Read> Decoder<R> {
+                     if frame.coding_process == CodingProcess::DctProgressive
+                         && self.coefficients.is_empty()
+                     {
++                        // Scaled to an eighth, a block is drawn from its DC
++                        // alone (a 1x1 IDCT): it is all that is kept.
++                        self.dc_only = frame.components.iter().all(|c| c.dct_scale == 1);
++                        let kept = if self.dc_only { 1 } else { 64 };
+                         self.coefficients = frame
+                             .components
+                             .iter()
+                             .map(|c| {
+                                 let block_count =
+                                     c.block_size.width as usize * c.block_size.height as usize;
+-                                vec![0; block_count * 64]
++                                vec![0; block_count * kept]
+                             })
+                             .collect();
+                     }
+ 
+-                    if frame.coding_process == CodingProcess::Lossless {
++                    if self.dc_only && scan.spectral_selection.start > 0 {
++                        // What an AC scan brings is not drawn: passed over,
++                        // never decoded.
++                        pending_marker = Some(self.skip_scan()?);
++                    } else if frame.coding_process == CodingProcess::Lossless {
+                         let (marker, data) = self.decode_scan_lossless(&frame, &scan)?;
+ 
+                         for (i, plane) in data
+@@ -497,6 +514,12 @@ impl<R: Read> Decoder<R> {
+                                 dc_seen[i] = true;
+                             }
+                         }
++                        // Those of the DC's bits a refinement would bring.
++                        if scan.spectral_selection.start == 0 {
++                            for &i in &scan.component_indices {
++                                self.dc_bits_left[i] = scan.successive_approximation_low;
++                            }
++                        }
+                         if dc_seen[..frame.components.len()].iter().all(|&seen| seen) {
+                             break;
+                         }
+@@ -679,6 +702,16 @@ impl<R: Read> Decoder<R> {
+                         None => continue,
+                     };
+ 
++                if self.dc_only {
++                    planes[i] = dc_samples(
++                        &self.coefficients[i],
++                        quantization_table[0],
++                        self.dc_bits_left[i],
++                        component.block_size.width.into(),
++                    );
++                    continue;
++                }
++
+                 // Get the worker prepared
+                 let row_data = RowData {
+                     index: i,
+@@ -813,6 +846,17 @@ impl<R: Read> Decoder<R> {
+         }
+     }
+ 
++    /// Reads past a scan's entropy-coded data, its restart markers
++    /// included, to the marker after it.
++    fn skip_scan(&mut self) -> Result<Marker> {
++        loop {
++            match self.read_marker()? {
++                Marker::RST(_) => {}
++                marker => return Ok(marker),
++            }
++        }
++    }
++
+ #[allow(clippy::type_complexity)]
+     fn decode_scan(
+         &mut self,
+@@ -981,13 +1025,23 @@ impl<R: Read> Decoder<R> {
+                 for (i, component) in components.iter().enumerate() {
+                     for v_pos in 0..mcu_vertical_samples[i] {
+                         for h_pos in 0..mcu_horizontal_samples[i] {
++                            // The block whose DC alone is kept, if so.
++                            let mut dc_of = None;
+                             let coefficients = if is_progressive {
+                                 let block_y = (mcu_y * mcu_vertical_samples[i] + v_pos) as usize;
+                                 let block_x = (mcu_x * mcu_horizontal_samples[i] + h_pos) as usize;
+-                                let block_offset =
+-                                    (block_y * component.block_size.width as usize + block_x) * 64;
+-                                &mut self.coefficients[scan.component_indices[i]]
+-                                    [block_offset..block_offset + 64]
++                                let block = block_y * component.block_size.width as usize + block_x;
++                                if self.dc_only {
++                                    // A DC scan reads and writes coefficient 0
++                                    // alone.
++                                    dummy_block[0] = self.coefficients[scan.component_indices[i]][block];
++                                    dc_of = Some(block);
++                                    &mut dummy_block[..64]
++                                } else {
++                                    let block_offset = block * 64;
++                                    &mut self.coefficients[scan.component_indices[i]]
++                                        [block_offset..block_offset + 64]
++                                }
+                             } else if finished[i] {
+                                 // Because the worker thread operates in batches as if we were always interleaved, we
+                                 // need to distinguish between a single-shot buffer and one that's currently in process
+@@ -1033,6 +1087,9 @@ impl<R: Read> Decoder<R> {
+                                     &mut eob_run,
+                                 )?;
+                             }
++                            if let Some(block) = dc_of {
++                                self.coefficients[scan.component_indices[i]][block] = dummy_block[0];
++                            }
+                         }
+                     }
+                 }
+@@ -1105,6 +1162,27 @@ impl<R: Read> Decoder<R> {
+     }
+ }
+ 
++/// The samples of a component decoded at an eighth, one a block of the
++/// `blocks_wide` of each row, drawn from its DC coefficients alone as the
++/// 1x1 IDCT draws them. What was kept of a DC is the whole one with its
++/// `bits_left` lowest bits cleared, at or below it: drawn as it is, every
++/// picture came out darker and its colours shifted. A block is drawn halfway
++/// between the least and the most its whole DC may draw, half of them
++/// rounding up, as on a chessboard.
++fn dc_samples(dc: &[i16], quantization: u16, bits_left: u8, blocks_wide: usize) -> Vec<u8> {
++    let quantization = i32::from(quantization);
++    let spread = Wrapping(((1i32 << bits_left) - 1).wrapping_mul(quantization));
++    dc.iter()
++        .enumerate()
++        .map(|(block, &dc)| {
++            let least = Wrapping(i32::from(dc) * quantization);
++            let (least, most) = (idct_1x1(least), idct_1x1(least + spread));
++            let up = (block % blocks_wide.max(1) + block / blocks_wide.max(1)) & 1;
++            ((usize::from(least) + usize::from(most) + up) / 2) as u8
++        })
++        .collect()
++}
++
+ #[allow(clippy::too_many_arguments)]
+ fn decode_block<R: Read>(
+     reader: &mut R,
+--- a/src/idct.rs
++++ b/src/idct.rs
+@@ -560,8 +560,13 @@ fn dequantize_and_idct_block_1x1(
+ ) {
+     debug_assert_eq!(coefficients.len(), 64);
+ 
+-    let s0 = (Wrapping(coefficients[0] as i32 * quantization_table[0] as i32) + Wrapping(128 * 8)) / Wrapping(8);
+-    output[0] = stbi_clamp(s0);
++    output[0] = idct_1x1(Wrapping(coefficients[0] as i32 * quantization_table[0] as i32));
++}
++
++/// The sample of a block drawn from its DC coefficient alone, dequantized.
++pub(crate) fn idct_1x1(dc: Wrapping<i32>) -> u8 {
++    let s0 = (dc + Wrapping(128 * 8)) / Wrapping(8);
++    stbi_clamp(s0)
+ }
+ 
+ // take a -128..127 value and stbi__clamp it and convert to 0..255
