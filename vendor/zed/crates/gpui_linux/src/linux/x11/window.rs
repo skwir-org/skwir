@@ -3,12 +3,12 @@ use x11rb::connection::RequestConnection;
 
 use crate::linux::X11ClientStatePtr;
 use gpui::{
-    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, WindowVisibility, popup::PopupNotSupportedError,
-    px,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, ForeignParent,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, WindowVisibility,
+    popup::PopupNotSupportedError, px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -654,6 +654,21 @@ impl X11WindowState {
                         ),
                     )?;
                 }
+            }
+
+            // Another program's dialog: that program's window is the one it
+            // belongs to, which the window manager keeps it over.
+            if let Some(ForeignParent::X11(foreign)) = &params.foreign_parent {
+                check_reply(
+                    || "X11 ChangeProperty32 setting WM_TRANSIENT_FOR for a foreign parent failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms.WM_TRANSIENT_FOR,
+                        xproto::AtomEnum::WINDOW,
+                        &[*foreign],
+                    ),
+                )?;
             }
 
             let parent = if params.kind == WindowKind::Dialog

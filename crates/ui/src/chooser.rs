@@ -53,6 +53,21 @@ pub(crate) fn start_folder(app: &skwir_core::App, asked: &Asked) -> PathBuf {
     kept.unwrap_or_else(|| skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")))
 }
 
+/// The asking program's window (ADR-141, 9), as the portal names it:
+/// `x11:` and its id in hexadecimal, `wayland:` and the handle it
+/// exported. Anything else names none: the window is one of its own.
+pub(crate) fn foreign_parent(window: &str) -> Option<gpui::ForeignParent> {
+    if let Some(id) = window.strip_prefix("x11:") {
+        let id = id.trim_start_matches("0x");
+        return u32::from_str_radix(id, 16)
+            .ok()
+            .filter(|id| *id != 0)
+            .map(gpui::ForeignParent::X11);
+    }
+    let handle = window.strip_prefix("wayland:")?;
+    (!handle.is_empty()).then(|| gpui::ForeignParent::Wayland(handle.to_owned()))
+}
+
 /// A request being answered in this window.
 pub(crate) struct Chooser {
     pub(crate) choosing: Choosing,
@@ -1032,6 +1047,27 @@ mod tests {
         assert_eq!(stem_len("archive.tar.gz"), "archive.tar".len());
         assert_eq!(stem_len(".bashrc"), ".bashrc".len());
         assert_eq!(stem_len("Untitled"), "Untitled".len());
+    }
+
+    /// The asking window is read as the portal writes it; anything else
+    /// names none.
+    #[test]
+    fn the_asking_window_is_read() {
+        assert_eq!(
+            foreign_parent("x11:3a0000d"),
+            Some(gpui::ForeignParent::X11(0x3a0_000d))
+        );
+        assert_eq!(
+            foreign_parent("x11:0x2c"),
+            Some(gpui::ForeignParent::X11(0x2c))
+        );
+        assert_eq!(
+            foreign_parent("wayland:6c1f5a2e-handle"),
+            Some(gpui::ForeignParent::Wayland("6c1f5a2e-handle".into()))
+        );
+        for none in ["", "x11:", "x11:zz", "x11:0", "wayland:", "win32:12"] {
+            assert_eq!(foreign_parent(none), None, "{none}");
+        }
     }
 
     /// A program's label keeps its words, not its mnemonic's mark.

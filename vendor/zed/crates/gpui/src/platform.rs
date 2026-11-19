@@ -2732,6 +2732,18 @@ pub enum TextInputAction {
     Send,
 }
 
+/// A window of another program, as its display server names it: what a
+/// program asking for a dialog hands the program showing it (the
+/// desktop portal's `parent_window`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForeignParent {
+    /// An X11 window's id.
+    X11(u32),
+    /// A toplevel its client exported through xdg-foreign (unstable v2),
+    /// by the handle it was given.
+    Wayland(String),
+}
+
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
@@ -2790,6 +2802,11 @@ pub struct WindowOptions {
 
     /// Application identifier of the window. Can by used by desktop environments to group applications together.
     pub app_id: Option<String>,
+
+    /// The window of another program this one belongs to (a dialog that
+    /// program asked another to show): set its child where the display
+    /// server can (X11, Wayland), so that it floats over it.
+    pub foreign_parent: Option<ForeignParent>,
 
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
@@ -2867,6 +2884,10 @@ pub struct WindowParams {
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub app_id: Option<String>,
 
+    /// See [`WindowOptions::foreign_parent`].
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    pub foreign_parent: Option<ForeignParent>,
+
     pub window_min_size: Option<Size<Pixels>>,
 
     /// The background the window opens with and the decorations it asks
@@ -2940,6 +2961,7 @@ impl Default for WindowOptions {
             window_background: WindowBackgroundAppearance::default(),
             icon: None,
             app_id: None,
+            foreign_parent: None,
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,

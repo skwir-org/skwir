@@ -1793,6 +1793,10 @@ fn open_window(
             }),
             app_id: Some(skwir_core::APP_ID.into()),
             window_decorations: Some(asks),
+            // Over the program whose dialog it answers (ADR-141, 9).
+            foreign_parent: choosing
+                .as_ref()
+                .and_then(|c| crate::chooser::foreign_parent(&c.asked().parent_window)),
             ..Default::default()
         },
         |window, cx| {

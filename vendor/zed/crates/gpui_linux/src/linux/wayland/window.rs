@@ -28,6 +28,7 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols::{
     wp::fractional_scale::v1::client::wp_fractional_scale_v1,
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
+    xdg::foreign::zv2::client::zxdg_imported_v2::ZxdgImportedV2,
 };
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
@@ -36,7 +37,7 @@ use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload,
-    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
+    ForeignParent, FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
     PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
@@ -285,6 +286,19 @@ impl WaylandSurfaceState {
             None
         };
 
+        // Another program's dialog: its window, imported, is this one's
+        // parent, which the compositor keeps it over. A handle that names
+        // nothing is told by the compositor's `destroyed`, and leaves a
+        // toplevel of its own.
+        let foreign_parent = match (&params.foreign_parent, &globals.importer) {
+            (Some(ForeignParent::Wayland(handle)), Some(importer)) => {
+                let imported = importer.import_toplevel(handle.clone(), &globals.qh, ());
+                imported.set_parent_of(&surface);
+                Some(imported)
+            }
+            _ => None,
+        };
+
         if let Some(size) = params.window_min_size {
             toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
@@ -302,6 +316,7 @@ impl WaylandSurfaceState {
             toplevel,
             decoration,
             dialog,
+            foreign_parent,
         }))
     }
 }
@@ -311,6 +326,9 @@ pub struct WaylandXdgSurfaceState {
     toplevel: xdg_toplevel::XdgToplevel,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     dialog: Option<XdgDialogV1>,
+    /// Another program's toplevel this one is the child of
+    /// (`WindowParams::foreign_parent`).
+    foreign_parent: Option<ZxdgImportedV2>,
 }
 
 pub struct WaylandLayerSurfaceState {
@@ -520,10 +538,14 @@ impl WaylandSurfaceState {
                 toplevel,
                 decoration: _decoration,
                 dialog,
+                foreign_parent,
             }) => {
                 // drop the dialog before toplevel so compositor can explicitly unapply it's effects
                 if let Some(dialog) = dialog {
                     dialog.destroy();
+                }
+                if let Some(foreign_parent) = foreign_parent {
+                    foreign_parent.destroy();
                 }
 
                 // The role object (toplevel) must always be destroyed before the xdg_surface.

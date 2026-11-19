@@ -117,6 +117,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0082-lists-follow-the-layout-direction` | A list's items are laid out, prepainted and painted in the list's own text style, its layout direction among it; a uniform list's rows scrolled sideways right to left move by its offset, not twice it | — |
 | `0083-window-menu-by-a-flag` | The menu macOS lists the windows in is the one that says it is (`Menu::window_menu`), never the one named "Window" | — |
 | `0084-text-direction` | A text's paragraphs read in the direction it says (`TextDirection`, inherited, `Styled::text_direction`; `WindowTextSystem::shape_text_in`), not each its first strong character's: gpui's levels worked out so (UAX #9's HL1) and the platform told (`PlatformTextSystem::layout_line_in`: DirectWrite's reading direction, Core Text's base writing direction, for cosmic-text a mark left out of what it gives back); a line of code that starts with an Arabic comment keeps its `//` at its left | — |
+| `0085-foreign-parent` | `WindowOptions::foreign_parent`: a window shown for another program (a dialog it asked for, the desktop portal's `parent_window`) is that program's window's child, `WM_TRANSIENT_FOR` on X11, imported through xdg-foreign (unstable v2) on Wayland, so the window manager keeps it over it; a handle that names nothing leaves a window of its own | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 

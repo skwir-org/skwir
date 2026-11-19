@@ -1659,6 +1659,7 @@ impl Window {
             display_id,
             window_background,
             app_id,
+            foreign_parent,
             window_min_size,
             window_decorations,
             #[cfg_attr(
@@ -1694,6 +1695,7 @@ impl Window {
                 window_background,
                 window_decorations,
                 app_id: app_id.clone(),
+                foreign_parent,
                 icon,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
