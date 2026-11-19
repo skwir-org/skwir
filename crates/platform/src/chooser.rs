@@ -403,6 +403,9 @@ pub(crate) mod linux {
     #[zvariant(signature = "dict")]
     pub(crate) struct Options {
         pub(crate) accept_label: Option<String>,
+        /// Read to be passed on whole (`Finishing.Choose`), not followed:
+        /// the window is the asking window's child, kept over it, never
+        /// holding it (ADR-141, 9).
         pub(crate) modal: Option<bool>,
         pub(crate) multiple: Option<bool>,
         pub(crate) directory: Option<bool>,
@@ -716,13 +719,6 @@ pub(crate) mod linux {
             )
             .await
         }
-
-        /// The version of the interface answered.
-        #[zbus(property)]
-        #[allow(clippy::unused_self)] // zbus asks a property of the object
-        fn version(&self) -> u32 {
-            4
-        }
     }
 
     impl Portal {
@@ -781,18 +777,10 @@ pub(crate) mod linux {
         let _ = bus.object_server().remove::<Portal, _>(PATH);
     }
 
-    /// Let go of the back end's name, asked of the bus itself too: zbus
-    /// forgets a name it was told it lost, and would then send nothing,
-    /// while the bus hands a name queued for back once its owner goes (a
-    /// skwir queued behind the one the bus started), which would hold it
-    /// serving nothing.
+    /// Let go of the back end's name, asked of the bus itself
+    /// (`handover::linux::release_name`).
     fn release(bus: &zbus::blocking::Connection) {
-        let _ = bus.release_name(super::BACK_END);
-        if let Ok(proxy) = zbus::blocking::fdo::DBusProxy::new(bus)
-            && let Ok(name) = zbus::names::WellKnownName::try_from(super::BACK_END)
-        {
-            let _ = proxy.release_name(name);
-        }
+        crate::handover::linux::release_name(bus, super::BACK_END);
     }
 
     /// What a skwir the bus started answers while another of its instance
@@ -887,12 +875,6 @@ pub(crate) mod linux {
                 options,
             };
             self.ask_holder(server, bus, handle, raw).await
-        }
-
-        #[zbus(property)]
-        #[allow(clippy::unused_self)] // zbus asks a property of the object
-        fn version(&self) -> u32 {
-            4
         }
     }
 
@@ -1010,15 +992,42 @@ pub(crate) mod linux {
                     break;
                 }
             }
-            // What came is answered whole before the name goes.
+            count.1
+        };
+        // The name first: what the portal asks from now on goes to the
+        // skwir queued behind (or starts one); then what reached this one
+        // before, the last of it too, is answered whole; only then the
+        // object goes and the program with it.
+        release(bus);
+        dispatched(bus);
+        {
+            let mut count = under_way.count.lock();
             while count.0 > 0 {
                 under_way.changed.wait(&mut count);
             }
-            count.1
-        };
-        release(bus);
+        }
         let _ = objects.remove::<Forward, _>(PATH);
         came
+    }
+
+    /// Once this returns, every call that reached `bus` before it has
+    /// begun: a ping of its own, answered after them in the order they
+    /// came (zbus spawns each call's task as it is read, and its executor,
+    /// one thread, begins them in that order).
+    fn dispatched(bus: &zbus::blocking::Connection) {
+        let Some(own) = bus.unique_name().map(ToString::to_string) else {
+            return;
+        };
+        let pinged = bus.call_method(
+            Some(own.as_str()),
+            PATH,
+            Some("org.freedesktop.DBus.Peer"),
+            "Ping",
+            &(),
+        );
+        if let Err(error) = pinged {
+            tracing::debug!("the calls under way were not waited for: {error}");
+        }
     }
 }
 

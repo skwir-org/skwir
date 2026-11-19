@@ -75,7 +75,9 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    with status 3. One that finds another skwir of its instance taking
    launches over takes the request and asks that one
    (`org.skwir.skwir.Finishing.Choose`, the request as the portal gave
-   it), waiting for its answer, which it gives the portal, then ends.
+   it), waiting for its answer, which it gives the portal, then ends:
+   the name first, so that what is asked after goes to the skwir queued
+   behind, then once all that reached it is answered.
 4. **A request is a whole skwir window in a choosing mode** (the user's
    choice over a compact dialog): sidebar, address, search, tags,
    views, preview, the shelf, as any window, and a bar at its bottom

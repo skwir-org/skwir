@@ -845,11 +845,25 @@ pub(crate) mod linux {
 
     /// The name let go and the object taken down, on `bus`.
     pub(super) fn let_go_of_file_manager(bus: &Connection) {
-        let _ = bus.release_name(FILE_MANAGER);
+        release_name(bus, FILE_MANAGER);
         let _ = bus
             .object_server()
             .remove::<FileManager, _>(FILE_MANAGER_PATH);
         tracing::info!("no longer showing files for other programs");
+    }
+
+    /// Let go of `name` on `bus`, asked of the bus itself too: zbus forgets
+    /// a name asked with `AllowReplacement` once told it was lost, and its
+    /// `release_name` then sends nothing, while the bus has put this
+    /// connection back in the name's queue and hands it back once its new
+    /// owner goes, to hold it serving nothing.
+    pub(crate) fn release_name(bus: &Connection, name: &str) {
+        let _ = bus.release_name(name);
+        if let Ok(proxy) = zbus::blocking::fdo::DBusProxy::new(bus)
+            && let Ok(name) = zbus::names::WellKnownName::try_from(name)
+        {
+            let _ = proxy.release_name(name);
+        }
     }
 
     /// [`super::answer_for_holder`] on `bus`, each launch handed by `hand`.
@@ -2574,6 +2588,41 @@ mod linux_tests {
             owner(&bus.address).is_some_and(|owner| owner != held_by)
         });
         drop(taking);
+    }
+
+    /// A Skwir that served the file manager's name, lost it to another
+    /// and was handed it back as the bus queued it, still lets it go
+    /// once asked, though zbus forgot it when it was lost.
+    #[test]
+    fn a_name_handed_back_is_let_go() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let owner = || {
+            let asker = connector(&bus.address)().unwrap();
+            zbus::blocking::fdo::DBusProxy::new(&asker)
+                .unwrap()
+                .get_name_owner(super::linux::FILE_MANAGER.try_into().unwrap())
+                .ok()
+                .map(|owner| owner.to_string())
+        };
+        let first = connector(&bus.address)().unwrap();
+        let held_by = first.unique_name().unwrap().to_string();
+        assert!(super::linux::serve_file_manager(
+            &first,
+            &super::Gate::new(|_| {})
+        ));
+        until("served", &|| owner().as_deref() == Some(held_by.as_str()));
+        // Another takes it (zbus's request_name replaces), then ends.
+        let second = connector(&bus.address)().unwrap();
+        second.request_name(super::linux::FILE_MANAGER).unwrap();
+        until("taken", &|| owner().is_some_and(|o| o != held_by));
+        second.close().unwrap();
+        until("handed back", &|| {
+            owner().as_deref() == Some(held_by.as_str())
+        });
+        super::linux::let_go_of_file_manager(&first);
+        until("let go", &|| owner().is_none());
     }
 
     /// Asked nothing within its wait, it hands nothing and lets go.
