@@ -277,7 +277,9 @@ impl Keyboard {
                 .get(action.command.as_str())
                 .is_none_or(|twin| !listed.contains(*twin))
         });
-        unkeyed.sort_by_cached_key(|action| action.title.to_lowercase());
+        unkeyed.sort_by_cached_key(|action| {
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(&action.title))
+        });
         let first_inside = actions
             .iter()
             .position(|action| action.inside)

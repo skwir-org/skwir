@@ -4003,7 +4003,11 @@ impl SettingsView {
             .filter(|page| matches!(page, Page::Plugin(_)))
             .collect();
         owners.dedup();
-        owners.sort_by_key(|page| self.page_title(page).to_lowercase());
+        // By their titles as names are ordered (`collate`): « Édition »
+        // among the E's.
+        owners.sort_by_cached_key(|page| {
+            skwir_core::collate::sort_key(std::ffi::OsStr::new(&self.page_title(page)))
+        });
         pages.extend(owners);
         pages
     }

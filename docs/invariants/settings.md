@@ -413,8 +413,10 @@ The key is the owner's; the page is the subject's (ADR-072).
   and their plugins (`settings_view::categories_by_name`, `by_name`; the
   search's and Changed's plugins too), the exclusions' categories,
   groups and rows (ADR-125, 13). The pages and a page's settings keep
-  the order they are declared in, which says what goes with what; the
-  Keyboard page lists by place, then as bound.
+  the order they are declared in, which says what goes with what, the
+  plugins' own pages after them by title, as names are ordered; the
+  Keyboard page lists by place, then as bound, the actions with no keys
+  by title, as is the new shortcut's list of commands.
 - **An icon beside words that may wrap is `controls::noted`**: the
   words wrap in the room left, the icon by their first line in a holder
   one line of them tall (an empty text, so it follows the text size).

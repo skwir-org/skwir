@@ -233,7 +233,9 @@ fn candidates(app: &skwir_core::App) -> Vec<Candidate> {
             all.push((spec, fixed, title));
         }
     }
-    all.sort_by_cached_key(|(_, _, title)| title.to_lowercase());
+    all.sort_by_cached_key(|(_, _, title)| {
+        skwir_core::collate::sort_key(std::ffi::OsStr::new(title))
+    });
     all
 }
 
@@ -1073,6 +1075,34 @@ mod tests {
         assert!(typed("DOSSIER créer"));
         assert!(typed("new_folder"));
         assert!(!typed("créer fichier"));
+    }
+
+    /// The commands are listed as names are ordered (`collate`): an
+    /// accented title among its letter's, not after Z.
+    #[test]
+    fn commands_are_listed_as_names_are_ordered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        for (name, title) in [
+            ("plug.zip", "Zip"),
+            ("plug.shelf", "Étagère"),
+            ("plug.edit", "edition"),
+        ] {
+            app.commands.register::<skwir_core::command::NoArgs, _>(
+                "plug",
+                skwir_core::command::Topic::Files,
+                name,
+                Words::as_written(title),
+                Words::as_written(""),
+                |_, _| Ok(skwir_core::command::Outcome::Done),
+            );
+        }
+        let titles: Vec<String> = candidates(&app)
+            .into_iter()
+            .filter(|(spec, _, _)| spec.name.starts_with("plug."))
+            .map(|(_, _, title)| title)
+            .collect();
+        assert_eq!(titles, ["edition", "Étagère", "Zip"]);
     }
 
     #[derive(serde::Deserialize, schemars::JsonSchema)]
