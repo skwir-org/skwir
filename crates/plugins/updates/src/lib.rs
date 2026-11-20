@@ -322,8 +322,9 @@ impl Plugin for UpdatesPlugin {
                 let Some(app) = weak.upgrade() else {
                     return;
                 };
-                // A window looked at meanwhile is looked at now.
-                if inner.take_here(&app, here, &cancel) && app.looked_at() {
+                // A window of the user's own looked at meanwhile is looked
+                // at now.
+                if inner.take_here(&app, here, &cancel) && app.looked_at_own() {
                     inner.looked_at(&app);
                 }
             },
@@ -641,7 +642,12 @@ impl Inner {
     /// started only where it may do something: at a run's first look
     /// (What's new), and for a copy downloaded or one its system may stop
     /// updating (a `.deb` or an `.rpm`, read again at each look). A copy
-    /// something else updates does nothing more once looked at.
+    /// something else updates does nothing more once looked at. Only a
+    /// look at a window of the user's own counts (`App::looked_at_own`):
+    /// all the plugin says unasked (What's new, the question, a version
+    /// out) is said once, and in a window answering another program's
+    /// dialog (ADR-141) it would be spent where the user is doing
+    /// something else, or go unseen with a skwir started for that dialog.
     fn look_later(self: &Arc<Self>, app: &App) {
         let lifetime = {
             let run = self.run.lock();
@@ -651,7 +657,7 @@ impl Inner {
             let follows = run.here.is_some_and(|here| {
                 here.downloaded().is_some() || here.channel.is_some_and(Channel::has_repository)
             });
-            if run.looked_for_whats_new && !follows {
+            if !app.looked_at_own() || run.looked_for_whats_new && !follows {
                 drop(run);
                 self.look_ended();
                 return;
@@ -731,9 +737,9 @@ impl Inner {
         // (`Kept::merged`): What's new, once a run; the question, or the
         // day's check, where what this process holds says one may come
         // today. Read before the plugin's lock is taken. The question is
-        // asked, and counted, only at a look of a window of the user's own
-        // (`App::looked_at_own`), never of another program's dialog that
-        // Skwir answers, where it would wait unseen.
+        // asked, and counted, only while a window of the user's own has
+        // the keyboard (`App::looked_at_own`): asked again here, as it may
+        // have gone to another program's dialog since the look began.
         let (asks, checks) = match downloaded {
             Some(_) => {
                 let mut held = Kept::read(&app.settings);

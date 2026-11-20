@@ -497,3 +497,8 @@ it trusts a package by its signed index. The user chose signing.
   read as today where deciding and never written back, so nothing is
   asked or checked twice once the clock is right; only a day further
   ahead is taken back to today.
+- **All it says unasked waits for a window of the user's own**, as the
+  question does: What's new, and the day's check with the version it
+  would tell, are each said once, so a look at another program's dialog
+  Skwir answers starts nothing; the next look at a window of the user's
+  own says them.

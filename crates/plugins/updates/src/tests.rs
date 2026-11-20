@@ -935,6 +935,35 @@ fn a_question_waits_for_a_window_of_the_users_own() {
     assert_eq!(f.kept().asked, 1);
 }
 
+/// A window answering another program's dialog (ADR-141) is told
+/// nothing: What's new, the question and the day's check (and the version
+/// it would tell) wait for a look at a window of the user's own.
+#[test]
+fn a_dialogs_window_is_told_nothing() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
+    let mut kept = f.kept();
+    kept.highest_run = Some("0.5.0".into());
+    kept.first_seen = Some(20_000);
+    kept.write(&f.app.settings);
+    f.app.settings.set(TELL, toml::Value::Boolean(true));
+    f.app.workspace.write().set_chooses(f.window, true);
+    f.look_on(20_002);
+    f.settled();
+    assert!(f.said().is_empty(), "nothing said in a dialog's window");
+    assert!(site.heads().is_empty(), "no check");
+
+    f.app.workspace.write().set_chooses(f.window, false);
+    f.look_on(20_002);
+    f.settled();
+    assert_eq!(
+        f.texts(),
+        ["Skwir was updated to 0.5.1", "Skwir 0.6.2 is out"],
+        "said at the look of a window of the user's own"
+    );
+    assert_eq!(site.heads().len(), 1);
+}
+
 /// A copy of a `.deb` as the question's link leaves it: the repository
 /// added, the question it asked is made moot.
 fn deb_copy(site: &Site) -> (Fixture, Arc<AtomicBool>, Notification) {
