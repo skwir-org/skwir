@@ -17,9 +17,15 @@ version = 2
 # and resvg) is that dependency's to replace.
 unmaintained = "workspace"
 yanked = "deny"
-# A crate vendored by path ([patch.crates-io]) has no source, and no
-# advisory is matched to it here: `tools/deny/vendored.py`, which
-# `just deny` runs next, checks the releases they were taken from.
+# A crate vendored by path has no source, one from git a source of its
+# own, and no advisory is matched to either here. Those [patch.crates-io]
+# takes in place of a release (Skwir's vendored copies, Zed's forks) are
+# held to the releases they stand for by `tools/deny/vendored.py`, which
+# `just deny` runs next. The rest gpui takes from git (wgpu's crates, Zed's
+# forks of font-kit, xim, scap and wasm_thread; see [sources]) are matched
+# to none: some are crates crates.io does not hold
+# (wgpu-core-deps-linux-android-bsd), and they change only when gpui is
+# taken again from Zed (ADR-064).
 # An advisory ignored is listed here with its reason (zip 8.6's, held by
 # calamine 0.36, went with calamine 0.37's zip 9 on 2026-10-28; zstd 0.13's
 # three, held by Wasmtime 48's compile cache, went with zstd 0.13.4 and

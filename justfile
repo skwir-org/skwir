@@ -226,8 +226,8 @@ prune *args:
 
 # The dependencies against deny.toml: their licences, known advisories
 # (read from RustSec's database, fetched), and where they come from (CI);
-# the crates vendored by path, which cargo-deny passes over, against the
-# advisories as the releases they were taken from.
+# the crates patched in by path or from git, which cargo-deny passes over,
+# against the advisories as the releases they stand for.
 deny:
     cargo deny check
     python3 tools/deny/vendored.py

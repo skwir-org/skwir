@@ -38,7 +38,8 @@ Skwir runs neither this crate's tests nor its benchmarks.
 Taken by path, the copy has no source, and `cargo deny check` matches no
 advisory to it: `tools/deny/vendored.py`, which `just deny` runs next,
 holds the published 0.3.2 to RustSec's database, an "unmaintained"
-advisory included, as it does every crate vendored here.
+advisory included, as it does every crate `[patch.crates-io]` takes in
+place of a release (vendored by path, or a fork from git).
 
 ## Patches
 
