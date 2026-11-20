@@ -1077,6 +1077,27 @@ keeps it, and the setting says where it leads. With Home Manager,
 `programs.skwir.fileChooser.enable = true;` set the two (see the
 [README](../README.md#nixos-and-nix)).
 
+A dialog's window floats over the program that asked where your
+compositor keeps a child over its parent. Where it does not (the program
+gave no window, or yours tiles it), a rule can float it: every Skwir
+window says what it is for, `file chooser` for a dialog's and `main
+window` for the others (on Wayland its toplevel tag, on X11 its window
+role, `WM_WINDOW_ROLE`), always in English. On Hyprland (0.56 and
+later):
+
+```lua
+hl.window_rule({
+    match  = { class = "org.skwir.skwir", xdg_tag = "file chooser" },
+    float  = true,
+    size   = "(monitor_w*0.6) (monitor_h*0.7)",
+    center = true,
+})
+```
+
+On i3 (and on sway, for its X11 windows),
+`for_window [class="org.skwir.skwir" window_role="file chooser"] floating enable`;
+on sway, its own windows' tags are in `swaymsg -t get_tree` (`tag`).
+
 **Before removing Skwir**, choose another default file manager here, and
 your desktop's own dialogs or another's: Skwir then removes its file
 from the bus's folder and its line from the portal's configuration. A

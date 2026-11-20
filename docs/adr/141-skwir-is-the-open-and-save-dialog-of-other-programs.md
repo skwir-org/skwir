@@ -7,7 +7,8 @@ step, before an autonomous night). Built on Linux; Linux's by nature
 (decision 11). Built 2026-11-19: the back end (1ae5a3bb), the window
 (e85e415e), attached to the asking window (a4299e63, gpui patch 0085),
 the Settings row (eaac889f), the packages; amended as built (decisions
-4, 6 and 10, and the Context's reading of the configuration).
+4, 6 and 10, and the Context's reading of the configuration), and on
+2026-11-20 (decision 9: the windows' tags).
 
 ## Context
 
@@ -141,7 +142,19 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    (`vendor/patches`). An identifier that names nothing, or a
    compositor without the protocol, leaves a window of its own, brought
    forward. The request's `modal` is passed on, not followed: the window
-   is kept over the asking one, which it does not hold.
+   is kept over the asking one, which it does not hold. **Amended
+   2026-11-20, on the user's ask:** every dialog's window is also
+   tagged `file chooser`, and every window of the user's own `main
+   window` (Wayland's xdg-toplevel-tag-v1, X11's `WM_WINDOW_ROLE`; gpui
+   patch 0089), whether or not a parent was found, so that a rule of the
+   compositor's can float the dialog where nothing keeps it over its
+   asker: an asker giving no window or one of the other display server
+   (an `x11:` id from a program on Xwayland, while skwir is on
+   Wayland), or a compositor that leaves the child tiled (a dialog was
+   seen to tile on the user's Hyprland 0.57.1, which offers xdg-foreign;
+   what its asker gave was not seen). The tags are an interface people's configuration
+   names: untranslated (the description beside, on Wayland, is the
+   reader's language), and renamed only as a breaking change.
 10. **Turning it on: Settings › "Open and save dialogs"** (the user's
     choice), on General beside the default file manager: a choice its
     owner keeps (ADR-140, 8), the back ends installed that offer the file

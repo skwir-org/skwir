@@ -1738,6 +1738,41 @@ const CASCADE: f32 = 32.;
 const DIALOG_WIDTH: f32 = 1000.;
 const DIALOG_HEIGHT: f32 = 680.;
 
+/// What a window is for, named for the window rules people write (ADR-141,
+/// 9): Wayland's toplevel tag, X11's window role. An interface their
+/// configuration names: never translated, and renamed only as a breaking
+/// change. Every window of the user's own is the main window; every window
+/// answering another program's Open or Save dialog, its file chooser,
+/// whichever it asks.
+const MAIN_WINDOW_TAG: &str = "main window";
+const CHOOSER_TAG: &str = "file chooser";
+
+/// The tag a window opens with (`MAIN_WINDOW_TAG`, `CHOOSER_TAG`), and
+/// what it means in the reader's language, which the compositor may show.
+fn window_tag(chooses: bool) -> gpui::WindowTag {
+    if chooses {
+        gpui::WindowTag {
+            tag: CHOOSER_TAG.into(),
+            description: skwir_core::words!(
+                window_tag_chooser = "File chooser",
+                note = "What a window answering another program's Open or Save dialog is for, as the desktop may show it (a window rule's list, a screen reader)."
+            )
+            .say()
+            .into(),
+        }
+    } else {
+        gpui::WindowTag {
+            tag: MAIN_WINDOW_TAG.into(),
+            description: skwir_core::words!(
+                window_tag_main = "Main window",
+                note = "What an ordinary skwir window is for, as the desktop may show it (a window rule's list, a screen reader)."
+            )
+            .say()
+            .into(),
+        }
+    }
+}
+
 /// Open a window drawing the core's window `id`, shaped and placed as it
 /// was left (restored, reopened), else as the window it was made from,
 /// else as the window used last (`Placement::opening`); `split` splits it
@@ -1856,6 +1891,9 @@ fn open_window(
             foreign_parent: choosing
                 .as_ref()
                 .and_then(|c| crate::chooser::foreign_parent(&c.asked().parent_window)),
+            // Whether or not it found a parent: where the compositor does
+            // not keep a dialog over its asker, a rule naming the tag can.
+            tag: Some(window_tag(choosing.is_some())),
             ..Default::default()
         },
         |window, cx| {

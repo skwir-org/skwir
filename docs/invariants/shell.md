@@ -2198,7 +2198,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   recorded for the next start nor reopened, its shape never the next
   window's, a dialog's size at most and never maximized, the asking
   window's child where its identifier names one (`chooser::foreign_parent`,
-  gpui's `WindowOptions::foreign_parent`). While dialogs' windows alone
+  gpui's `WindowOptions::foreign_parent`), and tagged `file chooser`
+  where every window of the user's own is tagged `main window`
+  (`finishing::window_tag`, gpui's `WindowOptions::tag`: Wayland's
+  toplevel tag, X11's window role), for the rules people write; the tags
+  are never translated and are renamed only as a breaking change. While dialogs' windows alone
   are up, the windows asleep stay asleep (`Finishing::asleep`) and a
   launch goes to a window of the user's own (`ordinary_handle`); nothing
   is recorded for the next start until one opened in the run
