@@ -299,6 +299,13 @@ impl WaylandSurfaceState {
             _ => None,
         };
 
+        // What the window is for, for the user's rules: part of the first
+        // commit, as the protocol asks.
+        if let (Some(tag), Some(manager)) = (&params.tag, &globals.tag_manager) {
+            manager.set_toplevel_tag(&toplevel, tag.tag.to_string());
+            manager.set_toplevel_description(&toplevel, tag.description.to_string());
+        }
+
         if let Some(size) = params.window_min_size {
             toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }

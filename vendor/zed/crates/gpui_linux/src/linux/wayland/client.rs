@@ -70,6 +70,7 @@ use wayland_protocols::xdg::shell::client::{
     xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland_protocols::xdg::system_bell::v1::client::xdg_system_bell_v1;
+use wayland_protocols::xdg::toplevel_tag::v1::client::xdg_toplevel_tag_manager_v1;
 use wayland_protocols::{
     wp::cursor_shape::v1::client::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1},
     xdg::dialog::v1::client::xdg_wm_dialog_v1::{self, XdgWmDialogV1},
@@ -266,6 +267,8 @@ pub struct Globals {
     /// Another client's toplevel imported to be a window's parent
     /// (`WindowParams::foreign_parent`).
     pub importer: Option<zxdg_importer_v2::ZxdgImporterV2>,
+    /// What tags a toplevel for the user's rules (`WindowParams::tag`).
+    pub tag_manager: Option<xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1>,
     pub executor: ForegroundExecutor,
     pub frame_ping: Ping,
 }
@@ -318,6 +321,7 @@ impl Globals {
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
             importer: globals.bind(&qh, 1..=1, ()).ok(),
+            tag_manager: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
             frame_ping,
@@ -1882,6 +1886,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 
 delegate_noop!(WaylandClientStatePtr: ignore xdg_activation_v1::XdgActivationV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_importer_v2::ZxdgImporterV2);
+delegate_noop!(WaylandClientStatePtr: ignore xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1);
 // The parent going (its client ended) leaves the window as it is: a
 // toplevel of its own.
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_imported_v2::ZxdgImportedV2);

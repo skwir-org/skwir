@@ -60,6 +60,7 @@ x11rb::atom_manager! {
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
         WM_TRANSIENT_FOR,
+        WM_WINDOW_ROLE,
         _NET_WM_PID,
         _NET_WM_NAME,
         _NET_WM_ICON,
@@ -667,6 +668,22 @@ impl X11WindowState {
                         atoms.WM_TRANSIENT_FOR,
                         xproto::AtomEnum::WINDOW,
                         &[*foreign],
+                    ),
+                )?;
+            }
+
+            // What the window is for, for the user's rules: its role, as
+            // the session management spec has a window say it (STRING,
+            // untranslated). X11 has no place for its description.
+            if let Some(tag) = &params.tag {
+                check_reply(
+                    || "X11 ChangeProperty8 on WM_WINDOW_ROLE failed.",
+                    xcb.change_property8(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms.WM_WINDOW_ROLE,
+                        xproto::AtomEnum::STRING,
+                        tag.tag.as_bytes(),
                     ),
                 )?;
             }

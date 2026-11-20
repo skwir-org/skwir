@@ -2745,6 +2745,20 @@ pub enum ForeignParent {
     Wayland(String),
 }
 
+/// What a window is for, named for the window rules people write: the
+/// tag of Wayland's xdg-toplevel-tag-v1, the role of X11's
+/// `WM_WINDOW_ROLE`. The same for every window that serves the same
+/// purpose, so that a rule matching it follows them all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowTag {
+    /// Untranslated, as configuration files name it, and readable: "main
+    /// window", "file chooser".
+    pub tag: SharedString,
+    /// The tag in the user's language, which the compositor may show or a
+    /// screen reader read (Wayland's toplevel description).
+    pub description: SharedString,
+}
+
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
@@ -2808,6 +2822,10 @@ pub struct WindowOptions {
     /// program asked another to show): set its child where the display
     /// server can (X11, Wayland), so that it floats over it.
     pub foreign_parent: Option<ForeignParent>,
+
+    /// What the window is for, for the user's window rules (Wayland's
+    /// toplevel tag, X11's window role), set before it is first shown.
+    pub tag: Option<WindowTag>,
 
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
@@ -2889,6 +2907,10 @@ pub struct WindowParams {
     #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub foreign_parent: Option<ForeignParent>,
 
+    /// See [`WindowOptions::tag`].
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    pub tag: Option<WindowTag>,
+
     pub window_min_size: Option<Size<Pixels>>,
 
     /// The background the window opens with and the decorations it asks
@@ -2963,6 +2985,7 @@ impl Default for WindowOptions {
             icon: None,
             app_id: None,
             foreign_parent: None,
+            tag: None,
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,

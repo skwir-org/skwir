@@ -121,6 +121,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0086-rows-reorder-within-paragraphs` | A wrapped row holding the end of one paragraph and the start of the next (a separator parts them on one line) lays each paragraph's stretch, and the separator, out on its own in the text's order, as the line is laid out unwrapped, never reordered across them | — |
 | `0087-right-to-left-answers-kept` | A line holding right-to-left text works out its carets, hit tests and selections at the first question and keeps them with it (`LineLayout::bidi_row`, a wrapped line's rows), each answer after that a search; its carets' edges sorted once, so a long right-to-left line costs a sort, never a move of every edge for each | — |
 | `0088-scroll-handle-direction` | `ScrollHandle::direction`: the direction the element a handle tracks was last laid out in, its own or inherited, which way its offset runs sideways (what `clamp_scroll_position` holds it to) | — |
+| `0089-window-tag` | `WindowOptions::tag` (`WindowTag`): what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and its translated description, part of the first commit where the compositor offers the protocol; X11's `WM_WINDOW_ROLE` | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -2218,3 +2219,33 @@ direction where it was itself drawn, wrong for a box that says its own.
 The tests are `elements::div::scroll_axis_tests::a_strip_left_to_right_scrolls_as_it_did`
 and `a_strip_right_to_left_starts_at_its_right`, a strip laying itself out
 right to left in a window laid out left to right.
+
+### 0089: A window's tag
+
+A compositor's or window manager's rules match a window by its program
+(the app id, `WM_CLASS`) and its title, which tell apart neither two
+windows of one program serving different ends (a program's main window
+and the dialog it shows for another program, ADR-141) nor anything
+whose title the window does not choose (the dialog's title is the asking
+program's, in its language). `WindowOptions::tag` names what the window
+is for (`WindowTag`: the tag, untranslated, and what it means in the
+user's language):
+
+- **Wayland**: xdg-toplevel-tag-v1 (staging, `xdg_toplevel_tag_manager_v1`,
+  bound only where the compositor offers it): `set_toplevel_tag` and
+  `set_toplevel_description` are sent once the surface is a toplevel,
+  before its first commit, as the protocol asks. A compositor without
+  the protocol is told nothing.
+- **X11**: `WM_WINDOW_ROLE` (STRING), the role the session management
+  spec has a window say, which window managers' rules match (i3's
+  `window_role`, Openbox's `role`, KWin's window role); X11 has no place
+  for the description.
+
+Windows and macOS leave the field unread. The tag is set as the window
+opens: nothing changes it after. Skwir tags its own windows `main window`
+and those answering another program's Open or Save dialog `file chooser`
+(`finishing::window_tag`).
+
+Checked in a window, as recorded in Skwir's STATUS-LOG; no test, as
+gpui's tests have no display server to answer.
+
