@@ -699,6 +699,9 @@ chooser_filter = Files shown
 # Said where another program saves several files in a folder holding a folder of the name of one of them, which no file can replace: name: that folder's name; folder: where it is.
 chooser_folder_taken = There is a folder named { $name } in { $folder }: choose another folder to save in
 
+# A dropdown of the bar answering another program's dialog: the folders that program last chose in, each shown when chosen.
+chooser_folders = Recent folders
+
 # Before the name field of the bar answering another program's Save dialog.
 chooser_name = Name
 
@@ -6284,7 +6287,7 @@ settings_choices = Choices
 settings_choices_none = None holds what is typed
 
 # What the window keeps, for agents and scripts.
-settings_chooser_folders_state = The folder each program last chose in, through the window answering its Open or Save dialog, by the program's id ("" for one with none)
+settings_chooser_folders_kept_state = The folders each program last chose in, through the window answering its Open or Save dialog, by the program's id ("" for one with none): its five last, newest first (folders), and when it last chose (used, seconds since 1970)
 
 # The button closing the settings.
 settings_close = Close

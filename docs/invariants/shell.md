@@ -2173,7 +2173,8 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   handed in through the same gate (`handover::take_over_choosing`), a
   window each (`finishing::open_chooser`), started where the request
   asks, else where its program last chose (`ui.chooser_folders`, by app
-  id), else, opening files, in what lists the files used lately
+  id: its five last folders, newest first, the fifty programs that chose
+  last; the bar's Recent folders offers them, ADR-144, 8), else, opening files, in what lists the files used lately
   (`App::lists_recent`: Recent, first among its places there,
   `sidebar::recent_first`), else home (`chooser::start_location`). The
   files it answers with (not folders) are added to the desktop's

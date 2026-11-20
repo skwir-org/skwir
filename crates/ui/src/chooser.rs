@@ -29,9 +29,71 @@ use crate::shell::Shell;
 use crate::sizes::{TextSizes, sized};
 use crate::theme::Theme;
 
-/// The folder each program last chose in (ADR-141, 7), by its id, the
-/// host's programs (no id) under "".
+/// The folders each program last chose in (ADR-141, 7; ADR-144, 8), by
+/// its id, the host's programs (no id) under "": a table each, its
+/// `folders` newest first and when it last chose (`used`, seconds since
+/// 1970). A program before was given its one folder as a string.
 pub(crate) const FOLDERS_KEY: &str = "ui.chooser_folders";
+
+/// The folders a program's dialogs offer (ADR-144, 8).
+const FOLDERS_KEPT: usize = 5;
+
+/// The programs whose folders are kept, those that chose last.
+const PROGRAMS_KEPT: usize = 50;
+
+/// The folders program `app` last chose in, newest first, as `kept` (the
+/// value of `FOLDERS_KEY`) holds them: only folders' paths (absolute).
+pub(crate) fn folders_of(kept: &toml::Table, app: &str) -> Vec<PathBuf> {
+    let folders: Vec<&str> = match kept.get(app) {
+        Some(toml::Value::String(one)) => vec![one.as_str()],
+        Some(toml::Value::Table(program)) => program
+            .get("folders")
+            .and_then(toml::Value::as_array)
+            .map(|folders| folders.iter().filter_map(toml::Value::as_str).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    folders
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|folder| folder.is_absolute())
+        .collect()
+}
+
+/// `kept` with `folder` the newest of program `app`'s, chosen at `now`:
+/// five folders a program at most, the fifty programs that chose last.
+fn with_folder(mut kept: toml::Table, app: &str, folder: &str, now: i64) -> toml::Table {
+    let mut folders: Vec<toml::Value> = vec![toml::Value::String(folder.to_owned())];
+    folders.extend(
+        folders_of(&kept, app)
+            .into_iter()
+            .filter_map(|kept| kept.to_str().map(str::to_owned))
+            .filter(|kept| kept != folder)
+            .take(FOLDERS_KEPT - 1)
+            .map(toml::Value::String),
+    );
+    let mut program = toml::Table::new();
+    program.insert("folders".into(), toml::Value::Array(folders));
+    program.insert("used".into(), toml::Value::Integer(now));
+    kept.insert(app.to_owned(), toml::Value::Table(program));
+    if kept.len() > PROGRAMS_KEPT {
+        let used = |value: &toml::Value| {
+            value
+                .get("used")
+                .and_then(toml::Value::as_integer)
+                .unwrap_or(0)
+        };
+        let mut programs: Vec<(String, i64)> = kept
+            .iter()
+            .map(|(app, value)| (app.clone(), used(value)))
+            .collect();
+        programs.sort_by_key(|(_, used)| std::cmp::Reverse(*used));
+        for (app, _) in programs.into_iter().skip(PROGRAMS_KEPT) {
+            kept.remove(&app);
+        }
+    }
+    kept
+}
 
 /// Where the window starts: the request's folder, else the one its
 /// program last chose in, else, opening files, what lists the files used
@@ -46,13 +108,7 @@ pub(crate) fn start_location(app: &skwir_core::App, asked: &Asked) -> Location {
     let kept = app
         .settings
         .get::<toml::Table>(FOLDERS_KEY)
-        .and_then(|folders| {
-            folders
-                .get(&asked.app_id)
-                .and_then(toml::Value::as_str)
-                .map(PathBuf::from)
-        })
-        .filter(|folder| folder.is_absolute());
+        .and_then(|kept| folders_of(&kept, &asked.app_id).into_iter().next());
     if let Some(kept) = kept {
         return Location::from_path(kept);
     }
@@ -136,6 +192,11 @@ pub(crate) struct Chooser {
     choices: Vec<String>,
     /// The dropdown whose list is open.
     open: Option<Dropdown>,
+    /// The folders its program last chose in, newest first (ADR-144, 8),
+    /// read as the window opened.
+    folders: Vec<PathBuf>,
+    folders_focus: FocusHandle,
+    folders_anchor: PopoverAnchor,
     filter_focus: FocusHandle,
     filter_anchor: PopoverAnchor,
     choice_focus: Vec<FocusHandle>,
@@ -150,6 +211,7 @@ pub(crate) struct Chooser {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Dropdown {
+    Folders,
     Filter,
     Choice(usize),
 }
@@ -388,6 +450,14 @@ impl Shell {
             filter,
             choices,
             open: None,
+            folders: self
+                .app
+                .settings
+                .get::<toml::Table>(FOLDERS_KEY)
+                .map(|kept| folders_of(&kept, &asked.app_id))
+                .unwrap_or_default(),
+            folders_focus: cx.focus_handle(),
+            folders_anchor: PopoverAnchor::default(),
             filter_focus: cx.focus_handle(),
             filter_anchor: PopoverAnchor::default(),
             choice_focus: (0..count).map(|_| cx.focus_handle()).collect(),
@@ -510,8 +580,9 @@ impl Shell {
         window.remove_window();
     }
 
-    /// The folder its program chose in, kept for its next dialog
-    /// (ADR-141, 7): the one shown, else the first path's.
+    /// The folder its program chose in, kept first of its folders for its
+    /// next dialog (ADR-141, 7; ADR-144, 8): the one shown, else the first
+    /// path's.
     fn chooser_remember(&self, asked: &Asked, paths: &[PathBuf]) {
         let folder = self.app.pane_dir(self.pane).ok().or_else(|| {
             paths
@@ -522,18 +593,18 @@ impl Shell {
         let Some(folder) = folder.and_then(|f| f.to_str().map(str::to_owned)) else {
             return;
         };
-        let mut folders = self
+        let kept = self
             .app
             .settings
             .get::<toml::Table>(FOLDERS_KEY)
             .unwrap_or_default();
-        if folders.get(&asked.app_id).and_then(toml::Value::as_str) == Some(folder.as_str()) {
-            return;
-        }
-        folders.insert(asked.app_id.clone(), toml::Value::String(folder));
-        self.app
-            .settings
-            .set(FOLDERS_KEY, toml::Value::Table(folders));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+            });
+        let kept = with_folder(kept, &asked.app_id, &folder, now);
+        self.app.settings.set(FOLDERS_KEY, toml::Value::Table(kept));
         self.save_settings_later();
     }
 
@@ -1055,6 +1126,9 @@ pub(crate) fn render(
                 .child(controls::field(input, None, focused, false, None, &theme)),
         );
     }
+    if !chooser.folders.is_empty() {
+        fields = fields.child(folders_dropdown(chooser, &theme, cx));
+    }
     if !asked.filters.is_empty() {
         fields = fields.child(filter_dropdown(chooser, &theme, cx));
     }
@@ -1118,6 +1192,62 @@ pub(crate) fn render(
             .child(buttons)
             .into_any_element(),
     )
+}
+
+/// The folders its program last chose in (ADR-144, 8): a press lists them,
+/// newest first, each from the home folder with `~`; choosing one shows
+/// it.
+fn folders_dropdown(chooser: &Chooser, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let open = chooser.open == Some(Dropdown::Folders);
+    let named = words!(
+        chooser_folders = "Recent folders",
+        note = "A dropdown of the bar answering another program's dialog: the folders that program last chose in, each shown when chosen."
+    );
+    let control = controls::dropdown(
+        "chooser-folders",
+        named.say(),
+        &chooser.folders_focus,
+        theme,
+    )
+    .aria_label(named.say())
+    .aria_expanded(open)
+    .child(chooser.folders_anchor.marker())
+    .on_click(cx.listener(move |this, _, _, cx| {
+        this.chooser_list((!open).then_some(Dropdown::Folders), cx);
+    }));
+    if !open {
+        return control.into_any_element();
+    }
+    let mut list = controls::dropdown_list("chooser-folders-list", theme).on_mouse_down_out(
+        chooser
+            .folders_anchor
+            .outside(cx.listener(|this, _, _, cx| this.chooser_list(None, cx))),
+    );
+    for (at, folder) in chooser.folders.iter().enumerate() {
+        let location = Location::from_path(folder.clone());
+        list = list.child(
+            controls::dropdown_row(format!("chooser-folder-{at}"), false, theme)
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .child(skwir_core::exclusions::tilde(folder)),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.chooser_list(None, cx);
+                    let go = skwir_core::command::Invocation::navigate(&location);
+                    this.run(&go.name, go.args, window, cx);
+                })),
+        );
+    }
+    let width = theme.sizes.scale(crate::sizes::Part::Interface).px(360.);
+    control
+        .child(
+            chooser
+                .folders_anchor
+                .popup_under(LIST_PRIORITY, width, list.into_any_element()),
+        )
+        .into_any_element()
 }
 
 /// The program's filters: the one in use, and the list of them and of all
@@ -1272,6 +1402,63 @@ mod tests {
         assert_eq!(stem_len("archive.tar.gz"), "archive.tar".len());
         assert_eq!(stem_len(".bashrc"), ".bashrc".len());
         assert_eq!(stem_len("Untitled"), "Untitled".len());
+    }
+
+    /// A program keeps its five last folders, newest first, the one
+    /// before read as its list; the fifty programs that chose last are
+    /// kept (ADR-144, 8).
+    #[test]
+    fn a_program_keeps_its_last_folders() {
+        let mut kept = toml::Table::new();
+        kept.insert(
+            "org.example.Old".into(),
+            toml::Value::String("/home/a/Old".into()),
+        );
+        kept.insert(
+            "relative".into(),
+            toml::Value::String("not/a/folder".into()),
+        );
+        assert_eq!(
+            folders_of(&kept, "org.example.Old"),
+            [PathBuf::from("/home/a/Old")]
+        );
+        assert!(folders_of(&kept, "relative").is_empty());
+        assert!(folders_of(&kept, "org.example.None").is_empty());
+        let kept = with_folder(kept, "org.example.Old", "/home/a/New", 10);
+        assert_eq!(
+            folders_of(&kept, "org.example.Old"),
+            [PathBuf::from("/home/a/New"), PathBuf::from("/home/a/Old")]
+        );
+        let mut kept = kept;
+        for at in 0..7 {
+            kept = with_folder(kept, "", &format!("/home/a/{at}"), 20 + at);
+        }
+        kept = with_folder(kept, "", "/home/a/3", 30);
+        let host: Vec<String> = folders_of(&kept, "")
+            .iter()
+            .map(|f| f.display().to_string())
+            .collect();
+        assert_eq!(
+            host,
+            [
+                "/home/a/3",
+                "/home/a/6",
+                "/home/a/5",
+                "/home/a/4",
+                "/home/a/2"
+            ]
+        );
+        for at in 0..PROGRAMS_KEPT {
+            kept = with_folder(
+                kept,
+                &format!("org.example.P{at}"),
+                "/home/a",
+                100 + i64::try_from(at).unwrap(),
+            );
+        }
+        assert_eq!(kept.len(), PROGRAMS_KEPT);
+        assert!(!kept.contains_key("org.example.Old"), "the oldest goes");
+        assert!(kept.contains_key("org.example.P0"));
     }
 
     /// Another filter gives the name its extension in place of one the
