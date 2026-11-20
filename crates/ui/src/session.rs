@@ -31,12 +31,25 @@ pub struct DialogShape {
 }
 
 /// How a window's files look: its view and the size of its icons and
-/// rows.
+/// rows. What it does not say (a file edited by hand, a later version's)
+/// is a dialog's for pictures at first: the grid, sizes left unset (0),
+/// never the whole layout lost.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Looks {
     pub view: String,
     pub zoom: u32,
     pub row_zoom: u32,
+}
+
+impl Default for Looks {
+    fn default() -> Self {
+        Looks {
+            view: crate::view::GRID.to_owned(),
+            zoom: 0,
+            row_zoom: 0,
+        }
+    }
 }
 
 impl Looks {
@@ -942,5 +955,28 @@ mod tests {
         let text = toml::to_string(&session).unwrap();
         assert!(text.contains("properties_on = true"), "{text}");
         assert!(!text.contains("properties ="), "{text}");
+    }
+
+    /// A dialogs' layout whose looks for pictures lack a key (edited by
+    /// hand, written by a later version) keeps the rest: what is missing
+    /// is a pictures dialog's at first (CH-17).
+    #[test]
+    fn a_key_missing_from_the_dialogs_looks_keeps_their_layout() {
+        let kept: DialogShape = toml::from_str(
+            "[session]\nview = \"list\"\nsidebar_width = 210.0\n\n[pictures]\nview = \"columns\"\nzoom = 128\n",
+        )
+        .unwrap();
+        assert_eq!(kept.session.view, "list");
+        assert_eq!(
+            kept.pictures,
+            Some(Looks {
+                view: "columns".into(),
+                zoom: 128,
+                row_zoom: 0,
+            })
+        );
+        let bare: DialogShape = toml::from_str("[pictures]\n").unwrap();
+        assert_eq!(bare.pictures, Some(Looks::default()));
+        assert_eq!(bare.pictures.unwrap().view, crate::view::GRID);
     }
 }
