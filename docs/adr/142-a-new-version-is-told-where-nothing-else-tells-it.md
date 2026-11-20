@@ -425,3 +425,21 @@ it trusts a package by its signed index. The user chose signing.
   Fedora build signed by `try.sh` (a full build in the root; the next
   `release-build` is the first), and PackageKit itself (GNOME Software
   or Discover updating Skwir on Fedora).
+
+### 2026-11-20: the review's fixes
+
+- **Nothing waits on the window's thread.** Yes and No are kept on a
+  worker, the setting written and saved there (`Settings::set`'s
+  contract). A look's work is a job of its own, outside the plugin
+  host's lock (`Plugin::on_looked_at` starts work), and reads the state
+  file only where it may decide what another skwir on it may have
+  decided first: What's new, once a run; the question, or the day's
+  check, on a day one may come. A copy something else updates does
+  nothing more once looked at. The plugin's lock of what is kept is
+  held over memory alone, never a file.
+- **An answer that cannot be kept.** Where the settings file cannot be
+  written (Home Manager's), nothing is asked: `updates.tell` is said
+  where the rest is declared. An answer the settings could not keep (a
+  file made read-only since, a full drive) is taken back and said ("Skwir
+  could not keep your answer", and why), and is not counted as answered:
+  the question may come back another day.

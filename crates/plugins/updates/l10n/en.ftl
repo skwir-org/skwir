@@ -5,6 +5,9 @@ updates_answer = Answer whether to be told of new versions
 # site: Skwir's website, as written (skwir.org).
 updates_answer_description = The answer to the question a downloaded copy asks once: whether to ask { $site } once a day
 
+# Said when the answer to the question about new versions could not be saved in the settings; why follows (the settings file is read-only, the drive is full).
+updates_answer_not_kept = Skwir could not keep your answer
+
 # Asked once, in a message that stays, of a copy downloaded from the website. site: the website, as written (skwir.org).
 updates_ask = Tell you when a new version of Skwir is out? Skwir would ask { $site } once a day; Cloudflare, which serves it, sees your IP address.
 

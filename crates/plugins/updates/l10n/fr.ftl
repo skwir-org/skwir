@@ -8,6 +8,9 @@ updates_answer = Répondre s’il faut être prévenu des nouvelles versions
 updates_answer_description = La réponse à la question qu’une copie téléchargée pose une fois : faut-il interroger { $site } une fois par jour
 
 # draft
+updates_answer_not_kept = Skwir n’a pas pu garder votre réponse
+
+# draft
 updates_ask = Être prévenu quand une nouvelle version de Skwir paraît ? Skwir interrogerait { $site } une fois par jour ; Cloudflare, qui le sert, voit votre adresse IP.
 
 # draft

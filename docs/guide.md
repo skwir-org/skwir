@@ -1106,7 +1106,9 @@ is metered, the day's check waits for another; **Check for a new
 version**, in the command palette, asks at once all the same, and says
 what it found: the new version, that Skwir is up to date, or why it could
 not tell. Skwir asks skwir.org directly, never through a proxy: where a
-network lets nothing out but through one, it is never told.
+network lets nothing out but through one, it is never told. Where the
+settings file cannot be written (Home Manager's), nothing is asked: set
+`updates.tell` where your settings are declared.
 
 A copy something else updates never asks: the AUR, Nix, your
 distribution, or Skwir's own apt and dnf repositories

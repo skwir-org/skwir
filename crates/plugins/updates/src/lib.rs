@@ -17,6 +17,13 @@
 //!
 //! What's new is said once after an update, on every channel, with no
 //! request: the running version against the highest one run before.
+//!
+//! Nothing here reads or writes a file on the window's thread, nor under
+//! a lock another waits for: a look's work is a job of its own, outside
+//! the plugin host's lock, which reads the state file only where it may
+//! decide something (`Inner::looked_at`); the answer to the question is
+//! kept on a worker (`Inner::answer`); and the plugin's own lock of what
+//! is kept is held only over memory (`Inner::save`).
 
 pub mod check;
 pub mod kept;
@@ -158,9 +165,9 @@ struct Inner {
     setup: Setup,
     /// While registered.
     run: Mutex<Run>,
-    /// Held across a read and a write of what is kept, so a look and a
-    /// check never write over each other. Taken before `run` where both
-    /// are held.
+    /// Held across a read and a write of what is kept in memory, so a look
+    /// and a check never write over each other; never across a file read
+    /// or written. Taken before `run` where both are held.
     kept: Mutex<()>,
 }
 
@@ -179,6 +186,9 @@ struct Run {
     /// The last check's thread, for a test to wait for its end.
     #[cfg(test)]
     thread: Option<std::thread::JoinHandle<()>>,
+    /// How many looks ended, for a test to wait for one.
+    #[cfg(test)]
+    looks: u64,
 }
 
 impl Plugin for UpdatesPlugin {
@@ -255,15 +265,18 @@ impl Plugin for UpdatesPlugin {
         if !keys.iter().any(|key| key == TELL) {
             return;
         }
-        // Chosen in Settings: the question is never asked.
-        self.inner.answered(app);
+        // Chosen in Settings: the question is never asked. Saved on a job
+        // of its own, outside the plugin host's lock this is called under.
+        if self.inner.answered(app) {
+            self.inner.save_later(app);
+        }
         self.inner.stand(app);
         if self.inner.downloaded().is_some() && tells(app) {
             self.inner.start_check(app, Asked::Daily);
         }
     }
     fn on_looked_at(&self, app: &App) {
-        self.inner.looked_at(app);
+        self.inner.look_later(app);
     }
     fn on_disable(&self, app: &App) {
         let mut run = self.inner.run.lock();
@@ -390,10 +403,12 @@ fn said_out(telling: Telling) -> Words {
 impl Inner {
     /// Save what is kept, merged once more with what the state file holds
     /// just before (`Kept::merged`), written again only where that file
-    /// brought something. Reads and writes the disk: on a worker.
+    /// brought something. Reads and writes the disk: on a worker, the
+    /// plugin's lock taken only over the merge in memory (`Settings::save`
+    /// serializes its writers itself).
     fn save(&self, app: &App) {
-        let _held = self.kept.lock();
         if let Some(theirs) = Kept::on_disk(&app.settings) {
+            let _held = self.kept.lock();
             let mine = Kept::read(&app.settings);
             let merged = mine.clone().merged(&theirs);
             if merged != mine {
@@ -505,9 +520,60 @@ impl Inner {
         );
     }
 
-    /// A window came to the front: what is new is said once a run, the
-    /// question asked when its day comes, and the day's check started.
+    /// A window came to the front (`Plugin::on_looked_at`, called under the
+    /// plugin host's lock): the look is a job of its own (`looked_at`),
+    /// started only where it may do something: at a run's first look
+    /// (What's new), and for a copy downloaded or one its system may stop
+    /// updating (a `.deb` or an `.rpm`, read again at each look). A copy
+    /// something else updates does nothing more once looked at.
+    fn look_later(self: &Arc<Self>, app: &App) {
+        let lifetime = {
+            let run = self.run.lock();
+            let Some(lifetime) = run.lifetime.clone() else {
+                return;
+            };
+            let follows = run.here.is_some_and(|here| {
+                here.downloaded().is_some() || here.channel.is_some_and(Channel::has_repository)
+            });
+            if run.looked_for_whats_new && !follows {
+                drop(run);
+                self.look_ended();
+                return;
+            }
+            lifetime
+        };
+        let (inner, weak) = (Arc::clone(self), app.weak());
+        app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Background,
+            "updates-look",
+            lifetime,
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    inner.looked_at(&app);
+                }
+            },
+        );
+    }
+
+    /// A window was looked at: what is new is said once a run, the
+    /// question asked when its day comes, and the day's check started. On
+    /// a worker, and outside the plugin host's lock.
     fn looked_at(self: &Arc<Self>, app: &App) {
+        self.look(app);
+        self.look_ended();
+    }
+
+    /// A look ended: counted, for a test to wait for it.
+    // Nothing is counted outside tests.
+    #[cfg_attr(not(test), allow(clippy::unused_self))]
+    fn look_ended(&self) {
+        #[cfg(test)]
+        {
+            self.run.lock().looks += 1;
+        }
+    }
+
+    fn look(self: &Arc<Self>, app: &App) {
         let (lifetime, here, look_for_whats_new) = {
             let mut run = self.run.lock();
             let Some(lifetime) = run.lifetime.clone() else {
@@ -530,10 +596,37 @@ impl Inner {
             other => other,
         };
         let today = (self.setup.today)();
-        let check = {
+        let downloaded = here.and_then(Here::downloaded);
+        // The state file, which another skwir writes too, is read only
+        // where this look may decide what that one may have decided first
+        // (`Kept::merged`): What's new, once a run; the question, or the
+        // day's check, where what this process holds says one may come
+        // today. Read before the plugin's lock is taken.
+        let (asks, checks) = match downloaded {
+            Some(_) => {
+                let mut held = Kept::read(&app.settings);
+                held.as_of(today);
+                let checks = tells(app) && held.checked_on != Some(today) && self.checks_daily();
+                (held.asks(today), checks)
+            }
+            None => (false, false),
+        };
+        let theirs = if look_for_whats_new || asks || checks {
+            Kept::on_disk(&app.settings)
+        } else {
+            None
+        };
+        // A settings file that cannot be written (Home Manager's) cannot
+        // keep the answer: nothing is asked of it, where `updates.tell` is
+        // said as the rest is declared.
+        let answerable = asks && !app.settings.read_only();
+        let (check, changed) = {
             let _held = self.kept.lock();
             let before = Kept::read(&app.settings);
-            let mut kept = Kept::now(&app.settings);
+            let mut kept = match &theirs {
+                Some(theirs) => before.clone().merged(theirs),
+                None => before.clone(),
+            };
             kept.as_of(today);
             if look_for_whats_new
                 && let Some(running) = self.setup.running
@@ -552,7 +645,7 @@ impl Inner {
                 );
             }
             let mut check = false;
-            if let Some(channel) = here.and_then(Here::downloaded) {
+            if let Some(channel) = downloaded {
                 kept.first_seen.get_or_insert(today);
                 // The answer is the setting: a copy that wrote it (here,
                 // in another skwir, by hand) is never asked, whatever the
@@ -560,22 +653,35 @@ impl Inner {
                 if app.settings.stored::<bool>(TELL).is_some() {
                     kept.answered = true;
                 }
-                if kept.asks(today) {
+                if answerable && kept.asks(today) {
                     kept.asked += 1;
                     kept.asked_on = Some(today);
                     self.ask(app, channel);
                 }
-                check = tells(app) && kept.checked_on != Some(today);
+                check = checks && kept.checked_on != Some(today);
             }
-            if kept != before {
+            let changed = kept != before;
+            if changed {
                 kept.write(&app.settings);
-                self.save_later(app);
             }
-            check
+            (check, changed)
         };
+        if changed {
+            self.save(app);
+        }
         if check {
             self.start_check(app, Asked::Daily);
         }
+    }
+
+    /// Whether a check the day's look starts would be made now: none under
+    /// way, none that got no answer within the hour (`start_check`).
+    fn checks_daily(&self) -> bool {
+        let run = self.run.lock();
+        run.checking.is_none()
+            && run.failed.is_none_or(|failed| {
+                (self.setup.now)().saturating_duration_since(failed) >= AGAIN_AFTER
+            })
     }
 
     /// The question, in a toast that stays: Yes, No, and for a `.deb` or
@@ -625,12 +731,61 @@ impl Inner {
         );
     }
 
-    /// The question's answer: the setting written, never asked again, and
-    /// a yes checked at once, which says the version it finds in place of
-    /// the confirmation (`Asked::Answered`).
+    /// The question's answer (`updates.answer`, its buttons): kept on a
+    /// worker, as the window's thread never writes nor waits for a save
+    /// under way (`Settings::set`); where it is asked elsewhere (a test),
+    /// there.
     fn answer(self: &Arc<Self>, app: &App, tell: bool) {
+        if !skwir_core::scheduler::on_window_thread() {
+            self.keep_answer(app, tell);
+            return;
+        }
+        let Some(lifetime) = self.run.lock().lifetime.clone() else {
+            return;
+        };
+        let (inner, weak) = (Arc::clone(self), app.weak());
+        app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Normal,
+            "updates-answer",
+            lifetime,
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    inner.keep_answer(&app, tell);
+                }
+            },
+        );
+    }
+
+    /// The answer kept: the setting written and saved, the question never
+    /// asked again, and a yes checked at once, which says the version it
+    /// finds in place of the confirmation (`Asked::Answered`). An answer
+    /// the settings cannot keep (their file made read-only, a full drive)
+    /// is taken back and said, and the question may come back another
+    /// day. Writes the disk: on a worker.
+    fn keep_answer(self: &Arc<Self>, app: &App, tell: bool) {
+        let before = app.settings.stored::<toml::Value>(TELL);
         app.settings.set(TELL, toml::Value::Boolean(tell));
-        self.answered(app);
+        if let Err(error) = app.settings.save() {
+            // A read-only file's settings are put back by `save`; any
+            // other failure leaves the change to be saved: taken back.
+            if app.settings.stored::<bool>(TELL) == Some(tell) {
+                match before {
+                    Some(value) => app.settings.set(TELL, value),
+                    None => app.settings.unset(TELL),
+                }
+            }
+            app.notify(
+                NotifyLevel::Error,
+                Words::of_error(error.context(words!(
+                    updates_answer_not_kept = "Skwir could not keep your answer",
+                    note = "Said when the answer to the question about new versions could not be saved in the settings; why follows (the settings file is read-only, the drive is full)."
+                ))),
+            );
+            return;
+        }
+        if self.answered(app) {
+            self.save(app);
+        }
         self.stand(app);
         if tell {
             if !self.start_check(app, Asked::Answered) {
@@ -647,15 +802,17 @@ impl Inner {
         }
     }
 
-    /// The question is never asked again.
-    fn answered(self: &Arc<Self>, app: &App) {
+    /// The question is never asked again: what is kept says so, in
+    /// memory. Whether it did not yet, for the caller to save.
+    fn answered(&self, app: &App) -> bool {
         let _held = self.kept.lock();
         let mut kept = Kept::read(&app.settings);
-        if !kept.answered {
-            kept.answered = true;
-            kept.write(&app.settings);
+        if kept.answered {
+            return false;
         }
-        self.save_later(app);
+        kept.answered = true;
+        kept.write(&app.settings);
+        true
     }
 
     /// `updates.check`: a check now, whatever the day.
@@ -788,6 +945,12 @@ impl Inner {
             return;
         };
         let today = (self.setup.today)();
+        // What another skwir on the state file told meanwhile, read before
+        // the plugin's lock is taken.
+        let theirs = fetched
+            .as_ref()
+            .ok()
+            .and_then(|_| Kept::on_disk(&app.settings));
         {
             // `kept` before `run`, wherever both are held.
             let _held = self.kept.lock();
@@ -823,7 +986,10 @@ impl Inner {
             if !downloaded || !tells(&app) {
                 return;
             }
-            let mut kept = Kept::now(&app.settings);
+            let mut kept = Kept::read(&app.settings);
+            if let Some(theirs) = &theirs {
+                kept = kept.merged(theirs);
+            }
             kept.as_of(today);
             kept.latest = Some(answer.latest.to_string());
             kept.important_since = answer.important_since.map(|v| v.to_string());

@@ -197,9 +197,12 @@ impl Fixture {
         }
     }
 
+    /// A window looked at on `day`, and the look's job ended.
     fn look_on(&self, day: i64) {
         self.day.store(day, Ordering::SeqCst);
+        let looks = self.plugin.inner.run.lock().looks;
         self.plugin.on_looked_at(&self.app);
+        self.wait_until("the look ends", |f| f.plugin.inner.run.lock().looks > looks);
     }
 
     /// `minutes` later than the clock says, the day the same.
@@ -800,6 +803,55 @@ fn turned_off_during_a_check_nothing_of_it_stays() {
         3,
         "not held back an hour by the earlier run's failure"
     );
+}
+
+/// Pressed in the window, the answer waits there for nothing: it is kept
+/// on a worker, even while what is kept is held (a save under way), and
+/// says its confirmation once kept.
+#[test]
+fn an_answer_pressed_in_the_window_waits_there_for_nothing() {
+    let site = Site::new(&file("0.5.1"), "\"a\"");
+    let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
+    skwir_core::scheduler::mark_window_thread(&f.app.scheduler);
+    let held = f.plugin.inner.kept.lock();
+    f.answer(true);
+    drop(held);
+    f.wait_until("the answer is kept and checked", |f| {
+        f.kept().answered && f.kept().checked_on.is_some()
+    });
+    f.settled();
+    assert_eq!(f.texts(), ["Skwir will tell you when a new version is out"]);
+    assert_eq!(f.app.settings.stored::<bool>(TELL), Some(true));
+}
+
+/// A settings file that cannot be written (Home Manager's) is asked
+/// nothing; an answer it cannot keep is said, taken back, and not counted
+/// as answered, and nothing is asked of the site.
+#[cfg(unix)]
+#[test]
+fn an_answer_the_settings_cannot_keep_is_said_and_not_counted() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let folder = tempfile::tempdir().unwrap();
+    let settings = folder.path().join("settings.toml");
+    std::fs::write(&settings, "").unwrap();
+    let f = Fixture::sharing(folder.path(), &site.address, Version(0, 5, 1));
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o444)).unwrap();
+    f.look_on(20_000);
+    f.look_on(20_002);
+    assert!(f.said().iter().all(|n| !n.stays), "nothing asked");
+
+    f.answer(true);
+    f.settled();
+    let said = f.texts();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with("Skwir could not keep your answer: "),
+        "{said:?}"
+    );
+    assert_eq!(f.app.settings.stored::<bool>(TELL), None, "taken back");
+    assert!(!f.kept().answered && !f.kept_on_disk().answered);
+    assert!(site.heads().is_empty());
 }
 
 /// Two releases on one state file (an older one still running, ADR-115)

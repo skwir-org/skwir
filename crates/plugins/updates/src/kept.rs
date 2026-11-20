@@ -75,20 +75,11 @@ impl Kept {
         settings.get::<Kept>(KEY).unwrap_or_default()
     }
 
-    /// What this process holds, merged with what the state file holds now
-    /// (`merged`): another skwir on the same file (two releases side by
-    /// side, ADR-115) writes it too, and a save writes the key whole. Reads
-    /// the disk: on a worker, under the plugin's lock of what is kept.
-    pub fn now(settings: &skwir_core::settings::Settings) -> Kept {
-        let mine = Kept::read(settings);
-        match Kept::on_disk(settings) {
-            Some(theirs) => mine.merged(&theirs),
-            None => mine,
-        }
-    }
-
     /// What the state file holds now, if it holds it: another skwir's
-    /// writes too. Reads the disk.
+    /// writes too (two releases side by side, ADR-115), which a save of
+    /// this one would write over whole unless merged first (`merged`).
+    /// Reads the disk: on a worker, never under the plugin's lock of what
+    /// is kept.
     pub fn on_disk(settings: &skwir_core::settings::Settings) -> Option<Kept> {
         settings
             .kept_on_disk(KEY)

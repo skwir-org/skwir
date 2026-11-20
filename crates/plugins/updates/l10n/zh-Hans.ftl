@@ -8,6 +8,9 @@ updates_answer = 回答是否在有新版本时收到通知
 updates_answer_description = 下载的副本只问一次的问题的答案：是否每天询问一次 { $site }
 
 # draft
+updates_answer_not_kept = Skwir 无法保存你的回答
+
+# draft
 updates_ask = 在 Skwir 发布新版本时通知你吗？Skwir 每天会询问一次 { $site }；为其提供服务的 Cloudflare 会看到你的 IP 地址。
 
 # draft
