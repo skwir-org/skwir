@@ -104,7 +104,10 @@ asked where the dialog's action asked them; decision 2: one tab).
 3. **A place whose files are not files to give** (the Trash: a trashed
    file is gone from where it was) says so
    (`LocationProvider::gives_files`), and a dialog's window offers it
-   nowhere: not in the sidebar, and its files answer nothing.
+   nowhere (`App::places_offered`: not in the sidebar, its Places
+   heading's menu nor the address field's places), and its files answer
+   nothing: reached by its address typed, Enter on one says they cannot
+   be chosen.
 4. **Dialogs remember their own layout** (`ui.chooser_session`), read
    and written only by dialogs' windows, as a window of the user's own
    remembers its (ADR-122, `ui.session`): a panel turned off in a

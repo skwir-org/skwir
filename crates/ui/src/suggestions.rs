@@ -206,10 +206,11 @@ impl SuggestSource for Places {
         let words = ask.words();
         // Each with where it leads, as data: two places leading to one
         // place, filtered alike, are offered once.
+        // Those the window asking offers: a dialog's, none whose files are
+        // not to give (the Trash, ADR-144, 3).
+        let chooses = ask.pane.is_some_and(|pane| app.chooses_in(pane));
         let mut found: Vec<(i32, (String, Option<String>), Suggestion)> = app
-            .registry
-            .places
-            .all()
+            .places_offered(chooses)
             .into_iter()
             .filter(|place| !place.hidden)
             .filter_map(|place| {

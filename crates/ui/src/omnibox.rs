@@ -2826,11 +2826,14 @@ impl Shell {
         let opened = self.app.schemes().into_iter().map(|s| s.to_string());
         for scheme in shown.chain(opened) {
             let address = format!("{scheme}:");
+            let location = Location::new(&scheme, "");
             let searches = self
                 .app
                 .provider(&scheme)
-                .is_none_or(|p| p.searches(&Location::new(&scheme, "")));
-            if scheme != PATH_SCHEME && !searches && !schemes.contains(&address) {
+                .is_none_or(|p| p.searches(&location));
+            // Of the places the window offers (a dialog's, no Trash).
+            let offered = !searches && self.offers_location(&location);
+            if scheme != PATH_SCHEME && offered && !schemes.contains(&address) {
                 schemes.push(address);
             }
         }
@@ -2970,7 +2973,9 @@ impl Shell {
             3,
         );
         let mut rank = 10;
-        for place in self.app.registry.places.all() {
+        // Of the places the window offers (`places_here`: a dialog's, no
+        // Trash, ADR-144, 3).
+        for place in self.places_here() {
             // A folder, a tag, every tag, Recent: where words can search
             // (`App::searchable`), never the trash or the shelf.
             if place.hidden || !place.is_its_location() || !self.app.searchable(&place.location) {
@@ -3132,7 +3137,9 @@ impl Shell {
             .filter_map(|scheme| {
                 let location = Location::new(&scheme, "");
                 let provider = self.app.provider(&scheme)?;
-                (!provider.searches(&location)).then(|| Row::Offered {
+                // A place the window offers (a dialog's, no Trash, ADR-144, 3).
+                let offered = !provider.searches(&location) && self.offers_location(&location);
+                offered.then(|| Row::Offered {
                     label: self.app.location_title(&location).say(),
                     text: format!("{scheme}:"),
                     location,

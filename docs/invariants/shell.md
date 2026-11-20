@@ -2227,9 +2227,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   no terminal nor split (their commands are not offered), views are
   offered but a lens (`ui.view`'s rule), Activity does not open there,
   by itself or from the strip and the rows arriving, nothing is pinned to
-  the player, and the sidebar leaves out a place whose files are not to give
-  (`App::gives_files`: the Trash), whose files it never answers with
-  either. A question goes to the window whose action asked it
+  the player, and it offers no place whose files are not to give
+  (`App::gives_files`: the Trash) wherever places are offered (the
+  sidebar, its Places heading's menu, the address field's places:
+  `App::places_offered`, `Shell::places_here`), whose files it never
+  answers with either. A question goes to the window whose action asked it
   (`app::asking_in`, `App::take_questions_to`, `finishing::deliver`):
   what a window runs, the workers its work starts (the scheduler hands
   the asking pane on), the plans it applies (the executor does) and a

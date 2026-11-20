@@ -213,3 +213,39 @@ fn a_dialog_s_keys_are_what_it_offers() {
         assert!(runs.contains(name), "{name} is refused: {refused:#?}");
     }
 }
+
+/// A dialog's window offers no place whose files are not to give (the
+/// Trash, ADR-144, 3) wherever places are offered: the places it arranges
+/// and the address field's places, as `ui.suggest` answers them for its
+/// pane; a window of the user's own offers it.
+#[test]
+fn a_dialog_offers_no_trash() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    skwir_ui::suggestions::register(&app);
+    let trash = |places: &[skwir_core::registry::Place]| {
+        places
+            .iter()
+            .any(|place| place.location.scheme.as_ref() == "trash")
+    };
+    assert!(trash(&app.places_offered(false)), "the user's own");
+    assert!(!trash(&app.places_offered(true)), "a dialog's");
+    let own = app.workspace.read().active_id();
+    let (dialog, _, pane) = app
+        .open_window(skwir_core::Location::from_path(tmp.path()))
+        .unwrap();
+    app.workspace.write().set_chooses(dialog, true);
+    assert!(app.chooses_in(pane) && !app.chooses_in(own));
+    let offered = |pane| {
+        let args = serde_json::json!({ "text": "trash", "pane": pane });
+        match app.dispatch(&skwir_core::command::Invocation::with_args(
+            "ui.suggest",
+            &args,
+        )) {
+            Ok(skwir_core::command::Outcome::Value(value)) => value.to_string(),
+            other => panic!("ui.suggest: {other:?}"),
+        }
+    };
+    assert!(offered(own).contains("trash:"), "{}", offered(own));
+    assert!(!offered(pane).contains("trash:"), "{}", offered(pane));
+}

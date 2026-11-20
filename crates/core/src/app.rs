@@ -1636,6 +1636,40 @@ impl App {
         }
     }
 
+    /// The places a window offers (ADR-144, 3): every place, but in one
+    /// answering another program's dialog (`chooses`), none whose files are
+    /// not files to give (the Trash: `gives_files`), wherever it would be
+    /// offered. The one answer the sidebar, its headings' menus and the
+    /// address field's places ask.
+    pub fn places_offered(&self, chooses: bool) -> Vec<crate::registry::Place> {
+        let places = self.registry.places.all();
+        if !chooses {
+            return places;
+        }
+        places
+            .into_iter()
+            .filter(|place| self.offers_location(chooses, &place.location))
+            .collect()
+    }
+
+    /// Whether a window offers going to `location` (ADR-144, 3): every
+    /// window, but one answering another program's dialog (`chooses`)
+    /// none whose files are not to give (`gives_files`). What
+    /// `places_offered` asks of each place, and the address field of a
+    /// place's address it offers (`trash:` for "tras").
+    pub fn offers_location(&self, chooses: bool, location: &Location) -> bool {
+        !chooses || self.gives_files(location)
+    }
+
+    /// Whether the window `pane` is in answers another program's dialog
+    /// (`WindowTabs::chooses`): not for a pane in no window.
+    pub fn chooses_in(&self, pane: PaneId) -> bool {
+        let ws = self.workspace.read();
+        ws.window_of(pane)
+            .and_then(|window| ws.window(window))
+            .is_some_and(crate::workspace::WindowTabs::chooses)
+    }
+
     /// Whether what `location` lists may be handed to another program as
     /// the files a person chose (`LocationProvider::gives_files`, ADR-144):
     /// true but where its provider says not.

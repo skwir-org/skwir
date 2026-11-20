@@ -348,11 +348,24 @@ pub(crate) enum Arranging {
 }
 
 impl Shell {
-    /// Every place as the user arranged them (`arrange`), kept until the
-    /// places or their arrangement change: the sidebar draws them at
-    /// every frame, and arranging copies and sorts every place. A dialog's
-    /// window leaves out a place whose files are not to give (the Trash,
-    /// `App::gives_files`, ADR-144, 3).
+    /// The places this window offers (`App::places_offered`): a dialog's
+    /// none whose files are not to give (the Trash, ADR-144, 3). What the
+    /// sidebar lists and its Places heading's menu arranges.
+    pub(crate) fn places_here(&self) -> Vec<Place> {
+        self.app.places_offered(self.chooser.is_some())
+    }
+
+    /// Whether this window offers going to `location`
+    /// (`App::offers_location`): the address field's places by their
+    /// address ask it.
+    pub(crate) fn offers_location(&self, location: &skwir_core::Location) -> bool {
+        self.app.offers_location(self.chooser.is_some(), location)
+    }
+
+    /// Every place this window offers (`places_here`) as the user arranged
+    /// them (`arrange`), kept until the places or their arrangement change:
+    /// the sidebar draws them at every frame, and arranging copies and
+    /// sorts every place.
     pub fn arranged_places(&self) -> std::sync::Arc<[Arranged]> {
         let revision = self.app.registry.places.revision();
         let arranging = match &self.chooser {
@@ -369,11 +382,7 @@ impl Shell {
             return std::sync::Arc::clone(arranged);
         }
         // Read after the revision: a change meanwhile arranges again.
-        let mut places = self.app.registry.places.all();
-        if arranging != Arranging::Own {
-            places.retain(|place| self.app.gives_files(&place.location));
-        }
-        let mut arranged = arrange(places, &self.sidebar_sections);
+        let mut arranged = arrange(self.places_here(), &self.sidebar_sections);
         if arranging == Arranging::DialogOpening {
             recent_first(&mut arranged, |place| {
                 self.app.lists_recent(&place.location)
@@ -2344,7 +2353,7 @@ impl Shell {
                     ..item(title, serde_json::Value::Null, order, icon)
                 }
             };
-            let places = arrange(self.app.registry.places.all(), sections);
+            let places = arrange(self.places_here(), sections);
             for (i, arranged) in places
                 .iter()
                 .filter(|a| a.place.group == group && a.role.hides())
