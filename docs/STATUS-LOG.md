@@ -21153,3 +21153,110 @@ root titled by its remote, the other's folder listed, both servers
 again once let go of. Against the old `publish` it fails ("both
 servers' places, mounted"). Not run: a window, check-cross, the rest
 of `remote-check`.
+
+## 2026-11-20: the review before the release, fixed; where the next review starts
+
+Asked by the user once another session's remote fix was in: "the final
+review before the release", of everything not reviewed since the last
+round.
+
+- **How**: six readers over 30a71ecd..5f25054d (36 commits: the fixes of
+  the round of ADR-142, the thumbnails and ADR-143; the repositories'
+  key and the signed `.rpm` files, from another session; the site's
+  deployment notes; a server kept with a folder), five by area and one
+  on the release as a whole (its changelog section against
+  `v0.5.1..HEAD`, RELEASING's steps, PLAN's statuses, what a release
+  would ship by mistake): 66 findings, one high (the changelog's
+  Unreleased section was no release page and left out nearly all the
+  release), five medium. Then six fixers, each owning its files, the
+  documents' fixer owning CHANGELOG and PLAN for the round, every step
+  committed apart (c1728654..4004e592, 43 commits with the catalogs'
+  count). The user added one item on the way (the repository link to
+  name the system, for the site), reviewed apart once committed (seven
+  findings, fixed in 54a1d9a8).
+- **The high and the mediums**: the release's changelog section written
+  in 0.5.1's form, 2.5 KB above `### All changes` (c50227cc, folded in
+  2852fbb9, 4004e592; not yet reviewed by the user); the reader's
+  cursor chosen for where the pointer was at the last frame, now as it
+  moves, a frame asked only when what is under it changes (287aec24);
+  Yes and No on the question of new versions writing and syncing two
+  files on the window's thread, now on a worker (0f3fca71); sizes in
+  thousands, collation, dates by the locale and the drafts said to a
+  0.5.1 user (c50227cc); PLAN, ADR-139 and the index saying the words
+  designed and unbuilt (8b828b82).
+- **The rest, by area**: notices: a plugin takes back its question and a
+  question that stays is asked, and counted, only at a look of a window
+  of the user's own (`App::take_back_question`, `App::looked_at_own`,
+  1aa30a63, 453a920d; the updates plugin's side 97718fb2, 393fe445); a
+  plugin's timed notices go with it (`App::notify_from`); each toast has
+  buttons of its own, which Tab now reaches (they were never tab stops:
+  the question could not be answered by keyboard, 23906469). The updates
+  plugin: a moot question taken down, the state file read only where a
+  look decides, an answer the settings cannot keep said, two copies'
+  merge on a tie and a clock behind, the setting on Privacy, its answer
+  kept out of the palette (`Declared::asked_only`), the network's
+  failures in Skwir's words, a broken state file written again whole
+  (512f233c, 254c8664, aacc66c2, 964038d4, bc3404f3, 0d776c99); the
+  repository link names Fedora, Debian or Ubuntu from os-release (one
+  reader, `platform::os_release`; 74b872b7, 54a1d9a8). Packaging and
+  release: release-build proves the key signs before the hour of checks
+  (5af9e6a8); skwir-repository dated by its version file, refused when
+  remade with other bytes (e943df53); a change of key's second step that
+  works (013ad387); on Fedora 44, rpm kept a key as first imported (an
+  extension never reached it, a retired key stayed trusted, a scriptlet
+  cannot touch rpm's keys under its lock): a helper `%posttrans` starts
+  apart does it once the transaction ends, and repository-check starts
+  from the published skwir-repository 1 (08caa199); the apt source a
+  configuration file again, removed with its package and brought back
+  when added again (80be087d); Cargo.lock and .SRCINFO checked with the
+  version, RELEASING's missing steps (3e5663df, cacfda60, ed397793).
+  Thumbnails: a lossless JPEG never decoded reduced (it drew stripes into
+  the desktop's cache, c1728654); whoever asks says whether a decode
+  takes threads (82f31d42); a photo's thumbnail encoded once (96cc78cd);
+  the crates patched from git held to the advisories (5b4bd414); a large
+  comic page decoded reduced, and picture::decode keeping its memory
+  bound, which image's JPEG decoder never checked (8f908cbd); e69680cb,
+  5ac85b49. The drag: a selection begun anywhere within a line, the
+  page's lines indexed once (dba5edcc); a press's page apart from the
+  selection's (d0c0793b); one test of a drag (6bb4ed92); the direction
+  read from each scroll box, gpui patch 0088 (63bdda5e). The remote fix:
+  only a server kept with a folder below a mount's top takes its place,
+  never a device's (803f4d0b).
+- **Decided along the way** (the conservative reading, the user may
+  revisit): a question that stays is asked at a look of the user's own
+  window (not counted when drawn, as nt first built); What's new and the
+  day's check wait for one too; the preview's decodes keep their
+  threads, read ahead included; a click where nothing selects clears the
+  selection, a drag that moves keeps it; a press within a line selects
+  (half a line beside it, 0.6 of a line into the leading); a server at a
+  mount's top is the mount's place again, as in 0.5.1, one kept from a
+  phone's or a camera's folder beside the device; the Fedora key helper
+  (a process a package starts apart: Google Chrome's repository does the
+  like by cron); an `.rpm` system whose ID_LIKE names fedora (RHEL and
+  its kin) gets Fedora's commands; the changelog names the version 0.6.0.
+  For the user: whether the site's French and Chinese pages go live with
+  this release (the site has no draft state).
+- **Checks**: each step by its fixer (rustfmt, clippy `-D warnings` on
+  the crates touched, their tests; windows on Xvfb for the toasts' keys,
+  the reader's presses and frames, the picture's double click;
+  `just repository-check` in fresh Debian 13, Ubuntu 24.04 and Fedora 44
+  roots, about 5 minutes with Fedora's mirrors; the jpeg-decoder series
+  and gpui's 0088 making their vendored copies; gpui's own tests, 202).
+  Then on the tree, in a capped scope: `just lint`; every test of the
+  default members at once (4030 passed, 32 skipped; the disk from 35 to
+  12 GB free); `just check-windows`, `just check-macos`; `just deny`
+  (advisories, bans, licences, sources, and the nine crates vendored by
+  path or patched from git); `just release-tools-check` (105 tests); `just
+  a11y-check` on a debug build (88 checks, passed). Not run: the native
+  workers' tests, Wine, `bench-check` (its thumbnail budgets not measured
+  since the cache and decoder changes), `just repository-check` on the
+  final tree (pk ran it after each of its steps that changed it), the
+  packages workflow, a real `release-build` with the real key, PackageKit
+  or GNOME Software, a screen reader, a cursor (Xvfb draws none). Owed
+  before the tag: `SKWIR_RPM_KEY=tools/package/repository/skwir.asc just
+  package-try fedora` once, and `just startup-order` then `just
+  idle-pss`.
+- **Where the next review starts**: every commit from v0.5.1 to 5f25054d
+  was read by a reviewer other than its author; this round's fixes
+  (c1728654..4004e592) had no second review, but 74b872b7's. What they
+  left is in PLAN's "What is left".
