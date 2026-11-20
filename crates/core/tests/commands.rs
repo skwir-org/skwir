@@ -455,7 +455,14 @@ fn a_dialog_offers_a_command_by_its_topic_unless_it_says_otherwise() {
     register(Topic::Notes, "dialogs.tag").in_dialogs().plans();
     register(Topic::Go, "dialogs.browse").opens_elsewhere();
     // By its arguments.
-    register(Topic::View, "dialogs.layout").in_dialogs_by(|_, args| args.get("panes").is_none());
+    register(Topic::View, "dialogs.layout").in_dialogs_by(|_, args| {
+        match args.get("panes").and_then(serde_json::Value::as_str) {
+            None => InDialogs::Offered,
+            // Run where it is asked, listed nowhere.
+            Some("asked") => InDialogs::Asked,
+            Some(_) => InDialogs::Not,
+        }
+    });
     // A picker leads to its source.
     register(Topic::Window, "dialogs.choose").leads_to(|args| {
         args.get("source")
@@ -483,6 +490,10 @@ fn a_dialog_offers_a_command_by_its_topic_unless_it_says_otherwise() {
     assert_eq!(
         here("dialogs.layout", serde_json::json!({"panes": "row"})),
         InDialogs::Not
+    );
+    assert_eq!(
+        here("dialogs.layout", serde_json::json!({"panes": "asked"})),
+        InDialogs::Asked
     );
     let source = |name: &str| serde_json::json!({"source": {"name": name, "args": {}}});
     assert_eq!(

@@ -1549,7 +1549,13 @@ pub(crate) fn register(app: &App) {
     // place (`App::new_tab`): offered there where it names one, as a middle
     // click and Ctrl+Enter on a place ask it; a new tab of what the pane
     // shows is none there (ADR-144, 2).
-    new_tab.in_dialogs_by(|_, args| args.get("location").is_some_and(|l| !l.is_null()));
+    new_tab.in_dialogs_by(|_, args| {
+        if args.get("location").is_some_and(|l| !l.is_null()) {
+            crate::command::InDialogs::Offered
+        } else {
+            crate::command::InDialogs::Not
+        }
+    });
     new_tab.shows();
 
     c.register::<OpenTabsArgs, _>(

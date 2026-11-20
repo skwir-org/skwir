@@ -1621,18 +1621,16 @@ impl App {
         if !leads {
             return InDialogs::Not;
         }
-        let offered = match terms.said {
-            Some(DialogRule::Offered) => true,
-            Some(DialogRule::Not) => false,
+        let said = match terms.said {
             Some(DialogRule::By(rule)) => rule(self, args),
-            None => terms.by_default,
+            Some(DialogRule::Offered) => InDialogs::Offered,
+            None if terms.by_default => InDialogs::Offered,
+            Some(DialogRule::Not) | None => InDialogs::Not,
         };
-        if offered {
-            InDialogs::Offered
-        } else if terms.asked {
+        if said == InDialogs::Not && terms.asked {
             InDialogs::Asked
         } else {
-            InDialogs::Not
+            said
         }
     }
 

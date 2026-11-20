@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use skwir_core::app::App;
 use skwir_core::command::{
-    Effect, Form, Invocation, LeadsTo, NoArgs, Outcome, Repeats, Topic, always,
+    Effect, Form, InDialogs, Invocation, LeadsTo, NoArgs, Outcome, Repeats, Topic, always,
 };
 use skwir_core::words;
 use skwir_core::words::Words;
@@ -1448,24 +1448,37 @@ const OPENS_ELSEWHERE: &[&str] = &["ui.open_url", "ui.preview_open_external", "u
 /// such a window has none of, while the preview's place and an archive's
 /// file's are its own; a view is offered by its role, a listing's shape
 /// or an alternate one, never a lens, which answers a question of its own
-/// (Usage, the map); a place opened in a new tab (the sidebar's
-/// Ctrl+Enter) is none in a window of one tab, where a place opens in place
-/// as Enter opens it (ADR-144, 2).
-fn dialogs_by(name: &str) -> Option<fn(&App, &serde_json::Value) -> bool> {
-    Some(match name {
-        "ui.layout" => |_, args| args.get("panes").is_none(),
-        "ui.sidebar_key" => {
-            |_, args| args.get("key").and_then(serde_json::Value::as_str) != Some("tab")
+/// (Usage, the map). The sidebar's Ctrl+Enter, a place opened in a new
+/// tab, does there what the middle click does, as every key of the pointer
+/// does: in a window of one tab it opens the place in place, which is
+/// Enter's, so it runs there and is listed nowhere (F1 lists Enter for it,
+/// ADR-144, 2).
+fn dialogs_by(name: &str) -> Option<fn(&App, &serde_json::Value) -> InDialogs> {
+    /// Offered where `offered`, else not.
+    fn offered_if(offered: bool) -> InDialogs {
+        if offered {
+            InDialogs::Offered
+        } else {
+            InDialogs::Not
         }
+    }
+    Some(match name {
+        "ui.layout" => |_, args| offered_if(args.get("panes").is_none()),
+        "ui.sidebar_key" => |_, args| match args.get("key").and_then(serde_json::Value::as_str) {
+            Some("tab") => InDialogs::Asked,
+            _ => InDialogs::Offered,
+        },
         "ui.view" => |app, args| {
-            args.get("id")
-                .and_then(serde_json::Value::as_str)
-                .is_none_or(|id| {
-                    app.registry
-                        .views
-                        .find(|view| &*view.id == id)
-                        .is_none_or(|view| view.role != skwir_core::registry::ViewRole::Lens)
-                })
+            offered_if(
+                args.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(|id| {
+                        app.registry
+                            .views
+                            .find(|view| &*view.id == id)
+                            .is_none_or(|view| view.role != skwir_core::registry::ViewRole::Lens)
+                    }),
+            )
         },
         _ => return None,
     })
@@ -3942,9 +3955,10 @@ mod tests {
             here("ui.sidebar_key", json!({"key": "open"})),
             InDialogs::Offered
         );
+        // Run as the middle click is, listed nowhere: Enter's there.
         assert_eq!(
             here("ui.sidebar_key", json!({"key": "tab"})),
-            InDialogs::Not
+            InDialogs::Asked
         );
         // A picker whose choices are given leads to each of them.
         let choose = |command: &str| {

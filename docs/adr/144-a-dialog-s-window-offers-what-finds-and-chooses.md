@@ -104,7 +104,8 @@ one tab).
    there (a middle click, Ctrl+Enter, a volume mounted for a tab) opens
    in place (`App::new_tab`), a step Back returns from, its menu offers
    no tab, and no tab moves into it, so Ctrl+W, its last tab's Close,
-   still cancels the dialog (amended after review, 2026-11-20).
+   still cancels the dialog (amended after review, 2026-11-20). F1 there
+   lists the sidebar's Ctrl+Enter nowhere: it does what Enter does.
 3. **A place whose files are not files to give** (the Trash: a trashed
    file is gone from where it was) says so
    (`LocationProvider::gives_files`), and a dialog's window offers it

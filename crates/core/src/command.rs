@@ -626,10 +626,12 @@ pub enum DialogRule {
     /// what is about a window of the user's own (Activity, the pinned
     /// player), a lens's own, what changes the user's servers.
     Not,
-    /// Offered where its arguments make it one thing a dialog offers
-    /// (`Declared::in_dialogs_by`): `ui.layout` placing the preview, not
-    /// the split's panes; `ui.view` a listing's shape, never a lens.
-    By(fn(&App, &serde_json::Value) -> bool),
+    /// As its arguments make it there (`Declared::in_dialogs_by`):
+    /// `ui.layout` placing the preview is offered, the split's panes are
+    /// not; `ui.view` a listing's shape, never a lens; the sidebar's
+    /// Ctrl+Enter on a place runs as the middle click does there, opening
+    /// it in place, listed nowhere, being Enter's (`InDialogs::Asked`).
+    By(fn(&App, &serde_json::Value) -> InDialogs),
 }
 
 /// Where what a command opens is shown (`CommandSpec::opens`).
@@ -920,7 +922,7 @@ impl Declared<'_> {
 
     /// A window answering another program's dialog offers it where `rule`
     /// says, by the arguments it runs with (see [`DialogRule::By`]).
-    pub fn in_dialogs_by(&self, rule: fn(&App, &serde_json::Value) -> bool) {
+    pub fn in_dialogs_by(&self, rule: fn(&App, &serde_json::Value) -> InDialogs) {
         self.update(|spec| spec.in_dialogs = Some(DialogRule::By(rule)));
     }
 
