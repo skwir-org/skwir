@@ -4365,12 +4365,16 @@ impl Shell {
                     .collect(),
             );
             if n.stays {
-                self.stand(toast, n.owner, cx);
+                let asked = n
+                    .owner
+                    .zip(n.question)
+                    .map(|(owner, question)| crate::toast::Asked { owner, question });
+                self.stand(toast, asked, cx);
             } else {
-                self.toast(toast, cx);
+                self.toast(toast.said_by(n.owner), cx);
             }
         }
-        self.standing_follows_its_owner(cx);
+        self.follow_owners(cx);
         self.pending = self.app.pending.get();
         self.sync_clipboard_files(cx);
         // What the theme is made of (`theme_inputs_of`), counted up, never

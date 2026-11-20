@@ -60,6 +60,9 @@ pub struct Toast {
     /// What it says after `text`, in the order it was said: the parts it is
     /// made of, kept as data, never read back from what it says (ADR-139).
     after: Vec<After>,
+    /// The plugin that said it (`App::notify_from`): turned off, what it
+    /// said goes, its words no longer said nor its buttons run.
+    owner: Option<String>,
 }
 
 /// What a toast says after what it said first.
@@ -81,7 +84,15 @@ impl Toast {
             tone,
             actions,
             after: Vec::new(),
+            owner: None,
         }
+    }
+
+    /// Said for the plugin `owner`, where one said it: it goes once that is
+    /// turned off (`Shell::follow_owners`).
+    pub(crate) fn said_by(mut self, owner: Option<String>) -> Toast {
+        self.owner = owner;
+        self
     }
 
     /// What it says, whole: what it said first, then what was said after
@@ -234,7 +245,8 @@ pub struct ToastState {
     pub current: Option<Toast>,
     /// A question that stays (`App::ask_quietly`, ADR-142 5), beneath
     /// what is said over it: drawn while nothing else is and again once
-    /// that goes, ended only by its own answers or its Close.
+    /// that goes, ended by its own answers or its Close, and by its owner
+    /// (`App::question_stands`).
     standing: Option<Standing>,
     /// Counts the questions that stood, which a button drawn on one names.
     stood: u64,
@@ -252,10 +264,21 @@ pub struct ToastState {
 /// A question that stays, beneath what is said over it.
 struct Standing {
     toast: Toast,
-    /// The plugin that asked it: turned off, its question goes.
-    owner: Option<String>,
+    /// Who asked it and which of its questions it is
+    /// (`Notification::question`): its owner turned off, or the question
+    /// taken back or asked again, it goes; drawn, its owner hears it.
+    asked: Option<Asked>,
+    /// Whether it was drawn, its owner told (`App::question_seen`).
+    seen: bool,
     /// Which one it is (`ToastState::stood`).
     id: u64,
+}
+
+/// Who asked a question that stays, and which of its questions it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Asked {
+    pub(crate) owner: String,
+    pub(crate) question: u64,
 }
 
 /// The toast a frame drew, which the buttons drawn on it and its Close
@@ -307,11 +330,12 @@ impl ToastState {
     /// `toast`, a question that stays, stands beneath what is said, in
     /// place of the one that stood: drawn now where nothing is said over
     /// it.
-    fn stand(&mut self, toast: Toast, owner: Option<String>) {
+    fn stand(&mut self, toast: Toast, asked: Option<Asked>) {
         self.stood += 1;
         self.standing = Some(Standing {
             toast,
-            owner,
+            asked,
+            seen: false,
             id: self.stood,
         });
         if self.current.is_none() {
@@ -328,19 +352,53 @@ impl ToastState {
         }
     }
 
-    /// The question standing goes where its owner is off (`on` false for
-    /// it): it asks for a plugin that no longer would, its words no longer
-    /// said and its answers no longer run. Whether it went.
-    fn owner_off(&mut self, on: impl Fn(&str) -> bool) -> bool {
+    /// What its owner no longer says goes: the one said, where the plugin
+    /// that said it is off (`on` false for it), and the question standing,
+    /// where it no longer stands (`stands` false for it,
+    /// `App::question_stands`): its owner turned off, or the question
+    /// answered or made moot elsewhere, or asked again. Gone, its words are
+    /// no longer said, nor its buttons run. Whether one went.
+    fn owners_gone(&mut self, on: impl Fn(&str) -> bool, stands: impl Fn(&Asked) -> bool) -> bool {
+        let said = self
+            .current
+            .as_ref()
+            .and_then(|toast| toast.owner.as_deref())
+            .is_some_and(|owner| !on(owner));
+        if said {
+            self.dismiss();
+        }
         let Some(id) = self
             .standing
             .as_ref()
-            .filter(|standing| standing.owner.as_deref().is_some_and(|owner| !on(owner)))
+            .filter(|standing| standing.asked.as_ref().is_some_and(|asked| !stands(asked)))
             .map(|standing| standing.id)
         else {
-            return false;
+            return said;
         };
-        self.close(Drawn::Standing(id))
+        self.close(Drawn::Standing(id)) || said
+    }
+
+    /// Who asked what `drawn` is, while it is the question standing.
+    fn asked(&self, drawn: Drawn) -> Option<&Asked> {
+        let Drawn::Standing(id) = drawn else {
+            return None;
+        };
+        self.standing
+            .as_ref()
+            .filter(|standing| standing.id == id)?
+            .asked
+            .as_ref()
+    }
+
+    /// The question standing is drawn: who asked it, the first time, to be
+    /// told (`App::question_seen`).
+    fn seen(&mut self) -> Option<Asked> {
+        if self.current.is_some() {
+            return None;
+        }
+        let standing = self.standing.as_mut().filter(|standing| !standing.seen)?;
+        standing.seen = true;
+        standing.asked.clone()
     }
 
     /// The one said over what stands goes (its caller done with it, its
@@ -902,17 +960,23 @@ impl Shell {
     /// what is said (`ToastState::stand`): a toast said meanwhile is drawn
     /// over it, and it comes back once that one goes. Only its answers and
     /// its Close end it; not kept in Earlier, and not timed.
-    pub(crate) fn stand(&mut self, toast: Toast, owner: Option<String>, cx: &mut Context<Self>) {
-        self.toasts.stand(toast, owner);
+    pub(crate) fn stand(&mut self, toast: Toast, asked: Option<Asked>, cx: &mut Context<Self>) {
+        self.toasts.stand(toast, asked);
         cx.notify();
     }
 
-    /// A question standing goes once the plugin that asked it is turned
-    /// off (ADR-142 4: off, a plugin asks nothing), checked at each sync
-    /// against the gate the plugin host closes before it withdraws.
-    pub(crate) fn standing_follows_its_owner(&mut self, cx: &mut Context<Self>) {
-        let gate = self.app.registry.gate();
-        if self.toasts.owner_off(|owner| gate.is_open(owner)) {
+    /// What a plugin said or asks goes once it no longer would, checked at
+    /// each sync: the plugin turned off (ADR-142 4: off, a plugin says and
+    /// asks nothing; the gate the plugin host closes before it withdraws),
+    /// or its question taken back, answered or made moot elsewhere, or
+    /// asked again (`App::question_stands`).
+    pub(crate) fn follow_owners(&mut self, cx: &mut Context<Self>) {
+        let app = &self.app;
+        let gate = app.registry.gate();
+        if self.toasts.owners_gone(
+            |owner| gate.is_open(owner),
+            |asked| app.question_stands(&asked.owner, asked.question),
+        ) {
             cx.notify();
         }
     }
@@ -1718,6 +1782,11 @@ pub fn render_answer(
     if let Some((generation, seconds)) = shell.toasts.drawn() {
         shell.time_toast(generation, seconds, cx);
     }
+    // A question that stays is asked once the user can see it (ADR-142,
+    // amended): its owner is told, once, that it was drawn.
+    if let Some(asked) = shell.toasts.seen() {
+        shell.app.question_seen(&asked.owner, asked.question);
+    }
     // An Undo that cannot take its plan back now is said, not offered,
     // with why, as the History says it (`history::undo_held`), rather
     // than refused once pressed.
@@ -1829,6 +1898,16 @@ pub fn render_answer(
             .aria_live(gpui::Live::Off)
             .text_color(theme.accent_text)
             .on_click(cx.listener(move |this, _, window, cx| {
+                // A question its owner took back since (answered or made
+                // moot elsewhere, its owner off) goes, and runs nothing:
+                // an answer would undo the one given elsewhere.
+                if let Some(asked) = this.toasts.asked(drawn)
+                    && !this.app.question_stands(&asked.owner, asked.question)
+                {
+                    this.toasts.close(drawn);
+                    cx.notify();
+                    return;
+                }
                 if this.toasts.pressed(drawn, &action) {
                     cx.notify();
                 }
@@ -1877,8 +1956,8 @@ pub fn render_answer(
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, After, End, Running, Toast, ToastState, Tone, bar, finished_actions, made_alone,
-        pace, share, show_action, shown_for, waiting_words, written,
+        Action, After, Asked, Drawn, End, Running, Toast, ToastState, Tone, bar, finished_actions,
+        made_alone, pace, share, show_action, shown_for, waiting_words, written,
     };
     use skwir_core::op::{Change, PlanId, RunKind, Transfer};
     use skwir_core::words::Words;
@@ -2874,8 +2953,8 @@ mod tests {
         assert_eq!(toasts.drawn(), None, "nothing to time");
     }
 
-    /// A question's link leaves it up, to be answered once its page is
-    /// read; its answers end it.
+    /// A question's link leaves it standing, to be answered once its page
+    /// is read; its answers end it.
     #[test]
     fn a_link_leaves_its_question_up() {
         let button = |label: &str, answers: bool| Action {
@@ -2889,19 +2968,56 @@ mod tests {
             button("Update with your system…", false),
         );
         let mut toasts = ToastState::default();
-        toasts.say(
+        toasts.stand(
             Toast::new(
                 Words::as_written("Tell you when a new version is out?".to_owned()),
                 Tone::Info,
                 vec![yes.clone(), link.clone()],
             ),
-            false,
+            Some(asked_by("updates", 1)),
         );
         let (_, drawn) = toasts.shown().expect("the question");
+        assert!(matches!(drawn, Drawn::Standing(_)));
         assert!(!toasts.pressed(drawn, &link));
-        assert!(toasts.current.is_some(), "the question stays up");
+        assert_eq!(
+            toasts.shown().map(|(_, shown)| shown),
+            Some(drawn),
+            "the question stays up"
+        );
         assert!(toasts.pressed(drawn, &yes));
-        assert!(toasts.current.is_none(), "answered, it goes");
+        assert!(toasts.shown().is_none(), "answered, it goes");
+    }
+
+    /// Who asked question `question` of `owner`.
+    fn asked_by(owner: &str, question: u64) -> Asked {
+        Asked {
+            owner: owner.to_owned(),
+            question,
+        }
+    }
+
+    /// A question that stays is seen once it is drawn: never while what is
+    /// said is drawn over it, and once only.
+    #[test]
+    fn a_question_is_seen_once_drawn() {
+        let said =
+            |text: &str| Toast::new(Words::as_written(text.to_owned()), Tone::Info, Vec::new());
+        let mut toasts = ToastState::default();
+        let (over, _) = toasts.say(said("Skwir was updated to 0.6.2"), false);
+        toasts.stand(
+            said("Tell you when a new version is out?"),
+            Some(asked_by("updates", 7)),
+        );
+        assert_eq!(toasts.seen(), None, "beneath what is said, unseen");
+        assert!(toasts.over(over));
+        assert_eq!(toasts.seen(), Some(asked_by("updates", 7)));
+        assert_eq!(toasts.seen(), None, "seen once");
+        // Asked again in its place, the new one is seen in turn.
+        toasts.stand(
+            said("Tell you when a new version is out?"),
+            Some(asked_by("updates", 8)),
+        );
+        assert_eq!(toasts.seen(), Some(asked_by("updates", 8)));
     }
 
     /// A question that stays stands beneath what is said: a toast said
@@ -2933,7 +3049,7 @@ mod tests {
         // What's new and the question on one look: neither takes the
         // other's place.
         let (whats_new, _) = toasts.say(said("Skwir was updated to 0.6.2"), false);
-        toasts.stand(question, Some("updates".to_owned()));
+        toasts.stand(question, Some(asked_by("updates", 1)));
         assert_eq!(
             drawn(&toasts).as_deref(),
             Some("Skwir was updated to 0.6.2")
@@ -2962,28 +3078,40 @@ mod tests {
         assert!(toasts.shown().is_none(), "answered, it is gone");
     }
 
-    /// A question standing goes once the plugin that asked it is off, and
-    /// only then; what is said over it stays.
+    /// A question standing goes once it no longer stands (the plugin that
+    /// asked it off, or the question taken back), and only then; what is
+    /// said over it stays, unless the plugin said it. A button of a
+    /// question that no longer stands is known as its.
     #[test]
-    fn a_question_goes_with_the_plugin_that_asked_it() {
+    fn what_a_plugin_said_or_asked_goes_once_it_no_longer_would() {
         let said =
             |text: &str| Toast::new(Words::as_written(text.to_owned()), Tone::Info, Vec::new());
+        let drawn = |toasts: &ToastState| toasts.shown().map(|(toast, _)| toast.text.english());
+        let on = |_: &str| true;
         let mut toasts = ToastState::default();
         toasts.stand(
             said("Tell you when a new version is out?"),
-            Some("updates".to_owned()),
+            Some(asked_by("updates", 1)),
         );
-        assert!(!toasts.owner_off(|_| true), "on, it stays");
+        let (_, question) = toasts.shown().expect("the question");
+        assert_eq!(toasts.asked(question), Some(&asked_by("updates", 1)));
+        assert!(!toasts.owners_gone(on, |_| true), "standing, it stays");
         toasts.say(said("Moved “a b.txt” to Trash"), false);
-        assert!(toasts.owner_off(|owner| owner != "updates"));
-        assert_eq!(
-            toasts
-                .shown()
-                .map(|(toast, _)| toast.text.english())
-                .as_deref(),
-            Some("Moved “a b.txt” to Trash")
-        );
+        let (_, moved) = toasts.shown().expect("the answer");
+        assert_eq!(toasts.asked(moved), None, "what is said asks nothing");
+        // Taken back (answered in Settings), or its plugin off.
+        assert!(toasts.owners_gone(on, |asked| asked.owner != "updates"));
+        assert_eq!(drawn(&toasts).as_deref(), Some("Moved “a b.txt” to Trash"));
         assert!(toasts.standing.is_none());
+        assert_eq!(toasts.asked(question), None, "gone, it is no one's");
+        // A plugin's notice goes with it, turned off; another's stays.
+        toasts.say(
+            said("Skwir was updated to 0.6.2").said_by(Some("updates".to_owned())),
+            false,
+        );
+        assert!(!toasts.owners_gone(|owner| owner != "other", |_| false));
+        assert!(toasts.owners_gone(|owner| owner != "updates", |_| false));
+        assert!(toasts.shown().is_none());
     }
 
     /// What a reveal says joins the answer still shown, its Undo kept, and

@@ -235,11 +235,17 @@ pub struct Notification {
     /// dialog.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stays: bool,
-    /// The plugin that asked it, for one that stays: turned off, its
-    /// question goes with it (`App::unregister_owner`), and the window
-    /// takes down one it shows.
+    /// The plugin that said or asked it (`App::notify_from`,
+    /// `App::ask_quietly`): turned off, what it said or asked goes with it
+    /// (`App::unregister_owner`), and the window takes down one it shows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Which of its owner's questions it is, for one that stays
+    /// (`App::ask_quietly`): the window tells its owner once it drew it
+    /// (`App::question_seen`), and takes it down once it no longer stands
+    /// (`App::question_stands`): taken back, asked again, or its owner off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<u64>,
 }
 
 /// A button on a [`Notification`]: its label, the command it runs, and
@@ -259,6 +265,22 @@ pub struct NotifyAction {
 /// What a [`NotifyAction`] does unless it says otherwise: it answers.
 fn answers() -> bool {
     true
+}
+
+/// What its owner hears once a window of the user's own drew its question
+/// (`App::ask_quietly`).
+type Seen = Box<dyn FnOnce(&App) + Send>;
+
+/// The questions that stay, one a plugin: the last each asked, while it
+/// stands (`App::ask_quietly`).
+#[derive(Default)]
+struct AskedQuietly {
+    /// Counts the questions asked, which a [`Notification::question`]
+    /// names.
+    asked: u64,
+    /// By owner: which question stands, and what its owner hears once it
+    /// is drawn, until it is.
+    standing: HashMap<String, (u64, Option<Seen>)>,
 }
 
 /// Construction options.
@@ -448,6 +470,9 @@ pub struct App {
     pub(crate) forms: crate::form::Forms,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
+    /// The question that stays each plugin asked last (`ask_quietly`),
+    /// while it stands: taken after the queue's lock where both are.
+    asked_quietly: parking_lot::Mutex<AskedQuietly>,
     /// Commands the window carries out (`ui.*`), dispatched from elsewhere
     /// (an agent, a script): they wait for it, which takes them when it
     /// next wakes (`take_front_requests`).
@@ -537,6 +562,7 @@ impl App {
             left_out: parking_lot::Mutex::new(None),
             private: parking_lot::Mutex::new(None),
             notifications: parking_lot::Mutex::new(Vec::new()),
+            asked_quietly: parking_lot::Mutex::default(),
             closed_tabs: parking_lot::Mutex::default(),
             executor: Executor::new(scheduler.clone()),
             thumbnails: crate::thumbs::Thumbnails::with_lifetime(
@@ -986,9 +1012,11 @@ impl App {
     /// Withdraw everything a plugin contributed.
     pub fn unregister_owner(&self, owner: &str) {
         // What it asked and no window took yet goes unasked.
-        self.notifications
-            .lock()
-            .retain(|n| n.owner.as_deref() != Some(owner));
+        {
+            let mut queued = self.notifications.lock();
+            queued.retain(|n| n.owner.as_deref() != Some(owner));
+            self.asked_quietly.lock().standing.remove(owner);
+        }
         self.commands.unregister_owner(owner);
         crate::words::withdraw(owner);
         self.ops.unregister_owner(owner);
@@ -3110,15 +3138,7 @@ impl App {
     /// Queue a message for the UI (errors from background work, results
     /// worth a status line) and wake it.
     pub fn notify(&self, level: NotifyLevel, text: impl Into<Words>) {
-        self.notifications.lock().push(Notification {
-            level,
-            text: text.into(),
-            setting: None,
-            actions: Vec::new(),
-            stays: false,
-            owner: None,
-        });
-        self.wake();
+        self.queue_notice(level, text.into(), None, Vec::new());
     }
 
     /// Like [`App::notify`], with a button that runs `command`.
@@ -3129,48 +3149,177 @@ impl App {
         label: impl Into<Words>,
         command: Invocation,
     ) {
-        self.notifications.lock().push(Notification {
+        self.queue_notice(
             level,
-            text: text.into(),
-            setting: None,
-            actions: vec![NotifyAction {
+            text.into(),
+            None,
+            vec![NotifyAction {
                 label: label.into(),
                 command,
                 answers: true,
             }],
-            stays: false,
-            owner: None,
-        });
+        );
+    }
+
+    /// Like [`App::notify`], with `actions` as its buttons, said for the
+    /// plugin `owner` (ADR-142 4: off, a plugin says nothing): refused while
+    /// it is off, and gone with it when it is turned off, queued or shown,
+    /// its words no longer said nor its buttons run.
+    pub fn notify_from(
+        &self,
+        owner: &str,
+        level: NotifyLevel,
+        text: impl Into<Words>,
+        actions: Vec<NotifyAction>,
+    ) {
+        self.queue_notice(level, text.into(), Some(owner), actions);
+    }
+
+    /// Queue a notice that is timed, `owner`'s where one says it, and wake
+    /// the UI. An owner's gate is read under the queue's lock, which the
+    /// withdrawal takes after closing it.
+    fn queue_notice(
+        &self,
+        level: NotifyLevel,
+        text: Words,
+        owner: Option<&str>,
+        actions: Vec<NotifyAction>,
+    ) {
+        {
+            let mut queued = self.notifications.lock();
+            if owner.is_some_and(|owner| !self.registry.gate().is_open(owner)) {
+                return;
+            }
+            queued.push(Notification {
+                level,
+                text,
+                setting: None,
+                actions,
+                stays: false,
+                owner: owner.map(str::to_owned),
+                question: None,
+            });
+        }
         self.wake();
     }
 
     /// Ask something that may wait for the user (ADR-142: whether to be
-    /// told of new versions) in a toast that stays until one of `answers`
-    /// that answers it is pressed (a link, `NotifyAction::answers` false,
+    /// told of new versions) in a toast that stays until one of `buttons`
+    /// that answers is pressed (a link, `NotifyAction::answers` false,
     /// leaves it up) or it is closed: never a dialog, nothing timed. What
     /// is said meanwhile is drawn over it, and it comes back once that
-    /// goes. Closed unanswered, or asked again in its place, nothing ran:
-    /// its owner may ask again another time.
+    /// goes. Closed unanswered, nothing ran: its owner may ask again
+    /// another time.
     ///
-    /// `owner` is the plugin asking: turned off, it asks nothing, and what
-    /// it asked goes, queued or shown. Its gate is read under the queue's
-    /// lock, which the withdrawal takes after closing it.
-    pub fn ask_quietly(&self, owner: &str, text: impl Into<Words>, answers: Vec<NotifyAction>) {
+    /// `owner` is the plugin asking, one question at a time: asked again,
+    /// the question replaces the one it asked before, queued or shown.
+    /// Turned off, it asks nothing, and what it asked goes. Its gate is
+    /// read under the queue's lock, which the withdrawal takes after
+    /// closing it. Answered or made moot elsewhere, its owner takes it
+    /// back (`App::take_back_question`).
+    ///
+    /// The question waits for a window of the user's own (ADR-141, 8), and
+    /// `seen` runs once, on a worker, when one first draws it: what the
+    /// owner counts as asked, as the user has seen it. It never runs for a
+    /// question replaced, taken back, or let go with the program before it
+    /// was drawn (a skwir started for another program's dialog, ended with
+    /// it), nor once its owner is off.
+    pub fn ask_quietly(
+        &self,
+        owner: &str,
+        text: impl Into<Words>,
+        buttons: Vec<NotifyAction>,
+        seen: impl FnOnce(&App) + Send + 'static,
+    ) {
         {
             let mut queued = self.notifications.lock();
             if !self.registry.gate().is_open(owner) {
                 return;
             }
+            let mut asked = self.asked_quietly.lock();
+            asked.asked += 1;
+            let question = asked.asked;
+            asked
+                .standing
+                .insert(owner.to_owned(), (question, Some(Box::new(seen))));
+            // The one it asked before, not yet taken by a window, goes; one
+            // a window shows goes at its next sync (`question_stands`).
+            queued.retain(|n| !(n.stays && n.owner.as_deref() == Some(owner)));
             queued.push(Notification {
                 level: NotifyLevel::Info,
                 text: text.into(),
                 setting: None,
-                actions: answers,
+                actions: buttons,
                 stays: true,
                 owner: Some(owner.to_owned()),
+                question: Some(question),
             });
         }
         self.wake();
+    }
+
+    /// `owner` takes back what it asked (`ask_quietly`), answered or made
+    /// moot elsewhere (a setting chosen, a copy its system now updates): it
+    /// goes from the queue at once, and from the window that shows it at
+    /// its next sync, which this wakes; its buttons, pressed meanwhile, run
+    /// nothing. Nothing where it asked nothing.
+    pub fn take_back_question(&self, owner: &str) {
+        {
+            let mut queued = self.notifications.lock();
+            queued.retain(|n| !(n.stays && n.owner.as_deref() == Some(owner)));
+            if self.asked_quietly.lock().standing.remove(owner).is_none() {
+                return;
+            }
+        }
+        self.wake();
+    }
+
+    /// Whether `owner`'s `question` (`Notification::question`) still
+    /// stands: its owner on, and neither taken back nor asked again since.
+    /// The window asks it at each sync, and before running a button of it.
+    pub fn question_stands(&self, owner: &str, question: u64) -> bool {
+        self.registry.gate().is_open(owner)
+            && self
+                .asked_quietly
+                .lock()
+                .standing
+                .get(owner)
+                .is_some_and(|(standing, _)| *standing == question)
+    }
+
+    /// A window of the user's own drew `owner`'s `question`: its owner hears
+    /// it, once, on a worker (`ask_quietly`'s `seen`), while it stands.
+    pub fn question_seen(&self, owner: &str, question: u64) {
+        if !self.registry.gate().is_open(owner) {
+            return;
+        }
+        let seen = {
+            let mut asked = self.asked_quietly.lock();
+            let Some((standing, seen)) = asked.standing.get_mut(owner) else {
+                return;
+            };
+            if *standing != question {
+                return;
+            }
+            seen.take()
+        };
+        let Some(seen) = seen else {
+            return;
+        };
+        let weak = self.weak();
+        let owner = owner.to_owned();
+        self.scheduler.spawn(
+            Priority::Background,
+            "question-seen",
+            self.lifetime.clone(),
+            move || {
+                if let Some(app) = weak.upgrade()
+                    && app.registry.gate().is_open(&owner)
+                {
+                    seen(&app);
+                }
+            },
+        );
     }
 
     /// Say what a user's edit did, with `inverse` as its Undo, or its Redo
@@ -3205,6 +3354,7 @@ impl App {
             actions: Vec::new(),
             stays: false,
             owner: None,
+            question: None,
         });
         self.wake();
     }
@@ -6040,7 +6190,7 @@ mod tests {
 
     /// A question that stays belongs to the plugin that asked it: asked
     /// while that is off, it is not; queued when it is turned off, it goes,
-    /// and what others said stays.
+    /// and what others said stays. What the plugin said goes with it too.
     #[test]
     fn a_question_goes_with_the_plugin_that_asked_it() {
         use super::NotifyLevel;
@@ -6052,40 +6202,108 @@ mod tests {
                 .map(|n| n.text.english())
                 .collect()
         };
-        app.ask_quietly(
-            "asker",
-            crate::words::Words::as_written("Asked?".to_owned()),
-            Vec::new(),
-        );
-        app.notify(
-            NotifyLevel::Info,
-            crate::words::Words::as_written("Said".to_owned()),
-        );
+        let said = |text: &str| crate::words::Words::as_written(text.to_owned());
+        app.ask_quietly("asker", said("Asked?"), Vec::new(), |_| {});
+        app.notify(NotifyLevel::Info, said("Said"));
         let asked = app.take_notifications();
         assert_eq!(asked[0].owner.as_deref(), Some("asker"));
+        assert!(asked[0].question.is_some());
         assert_eq!(asked[1].owner, None);
-        app.ask_quietly(
-            "asker",
-            crate::words::Words::as_written("Asked?".to_owned()),
-            Vec::new(),
-        );
-        app.notify(
-            NotifyLevel::Info,
-            crate::words::Words::as_written("Said".to_owned()),
-        );
+        assert_eq!(asked[1].question, None);
+        let question = asked[0].question.unwrap();
+        assert!(app.question_stands("asker", question));
+        app.ask_quietly("asker", said("Asked?"), Vec::new(), |_| {});
+        app.notify_from("asker", NotifyLevel::Info, said("Its notice"), Vec::new());
+        app.notify(NotifyLevel::Info, said("Said"));
         app.registry.set_owner_enabled("asker", false);
         app.unregister_owner("asker");
         assert_eq!(
             texts(&app),
             ["Said"],
-            "what it asked goes, not what was said"
+            "what it asked and said goes, not what others said"
         );
-        app.ask_quietly(
-            "asker",
-            crate::words::Words::as_written("Asked?".to_owned()),
-            Vec::new(),
+        assert!(!app.question_stands("asker", question), "shown, it goes");
+        app.ask_quietly("asker", said("Asked?"), Vec::new(), |_| {});
+        app.notify_from("asker", NotifyLevel::Info, said("Its notice"), Vec::new());
+        assert!(
+            texts(&app).is_empty(),
+            "turned off, it asks and says nothing"
         );
-        assert!(texts(&app).is_empty(), "turned off, it asks nothing");
+    }
+
+    /// One question a plugin: asked again, it replaces the one before,
+    /// queued or shown; taken back, it goes from the queue and no longer
+    /// stands where it is shown. Another's stays.
+    #[test]
+    fn a_question_asked_again_or_taken_back_replaces_or_goes() {
+        use crate::words::Words;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let said = |text: &str| Words::as_written(text.to_owned());
+        app.ask_quietly("asker", said("First?"), Vec::new(), |_| {});
+        app.ask_quietly("other", said("Other's?"), Vec::new(), |_| {});
+        app.ask_quietly("asker", said("Again?"), Vec::new(), |_| {});
+        let taken = app.take_notifications();
+        let texts: Vec<String> = taken.iter().map(|n| n.text.english()).collect();
+        assert_eq!(texts, ["Other's?", "Again?"], "the one before is replaced");
+        let shown = taken[1].question.unwrap();
+        app.ask_quietly("asker", said("Third?"), Vec::new(), |_| {});
+        assert!(
+            !app.question_stands("asker", shown),
+            "the one shown no longer stands once asked again"
+        );
+        app.take_back_question("asker");
+        assert!(app.take_notifications().is_empty(), "taken back, unshown");
+        assert!(!app.question_stands("asker", shown));
+        let other = taken[0].question.unwrap();
+        assert!(app.question_stands("other", other), "another's stands");
+        app.take_back_question("other");
+        assert!(!app.question_stands("other", other), "taken back, shown");
+    }
+
+    /// Its owner hears once that its question was drawn, and only while it
+    /// stands: never for one replaced or taken back first, nor twice.
+    #[test]
+    fn a_question_drawn_is_heard_once_by_its_owner() {
+        use crate::words::Words;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let heard = Arc::new(AtomicUsize::new(0));
+        let ask = |app: &super::App, text: &str, by: usize| -> u64 {
+            let heard = Arc::clone(&heard);
+            app.ask_quietly(
+                "asker",
+                Words::as_written(text.to_owned()),
+                Vec::new(),
+                move |_| {
+                    heard.fetch_add(by, Ordering::SeqCst);
+                },
+            );
+            app.take_notifications()[0].question.unwrap()
+        };
+        let wait = |want: usize| {
+            assert!(app.scheduler.wait_idle(std::time::Duration::from_secs(10)));
+            assert_eq!(heard.load(Ordering::SeqCst), want);
+        };
+        let first = ask(&app, "First?", 100);
+        let second = ask(&app, "Again?", 1);
+        app.question_seen("asker", first);
+        app.question_seen("asker", second);
+        app.question_seen("asker", second);
+        wait(1);
+        let third = ask(&app, "Third?", 10);
+        app.take_back_question("asker");
+        app.question_seen("asker", third);
+        let fourth = ask(&app, "Fourth?", 1000);
+        app.question_seen("asker", fourth);
+        wait(1001);
+        // Its owner off, a question drawn meanwhile is heard by no one.
+        let fifth = ask(&app, "Fifth?", 10_000);
+        app.registry.set_owner_enabled("asker", false);
+        app.question_seen("asker", fifth);
+        wait(1001);
     }
 
     /// What another program's dialog is given is what is said, never a
@@ -6104,11 +6322,17 @@ mod tests {
             NotifyLevel::Info,
             Words::as_written("Said first".to_owned()),
         );
-        app.ask_quietly("asker", Words::as_written("Asked?".to_owned()), Vec::new());
         app.ask_quietly(
             "asker",
-            Words::as_written("Asked again?".to_owned()),
+            Words::as_written("Asked?".to_owned()),
             Vec::new(),
+            |_| {},
+        );
+        app.ask_quietly(
+            "other",
+            Words::as_written("Asked too?".to_owned()),
+            Vec::new(),
+            |_| {},
         );
         app.notify(NotifyLevel::Info, Words::as_written("Said then".to_owned()));
         assert_eq!(
@@ -6118,7 +6342,7 @@ mod tests {
         assert!(app.take_notifications_for(false).is_empty());
         assert_eq!(
             texts(app.take_notifications_for(true)),
-            ["Asked?", "Asked again?"]
+            ["Asked?", "Asked too?"]
         );
     }
 

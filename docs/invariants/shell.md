@@ -1344,8 +1344,15 @@ asks the direction.
   (`ToastState::stand`): one said meanwhile is drawn over it, and it
   comes back once that one goes; only its own answers and its Close end
   it, pressed on a frame drawn before another came over it too, and the
-  plugin that asked it turned off (`Notification::owner`: what it asked
-  goes, queued or shown).
+  plugin that asked it: turned off, taking it back (answered or made moot
+  elsewhere, `App::take_back_question`) or asking another in its place
+  (one question a plugin), checked at each sync (`App::question_stands`;
+  what it asked goes, queued or shown, and a button of it pressed before
+  the sync runs nothing). It waits for a window of the user's own, and
+  its plugin hears once one first draws it (`App::question_seen`): what
+  counts as asked is what the user saw, never one queued and let go with
+  a skwir started for another program's dialog. What a plugin says
+  (`App::notify_from`) goes with it too, turned off.
   A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its
