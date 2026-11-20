@@ -2,27 +2,217 @@
 
 ## Unreleased
 
-- **A document or a picture zoomed in moves with a drag**: a picture
-  larger than the panel, a page without text, a page's margins and
-  pictures, and the room around and between pages follow the pointer;
-  the middle button's drag moves them
-  anywhere; **Drag to move the page** in the reader's bar (`H`, or
-  Settings › Reading › Pages) makes a drag across a page's text move it
-  too, rather than select, a click still following a link.
-- **A copy downloaded from skwir.org can tell you of a new version**: it
-  asks once, two days after it was first seen, whether to be told; said
-  yes, it reads skwir.org at the first look of each day (nothing about
-  the copy is sent, nothing on a metered connection) and tells a new
-  version once, About and More saying it until you update. **Check for
-  a new version** in the palette answers at once. Copies a package
-  manager updates (the AUR's, Nix's, a repository's) never ask. What's
-  new is said once after an update.
-- **Thumbnails come sooner and keep less**: a picture's thumbnail shows
-  before the desktop's cache keeps it; a progressive JPEG's is read from
-  its first scans alone, keeping only their DC coefficients (a few MB
-  where it held two bytes a pixel), its colours no longer darker; a
-  document's or a drawing's thumbnail takes up to half as much room in
-  the cache.
+Skwir 0.6.0 speaks French and Simplified Chinese, as drafts to review, and
+writes numbers, dates and the order of names as your region does. On Linux it
+can show files and answer Open and Save dialogs for other programs, and a copy
+downloaded from skwir.org can tell you of a new version.
+
+[Installation instructions](README.md#installing)
+
+- **French and Simplified Chinese** (#13): the window speaks your system's
+  language, these two as drafts not yet reviewed; Settings › General ›
+  Language chooses another, and the draft's notice offers English.
+- **Your region's ways**: numbers, sizes, dates and times as your locale writes
+  them, names in its alphabetical order.
+- **Right to left**: Hebrew and Arabic drawn and edited right in names and
+  fields, a document's paragraph from its right; printing as shown, a booklet
+  bound on the right.
+- **Show in Folder from other programs** opens Skwir once it is the default
+  file manager (Settings › General).
+- **Other programs' Open and Save dialogs** in a Skwir window (Settings ›
+  General › Open and save dialogs).
+- **New versions told**: a copy downloaded from skwir.org asks once whether to
+  be told; skwir.org's apt and dnf repositories update it with the system.
+- **A document or a picture zoomed in moves with a drag**, the middle button's
+  anywhere.
+- **A copy onto an rclone mount** shows what the server has, no longer 100%
+  while the mount still sends.
+- **Shortcuts on other keyboard layouts**: Russian, Greek, Arabic or Hebrew,
+  AZERTY's digits.
+- **A name's hidden direction controls are shown**, so `gnp.js` reversed can no
+  longer pass for a picture.
+
+**Changed from 0.5.1**: sizes count a thousand bytes to a kilobyte (kB, MB), as
+disks are sold and GNOME and macOS show them, where 0.5.1 counted 1024 and wrote
+KB (Settings › Folders and views › Sizes › Units: Binary, KiB and MiB); names
+sort by your locale (accents after their letters, then case; a C locale keeps
+0.5.1's order); dates and times are your locale's (a US one writes 2:02 PM);
+on a French or Simplified Chinese system the window speaks its draft; a double
+click in a text field selects a word, a triple click all; Settings › General
+shows the default file manager where Ask what dropped files do was, now under
+More settings.
+
+**Windows and macOS builds to try** come with this release too. They are made
+on Linux and have never run on either system: please [try them and tell us what
+happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
+
+### All changes
+
+- **The window in your language** (ADR-139, #13): everything the window says is
+  a message, said in the language Settings › General › Language names:
+  Automatic takes the system's languages in their order (`LANGUAGE`,
+  `LC_MESSAGES`, `LANG` on Linux; the preferred languages on macOS, the
+  display languages on Windows), then English. French and Simplified Chinese
+  come with this release, every message translated, as drafts a speaker has
+  not reviewed yet: Automatic speaks them, the first start in one says so
+  once with **Use English** beside it, and About and Settings say it while
+  the window speaks one ("Français — draft, 0% reviewed"). Each language is
+  named in itself (Français, 简体中文). The desktop entry and the AppStream
+  page are in both too, as drafts. Agents, scripts and the command line still
+  read English. A translation is welcome: `docs/invariants/words.md` says
+  how, and `docs/glossary-fr.md` and `docs/glossary-zh-Hans.md` hold the
+  terms.
+- **Sizes counted one way, as you choose** (ADR-139): Settings › Folders and
+  views › Sizes › Units is Decimal by default, a thousand bytes to a kilobyte
+  (kB, MB, GB), as disks are sold and as GNOME and macOS show sizes, or
+  Binary, 1024 (KiB, MiB, GiB), as KDE does. 0.5.1 counted files in 1024s
+  written KB and MB, volumes in thousands and limits in MiB; every size now
+  follows the setting, at once when it changes. A search still reads `10M` as
+  1024-based, as saved searches hold it, and now takes `10MB` (a thousand)
+  and `10MiB` (1024) too; the size groups and the Size chip write the units
+  shown.
+- **Numbers, dates and times as your region writes them**: counts, decimals
+  and sizes as the system's number locale writes them (1,234; « 1 234 »,
+  « 1,5 Mo »), dates and times as its date locale does: a US locale writes
+  2:02 PM and Mar 12, 2024, where 0.5.1 wrote 14:02 and 12 Mar 2024 for
+  everyone. The desktop's 12- or 24-hour switch outweighs the locale (GNOME's,
+  macOS's, Windows' own). Settings › Appearance › Dates' ISO 8601 now reaches
+  every date, Git's commits and a printed listing's included, which wrote ISO
+  whatever it said. A file's type is named in your language from the type
+  database's translations, Open With's applications in your languages
+  (`LANGUAGE`'s list read too), and the paper size is your locale's
+  (`LC_PAPER` after `LC_ALL`, as POSIX orders them; the region on macOS and
+  Windows, which always took A4). Agents read English's formats.
+- **Names in your locale's order** (ADR-139): names sort by the system's
+  collation (`LC_COLLATE` on Linux, the region on macOS and Windows): the base
+  letters first, then the accents, then the case, numbers by value, spaces and
+  punctuation before digits and letters, each language's own alphabet
+  (Swedish Ä after Z). 0.5.1 folded case and Latin accents and broke ties by
+  bytes; a C or POSIX locale keeps that order. Group by Name heads by the same
+  letters (é under E, Swedish Ä apart), in other scripts by CLDR's index
+  (pinyin for Han, kana rows, Hangul initials). Tags, Open With's
+  applications, rclone's remotes and the themes' lists sort the same way,
+  where an accented name went after Z.
+- **Text in every script** (gpui 0069 to 0084): Hebrew and Arabic names and
+  text fields are drawn, wrapped and edited right, the caret, a selection and
+  the arrows following the letters drawn. Lines break as Unicode's rules say:
+  Chinese and Japanese by theirs, Thai, Lao, Khmer and Burmese between words by
+  dictionary; a line may wrap after a hyphen or a slash. Ctrl+arrows,
+  Ctrl+Backspace and Ctrl+Delete go a word at a time in every script; a
+  double click in a text field selects a word and a triple click all of it,
+  where a double click selected all; the settings search finds words typed
+  without spaces. Chinese characters take their Japanese forms on a Japanese
+  system. Where no installed font draws a script you read, a notice names the
+  font to install, and [the guide](docs/guide.md) each system's package. The
+  screen reader is told the window's language (Linux's AT-SPI does not pass
+  it on yet).
+- **Documents read in their own direction**: a Hebrew or Arabic paragraph,
+  heading, list item or table cell in a document (Markdown, a web page in
+  reading mode, a book, a mail) starts at its right, its marker, quotation
+  bar and indent on that side; a page that says it reads right to left (HTML's
+  `dir`, a book's page progression) runs its tables from the right. Code
+  reads left to right on every line, whatever letter starts it. A click, a
+  selection or a link's hover on a centered or right-aligned text now lands
+  where its rows are drawn: a centered title page selected the wrong words.
+- **Printing right to left** (ADR-111 revised): each block is laid out in its
+  own direction, code left to right, a listing as the window runs; the PDF of
+  a document that reads right to left says so to its viewer. A booklet can be
+  **Bound on the right**, preset from the document: a PDF's or an EPUB's
+  declared direction, a manga's `ComicInfo.xml`, else its text's first
+  letters. Print… gives a comic its pages and direction from its own menu
+  too, as from the preview.
+- **A name's hidden controls are shown** (ADR-139): a name holding Unicode's
+  direction controls shows each as a tag wherever the name is drawn alone
+  (rows, tiles, tabs, the trail, the title, text fields, an archive's members,
+  Rename Several's preview, group headings): `Hello_` + U+202E + `gnp.js`
+  reads `Hello_⟨RLO⟩gnp.js`, where 0.5.1 drew `Hello_sj.png`, a picture. The
+  name's bytes stay as they are.
+- **Shortcuts on every keyboard layout** (gpui 0076): a shortcut on a
+  non-Latin layout (Russian, Greek, Arabic, Hebrew, Persian, Devanagari) acts
+  as the keymap's Latin layout or the US keys' positions name it, AZERTY's
+  and Persian's digit rows give their digits, and the shifted comma and
+  period no longer swap. Keys are named in the window's language (Entrée,
+  Maj+F4), and a search of the Keyboard page, Settings or F1 for keys finds
+  the names shown.
+- **Show in Folder for other programs** (ADR-140): on Linux, with Skwir the
+  desktop's default for folders (Settings › General › Default file manager,
+  Open With's Always use on a folder, or the desktop's own settings), another
+  program's Show in Folder opens the folder in Skwir with its files
+  selected, or their Properties, even when Skwir is not running: Skwir
+  answers `org.freedesktop.FileManager1`, and keeps a file in
+  `$XDG_DATA_HOME/dbus-1/services` for the session's bus to start it
+  (`skwir --file-manager`, no window until asked). A program that holds the
+  name and does not let go (Dolphin's daemon) answers until it ends, which
+  the row says. Home Manager's `programs.skwir.defaultFileManager` sets it.
+  Choose another default before removing Skwir: [the guide](docs/guide.md)
+  says why.
+- **Other programs' Open and Save dialogs** (ADR-141): on Linux, Settings ›
+  General › Open and save dialogs can name Skwir for the programs that ask the
+  desktop portal for one. Each dialog is a Skwir window of its own, attached
+  to the asking program's, opening where it asks, else where that program
+  last chose, with the name, the program's filters and choices, Cancel and
+  its answer; only you answer it, never an agent or a script. The row writes
+  your portal configuration, applied once the portal starts again (the next
+  login), and leaves one a link keeps (Home Manager's, a dotfiles folder's)
+  to its keeper. Home Manager's `programs.skwir.fileChooser.enable` sets it.
+- **General's essentials** (ADR-072 amended): the language, Open at startup,
+  the startup folder (dimmed unless Open at startup is A chosen folder), the
+  default file manager and, on Linux, Open and save dialogs; Ask what dropped
+  files do is under More settings.
+- **A copy downloaded from skwir.org can tell you of a new version**
+  (ADR-142): it asks once, two days after it was first seen, whether to be
+  told; said yes, it reads skwir.org at the first look of each day (nothing
+  about the copy is sent; on Linux, not on a metered connection, whose cost
+  Windows and macOS do not tell it yet) and tells a new version once, About
+  and More saying it until you update. **Check for a new version** in the
+  palette answers at once. A downloaded `.deb` or `.rpm` also offers to add
+  the repository; copies a package manager updates (the AUR's, Nix's, a
+  repository's) never ask. What's new is said once after each update from
+  this version on (Settings › General › Updates turns them off). The
+  AppImage carries its update information, for AppImageUpdate and Gear
+  Lever, through skwir.org.
+- **Skwir's repositories** (ADR-142): Debian 13, Ubuntu 24.04 and Fedora 44
+  can install Skwir from skwir.org's apt and dnf repositories, which update
+  it with the rest of the system: the
+  [download page](https://skwir.org/download#repository) gives the command.
+  Their indexes are signed by the key "Skwir repositories" (F6EB 0DC1 7B1A
+  3E87 8C48 2DB3 0CF3 A0EA 4800 4329), and so is each `.rpm` from this
+  release on: dnf asks once to import the key (0x48004329) for the packages.
+- **Plugins from outside speak your language** (protocol 2, ADR-045, ADR-046
+  and ADR-047 amended): a plugin on protocol 2 is told the window's languages
+  and may say its words as messages of its own catalogs (`l10n/<language>.ftl`
+  beside its manifest), counts, sizes, names, folders, decimals and dates
+  written as the window writes them; agents read its English. A plugin on
+  protocol 1 runs as before. A plugin that is off is described on the
+  Plugins page in your language. The hex view's module writes sizes as the
+  size setting says. [The protocol](docs/plugins/protocol.md) has it.
+- **A document or a picture zoomed in moves with a drag** (ADR-143): a
+  picture larger than the panel, a page without text, a page's margins and
+  pictures, and the room around and between pages follow the pointer; the
+  middle button's drag moves them anywhere; **Drag to move the page** in the
+  reader's bar (`H`, or Settings › Reading › Pages) makes a drag across a
+  page's text move it too, rather than select, a click still following a
+  link.
+- **Thumbnails come sooner and keep less**: a picture's thumbnail shows before
+  the desktop's cache keeps it; a progressive JPEG's is read from its first
+  scans alone, keeping only their DC coefficients (7 MB for a 45-megapixel
+  photo, where 0.5.1 held 130 MB); a document's or a drawing's thumbnail
+  takes up to half as much room in the cache.
+- **A copy onto an rclone mount says what the server has** (ADR-113
+  amended): 0.5.1's strip said 100% and its bar stood full while the mount
+  still sent the files, as it counted what went into the mount's cache. The
+  bar now draws what was written, lighter, under what the server has; the
+  percent, the strip, Activity's header and the desktop's progress follow
+  what the server has. Activity's card no longer runs its line under its
+  Pause and Cancel: every popup's text wraps.
+- **A server kept with a folder stays its own place once mounted**: a server
+  added with a Folder (`sftp://nas/srv/photos`) gave way, once mounted, to
+  the mount's own place at its root, under the mount's name, so what you
+  renamed, moved or hid it as was lost while it was mounted, two servers of
+  one host became one place, and a lost connection was made again at the
+  root. A server is now one place mounted or not, keeping its name, its
+  place and its items, and opens its folder in the mount; the mount's root
+  is named by its remote in the trail and the tab.
 - **What you are on keeps its place more surely as a view changes size**:
   a grid's tile kept at the foot of the view was left cut by its gutter,
   so the next arrow scrolled it again; a list's place given back (a tab
@@ -37,15 +227,42 @@
   stay for good without its tags, rating and dates, read as the copy was
   asked but lost as its run began; a filter or a sort by them left it out
   of place until it landed.
-- **A size just under a unit is said in the next one**: 1,048,570 bytes
-  read "1024.0 KB"; rounded before its unit is chosen, it reads "1.0 MiB"
-  now (and 999,990 bytes "1.0 MB" in decimal units).
+- **A size just under a unit is said in the next one**: 0.5.1 said
+  1,048,570 bytes as "1024.0 KB"; rounded before its unit is chosen, it
+  reads "1.0 MB" now, or "1.0 MiB" in Binary units.
 - **Grouped by Type, a type the system does not name is headed as its
   files are called** ("PNG file", "File"), where its MIME type headed it
   (`image/png`, among the a's).
 - **Settings › Keyboard's new shortcut finds its command as the palette
-  does**: whatever its case, its accents and the order of its words
-  ("dossier créer" finds « Créer un dossier »).
+  does**: whatever its accents and the order of its words, in its title or
+  its name.
+- **On Windows, no program Skwir starts opens a console window** (#12): the
+  Git helper's flashed at each Git state read, and so did the other helpers,
+  plugins from outside and the `rclone` behind Add Server. Seen to stop for
+  the Git helper on Windows, by the pull request's author; the rest is tried
+  under Wine, which shows no console.
+- **Wasmtime 48.0.10**, past eight advisories of 48.0.8 (RUSTSEC-2026-0566
+  to RUSTSEC-2026-0573): it runs plugins from outside built as WebAssembly
+  modules (off until you turn one on) and the WebAssembly grammars Skwir
+  finds where editors keep theirs.
+- **The English, reworded in places**: counts are grouped (1,234), plurals
+  agree, a list takes a comma before "and" ("a, b, and c"), a percent is
+  "42%" everywhere (Activity and the text sizes wrote "42 %"), the search
+  plugin is titled Search, and a command nobody declared shows its name as
+  written (`gone.open`, not "Gone open").
+- **Smaller fixes**: a folder's tab draws the theme's folder icon, as the
+  views do, where only the sidebar's places did; a notice's buttons go under
+  its words where both do not fit beside each other; a setting's dropdown
+  leaves its description the room the buttons left, where the description
+  wrapped in a third of the row.
+- **For packagers**: the Linux packages install
+  `share/xdg-desktop-portal/portals/skwir.portal` and
+  `share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service`
+  (ADR-141), the desktop entry's and the metainfo's translations, merged
+  from `tools/package/linux/po` with gettext 0.21 or later, and
+  `share/skwir/channel`, which says how the copy came: a package manager
+  that repackages a release removes it
+  ([how](tools/package/channel/README.md)).
 
 ## 0.5.1 (2026-11-16)
 
