@@ -8600,6 +8600,9 @@ views_entry_marks = { $marks }
 # What a screen reader hears after a folder's name: it is shown only because files the filter keeps are inside it.
 views_entry_only_leads = leads to what the filter keeps
 
+# What a screen reader hears after a file's name in a window choosing folders for another program's dialog: it is shown dimmed, to say where one is, and cannot be chosen.
+views_entry_untaken = cannot be chosen here
+
 # What a screen reader hears after a file's name: its state in Git, changed since the last commit.
 views_entry_vcs_changed = changed
 

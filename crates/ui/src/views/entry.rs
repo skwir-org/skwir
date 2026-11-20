@@ -106,6 +106,9 @@ pub struct Look {
     /// A folder shown only as the way to what a filter keeps below it
     /// (`Pane::only_leads`): drawn dimmed.
     pub only_leads: bool,
+    /// What a dialog choosing folders does not take (`Pane::untaken`,
+    /// ADR-144, 9): drawn dimmed as such a folder, said apart.
+    pub untaken: bool,
     /// Hidden though its name does not say so (`Entry::hidden_unsaid`):
     /// marked, never dimmed, as what a file is.
     pub hidden: bool,
@@ -180,6 +183,7 @@ impl Shell {
             cursor: pane.selection.cursor == Some(id) && self.ui().list.heading.is_none(),
             cut: self.pending.cut && self.pending.holds(e.file(), &e.name),
             only_leads: pane.only_leads(id),
+            untaken: pane.untaken(id),
             hidden: e.hidden_unsaid(),
             icon: self.icons.for_entry(e, || pane.path_of(id), icon_px),
             link: icons::Link::of(e),
@@ -255,9 +259,10 @@ pub fn behave(
     let pane = shell.pane;
     let el = el
         .when(look.cut, |d| d.opacity(crate::views::list::CUT_OPACITY))
-        .when(look.only_leads && !look.cut && !look.selected, |d| {
-            d.opacity(crate::views::list::ONLY_LEADS_OPACITY)
-        })
+        .when(
+            (look.only_leads || look.untaken) && !look.cut && !look.selected,
+            |d| d.opacity(crate::views::list::ONLY_LEADS_OPACITY),
+        )
         .when(shell.a11y, |d| expose(d, look, seat))
         .children(shell.menu_marker(pane, look.cursor));
     let mut el = crate::list::entry_mouse(el, pane, look.id, cx);
@@ -317,7 +322,8 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
 
 /// What is said of an entry beside its name: whether it plays, what dims
 /// or marks it (cut, hidden though its name does not say so, only the way
-/// to what a filter keeps), its tags and stars; what is drawn is heard.
+/// to what a filter keeps, not to be chosen in a dialog), its tags and
+/// stars; what is drawn is heard.
 fn said(look: &Look) -> Option<String> {
     let states = [
         look.writing.then(|| {
@@ -342,6 +348,12 @@ fn said(look: &Look) -> Option<String> {
             skwir_core::words!(
                 views_entry_only_leads = "leads to what the filter keeps",
                 note = "What a screen reader hears after a folder's name: it is shown only because files the filter keeps are inside it."
+            )
+        }),
+        look.untaken.then(|| {
+            skwir_core::words!(
+                views_entry_untaken = "cannot be chosen here",
+                note = "What a screen reader hears after a file's name in a window choosing folders for another program's dialog: it is shown dimmed, to say where one is, and cannot be chosen."
             )
         }),
     ];
@@ -452,6 +464,7 @@ mod tests {
             cursor: false,
             cut: false,
             only_leads: false,
+            untaken: false,
             hidden: false,
             icon: None,
             link: crate::icons::Link::None,
@@ -492,6 +505,13 @@ mod tests {
             said(&leads).as_deref(),
             Some("cut and leads to what the filter keeps")
         );
+        // A file a dialog choosing folders shows dimmed says why, never
+        // that it leads anywhere (ADR-144, 9).
+        let untaken = Look {
+            untaken: true,
+            ..look()
+        };
+        assert_eq!(said(&untaken).as_deref(), Some("cannot be chosen here"));
         // What plays first: it is what the badge on its picture says.
         let playing = Look {
             plays: Some(crate::icons::Plays::Paused),

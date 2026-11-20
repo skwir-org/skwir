@@ -61,9 +61,10 @@ around the views is in [shell.md](shell.md).
     shown, but not wholly part of what the view holds. A cut entry, on
     its way out, at `CUT_OPACITY`; a folder shown only as the way to what
     a filter keeps (`Look::only_leads`, ADR-126, and a search's folders
-    on the way, ADR-127) at `ONLY_LEADS_OPACITY`, unless it is cut or
-    selected: what those say comes first. A hidden file shown is wholly
-    shown: never faded.
+    on the way, ADR-127) at `ONLY_LEADS_OPACITY`, as a file a dialog
+    choosing folders cannot take (`Look::untaken`, ADR-144, 9), each said
+    apart, unless it is cut or selected: what those say comes first. A
+    hidden file shown is wholly shown: never faded.
   - *What plays* (the program's `playing::NowPlaying`, whichever
     window plays it) is a round badge in the middle of its picture
     (`icons::Marks::plays`, `playing_badge`): a speaker while it plays,

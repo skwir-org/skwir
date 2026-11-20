@@ -9450,6 +9450,9 @@ views_entry_marks = { $marks }
 views_entry_only_leads = mène à ce que garde le filtre
 
 # draft
+views_entry_untaken = ne peut pas être choisi ici
+
+# draft
 views_entry_vcs_changed = modifié
 
 # draft

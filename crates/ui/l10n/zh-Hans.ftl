@@ -9020,6 +9020,9 @@ views_entry_marks = { $marks }
 views_entry_only_leads = 通向筛选条件保留的项目
 
 # draft
+views_entry_untaken = 此处无法选择
+
+# draft
 views_entry_vcs_changed = 已更改
 
 # draft

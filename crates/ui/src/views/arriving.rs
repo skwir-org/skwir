@@ -279,6 +279,7 @@ impl Shell {
             cursor: false,
             cut: false,
             only_leads: false,
+            untaken: false,
             hidden: e.hidden_unsaid(),
             icon: self.icons.for_entry(e, || Some(path), icon_px),
             link: crate::icons::Link::of(e),

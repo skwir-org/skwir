@@ -3257,9 +3257,6 @@ impl Pane {
     /// finds, read from the order made (`FilterCache`): no plugin is asked
     /// per row drawn.
     pub fn only_leads(&self, id: EntryId) -> bool {
-        if self.untaken(id) {
-            return true;
-        }
         if self.is_way(id) {
             return true;
         }
@@ -3279,7 +3276,8 @@ impl Pane {
 
     /// Whether `id` shows dimmed as what a dialog choosing folders does
     /// not take (`Admits::dims`, ADR-144, 9): drawn as a folder that only
-    /// leads is (`only_leads`).
+    /// leads is (`only_leads`), and said apart from one, as what cannot be
+    /// chosen there.
     pub fn untaken(&self, id: EntryId) -> bool {
         self.admits
             .as_ref()
@@ -7608,7 +7606,11 @@ mod tests {
         // Choosing folders, the files show dimmed (ADR-144, 9).
         p.set_admits(Some(Admits::folders()));
         assert_eq!(ids(&mut p).len(), 4);
-        assert!(p.untaken(file(1).id) && p.only_leads(file(1).id));
+        assert!(p.untaken(file(1).id), "dimmed");
+        assert!(
+            !p.only_leads(file(1).id),
+            "and no way to what a filter keeps"
+        );
         assert!(!p.untaken(folder_id));
     }
 
