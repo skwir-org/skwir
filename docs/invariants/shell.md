@@ -2209,8 +2209,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`Opened::Own`), so a skwir the bus started (`--portal`) never
   replaces the windows the user left. The window answers once, and every
   way it goes answers it (cancelled unless it answered: its close
-  button, Ctrl+W, Quit and its answers, finishing in the background, its
-  request closed; `Shell::leave`, `chooser_let_go`). Its core window goes
+  button, Ctrl+W, Quit from another window and its answers, finishing in
+  the background, its request closed; `Shell::leave`, `chooser_let_go`).
+  Quit asked in a dialog's window (Ctrl+Q there) cancels that dialog
+  alone (`Shell::quit`): the user's own windows were not what they were
+  leaving. Its core window goes
   from the core whatever else is there, never kept as the last window
   nor turned into an ordinary one (`App::close_dialog_window`: were it
   the last, a window of the user's own on the startup folder takes its

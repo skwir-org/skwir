@@ -3178,7 +3178,13 @@ impl Shell {
     /// finishes it without its window (the answer Enter gives, and Quit
     /// again), or stops now. With nothing under way, quit at once: an
     /// action an error stopped, still shown in the strip, is let go.
+    /// In a window answering another program's dialog, Quit cancels that
+    /// dialog alone: the user's own windows were not what they left.
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.chooser.is_some() {
+            self.chooser_cancel(window, cx);
+            return;
+        }
         if self
             .confirm
             .as_ref()
