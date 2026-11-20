@@ -100,3 +100,11 @@ the package).
 - A flag changed is another derivation, built from source: there is no
   binary cache for skwir.
 - aarch64-linux and aarch64-darwin are evaluated, never built here.
+- A nixpkgs whose `cargoSetupHook` asks crates for the system's libraries
+  (from 2026-11) gets them where the system has them: on Linux nixpkgs'
+  zstd (the tree-sitter and module helpers load `libzstd.so.1`, where the
+  other packages carry zstd-sys's copy, which the notices name) and
+  sqlite; on macOS, which has no zstd of its own, zstd-sys's copy still
+  (`ZSTD_SYS_USE_PKG_CONFIG` undone), and the system's sqlite and zlib.
+  Checked on x86_64-linux against nixpkgs 0bb8272 (2026-11-19);
+  aarch64-darwin evaluated.

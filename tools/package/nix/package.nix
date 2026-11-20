@@ -222,13 +222,24 @@ rustPlatform.buildRustPackage {
         expat
         dbus
         sqlite
-        # zstd-sys links the system zstd: nixpkgs' cargoSetupHook asks it
-        # to (ZSTD_SYS_USE_PKG_CONFIG), as it does sqlite's.
+        # Linked where the system has it, as nixpkgs' cargoSetupHook asks
+        # zstd-sys to (ZSTD_SYS_USE_PKG_CONFIG, from 2026-11), as it does
+        # sqlite's: the tree-sitter and module helpers (wasmtime's cache)
+        # then load libzstd.so.1 at run time rather than carry zstd-sys's
+        # copy, which the notices still name, as the other packages
+        # bundle it.
         zstd
       ]
     )
     ++ lib.optional stdenv.hostPlatform.isDarwin libiconv
     ++ lib.concatMap (feature: feature.libraries) enabled;
+
+  # macOS has no zstd of its own: zstd-sys builds the copy it bundles, as
+  # the macOS package's does, whatever the hook asked (above; a nixpkgs
+  # before it asked nothing). sqlite and zlib are the system's there.
+  preBuild = lib.optionalString stdenv.hostPlatform.isDarwin ''
+    unset ZSTD_SYS_USE_PKG_CONFIG
+  '';
 
   postInstall = ''
     # The helpers where skwir looks for them, off the PATH
