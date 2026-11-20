@@ -700,6 +700,15 @@ fn push(
     cancel: CancelToken,
     job: impl FnOnce() + Send + 'static,
 ) {
+    // What a window asked runs as asked there, on whichever worker: what
+    // it asks the user is asked in that window (`app::asking_in`).
+    let job: Job = match crate::app::asking_pane() {
+        None => Box::new(job),
+        Some(pane) => Box::new(move || {
+            let _asking = crate::app::asking_in(Some(pane));
+            job();
+        }),
+    };
     let seq = inner.seq.fetch_add(1, AtomicOrdering::Relaxed);
     let mut q = inner.queue.lock();
     q.heap.push(Task {
@@ -708,7 +717,7 @@ fn push(
         label,
         cancel,
         lane,
-        job: Box::new(job),
+        job,
     });
     let another = q.wants_another(inner.workers);
     let look = !another && q.wants_a_look(inner.workers);

@@ -585,6 +585,41 @@ fn the_window_is_asked_once_and_its_answer_is_the_plan() {
     assert_eq!(snapshot(&root), before, "all of it taken back");
 }
 
+/// A plan a window applies asks what becomes of the names it finds taken
+/// in that window, another program's dialog's too, with no window of the
+/// user's own up (a skwir the bus started for the dialog): its paste is
+/// asked there, never refused for want of a window, nor sent elsewhere
+/// (ADR-144, 1).
+#[test]
+fn a_dialog_s_paste_asks_in_the_dialog() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    write(&root.join("a.txt"), "mine");
+    write(&root.join("dest/a.txt"), "theirs");
+    let app = app(root);
+    let (_, _, dialog) = app
+        .open_window(skwir_core::Location::from_path(root))
+        .unwrap();
+    let plan = transfer(&app, "copy", &[root.join("a.txt")], &root.join("dest"));
+    {
+        let _asking = skwir_core::app::asking_in(Some(dialog));
+        app.apply_whole(plan);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let question = loop {
+        let mut asked = app.take_clash_questions_to(|pane| pane);
+        if let Some((pane, question)) = asked.pop() {
+            assert_eq!(pane, dialog, "asked in the dialog's window");
+            break question;
+        }
+        assert!(Instant::now() < deadline, "never asked");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(app.answer_clashes(question.id, None));
+    assert!(matches!(finished(&app), ExecEvent::Finished { .. }));
+    assert_eq!(read(&root.join("dest/a.txt")), "theirs", "nothing copied");
+}
+
 /// Cancel applies nothing, and shows nothing: the plan never started.
 #[test]
 fn cancelled_the_plan_applies_nothing() {

@@ -721,10 +721,10 @@ fn deliver(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
     let active = app.workspace.read().active_window_id();
-    // What asks the user an answer, and what is asked from elsewhere, go
-    // to a window of the user's own, never to one answering another
-    // program's dialog (ADR-141, 8): while those alone are up, they wait
-    // in the core as with no window at all.
+    // What is asked from elsewhere (an agent's, a script's) and what no
+    // window asked go to a window of the user's own, never to one
+    // answering another program's dialog (ADR-141, 8): while those alone
+    // are up, they wait in the core as with no window at all.
     let own = own_windows(state);
     let dialogs: HashSet<WindowId> = state
         .windows
@@ -736,6 +736,20 @@ fn deliver(cx: &mut App) {
     let Some(front) = own_front.or_else(|| front_of(&state.windows, active).map(|(id, _)| *id))
     else {
         return;
+    };
+    // The window up each pane is in: what a window asked goes back to it.
+    let in_window: HashMap<PaneId, WindowId> = {
+        let ws = app.workspace.read();
+        state
+            .windows
+            .iter()
+            .filter_map(|(id, _)| ws.window(*id))
+            .flat_map(|w| {
+                w.tabs()
+                    .iter()
+                    .flat_map(move |tab| tab.panes.iter().map(move |pane| (*pane, w.id)))
+            })
+            .collect()
     };
     let mut inboxes: HashMap<WindowId, Inbox> = HashMap::new();
     let watched = watched(cx);
@@ -786,13 +800,30 @@ fn deliver(cx: &mut App) {
     // front is whenever one is up.
     let inbox = inboxes.entry(front).or_default();
     inbox.notifications = app.take_notifications_for(own_front.is_some());
+    // What asks the user an answer goes to the window whose action asked
+    // it while it is up, another program's dialog's too: the user's answer
+    // to what the user did there (ADR-144, 1; `app::asking_in`). What no
+    // window asked, or one gone since, goes to a window of the user's own,
+    // and with none, waits in the core.
+    let to = |pane: Option<PaneId>| {
+        pane.and_then(|pane| in_window.get(&pane).copied())
+            .or(own_front)
+    };
+    for (window, question) in app.take_questions_to(to) {
+        inboxes.entry(window).or_default().questions.push(question);
+    }
+    for (window, clashes) in app.take_clash_questions_to(to) {
+        inboxes.entry(window).or_default().clashes.push(clashes);
+    }
+    for (window, secret) in app.take_secret_questions_to(to) {
+        inboxes.entry(window).or_default().secrets.push(secret);
+    }
+    for (window, form) in app.take_forms_to(to) {
+        inboxes.entry(window).or_default().forms.push(form);
+    }
     if let Some(front) = own_front {
         let inbox = inboxes.entry(front).or_default();
         inbox.proposals = app.take_proposals();
-        inbox.questions = app.take_questions();
-        inbox.clashes = app.take_clash_questions();
-        inbox.secrets = app.take_secret_questions();
-        inbox.forms = app.take_forms();
         let state = cx.global_mut::<Finishing>();
         inbox.take_in(std::mem::take(&mut state.handed));
         let waited = std::mem::take(&mut state.waiting);

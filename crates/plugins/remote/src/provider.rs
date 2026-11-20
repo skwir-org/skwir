@@ -60,6 +60,7 @@ impl LocationProvider for Provider {
                 // An agent's call connects only once the user allowed it:
                 // the server it names is told who the user is (their keys).
                 agent: skwir_core::permissions::agent_call().is_some(),
+                asking: skwir_core::app::asking_pane(),
                 running: Mutex::new(false),
             }),
         });
@@ -160,6 +161,10 @@ struct How {
     remotes: Remotes,
     app: std::sync::Weak<App>,
     agent: bool,
+    /// The pane whose window opened it (`app::asking_pane`): what
+    /// connecting asks the user (a password, whether to trust the server)
+    /// is asked in that window, another program's dialog's too.
+    asking: Option<skwir_core::workspace::PaneId>,
     /// A connection is being made: F5 waits for it.
     running: Mutex<bool>,
 }
@@ -177,6 +182,7 @@ impl How {
         let spawned = std::thread::Builder::new()
             .name("skwir-connect".into())
             .spawn(move || {
+                let _asking = skwir_core::app::asking_in(this.asking);
                 let outcome = this.reach();
                 *this.running.lock() = false;
                 if this.cancel.is_cancelled() {

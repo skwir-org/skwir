@@ -289,7 +289,7 @@ fn asked(
     refused: bool,
     cancel: &CancelToken,
 ) -> Option<SecretAnswer> {
-    if !app.window_shown() {
+    if !app.can_ask() {
         return None;
     }
     let title = match (volume.title, refused) {

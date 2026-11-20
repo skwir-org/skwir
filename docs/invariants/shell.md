@@ -2229,14 +2229,23 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   by itself or from the strip and the rows arriving, nothing is pinned to
   the player, and the sidebar leaves out a place whose files are not to give
   (`App::gives_files`: the Trash), whose files it never answers with
-  either. What asks the
-  user an answer (proposals, questions, clashes, secrets, forms, a
-  notice that stays: `App::take_notifications_for`) and what is asked
-  from elsewhere (`ui.*` requests) go to a window of the user's own
-  (`finishing::deliver`, `own_windows`), never to a dialog's:
-  while dialogs' windows alone are up, they wait in the core as with no
-  window at all, and what the user's last own window held is declined
-  as it closes (`hand_on`). A dialog's
+  either. A question goes to the window whose action asked it
+  (`app::asking_in`, `App::take_questions_to`, `finishing::deliver`):
+  what a window runs, the workers its work starts (the scheduler hands
+  the asking pane on), the plans it applies (the executor does) and a
+  connection a location opened there makes (the remote provider takes it
+  as it opens) ask there, a dialog's window too, the user's answer to
+  what the user did there (a server's password, a volume's passphrase,
+  names a paste found taken: ADR-144, 1), and `App::can_ask` holds there
+  in a skwir the bus started for a dialog alone. What no window asked (an
+  agent's call, a script's, a plugin's work of its own), what a window
+  gone asked, proposals, a notice that stays
+  (`App::take_notifications_for`) and what is asked from elsewhere
+  (`ui.*` requests) go to a window of the user's own (`own_windows`),
+  never to a dialog's: while dialogs' windows alone are up, they wait in
+  the core as with no window at all, and what the user's last own window
+  held, or a dialog's window held as it went, is declined as it closes
+  with none of the user's own up (`hand_on`). A dialog's
   window is a core window marked so (`WindowTabs::chooses`): never
   recorded for the next start nor reopened, its shape never the next
   window's: the dialogs keep a layout of their own (ADR-144, 4 and 5;

@@ -2934,7 +2934,7 @@ impl WindowAsk {
         cancel: &CancelToken,
     ) -> Option<skwir_core::app::SecretAnswer> {
         let app = self.app.upgrade()?;
-        if !app.window_shown() {
+        if !app.can_ask() {
             return None;
         }
         let (id, answer) = if password {
@@ -2962,7 +2962,7 @@ impl WindowAsk {
         let Some(app) = self.app.upgrade() else {
             return false;
         };
-        if !app.window_shown() {
+        if !app.can_ask() {
             return false;
         }
         let (id, answer) = app.ask_as(

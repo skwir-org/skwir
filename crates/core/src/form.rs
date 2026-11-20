@@ -560,7 +560,8 @@ pub struct Asked {
 /// The forms waiting for the window, and who waits for each answer.
 #[derive(Default)]
 pub(crate) struct Forms {
-    asked: parking_lot::Mutex<Vec<Asked>>,
+    /// Each with the pane whose window asked it (`app::asking_pane`).
+    asked: parking_lot::Mutex<crate::app::AskedIn<Asked>>,
     replies: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<Answer>>>>,
 }
 
@@ -583,7 +584,10 @@ impl App {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = crossbeam_channel::bounded(1);
         self.forms.replies.lock().insert(id, reply);
-        self.forms.asked.lock().push(Asked { id, form });
+        self.forms
+            .asked
+            .lock()
+            .push((crate::app::asking_pane(), Asked { id, form }));
         self.wake();
         (id, answer)
     }
@@ -592,7 +596,7 @@ impl App {
     /// Cancel, with no window to ask, or once `cancel` fires (the form is
     /// then withdrawn).
     pub fn fill(&self, form: Form, cancel: &CancelToken) -> Option<Answer> {
-        if !self.window_shown() {
+        if !self.can_ask() {
             return None;
         }
         let (id, answer) = self.ask_form(form);
@@ -612,6 +616,18 @@ impl App {
     /// The forms asked since the last call, oldest first.
     pub fn take_forms(&self) -> Vec<Asked> {
         std::mem::take(&mut *self.forms.asked.lock())
+            .into_iter()
+            .map(|(_, asked)| asked)
+            .collect()
+    }
+
+    /// The forms asked since the last call that `to` finds a window for,
+    /// oldest first, each with it (see `App::take_questions_to`).
+    pub fn take_forms_to<W>(
+        &self,
+        to: impl Fn(Option<crate::workspace::PaneId>) -> Option<W>,
+    ) -> Vec<(W, Asked)> {
+        crate::app::take_to(&self.forms.asked, to)
     }
 
     /// The user answered the form `id` (`None`: Cancel): whether its
@@ -631,7 +647,7 @@ impl App {
     /// taken yet is not shown.
     pub fn withdraw_form(&self, id: u64) {
         self.forms.replies.lock().remove(&id);
-        self.forms.asked.lock().retain(|asked| asked.id != id);
+        self.forms.asked.lock().retain(|(_, asked)| asked.id != id);
         // The window closes one it shows already.
         self.wake();
     }

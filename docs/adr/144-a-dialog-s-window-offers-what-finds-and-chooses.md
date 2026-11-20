@@ -8,8 +8,8 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
 7). Built on Linux, which alone has these dialogs (ADR-141, 11), the
 same day (2f32dfaa..dd85c5b5), each step checked in a window on Xvfb;
 amended as built (decisions 1, 4, 6, 7 and 10), and after review
-(decision 1: one answer every way to run a command asks; decision 2:
-one tab).
+(decision 1: one answer every way to run a command asks, questions
+asked where the dialog's action asked them; decision 2: one tab).
 
 ## Context
 
@@ -79,7 +79,14 @@ one tab).
    it, a field's typing). Views are offered by their role: listings and
    alternate shapes, never a lens (Usage, the Map). Ctrl+Q there is the
    dialog's Cancel, bound in its `choosing` context; Quit is not offered
-   there (amended 2026-11-20). Amended after review (2026-11-20): as first
+   there (amended 2026-11-20). What the dialog's own action asks the
+   user (a server's password or whether to trust it, a volume's
+   passphrase, names a paste found taken) is asked in the dialog's
+   window, a question going to the window whose action asked it
+   (`app::asking_in`); only what agents, scripts and plugins' work of its
+   own ask waits for a window of the user's own (ADR-141, 8, which keeps
+   agents and scripts from answering a dialog, not the dialog from
+   asking). Amended after review (2026-11-20): as first
    built, each surface asked a part of the rule (keys and menus one,
    the palette another, pickers a third), checks beside features (the
    terminal, the split) stood beside it, and a command about notes or

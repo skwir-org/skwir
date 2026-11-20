@@ -482,6 +482,81 @@ fn a_dialog_s_window_opens_a_tab_asked_in_place() {
     assert_eq!(tabs_of(&app, own).len(), 2);
 }
 
+/// What asks the user an answer goes to the window whose action asked it,
+/// a dialog's too, from the window's thread and from the workers its work
+/// starts; what no window asked goes to a window of the user's own; what
+/// no window takes waits in the core (ADR-144, 1).
+#[test]
+fn a_question_goes_to_the_window_that_asked_it() {
+    use skwir_core::app::{Asker, asking_in};
+    let dir = home_tempdir();
+    let app = app(dir.path());
+    let own = active(&app);
+    let (_, _, dialog) = app.open_window(Location::from_path(dir.path())).unwrap();
+    assert!(!app.can_ask(), "no window shown, none asking");
+    {
+        let _asking = asking_in(Some(dialog));
+        assert!(app.can_ask(), "the dialog asks");
+        app.ask_as(
+            Asker::Connection,
+            Words::as_written("trust"),
+            Words::as_written(""),
+        );
+        let (sent, done) = crossbeam_channel::bounded(1);
+        let worker = std::sync::Arc::clone(&app);
+        app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Normal,
+            "test-asks",
+            app.lifetime().child(),
+            move || {
+                worker.ask_password(Words::as_written("password"), Words::as_written("ok"));
+                sent.send(()).unwrap();
+            },
+        );
+        done.recv_timeout(Duration::from_secs(10))
+            .expect("the worker asked");
+    }
+    // An agent's call, asked by no window.
+    app.ask(Words::as_written("agent"), Words::as_written(""));
+    let to = |pane: Option<PaneId>| {
+        Some(if pane == Some(dialog) {
+            "dialog"
+        } else {
+            "own"
+        })
+    };
+    let questions: Vec<(&str, String)> = app
+        .take_questions_to(to)
+        .into_iter()
+        .map(|(window, q)| (window, q.title.english()))
+        .collect();
+    assert_eq!(
+        questions,
+        [("dialog", "trust".to_owned()), ("own", "agent".to_owned())]
+    );
+    let secrets: Vec<&str> = app
+        .take_secret_questions_to(to)
+        .into_iter()
+        .map(|(window, _)| window)
+        .collect();
+    assert_eq!(
+        secrets,
+        ["dialog"],
+        "from the worker the dialog's work started"
+    );
+    // With no window to take it, it waits for one.
+    {
+        let _asking = asking_in(Some(own));
+        app.ask_as(
+            Asker::Connection,
+            Words::as_written("later"),
+            Words::as_written(""),
+        );
+    }
+    assert!(app.take_questions_to(|_| None::<()>).is_empty());
+    assert_eq!(app.take_questions().len(), 1, "still asked");
+}
+
 #[test]
 fn the_active_pane_is_in_the_active_window() {
     let dir = home_tempdir();

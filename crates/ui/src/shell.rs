@@ -3116,6 +3116,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // What it runs, and the work that starts, asks the user in this
+        // window, another program's dialog's too (`app::asking_in`, ADR-144,
+        // 1): its server's password, its paste's names taken.
+        let _asking = skwir_core::app::asking_in(Some(self.pane));
         // Behind a plan being made, what acts waits its turn, what shows
         // runs at once, and what ends the window lets the plan go, as its
         // close button does, and goes at once (`planning::turn`).
@@ -3258,6 +3262,8 @@ impl Shell {
             self.confirm_deleting(plan, window, cx);
             return;
         }
+        // What it asks as it runs (names taken, room) is asked here.
+        let _asking = skwir_core::app::asking_in(Some(self.pane));
         self.app.apply_whole(plan);
         cx.notify();
     }

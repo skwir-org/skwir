@@ -372,6 +372,71 @@ fn asked_now() -> Option<Asked> {
     ASKED.with(|now| now.borrow().clone())
 }
 
+thread_local! {
+    /// The pane whose window asked what runs on this thread (`asking_in`).
+    static ASKING: std::cell::Cell<Option<PaneId>> = const { std::cell::Cell::new(None) };
+}
+
+/// What runs on this thread, until the guard goes, was asked in `pane`'s
+/// window: the user's action there, a command its keys or a click ran, a
+/// worker's job it spawned (the scheduler hands it on), a plan it applied
+/// (the executor does), a connection a location opened there makes
+/// (`asking_pane`, taken where its thread starts). What that work asks the
+/// user (a server's password, a volume's passphrase, names a paste found
+/// taken) is asked in that window, another program's dialog's too
+/// (`App::take_questions_to`, ADR-144, 1); `None`, what no window asked.
+#[must_use = "what runs is asked in the pane only while the guard lives"]
+pub fn asking_in(pane: Option<PaneId>) -> AskingIn {
+    AskingIn(ASKING.with(|now| now.replace(pane)))
+}
+
+/// What `asking_in` set, put back as it goes.
+pub struct AskingIn(Option<PaneId>);
+
+impl Drop for AskingIn {
+    fn drop(&mut self) {
+        let before = self.0;
+        ASKING.with(|now| now.set(before));
+    }
+}
+
+/// The pane whose window asked what runs on this thread (`asking_in`), else
+/// the one a plan made for the window was asked of (`as_asked`); `None` for
+/// what no window asked: an agent's or a script's call, work of its own.
+pub fn asking_pane() -> Option<PaneId> {
+    ASKING
+        .with(std::cell::Cell::get)
+        .or_else(|| asked_now().map(|asked| asked.pane))
+}
+
+/// A queue of what asks the user an answer, each with the pane whose
+/// window asked it (`asking_pane`).
+pub(crate) type AskedIn<T> = Vec<(Option<PaneId>, T)>;
+
+/// What `queue` holds, without where it was asked.
+fn untagged<T>(queue: AskedIn<T>) -> Vec<T> {
+    queue.into_iter().map(|(_, asked)| asked).collect()
+}
+
+/// What `queue` holds that `to` finds a window for, each with it; the rest
+/// stays, in its order.
+pub(crate) fn take_to<T, W>(
+    queue: &parking_lot::Mutex<AskedIn<T>>,
+    to: impl Fn(Option<PaneId>) -> Option<W>,
+) -> Vec<(W, T)> {
+    let mut queue = queue.lock();
+    let mut taken = Vec::new();
+    let mut left = Vec::new();
+    for (pane, asked) in queue.drain(..) {
+        match to(pane) {
+            Some(window) => taken.push((window, asked)),
+            None => left.push((pane, asked)),
+        }
+    }
+    *queue = left;
+    taken
+}
+
 /// The selection a command acts on in `p`: the one asked when it was asked
 /// of `p` (`as_asked`), else `p`'s own. The one way a command reads a
 /// pane's selection, under the workspace's guard too.
@@ -451,15 +516,15 @@ pub struct App {
     proposals: parking_lot::Mutex<Vec<Plan>>,
     /// Questions for the user (`ask`), until the window takes them, and
     /// who waits for each answer.
-    questions: parking_lot::Mutex<Vec<Question>>,
+    questions: parking_lot::Mutex<AskedIn<Question>>,
     answers: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<bool>>>,
     /// The names plans found taken (ADR-054), until the window takes them,
     /// and who waits for each answer.
-    clashes: parking_lot::Mutex<Vec<ClashQuestion>>,
+    clashes: parking_lot::Mutex<AskedIn<ClashQuestion>>,
     settled: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<op::clash::Answer>>>>,
     /// What steps ask that only the user knows, until the window takes
     /// them, and who waits for each answer.
-    secrets: parking_lot::Mutex<Vec<SecretQuestion>>,
+    secrets: parking_lot::Mutex<AskedIn<SecretQuestion>>,
     secret_replies:
         parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<SecretAnswer>>>>,
     /// The forms plugins ask the user to fill (ADR-086), until the window
@@ -670,11 +735,11 @@ impl App {
                 }),
             );
             // A plan short of room asks the user whether to go on anyway;
-            // with no window up, no one is asked, and nothing is copied.
+            // with no window to ask it, no one is asked, and nothing is copied.
             let asking = Arc::downgrade(&app);
             app.executor.set_room_asker(Some(Arc::new(
                 move |title: &crate::words::Words, short: &op::room::Short| match asking.upgrade() {
-                    Some(app) if app.window_shown() => {
+                    Some(app) if app.can_ask() => {
                         let detail = words!(
                             app_room_detail = "{ $title }: a drive, a network share above all, may say it has less room than it has. Copy anyway, or cancel and make room.",
                             title = title.clone(),
@@ -688,17 +753,17 @@ impl App {
                 },
             )));
             // A plan that finds names taken asks the window what becomes
-            // of them; with no window up, no one is asked.
+            // of them; with no window to ask it, no one is asked.
             let asking = Arc::downgrade(&app);
             app.executor.set_clash_asker(Some(Arc::new(
                 move |title: &crate::words::Words, clashes: &[op::clash::Clash]| {
                     let app = asking.upgrade()?;
-                    app.window_shown()
+                    app.can_ask()
                         .then(|| app.ask_clashes(title.clone(), clashes.to_vec()))
                 },
             )));
             // A step that needs what only the user knows (an archive's
-            // password) asks the window and waits; with no window up, no
+            // password) asks the window and waits; with no window to ask it, no
             // one is asked, and the step says so.
             let asking = Arc::downgrade(&app);
             app.executor.set_secret_asker(Some(Arc::new(
@@ -706,7 +771,7 @@ impl App {
                     use crossbeam_channel::RecvTimeoutError;
                     let (id, answer) = {
                         let app = asking.upgrade().ok_or(op::Unanswered::NoOne)?;
-                        if !app.window_shown() {
+                        if !app.can_ask() {
                             return Err(op::Unanswered::NoOne);
                         }
                         app.ask_secret(title.clone(), accept.clone())
@@ -2808,6 +2873,13 @@ impl App {
         *self.shown.0.lock()
     }
 
+    /// Whether what runs on this thread can ask the user: a window asked
+    /// it (`asking_pane`: another program's dialog's too, which a skwir the
+    /// bus started for it shows alone), or one is up (`window_shown`).
+    pub fn can_ask(&self) -> bool {
+        asking_pane().is_some() || self.window_shown()
+    }
+
     /// Window `window` has the keyboard, or no longer: the UI says so as
     /// the desktop tells it, and as the window goes. Coming to the front
     /// reads remote folders again (`refresh_remote`) and tells the plugins
@@ -2918,12 +2990,15 @@ impl App {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = crossbeam_channel::bounded(1);
         self.answers.lock().insert(id, reply);
-        self.questions.lock().push(Question {
-            id,
-            title: title.into(),
-            detail: detail.into(),
-            asker,
-        });
+        self.questions.lock().push((
+            asking_pane(),
+            Question {
+                id,
+                title: title.into(),
+                detail: detail.into(),
+                asker,
+            },
+        ));
         self.wake();
         (id, answer)
     }
@@ -2940,18 +3015,30 @@ impl App {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = crossbeam_channel::bounded(1);
         self.settled.lock().insert(id, reply);
-        self.clashes.lock().push(ClashQuestion {
-            id,
-            title: title.into(),
-            clashes,
-        });
+        self.clashes.lock().push((
+            asking_pane(),
+            ClashQuestion {
+                id,
+                title: title.into(),
+                clashes,
+            },
+        ));
         self.wake();
         answer
     }
 
     /// The names found taken since the last call, oldest first.
     pub fn take_clash_questions(&self) -> Vec<ClashQuestion> {
-        std::mem::take(&mut *self.clashes.lock())
+        untagged(std::mem::take(&mut *self.clashes.lock()))
+    }
+
+    /// The names found taken since the last call that `to` finds a window
+    /// for, oldest first, each with it (see `take_questions_to`).
+    pub fn take_clash_questions_to<W>(
+        &self,
+        to: impl Fn(Option<PaneId>) -> Option<W>,
+    ) -> Vec<(W, ClashQuestion)> {
+        take_to(&self.clashes, to)
     }
 
     /// The user answered the clashes `id`, `None` for Cancel: whether the
@@ -3031,14 +3118,26 @@ impl App {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = crossbeam_channel::bounded(1);
         self.secret_replies.lock().insert(id, reply);
-        self.secrets.lock().push(SecretQuestion { id, ..question });
+        self.secrets
+            .lock()
+            .push((asking_pane(), SecretQuestion { id, ..question }));
         self.wake();
         (id, answer)
     }
 
     /// What steps asked of the user since the last call, oldest first.
     pub fn take_secret_questions(&self) -> Vec<SecretQuestion> {
-        std::mem::take(&mut *self.secrets.lock())
+        untagged(std::mem::take(&mut *self.secrets.lock()))
+    }
+
+    /// What was asked of the user that only they know since the last call
+    /// that `to` finds a window for, oldest first, each with it (see
+    /// `take_questions_to`).
+    pub fn take_secret_questions_to<W>(
+        &self,
+        to: impl Fn(Option<PaneId>) -> Option<W>,
+    ) -> Vec<(W, SecretQuestion)> {
+        take_to(&self.secrets, to)
     }
 
     /// The user answered the question `id`, `None` for Cancel: whether
@@ -3058,14 +3157,28 @@ impl App {
     /// answer goes nowhere, and a question not taken yet is not shown.
     pub fn withdraw_secret(&self, id: u64) {
         self.secret_replies.lock().remove(&id);
-        self.secrets.lock().retain(|q| q.id != id);
+        self.secrets.lock().retain(|(_, q)| q.id != id);
         // The window closes its prompt if it shows it already.
         self.wake();
     }
 
     /// Questions asked since the last call, oldest first.
     pub fn take_questions(&self) -> Vec<Question> {
-        std::mem::take(&mut *self.questions.lock())
+        untagged(std::mem::take(&mut *self.questions.lock()))
+    }
+
+    /// The questions asked since the last call that `to` finds a window
+    /// for, oldest first, each with it: `to` is handed the pane whose
+    /// window asked each (`asking_in`), `None` for what no window asked
+    /// (an agent's call, a script's, work of its own), and a question it
+    /// finds none for waits for the next call. A question goes to the
+    /// window whose action asked it, another program's dialog's too: the
+    /// user's answer to what the user did there (ADR-144, 1).
+    pub fn take_questions_to<W>(
+        &self,
+        to: impl Fn(Option<PaneId>) -> Option<W>,
+    ) -> Vec<(W, Question)> {
+        take_to(&self.questions, to)
     }
 
     /// The user answered the question `id`: whether anyone still waited.
@@ -3078,7 +3191,7 @@ impl App {
     /// question the window has not taken yet is not shown.
     pub fn withdraw(&self, id: u64) {
         self.answers.lock().remove(&id);
-        self.questions.lock().retain(|q| q.id != id);
+        self.questions.lock().retain(|(_, q)| q.id != id);
         // The window lets go of one it shows already.
         self.wake();
     }

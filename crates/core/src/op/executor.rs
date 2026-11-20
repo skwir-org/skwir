@@ -827,6 +827,10 @@ struct Job {
     /// undo's or a redo's made as it is asked and handed to the asker
     /// (`Executor::undo`), so that the window follows its own runs alone.
     run: PlanId,
+    /// The pane whose window asked it (`app::asking_pane`, as it was
+    /// queued): what it asks the user as it runs (names taken, room, a
+    /// password) is asked in that window.
+    asking: Option<crate::workspace::PaneId>,
 }
 
 /// Undo with what came after, as one action (ADR-079, 13): its undos run
@@ -3114,6 +3118,7 @@ impl Executor {
             refused: None,
             chain,
             run,
+            asking: crate::app::asking_pane(),
         });
         drop(lane);
         if let Some((plan, _)) = brings {
@@ -3823,6 +3828,7 @@ impl Executor {
 
     fn run_job(&self, job: Job) {
         let _ended = Ended(self, job.seq);
+        let _asking = crate::app::asking_in(job.asking);
         // What it touches, which its entry keeps, bounded as when measured.
         let touched = job.footprint.clone().unwrap_or_default();
         let (kept, exact) = (job.kept.clone(), job.exact.clone());
