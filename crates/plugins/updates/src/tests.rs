@@ -17,7 +17,7 @@ use skwir_platform::channel::Channel;
 
 use crate::kept::Kept;
 use crate::version::Version;
-use crate::{Here, Setup, TELL, UpdatesPlugin, WHATS_NEW};
+use crate::{Family, Here, Setup, TELL, UpdatesPlugin, WHATS_NEW};
 
 /// What the site answers: its file and the file's tag.
 #[derive(Clone)]
@@ -279,6 +279,7 @@ impl Fixture {
 const DOWNLOADED: Here = Here {
     channel: Some(Channel::AppImage),
     repository: false,
+    family: None,
 };
 
 fn file(latest: &str) -> String {
@@ -591,10 +592,12 @@ fn a_copy_something_else_updates_is_never_checked() {
         Here {
             channel: None,
             repository: false,
+            family: None,
         },
         Here {
             channel: Some(Channel::Deb),
             repository: true,
+            family: None,
         },
     ] {
         let f = Fixture::new(&site.address, Version(0, 5, 1), here);
@@ -624,6 +627,7 @@ fn a_copy_something_else_updates_is_never_checked() {
         Here {
             channel: Some(Channel::Deb),
             repository: false,
+            family: Some(Family::Ubuntu),
         },
     );
     f.look_on(20_000);
@@ -640,7 +644,52 @@ fn a_copy_something_else_updates_is_never_checked() {
     let repository = &question.actions[2].command;
     assert_eq!(
         repository.args["url"],
-        format!("{}/download#repository", site.address)
+        format!("{}/download?package=ubuntu#repository", site.address),
+        "the page shows the system's commands"
+    );
+}
+
+/// The repository's page names the system the copy runs on, read from its
+/// os-release for a `.deb`: Ubuntu's for Ubuntu and what is like it,
+/// Debian's for Debian and what is like it alone; the site guesses where
+/// neither is said.
+#[test]
+fn the_repository_page_names_the_system_the_copy_runs_on() {
+    let page = |channel: Channel, os: Option<&str>| {
+        let family = Family::of(channel, || {
+            os.map(skwir_platform::about::OsRelease::of_text)
+        });
+        crate::repository_page("https://skwir.org", family)
+    };
+    let package = |word: &str| format!("https://skwir.org/download?package={word}#repository");
+    let guessed = "https://skwir.org/download#repository";
+    assert_eq!(page(Channel::Rpm, None), package("fedora"), "an .rpm");
+    for (system, os, expected) in [
+        ("Ubuntu", "ID=ubuntu\nID_LIKE=debian\n", package("ubuntu")),
+        (
+            "Linux Mint",
+            "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n",
+            package("ubuntu"),
+        ),
+        (
+            "Pop!_OS",
+            "ID=pop\nID_LIKE=\"ubuntu debian\"\n",
+            package("ubuntu"),
+        ),
+        ("Debian", "ID=debian\n", package("debian")),
+        ("LMDE", "ID=linuxmint\nID_LIKE=debian\n", package("debian")),
+        (
+            "another",
+            "ID=other\nID_LIKE=\"something else\"\n",
+            guessed.to_owned(),
+        ),
+    ] {
+        assert_eq!(page(Channel::Deb, Some(os)), expected, "{system}");
+    }
+    assert_eq!(page(Channel::Deb, None), guessed, "no os-release");
+    assert_eq!(
+        Family::of(Channel::AppImage, || panic!("read only for a .deb")),
+        None
     );
 }
 
@@ -652,6 +701,7 @@ fn what_is_new_is_said_once_after_an_update() {
     let managed = Here {
         channel: None,
         repository: false,
+        family: None,
     };
     let f = Fixture::new(&site.address, Version(0, 5, 1), managed);
     f.look_on(20_000);
@@ -742,6 +792,7 @@ fn a_copy_the_system_comes_to_update_is_checked_no_more() {
         Arc::new(move || Here {
             channel: Some(Channel::Deb),
             repository: added.load(Ordering::SeqCst),
+            family: None,
         }),
     );
     assert!(
@@ -895,6 +946,7 @@ fn deb_copy(site: &Site) -> (Fixture, Arc<AtomicBool>, Notification) {
         Arc::new(move || Here {
             channel: Some(Channel::Deb),
             repository: added.load(Ordering::SeqCst),
+            family: None,
         }),
     );
     f.look_on(20_000);

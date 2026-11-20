@@ -1,6 +1,8 @@
 //! What the About dialog says of the system skwir runs on and of where
 //! it is installed: the system's own name for itself, and the folder its
-//! package keeps skwir's licences in. Both read files: call from a worker.
+//! package keeps skwir's licences in; and what the system says it is
+//! (`OsRelease`), which the updates plugin reads too. Each reads files:
+//! call from a worker.
 
 use std::path::{Path, PathBuf};
 
@@ -8,27 +10,56 @@ use std::path::{Path, PathBuf};
 /// (Workstation Edition)`), when it does: os-release's `PRETTY_NAME` on
 /// Linux, else its `NAME`.
 pub fn system_name() -> Option<String> {
-    if !cfg!(target_os = "linux") {
-        return None;
-    }
-    ["/etc/os-release", "/usr/lib/os-release"]
-        .into_iter()
-        .find_map(|path| crate::file::read_regular_text(Path::new(path), 64 << 10).ok())
-        .and_then(|text| pretty_name(&text))
+    OsRelease::read()?.pretty_name()
 }
 
-/// os-release's name for the system: `PRETTY_NAME`, else `NAME`. Its
-/// values are written as a shell would read them: quoted or not, with
-/// backslashes escaping in double quotes.
-fn pretty_name(text: &str) -> Option<String> {
-    let value = |key: &str| {
-        text.lines()
+/// What the system says it is, in its os-release (`/etc/os-release`, else
+/// `/usr/lib/os-release`, on Linux): its values written as a shell would
+/// read them, quoted or not, with backslashes escaping in double quotes,
+/// read here alone.
+pub struct OsRelease(String);
+
+impl OsRelease {
+    /// The system's, on Linux. Reads a file: on a worker.
+    pub fn read() -> Option<OsRelease> {
+        if !cfg!(target_os = "linux") {
+            return None;
+        }
+        ["/etc/os-release", "/usr/lib/os-release"]
+            .into_iter()
+            .find_map(|path| crate::file::read_regular_text(Path::new(path), 64 << 10).ok())
+            .map(OsRelease)
+    }
+
+    /// An os-release's text, as read.
+    pub fn of_text(text: &str) -> OsRelease {
+        OsRelease(text.to_owned())
+    }
+
+    /// The value of `key`, the last line naming it, unless empty.
+    fn value(&self, key: &str) -> Option<String> {
+        self.0
+            .lines()
             .filter_map(|line| line.trim().strip_prefix(key)?.strip_prefix('='))
             .next_back()
             .map(unquote)
             .filter(|value| !value.is_empty())
-    };
-    value("PRETTY_NAME").or_else(|| value("NAME"))
+    }
+
+    /// Its name for the system: `PRETTY_NAME`, else `NAME`.
+    pub fn pretty_name(&self) -> Option<String> {
+        self.value("PRETTY_NAME").or_else(|| self.value("NAME"))
+    }
+
+    /// Whether the system is `id` (`ID`), or says it is like it (one of
+    /// `ID_LIKE`'s words): Linux Mint is like `ubuntu`, which is like
+    /// `debian`.
+    pub fn is_like(&self, id: &str) -> bool {
+        self.value("ID").as_deref() == Some(id)
+            || self
+                .value("ID_LIKE")
+                .is_some_and(|like| like.split_whitespace().any(|word| word == id))
+    }
 }
 
 fn unquote(value: &str) -> String {
@@ -85,7 +116,11 @@ fn licences_beside(bin: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{licences_beside, pretty_name};
+    use super::{OsRelease, licences_beside};
+
+    fn pretty_name(text: &str) -> Option<String> {
+        OsRelease::of_text(text).pretty_name()
+    }
 
     #[test]
     fn the_system_is_named_as_its_os_release_says() {
@@ -115,6 +150,23 @@ mod tests {
             None,
             "a key, not a prefix"
         );
+    }
+
+    /// What a system is like: its own id, or one its `ID_LIKE` names,
+    /// whole words only.
+    #[test]
+    fn a_system_is_what_its_ids_say() {
+        let mint =
+            OsRelease::of_text("NAME=\"Linux Mint\"\nID=linuxmint\nID_LIKE=\"ubuntu debian\"\n");
+        assert!(mint.is_like("linuxmint") && mint.is_like("ubuntu") && mint.is_like("debian"));
+        assert!(!mint.is_like("fedora"));
+        let ubuntu = OsRelease::of_text("ID=ubuntu\nID_LIKE=debian\n");
+        assert!(ubuntu.is_like("ubuntu") && ubuntu.is_like("debian"));
+        let quoted = OsRelease::of_text("ID='debian'\n");
+        assert!(quoted.is_like("debian"));
+        let part = OsRelease::of_text("ID=debianish\nID_LIKE=\"ubuntu-like\"\n");
+        assert!(!part.is_like("debian") && !part.is_like("ubuntu"));
+        assert!(!OsRelease::of_text("").is_like("debian"));
     }
 
     #[test]

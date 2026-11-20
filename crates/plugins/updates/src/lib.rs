@@ -87,6 +87,9 @@ pub struct Here {
     pub channel: Option<Channel>,
     /// Whether the system has Skwir's repository for it.
     pub repository: bool,
+    /// The system a `.deb` or an `.rpm` runs on, where the site has its
+    /// repository's commands.
+    pub family: Option<Family>,
 }
 
 impl Here {
@@ -96,6 +99,8 @@ impl Here {
         Here {
             channel,
             repository: channel.is_some_and(skwir_platform::channel::repository_added),
+            family: channel
+                .and_then(|channel| Family::of(channel, skwir_platform::about::OsRelease::read)),
         }
     }
 
@@ -104,6 +109,65 @@ impl Here {
     pub fn downloaded(self) -> Option<Channel> {
         self.channel
             .filter(|channel| !(channel.has_repository() && self.repository))
+    }
+}
+
+/// A system the site gives the repository's commands of: what the page
+/// a `.deb` or an `.rpm` copy's question links to shows
+/// (`/download?package=<word>`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    Debian,
+    Ubuntu,
+    Fedora,
+}
+
+impl Family {
+    /// The site's word for it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Family::Debian => "debian",
+            Family::Ubuntu => "ubuntu",
+            Family::Fedora => "fedora",
+        }
+    }
+
+    /// The system a copy that came by `channel` runs on: Fedora for an
+    /// `.rpm`; for a `.deb` (one word for Debian's and Ubuntu's builds,
+    /// whose repository packages differ), Ubuntu where its os-release
+    /// (`os`, read only then) says it is or is like Ubuntu (Linux Mint,
+    /// Pop!_OS, elementary OS, Zorin OS), else Debian where it says it is
+    /// or is like Debian (LMDE, MX Linux); neither, `None`, and the site
+    /// guesses.
+    pub fn of(
+        channel: Channel,
+        os: impl FnOnce() -> Option<skwir_platform::about::OsRelease>,
+    ) -> Option<Family> {
+        match channel {
+            Channel::Rpm => Some(Family::Fedora),
+            Channel::Deb => {
+                let os = os()?;
+                if os.is_like("ubuntu") {
+                    Some(Family::Ubuntu)
+                } else if os.is_like("debian") {
+                    Some(Family::Debian)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The site's page on adding Skwir's repository: the commands of the
+/// system the copy runs on (`?package=`) where it is known, else of the
+/// one the site guesses from the browser; `#repository` scrolls to them,
+/// and is what an older page reads alone.
+fn repository_page(site: &str, family: Option<Family>) -> String {
+    match family {
+        Some(family) => format!("{site}/download?package={}#repository", family.word()),
+        None => format!("{site}/download#repository"),
     }
 }
 
@@ -725,7 +789,7 @@ impl Inner {
                 if answerable && kept.asks(today) {
                     kept.asked += 1;
                     kept.asked_on = Some(today);
-                    self.ask(app, channel);
+                    self.ask(app, channel, here.and_then(|here| here.family));
                 }
                 check = checks && kept.checked_on != Some(today);
             }
@@ -754,9 +818,9 @@ impl Inner {
     }
 
     /// The question, in a toast that stays: Yes, No, and for a `.deb` or
-    /// an `.rpm` the site's way to update with the system, which answers
-    /// nothing.
-    fn ask(&self, app: &App, channel: Channel) {
+    /// an `.rpm` the site's way to update with the system (`family`'s,
+    /// where known), which answers nothing.
+    fn ask(&self, app: &App, channel: Channel, family: Option<Family>) {
         let answer = |tell: bool| {
             Invocation::with_args("updates.answer", &serde_json::json!({ "tell": tell }))
         };
@@ -784,7 +848,7 @@ impl Inner {
                     updates_ask_repository = "Update with your system…",
                     note = "A button of the question about new versions, for a .deb or an .rpm: opens the website's page on adding Skwir's repository, so the system updates it."
                 ),
-                command: open_url(&format!("{}/download#repository", self.setup.site)),
+                command: open_url(&repository_page(&self.setup.site, family)),
                 // A page to read: the question stays up.
                 answers: false,
             });
@@ -1001,6 +1065,7 @@ impl Inner {
             let unknown = Here {
                 channel: None,
                 repository: false,
+                family: None,
             };
             if let Some(why) = not_checked(here.unwrap_or(unknown), tells(&app)) {
                 let asked = {

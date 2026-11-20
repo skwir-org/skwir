@@ -454,3 +454,15 @@ it trusts a package by its signed index. The user chose signing.
   reads again how a `.deb` or an `.rpm` came before it asks the site.
 - **What it says is its own** (`App::notify_from`): turned off, what
   the plugin said goes with it, queued or shown.
+- **The question's link names the system** (decision 5): it opens
+  `/download?package=<id>#repository`, the site showing that system's
+  card and scrolling to its commands. `fedora` for an `.rpm`; for a
+  `.deb`, one word for Debian's and Ubuntu's builds whose repository
+  packages differ, os-release says which (the platform's `OsRelease`,
+  the reader About's system name uses, read where how the copy came
+  is): `ubuntu` where `ID` is ubuntu or `ID_LIKE` names it
+  (Linux Mint, Pop!_OS, elementary OS, Zorin OS), else `debian` where
+  `ID` is debian or `ID_LIKE` names it (LMDE, MX Linux). Neither said,
+  `?package=` is left out and the site guesses from the browser, which
+  rarely names the distribution. `#repository` alone is what older pages
+  and bookmarks read, and the site still takes it.

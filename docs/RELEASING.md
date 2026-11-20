@@ -299,7 +299,9 @@ bundle of the release before (`just repositories v0.5.1`), set
 `just repositories` refuses a release whose `.rpm` the key did not sign,
 and `skwir-repository` 2 checks each package.) A downloaded `.deb` or `.rpm`
 copy's question links to the download page's repository section
-(`/download#repository`), which the site shows only once that is set:
+(`/download?package=<id>#repository`, `<id>` the system's: `fedora`,
+`debian` or `ubuntu`, or `/download#repository` where the copy cannot
+tell; ADR-142's amendments), which the site shows only once that is set:
 released first, the plugin would send its users to a page without it.
 
 After the GitHub release is published:
