@@ -1233,7 +1233,8 @@ filter swaps the extension; opening files, Recent first and the start
 where nothing names a folder, where it has a file to give
 (`LocationProvider::lists_recent`, `skwir_platform::recent::offered`),
 what is chosen added to `recently-used.xbel` (`skwir_platform::recent`);
-a program's five recent folders in the bar; files dimmed while choosing
+a program's five recent folders the sidebar's Recent Folders (amended
+the same evening: they were a dropdown of the bar); files dimmed while choosing
 folders (`Admits::folders`); a drop gone to, never copied; the answer
 counts what it gives. Reviewed and fixed the same day: one answer every
 way to run a command asks, a window of one tab whose `open` is its
@@ -1241,7 +1242,13 @@ answer, its questions asked in it and its Undo taking back what it did
 alone, Ctrl+Q its Cancel, the recent list written as GLib reads it and
 each desktop's switch heeded, the extension swapped as the filters take
 it, a size never a tile's, a folder whose files the filter hides said
-so. Checks in `docs/STATUS-LOG.md` (2026-11-20).
+so. Then, from the user's first install through Nix: a program's own
+All files no longer doubled by Skwir's in the filter list, places of
+one name in a sidebar group told apart by the folder above that
+differs, a folder's place saying its path when pointed at, and a launch
+handed to a skwir the bus started for a dialog showing the startup
+choice rather than an empty window (the choice is made as the user's
+windows first come up). Checks in `docs/STATUS-LOG.md` (2026-11-20).
 
 ## A new version told where nothing else tells it (ADR-142, 2026-11-19)
 

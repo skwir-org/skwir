@@ -21438,3 +21438,70 @@ zstd from another session).
   d2a6f937 was read by a reviewer other than its author, and 786b97aa
   here; this round's fixes (aa392b16, 034f82ee..5681dddb) had no second
   review. What they left is in PLAN's "What is left".
+
+## 2026-11-20: an empty window, a filter twice, and Recent Folders in the sidebar (ADR-144, 8 amended)
+
+The user's first install through their Nix configuration (Home Manager's
+`programs.skwir.fileChooser`) showed two bugs; they also asked for the
+dialogs' recent folders in the sidebar rather than the bar.
+
+- **An empty window on a launch.** The session's journal showed the bus
+  starting skwir's portal back end as the session came up, with no
+  dialog asked (`--portal`, windowless, waiting 30 s for a request), and
+  the user's launch 17 s later handed to it. The workspace's untouched
+  window (`Workspace::default`: one pane, no location) was woken as it
+  was: `main.rs` made the startup choice only for a start with a window.
+  The choice is now made as the user's windows first come up
+  (`finishing::show`, `start_choice`), whatever brings them up, and
+  `App::restore_windows` fills the user's own untouched window, never a
+  dialog's that is up and in use. `main.rs` passes only the folder named.
+- **All files twice.** A program's own All files (`*`) stood beside
+  Skwir's, under the same words in French. `Filter::admits_all` and
+  `Asked::all_files` find the program's; the window adds none of its
+  own then, Show all files and `ui.chooser_filter` without an index
+  choose it, the answer names it, and the pane is left unfiltered by it.
+- **Recent Folders in the sidebar** (the user's choices: a section as
+  configurable as the others, first, two of one name told apart by the
+  first folder above that differs, the whole path when pointed at, the
+  heading saying folders). The bar's dropdown is gone; the folders are
+  places of a group of the shell's own (`groups::RECENT_FOLDERS`,
+  `Chooser::folder_places`, through `Shell::places_here`, which the
+  headings' menus now read too), kept by the user: Remove From Sidebar
+  forgets one, the heading's Clear Recent Folders all
+  (`ui.chooser_forget_folders`, user only), the next dialog starting as
+  one that chose nowhere would. A group the sidebar ships with that the
+  user's order does not name comes where it ships (`Sections::rank`), so
+  it is first even for those who moved groups before. Every group's
+  places of one name, both folders, are told apart after it in Small
+  (`sidebar::told_apart`: the first differing folder above, `skwir/…`,
+  or the folders up to it where two would read the same), and a
+  folder's place says its path from home in its tooltip. A group's own
+  menu items go where their order puts them (Clear beside Move, Add
+  Server… still first).
+- **Checked**: rustfmt on the files touched; clippy `-D warnings` on
+  skwir-core, skwir-platform, skwir-ui and skwir, all targets (clean);
+  nextest: core's `windows` and `tabs` binaries and the catalogs' tests
+  (73), the platform's chooser tests (8), all of skwir-ui (811), the
+  binary's `dialogs_offer`, `plugins_toggle`, `keymap_titles`,
+  `settings`, `places_kept`, `places_plain` (29): all passed, the new
+  ones included (`windows_come_back_beside_a_dialog_s_window`,
+  `a_program_s_all_files_is_found_by_what_it_admits`,
+  `a_program_forgets_where_it_chose`, three of the sidebar's). `just
+  words` then `--check` clean (6,966 messages, the new ones drafted in
+  French and Simplified Chinese). In windows on Xvfb with a private bus
+  and scratch XDG folders: the back end started by the bus with nothing
+  asked, then a bare launch handed to it opened Home (it was the empty
+  pane); a launch while a dialog was up opened Home beside it, the
+  dialog kept; a dialog asking with Pictures and All files (`*`) listed
+  All files once, Show all files chose it and showed the folder's file;
+  Recent Folders first with `src one`, `Pictures`, `src two`, the
+  tooltip `~/wip/two/src`, Remove From Sidebar (the other `src` then
+  without a note, the state keeping two folders and `used`), the
+  section hidden and shown again from another heading's menu, Clear
+  Recent Folders (the group gone, the program's entry gone from the
+  state). `just check-cross` passed (Windows and macOS, skwir-ui left out
+  of macOS's as always). Not run: the whole of `just lint` and of the
+  default members' tests, a11y-check, bench-check. Not seen in a window:
+  restoring the windows left (`core.startup = last`) under a dialog's
+  window (covered by core's test), a screen reader on the notes, the
+  tooltip on a volume's row (path above its space).
