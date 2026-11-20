@@ -145,7 +145,9 @@ fn names_one(text: &str) -> bool {
         .any(|path| skwir_core::fs::reach::of(&path).is_some() || path.exists())
 }
 
-/// What the desktop's switches say of remembering the files used.
+/// What the desktop's switches say of remembering the files used (read
+/// on Linux alone, `remembered`).
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Said {
     /// None remembered.
@@ -154,6 +156,7 @@ struct Said {
     days: Option<u32>,
 }
 
+#[cfg(target_os = "linux")]
 impl Said {
     /// What both say: none where either says none, the shorter age.
     fn and(self, other: Said) -> Said {
@@ -195,6 +198,7 @@ impl Said {
 
 /// What GTK's `settings.ini`s say, each GTK's (`versions`) in the order
 /// it reads them, the first that says a key saying it.
+#[cfg(target_os = "linux")]
 fn gtk_said(versions: &[Vec<String>]) -> Said {
     let value = |texts: &[String], key: &str| {
         texts
@@ -213,6 +217,7 @@ fn gtk_said(versions: &[Vec<String>]) -> Said {
 
 /// What a privacy schema says, as `gsettings list-recursively` prints it
 /// (`schema key value` a line).
+#[cfg(target_os = "linux")]
 fn gsettings_said(printed: &str) -> Said {
     let value = |key: &str| {
         printed.lines().find_map(|line| {
@@ -225,6 +230,7 @@ fn gsettings_said(printed: &str) -> Said {
 }
 
 /// What KDE's `kdeglobals` say, the user's first (`cascade`).
+#[cfg(target_os = "linux")]
 fn kde_said(cascade: &[String]) -> Said {
     let value = |key: &str| {
         cascade
