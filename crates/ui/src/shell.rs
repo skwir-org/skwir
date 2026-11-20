@@ -4177,6 +4177,9 @@ impl Shell {
                     .and_then(|n| usize::try_from(n).ok())
                     .unwrap_or(usize::MAX),
                 args.get("tab").and_then(serde_json::Value::as_bool) == Some(true),
+                args.get("page")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|p| u32::try_from(p).ok()),
                 window,
                 cx,
             ),

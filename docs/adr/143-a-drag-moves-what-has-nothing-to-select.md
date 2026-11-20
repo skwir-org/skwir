@@ -13,8 +13,10 @@ characters (5). Amended on 2026-11-20 after the review before the
 release: a press selects from anywhere within a line of the text
 (between words, in a paragraph's leading, a little before its first
 letter and after its last), the margins, pictures and the room between
-paragraphs moving the pages (1, 2); the cursor follows the pointer
-within a page, and a selection's I-beam goes beside the pages (5).
+paragraphs moving the pages (1, 2); a press's page is kept apart from
+the selection's, and a click is one test, the grab's (2); the cursor
+follows the pointer within a page, and a selection's I-beam goes beside
+the pages (5).
 
 ## Context
 
@@ -53,8 +55,12 @@ within a page, and a selection's I-beam goes beside the pages (5).
    Pages), off by default: as Continuous scrolling, it is the user's,
    remembered, read when the reader for the next file is made. On, a
    drag across the text moves the page; a click still follows a link (a
-   release within `pan::CLICK_SLOP` of the press, the page unmoved); a
-   selection made before stays on its page.
+   press whose pointer never went past `pan::CLICK_SLOP`, the one test of
+   a click for every press on a page, selecting or not; amended); a
+   selection made before stays on its page. A press's page is its own,
+   apart from the selection's (amended): a drag that moves the pages
+   keeps what is selected on any page, and a click where nothing selects
+   lets it go on any page.
 3. **The middle button's drag moves what is shown anywhere**, whatever
    the switch says: what moves now and then needs no switch. Space held
    is not taken: it closes peek.

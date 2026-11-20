@@ -117,8 +117,9 @@ impl Grab {
         self.0.held.get().is_some_and(|held| held.by != By::Layer)
     }
 
-    /// Whether the press held has gone far enough to be a drag: its release
-    /// is no click (a link under it is not followed).
+    /// Whether the press held has gone far enough to be a drag, moving what
+    /// is shown or selecting: its release is no click (a link under it is
+    /// not followed).
     pub fn dragged(&self) -> bool {
         self.0.held.get().is_some_and(|held| held.dragged)
     }
@@ -158,19 +159,24 @@ impl Grab {
     }
 
     /// The pointer at `at` with the press held: how far what is shown moves.
-    /// Nothing while it selects, nor until the pointer leaves a click's
-    /// reach, then the whole way from the press, so the point grabbed lands
-    /// under the pointer. Each move is taken once: a guard, as no two
-    /// layers share a grab (the panel behind peek or the whole screen has
-    /// none).
+    /// Nothing until the pointer leaves a click's reach, then the whole way
+    /// from the press, so the point grabbed lands under the pointer; never
+    /// anything while it selects, which is told a drag all the same, so
+    /// that every press over the layer has one click (`dragged`). Each move
+    /// is taken once: a guard, as no two layers share a grab (the panel
+    /// behind peek or the whole screen has none).
     fn follow(&self, at: Point<Pixels>) -> Option<Point<Pixels>> {
-        let mut held = self.0.held.get().filter(|held| held.by != By::Selecting)?;
+        let mut held = self.0.held.get()?;
         if !held.dragged {
             let gone = at - held.from;
             if f32::from(gone.x).hypot(f32::from(gone.y)) <= CLICK_SLOP {
                 return None;
             }
             held.dragged = true;
+            self.0.held.set(Some(held));
+        }
+        if held.by == By::Selecting {
+            return None;
         }
         let delta = at - held.last;
         held.last = at;
@@ -395,8 +401,11 @@ mod tests {
         let grab = Grab::default();
         grab.0.movable.set(true);
         grab.select(at(0., 0.));
+        assert_eq!(grab.follow(at(2., 2.)), None, "a click's tremble");
+        assert!(!grab.dragged());
         assert_eq!(grab.follow(at(40., 40.)), None, "a selection's drag");
-        assert!(grab.selecting() && !grab.grabbing() && !grab.dragged());
+        assert!(grab.selecting() && !grab.grabbing());
+        assert!(grab.dragged(), "its release is no click");
         assert!(grab.let_go(), "its cursor goes with it");
         assert!(!grab.selecting());
     }

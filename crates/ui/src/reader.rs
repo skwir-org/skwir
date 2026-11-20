@@ -67,19 +67,25 @@ pub struct ReaderState {
     pub(crate) active_hit: Option<usize>,
     /// The search the find field asked for.
     pub(crate) search: Latest<Result<Vec<SearchHit>, Words>>,
-    /// The left press on the page of the selection, until its release.
+    /// The left press on a page, until its release: the page it is on is
+    /// its own, apart from the selection's, which only a press that
+    /// selects takes.
     pub down: Option<Down>,
     /// A drag across a page's text moves the page, as one across what has
     /// no text does, rather than selecting (`ui.reader_drag`, ADR-143).
     pub drag_moves: bool,
 }
 
-/// A left press on a page, held: where it was, and whether it selects the
-/// page's text or holds the pages (`elements::document::selects_at`).
+/// A left press on a page, held: the page, where on it, whether it
+/// selects the page's text or holds the pages
+/// (`elements::document::Page::selects_at`), and whether the pointer made
+/// it, holding the window's `pan::Grab` (a script's has no pointer).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Down {
+    pub page: u32,
     pub at: (f32, f32),
     pub selects: bool,
+    pub pointer: bool,
 }
 
 impl ReaderState {
@@ -140,6 +146,78 @@ impl ReaderState {
     pub fn cancel_search(&mut self) {
         self.search.forget();
     }
+
+    /// A left press at `at` on page `number` (`pointer`: made with the
+    /// pointer, holding the grab). Within a line it selects from there, and
+    /// takes the selection's page; anywhere else, or across text whose drag
+    /// moves the pages, it holds them and leaves what is selected where it
+    /// is, on any page, as the middle button's does (ADR-143). The press's
+    /// page is its own, apart from the selection's.
+    fn press(
+        &mut self,
+        number: u32,
+        page: &crate::elements::document::Page,
+        at: (f32, f32),
+        pointer: bool,
+    ) {
+        let from = page.selects_at(drags(self.drag_moves, page), at.0, at.1);
+        self.down = Some(Down {
+            page: number,
+            at,
+            selects: from.is_some(),
+            pointer,
+        });
+        if let Some(from) = from {
+            self.selection_page = Some(number);
+            self.selection = Some((from, from));
+        }
+    }
+
+    /// The pointer at `at` on page `number`, its press held: where what it
+    /// selects ends.
+    fn drag_to(&mut self, number: u32, page: &crate::elements::document::Page, at: (f32, f32)) {
+        if self
+            .down
+            .is_some_and(|down| down.page == number && down.selects)
+            && self.selection_page == Some(number)
+            && let Some((from, _)) = self.selection
+        {
+            self.selection = page.nearest(at.0, at.1).map(|to| (from, to));
+        }
+    }
+
+    /// The press on page `number` let go at `at`, `dragged` as the grab
+    /// says: the link of that page it clicks, by its index. A click is a
+    /// press whose pointer never went past `pan::CLICK_SLOP`, selecting or
+    /// holding the pages (`Grab::dragged`): where on the page its release
+    /// falls tells nothing, as the page may follow the pointer. A script's
+    /// press, which has no pointer, clicks where it is let go where it was
+    /// made. A click on a link, or where nothing selects (a margin, between
+    /// paragraphs, text whose drag moves the pages), lets go of what is
+    /// selected, on any page; a drag keeps it.
+    fn release(
+        &mut self,
+        number: u32,
+        page: &crate::elements::document::Page,
+        at: (f32, f32),
+        dragged: bool,
+    ) -> Option<usize> {
+        let down = self.down.take_if(|down| down.page == number)?;
+        let clicked = if down.pointer {
+            !dragged
+        } else {
+            (down.at.0 - at.0).abs() < f32::EPSILON && (down.at.1 - at.1).abs() < f32::EPSILON
+        };
+        let link = page
+            .links
+            .iter()
+            .position(|link| link.bounds.contains(down.at.0, down.at.1))
+            .filter(|_| clicked);
+        if link.is_some() || (clicked && !down.selects) {
+            self.selection = None;
+        }
+        link
+    }
 }
 
 /// Whether a left drag across `page`'s text moves the pages rather than
@@ -151,12 +229,18 @@ pub(crate) fn drags(drag_moves: bool, page: &PageContent) -> bool {
     drag_moves || page.chars.is_empty()
 }
 
+/// The page of what is selected, else the page shown.
 fn page(shell: &Shell) -> Option<&Arc<crate::elements::document::Page>> {
     let number = shell
         .preview
         .reader
         .selection_page
         .unwrap_or(shell.preview.page);
+    numbered(shell, number)
+}
+
+/// The page `number`, as the reader holds it: kept, or the one opened.
+fn numbered(shell: &Shell, number: u32) -> Option<&Arc<crate::elements::document::Page>> {
     if let Some(page) = shell.preview.reader.scroll.pages.get(&number) {
         return Some(&page.content);
     }
@@ -292,75 +376,42 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Whether the press is on the page of what is selected.
-        let on_selection = self.preview.reader.selection_page == Some(number);
-        if phase == "down" {
-            self.preview.reader.selection_page = Some(number);
-        } else if !on_selection {
+        // A press's page is its own, whatever page is selected: what it
+        // hears after is its press's only.
+        if phase != "down"
+            && self
+                .preview
+                .reader
+                .down
+                .is_none_or(|down| down.page != number)
+        {
             return;
         }
-        let Some(page) = page(self).cloned() else {
+        let Some(page) = numbered(self, number).cloned() else {
             return;
         };
-        if phase == "down" {
-            if let Some(focus) = &self.preview.reader.focus {
-                window.focus(focus, cx);
+        match phase {
+            "down" => {
+                if let Some(focus) = &self.preview.reader.focus {
+                    window.focus(focus, cx);
+                }
+                let pointer = self.preview.grab.held_over();
+                self.preview.reader.press(number, &page, (x, y), pointer);
             }
-            let reader = &mut self.preview.reader;
-            // A press on a character selects from it; one anywhere else, or
-            // across text whose drag moves the pages, holds them, selects
-            // nothing and keeps what is selected on them, as the middle
-            // button's does (ADR-143); on another page, where its release
-            // and its link are read, it takes the selection's page.
-            let from = page.selects_at(drags(reader.drag_moves, &page), x, y);
-            reader.down = Some(Down {
-                at: (x, y),
-                selects: from.is_some(),
-            });
-            if let Some(from) = from {
-                reader.selection = Some((from, from));
-            } else if !on_selection {
-                reader.selection = None;
-            }
-        } else if let Some(down) = self.preview.reader.down {
-            if down.selects
-                && let Some((a, _)) = self.preview.reader.selection
-            {
-                self.preview.reader.selection = page.nearest(x, y).map(|b| (a, b));
-            }
-            if phase == "up" {
-                // A press that held the pages clicks where it did not move
-                // them: the page follows the pointer, so where on it the
-                // release falls tells nothing. One that selects clicks where
-                // it stayed on the page.
-                self.preview.reader.down = None;
-                let clicked = if down.selects {
-                    let (a, b) = down.at;
-                    (a - x).abs() + (b - y).abs() < 0.006
-                } else {
-                    !self.preview.grab.dragged()
-                };
-                if clicked
-                    && let Some((index, _)) = page
-                        .links
-                        .iter()
-                        .enumerate()
-                        .find(|(_, link)| link.bounds.contains(x, y))
-                {
-                    // Following it, the selection goes, as a press to select
-                    // would have taken it.
-                    self.preview.reader.selection = None;
+            "up" => {
+                self.preview.reader.drag_to(number, &page, (x, y));
+                let dragged = self.preview.grab.dragged();
+                if let Some(index) = self.preview.reader.release(number, &page, (x, y), dragged) {
                     let tab = window.modifiers().shift;
                     self.run(
                         "ui.reader_link",
-                        serde_json::json!({"index": index, "tab": tab}),
+                        serde_json::json!({"index": index, "tab": tab, "page": number}),
                         window,
                         cx,
                     );
                 }
             }
-        } else {
-            return;
+            _ => self.preview.reader.drag_to(number, &page, (x, y)),
         }
         cx.notify();
     }
@@ -398,15 +449,22 @@ impl Shell {
         cx.notify();
     }
     /// A page's link: a page of this document, or where any document's
-    /// link goes (`Shell::follow_document_link`).
+    /// link goes (`Shell::follow_document_link`). The link is the `index`th
+    /// of page `on`, else of the page of what is selected, else of the page
+    /// shown.
     pub fn reader_link(
         &mut self,
         index: usize,
         tab: bool,
+        on: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let target = page(self)
+        let page = match on {
+            Some(number) => numbered(self, number),
+            None => page(self),
+        };
+        let target = page
             .and_then(|p| p.links.get(index))
             .map(|l| l.destination.clone());
         match target {
@@ -823,7 +881,7 @@ pub(crate) fn surface(
                     // running the command drew the window again for each.
                     let reader = &mut shell.preview.reader;
                     if phase != "down" {
-                        if reader.selection_page != Some(number) || reader.down.is_none() {
+                        if reader.down.is_none_or(|down| down.page != number) {
                             return;
                         }
                         // Its press was let go where it did not hear it (the
@@ -1254,6 +1312,81 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
 mod tests {
     use super::*;
     use skwir_core::document::{Rect, TextChar};
+
+    /// A page of one line, "ab", the second letter a link to page 9.
+    fn line_page(number: u32) -> crate::elements::document::Page {
+        let letter = |text: &str, x| TextChar {
+            text: text.into(),
+            bounds: Rect {
+                x,
+                y: 0.1,
+                width: 0.05,
+                height: 0.05,
+            },
+        };
+        crate::elements::document::Page::new(Arc::new(PageContent {
+            page: number,
+            width: 600.,
+            height: 800.,
+            chars: vec![letter("a", 0.1), letter("b", 0.15)],
+            links: vec![skwir_core::document::Link {
+                bounds: Rect {
+                    x: 0.15,
+                    y: 0.1,
+                    width: 0.05,
+                    height: 0.05,
+                },
+                destination: Destination::Page(9),
+            }],
+        }))
+    }
+
+    /// A press's page is its own, apart from the selection's: a drag that
+    /// moves the pages keeps what is selected on any page, a click where
+    /// nothing selects lets it go on any page, and a link is clicked on
+    /// the press's page by one test, the grab's.
+    #[test]
+    fn a_press_keeps_its_page_apart_from_the_selection() {
+        let (three, four) = (line_page(3), line_page(4));
+        let mut reader = ReaderState::new(true, false);
+        let selected = |reader: &ReaderState| (reader.selection_page, reader.selection);
+        // Selected on page 3, from "a" to "b".
+        reader.press(3, &three, (0.12, 0.12), true);
+        reader.drag_to(3, &three, (0.17, 0.12));
+        assert_eq!(reader.release(3, &three, (0.17, 0.12), true), None);
+        assert_eq!(selected(&reader), (Some(3), Some((0, 1))));
+        // A drag from page 4's margin moves the pages: the selection stays.
+        reader.press(4, &four, (0.9, 0.9), true);
+        assert_eq!(reader.release(4, &four, (0.5, 0.9), true), None);
+        assert_eq!(selected(&reader), (Some(3), Some((0, 1))));
+        // So does one from page 3's.
+        reader.press(3, &three, (0.9, 0.9), true);
+        assert_eq!(reader.release(3, &three, (0.5, 0.9), true), None);
+        assert_eq!(selected(&reader), (Some(3), Some((0, 1))));
+        // What page 4 hears of no press of its own does nothing.
+        assert_eq!(reader.release(4, &four, (0.16, 0.12), false), None);
+        assert_eq!(selected(&reader), (Some(3), Some((0, 1))));
+        // A click on page 4's margin lets it go.
+        reader.press(4, &four, (0.9, 0.9), true);
+        assert_eq!(reader.release(4, &four, (0.9, 0.9), false), None);
+        assert_eq!(reader.selection, None);
+        // Page 4's link, clicked while page 3 is selected, is page 4's.
+        reader.press(3, &three, (0.12, 0.12), true);
+        reader.press(4, &four, (0.16, 0.12), true);
+        assert_eq!(reader.release(4, &four, (0.16, 0.12), false), Some(0));
+        assert_eq!(reader.selection, None, "following it, the selection goes");
+        // A drag across the link selects: no click.
+        reader.press(4, &four, (0.16, 0.12), true);
+        reader.drag_to(4, &four, (0.11, 0.12));
+        assert_eq!(reader.release(4, &four, (0.11, 0.12), true), None);
+        assert_eq!(selected(&reader), (Some(4), Some((1, 0))));
+        // A script's press has no pointer: it clicks where it is let go
+        // where it was made.
+        reader.press(4, &four, (0.16, 0.12), false);
+        assert_eq!(reader.release(4, &four, (0.11, 0.12), false), None);
+        reader.press(4, &four, (0.16, 0.12), false);
+        assert_eq!(reader.release(4, &four, (0.16, 0.12), false), Some(0));
+    }
 
     /// Whatever an engine or a plugin says, the reader shows at most
     /// `MAX_PAGES`: four billion would be as many list items.

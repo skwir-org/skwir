@@ -145,11 +145,19 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   or a page with no text). Anywhere else on the page (a margin, between
   paragraphs, a picture), and across its text where it drags, the page
   holds the `pan::Grab` itself (`Grab::hold`, even where nothing can
-  move, for its click); it sends no move (nothing to select as it goes),
-  and its release follows a link only where the press did not move the
-  pages (`Grab::dragged`): the page follows the pointer, so where on it
-  the release falls tells nothing. Such a press keeps what is selected
-  on its page. A page's hitbox is the page drawn, not the letterbox
+  move, for its click); it sends no move (nothing to select as it goes).
+  A press's page is its own, apart from the selection's
+  (`ReaderState::down`, `press`, `release`): only a press that selects
+  takes the selection's page, so a drag that moves the pages keeps what
+  is selected wherever it is, and a click where nothing selects (a
+  margin, between paragraphs, text that drags) lets it go, on any page.
+  A click is one test, the grab's, for every press on a page, selecting
+  or holding the pages: one whose pointer never went past
+  `pan::CLICK_SLOP` (`Grab::dragged`, which a selection's drag marks
+  too); where on the page its release falls tells nothing, as the page
+  may follow the pointer. It follows the link under the press, on the
+  press's page (`ui.reader_link`'s `page`); a script's press, with no
+  pointer, clicks where it is let go where it was made. A page's hitbox is the page drawn, not the letterbox
   around it: a press there is the layer's. While a press holds the
   pages, no page sets a cursor (the layer's closed hand shows); while
   one selects, the I-beam shows wherever it goes, over every page and

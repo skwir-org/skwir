@@ -542,6 +542,10 @@ mod args {
         index: usize,
         #[serde(default)]
         tab: bool,
+        /// The page it is on, by its number: the page of what is
+        /// selected, else the page shown, where left out.
+        #[serde(default)]
+        page: Option<u32>,
     }
 
     #[derive(Deserialize, JsonSchema)]
