@@ -1590,7 +1590,9 @@ is still to come are in `docs/preview-frame.md`.
   Nothing is thrown after the pointer stops. The layer takes a press
   only where what it moves can move, and draws again only for a hand to
   show or for a move that changes an offset, held within its bounds as
-  gpui will hold it in prepaint (`pan::within`; the list's against
+  gpui will hold it in prepaint (`pan::within`, sideways in the
+  direction the box was laid out in as its handle says,
+  `ScrollHandle::direction`, gpui 0088; the list's against
   `max_offset_for_scrollbar`): a drag against an edge, or over what
   fits, draws nothing. gpui tells a click at a drag's release too, and
   a double click by where the second press is, whatever the first did:

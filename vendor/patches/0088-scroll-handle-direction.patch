@@ -1,0 +1,38 @@
+0088 scroll-handle-direction: ScrollHandle::direction, the direction the element it tracks was last laid out in (its own or inherited), which way its offset runs sideways and how clamp_scroll_position holds it
+
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index 41087a30..a9f448fd 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -4500,6 +4500,13 @@ impl ScrollHandle {
+         self.0.borrow().max_offset
+     }
+ 
++    /// The direction the element lays out in, as last prepainted, its own
++    /// or inherited: which way its offset runs sideways (`offset`), and
++    /// how `clamp_scroll_position` holds it.
++    pub fn direction(&self) -> LayoutDirection {
++        self.0.borrow().direction
++    }
++
+     /// Get the top child that's scrolled into view.
+     pub fn top_item(&self) -> usize {
+         let state = self.0.borrow();
+@@ -6311,6 +6318,7 @@ mod scroll_axis_tests {
+     fn a_strip_left_to_right_scrolls_as_it_did(cx: &mut TestAppContext) {
+         let direction = LayoutDirection::LeftToRight;
+         let (cx, handle) = strip(cx, direction);
++        assert_eq!(handle.direction(), direction);
+         assert_eq!(handle.max_offset().x, px(300.));
+         assert_eq!(handle.bounds_for_item(3).unwrap().left(), px(450.));
+         // The wheel turned down moves it toward its end, rightward.
+@@ -6332,6 +6340,9 @@ mod scroll_axis_tests {
+     fn a_strip_right_to_left_starts_at_its_right(cx: &mut TestAppContext) {
+         let direction = LayoutDirection::RightToLeft;
+         let (cx, handle) = strip(cx, direction);
++        // Its own direction, in a window laid out left to right: the one
++        // its offset runs in.
++        assert_eq!(handle.direction(), direction);
+         assert_eq!(handle.offset().x, px(0.));
+         assert_eq!(handle.max_offset().x, px(300.));
+         assert_eq!(handle.bounds_for_item(0).unwrap().left(), px(150.));

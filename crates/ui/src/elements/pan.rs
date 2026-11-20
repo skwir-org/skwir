@@ -285,11 +285,14 @@ impl Moves {
     /// bounds as gpui will hold it when it lays it out: whether it moved,
     /// so a drag against an edge, or over what fits, draws nothing. (Two
     /// offsets are told apart in numbers: `Pixels`' `==` is its `f32`'s,
-    /// -0 and 0 one, though it orders -0 below 0.)
-    fn by(&self, delta: Point<Pixels>, rtl: bool) -> bool {
+    /// -0 and 0 one, though it orders -0 below 0.) Sideways, in the
+    /// direction the box was last laid out in, as its handle says: its own,
+    /// whatever the layer's.
+    fn by(&self, delta: Point<Pixels>) -> bool {
         match self {
             Moves::Offset(handle) => {
                 let (was, most) = (handle.offset(), handle.max_offset());
+                let rtl = handle.direction().is_rtl();
                 let to = within(was, delta, most, rtl);
                 let moved = to != was;
                 if moved {
@@ -305,6 +308,7 @@ impl Moves {
                     list.scroll_by(to - top);
                 }
                 let (was, most) = (across.offset(), across.max_offset());
+                let rtl = across.direction().is_rtl();
                 let sideways = within(was, point(delta.x, px(0.)), point(most.x, px(0.)), rtl);
                 let aside = sideways != was;
                 if aside {
@@ -345,8 +349,6 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
         move |_, hitbox, window, _| {
             let movable = moves.movable();
             grab.0.movable.set(movable);
-            // The direction the box it moves is laid out in, its sibling's.
-            let rtl = window.layout_direction().is_rtl();
             // A selection's I-beam goes with its drag past the pages' edges,
             // around and between them.
             if grab.grabbing() {
@@ -395,7 +397,7 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
                     return;
                 }
                 if let Some(delta) = followed.follow(event.position)
-                    && moves.by(delta, rtl)
+                    && moves.by(delta)
                 {
                     window.refresh();
                 }
@@ -493,6 +495,11 @@ mod tests {
         assert!(grab.held_over());
     }
 
+    /// The holds gpui's own tests find for a box laid out either way
+    /// (vendored gpui's `scroll_axis_tests::a_strip_left_to_right_scrolls_as_it_did`
+    /// and `a_strip_right_to_left_starts_at_its_right`: 0 to -300, 0 to
+    /// 300), as `within` holds a move, in the direction the handle says
+    /// (`ScrollHandle::direction`, patch 0088).
     #[test]
     fn a_move_is_held_where_gpui_holds_the_offset() {
         let most = at(100., 50.);
@@ -509,6 +516,13 @@ mod tests {
         assert_eq!(within(at(0., 0.), at(30., 30.), most, false), at(0., 0.));
         // Right to left, sideways runs from 0 up.
         assert_eq!(within(at(10., 0.), at(20., 0.), most, true), at(30., 0.));
+        let strip = at(300., 0.);
+        assert_eq!(
+            within(at(0., 0.), at(-400., 0.), strip, false),
+            at(-300., 0.)
+        );
+        assert_eq!(within(at(0., 0.), at(400., 0.), strip, true), strip);
+        assert_eq!(within(at(40., 0.), at(-60., 0.), strip, true), at(0., 0.));
         assert_eq!(within(at(10., 0.), at(-20., 0.), most, true), at(0., 0.));
         // What fits moves nowhere.
         assert_eq!(

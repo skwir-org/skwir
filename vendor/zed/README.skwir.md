@@ -120,6 +120,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0085-foreign-parent` | `WindowOptions::foreign_parent`: a window shown for another program (a dialog it asked for, the desktop portal's `parent_window`) is that program's window's child, `WM_TRANSIENT_FOR` on X11, imported through xdg-foreign (unstable v2) on Wayland, so the window manager keeps it over it; a handle that names nothing leaves a window of its own | — |
 | `0086-rows-reorder-within-paragraphs` | A wrapped row holding the end of one paragraph and the start of the next (a separator parts them on one line) lays each paragraph's stretch, and the separator, out on its own in the text's order, as the line is laid out unwrapped, never reordered across them | — |
 | `0087-right-to-left-answers-kept` | A line holding right-to-left text works out its carets, hit tests and selections at the first question and keeps them with it (`LineLayout::bidi_row`, a wrapped line's rows), each answer after that a search; its carets' edges sorted once, so a long right-to-left line costs a sort, never a move of every edge for each | — |
+| `0088-scroll-handle-direction` | `ScrollHandle::direction`: the direction the element a handle tracks was last laid out in, its own or inherited, which way its offset runs sideways (what `clamp_scroll_position` holds it to) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -2203,3 +2204,17 @@ the beside answers equal to a walk of every caret, on Hebrew, mixed,
 Arabic with digits and two paragraphs, every 2.5 px and every place);
 0069's tests of carets, hit tests and selections answer as they did. Not
 measured.
+
+### 0088: The scroll handle's direction
+
+A handle kept the direction its element was last laid out in
+(`ScrollHandleState::direction`, 0075), which decides how its offset is
+held sideways (from 0 down to `-max_offset`, right to left from 0 up), but
+said it to nobody: what moves a box by its handle (Skwir's
+`elements::pan::Moves`, a drag that moves a picture or pages) read the
+direction where it was itself drawn, wrong for a box that says its own.
+`ScrollHandle::direction` says it.
+
+The tests are `elements::div::scroll_axis_tests::a_strip_left_to_right_scrolls_as_it_did`
+and `a_strip_right_to_left_starts_at_its_right`, a strip laying itself out
+right to left in a window laid out left to right.
