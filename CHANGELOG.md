@@ -144,8 +144,8 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   (`skwir --file-manager`, no window until asked). A program that holds the
   name and does not let go (Dolphin's daemon) answers until it ends, which
   the row says. Home Manager's `programs.skwir.defaultFileManager` sets it.
-  Choose another default before removing Skwir: [the guide](docs/guide.md)
-  says why.
+  Choose another default before removing Skwir:
+  [the guide](docs/guide.md#skwir-for-other-programs) says why.
 - **Other programs' Open and Save dialogs** (ADR-141): on Linux, Settings ›
   General › Open and save dialogs can name Skwir for the programs that ask the
   desktop portal for one. Each dialog is a Skwir window of its own, attached

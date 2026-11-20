@@ -865,7 +865,7 @@ Settings are grouped by subject, whichever plugin brings them:
 
 | Page | What it sets |
 | --- | --- |
-| General | The language Skwir speaks (Automatic, your system's, else English; French and Simplified Chinese are drafts so far, which the window says), what Skwir does at startup and with folders other programs open in it, with tabs, the split and the path above the files, with what you drag and drop, and with new versions (Updates) |
+| General | The language Skwir speaks (Automatic, your system's, else English; French and Simplified Chinese are drafts so far, which the window says), what Skwir does at startup and with folders other programs open in it, on Linux whether it is the default file manager and answers other programs' Open and Save dialogs ([below](#skwir-for-other-programs)), with tabs, the split and the path above the files, with what you drag and drop, and with new versions (Updates) |
 | Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
 | Folders and views | The order of folders and files, how sizes are counted (Decimal, a thousand bytes to a kilobyte as disks are sold; or Binary, 1024), the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
@@ -1041,6 +1041,53 @@ kept in files of its own, so it is kept still.
 `skwir cmd settings.check '{"file": "/path/to/settings.toml"}'` says what
 in a file Skwir would not take.
 
+### Skwir for other programs
+
+On Linux, two settings on General let Skwir work for the other programs
+you use.
+
+**Default file manager** is the application that opens folders for every
+program: the same choice as Open With's **Always use** on a folder, and
+as your desktop's own settings, written where they keep it
+(`~/.config/mimeapps.list`). With Skwir chosen, another program's **Show
+in Folder** opens the folder in Skwir with its files selected, or a
+file's Properties when the program asks for them, even when Skwir is not
+running. Skwir answers it on the session bus
+(`org.freedesktop.FileManager1`) and keeps a file that tells the bus how
+to start it, `skwir --file-manager`, which opens no window until asked:
+`~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service`. A
+program that holds that name and does not let go (Dolphin's daemon)
+answers until it ends, and the setting says so. Choose another
+application and Skwir lets the name go and removes its file.
+
+**Open and save dialogs** chooses what answers the programs that ask the
+desktop portal for one: Skwir, or what your desktop gives. Each dialog
+is then a Skwir window of its own, attached to the program's, opening
+where the program asks, else where it last chose, else your home; its
+bar holds the name, the program's filters and choices, Cancel and its
+answer, and Replace? is asked in Skwir. Only you answer it: an agent or
+a script never reaches it. The choice is written in your portal
+configuration (`~/.config/xdg-desktop-portal/`, the file your desktop
+reads, `<desktop>-portals.conf` before `portals.conf`), its other lines
+kept, and applies once the portal starts again, the next login at the
+latest: the setting says while it waits for that. A configuration that
+is a link (Home Manager's, a dotfiles folder's) is left to whatever
+keeps it, and the setting says where it leads. With Home Manager,
+`programs.skwir.defaultFileManager = true;` and
+`programs.skwir.fileChooser.enable = true;` set the two (see the
+[README](../README.md#nixos-and-nix)).
+
+**Before removing Skwir**, choose another default file manager here, and
+your desktop's own dialogs or another's: Skwir then removes its file
+from the bus's folder and its line from the portal's configuration. A
+package's removal cannot reach these files in your home. Removed first,
+delete
+`~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service`
+yourself (Skwir's begins with "# Written by skwir"), or other programs'
+Show in Folder may fail, the bus starting a program that is gone; and
+take the line `org.freedesktop.impl.portal.FileChooser=skwir` out of
+your portal configuration.
+
 ### New versions
 
 A copy of Skwir downloaded from its website (the AppImage, the tarball,
@@ -1081,7 +1128,9 @@ Settings › General › Updates turns that off too.
 | The cache | `~/.cache/skwir`: delete it whenever you like, Skwir rebuilds what it needs |
 | Thumbnails it makes | The desktop's cache (`~/.cache/thumbnails`), shared unless Thumbnails › Share generated thumbnails is off |
 | Tags, ratings, comments | On the files (see above) |
-| Bookmarks, default applications | The desktop's own files |
+| Bookmarks, default applications, the default file manager among them | The desktop's own files (`~/.config/mimeapps.list` for the applications) |
+| While Skwir is the default file manager, on Linux: how the session bus starts it for other programs' Show in Folder | `~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service`, removed once another is chosen ([before removing Skwir](#skwir-for-other-programs)) |
+| Open and save dialogs answered by Skwir, on Linux | Your desktop portal's configuration, in `~/.config/xdg-desktop-portal/` |
 | A tile server's key | The desktop's keyring |
 | Plugins from outside Skwir | `~/.local/share/skwir/plugins/` |
 
