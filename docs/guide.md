@@ -1063,16 +1063,17 @@ application and Skwir lets the name go and removes its file.
 **Open and save dialogs** chooses what answers the programs that ask the
 desktop portal for one: Skwir, or what your desktop gives. Each dialog
 is then a Skwir window of its own, attached to the program's, opening
-where the program asks, else where it last chose, else your home; its
-bar holds the name, the program's filters and choices, Cancel and its
-answer, and Replace? is asked in Skwir. Only you answer it: an agent or
-a script never reaches it. The choice is written in your portal
-configuration (`~/.config/xdg-desktop-portal/`, the file your desktop
-reads, `<desktop>-portals.conf` before `portals.conf`), its other lines
-kept, and applies once the portal starts again, the next login at the
-latest: the setting says while it waits for that. A configuration that
-is a link (Home Manager's, a dotfiles folder's) is left to whatever
-keeps it, and the setting says where it leads. With Home Manager,
+where the program asks, else where it last chose, else in Recent or
+your home (below); its bar holds the name, the program's filters and
+choices, Cancel and its answer, and Replace? is asked in Skwir. Only
+you answer it: an agent or a script never reaches it. The choice is
+written in your portal configuration (`~/.config/xdg-desktop-portal/`,
+the file your desktop reads, `<desktop>-portals.conf` before
+`portals.conf`), its other lines kept, and applies once the portal
+starts again, the next login at the latest: the setting says while it
+waits for that. A configuration that is a link (Home Manager's, a
+dotfiles folder's) is left to whatever keeps it, and the setting says
+where it leads. With Home Manager,
 `programs.skwir.defaultFileManager = true;` and
 `programs.skwir.fileChooser.enable = true;` set the two (see the
 [README](../README.md#nixos-and-nix)).
@@ -1090,17 +1091,21 @@ The dialogs keep a layout of their own, apart from your windows': turn
 the preview off in one and the next opens without it, while your own
 windows keep theirs. The first takes how your window shows its files,
 and no panel; a program asking for pictures or films alone gets the
-grid, and what you choose for those is kept apart. Opening, Recent
-comes first, and a program that names no folder and chose in none
-starts there; what you choose is added to the desktop's recently used
-files, as the desktop's own dialog does (unless your desktop is told to
-remember none). Recent folders, in the bar, lists the five folders that
-program last chose in. Saving, choosing another filter changes the
-name's extension to the filter's. Choosing a folder, its files show
-dimmed. A file dropped on the dialog, from your own window or another
-program, is gone to (saving, its name is taken): nothing is copied, and
-nothing answered until you do. The answer says how many it gives
-("Open 3 files").
+grid, and what you choose for those is kept apart. They keep the size
+you leave one at, never a maximized or full screen one's, nor, on
+Wayland, that of a tile your compositor puts it in. Opening files, while
+your desktop remembers the files you used and its list names one that is
+there, Recent comes first in its group of places, and a program that
+names no folder and chose in none starts there; otherwise such a dialog
+starts in your home. What you choose is added to the desktop's recently
+used files, as the desktop's own dialog does, unless your desktop is
+told to remember none (GTK's, GNOME's, Cinnamon's or KDE's setting).
+Recent folders, in the bar, lists the five folders that program last
+chose in. Saving, choosing another filter changes the name's extension
+to the filter's. Choosing a folder, its files show dimmed. A file
+dropped on the dialog, from your own window or another program, is gone
+to (saving, its name is taken): nothing is copied, and nothing answered
+until you do. The answer says how many it gives ("Open 3 files").
 
 A dialog's window floats over the program that asked where your
 compositor keeps a child over its parent. Where it does not (the program

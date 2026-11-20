@@ -91,16 +91,17 @@ Recent).
    Save, Select). Its title is the request's. Enter accepts, Escape
    cancels (once a name typed to find a file has gone: the first Escape
    lets go of it, the user's choice of 2026-11-19), and closing the
-   window cancels. As built: a dialog's
-   size at most (1000 × 680 at 100 %), never maximized, its shape never
-   the next window's; a core window marked a dialog's
-   (`WindowTabs::chooses`), never recorded for the next start nor
-   reopened; the windows asleep stay asleep while dialogs' windows
-   alone are up, a launch going to a window of the user's own; nothing
-   recorded in a run until a window of the user's own opened, so a
-   skwir the bus started never replaces the windows the user left. A
-   folder typed in the name is gone into; Replace? is read on a worker,
-   in the folder's lane. A second request opens a second window.
+   window cancels. As built: a dialog's size at first (1000 × 680 at
+   100 %), then the size the dialogs were left at, never a tile's, never
+   maximized, its shape kept for the next dialog alone (ADR-144, 4); a
+   core window marked a dialog's (`WindowTabs::chooses`), never recorded
+   for the next start nor reopened; the windows asleep stay asleep while
+   dialogs' windows alone are up, a launch going to a window of the
+   user's own; nothing recorded in a run until a window of the user's
+   own opened, so a skwir the bus started never replaces the windows the
+   user left. A folder typed in the name is gone into; Replace? is read
+   on a worker, in the folder's lane. A second request opens a second
+   window.
 5. **What is chosen.** Opening: the file under the cursor or the
    selection; several only with `multiple`, which the shelf gathers
    across folders; `directory` chooses folders only, the one selected or
@@ -133,9 +134,9 @@ Recent).
    taken as typed.
 7. **Where it starts**: the request's folder (`current_folder`,
    `current_file`'s), else the folder that program (`app_id`) last chose
-   in (the window's state, by program, ADR-056), else home (opening,
-   Recent: ADR-144, 7). A program with no id (the host's) keeps one
-   place for all.
+   in (the window's state, by program, ADR-056), else home (opening
+   files, Recent where it has a file to give: ADR-144, 7). A program
+   with no id (the host's) keeps one place for all.
 8. **Only the user answers.** The chooser's commands are the window's
    (`ui.chooser_*`), the user's alone (ADR-044): never an agent's, a
    script's or a plugin's from outside, which cannot see what is asked
@@ -158,8 +159,8 @@ Recent).
    seen to tile on the user's Hyprland 0.57.1, which offers xdg-foreign;
    what its asker gave was not seen). The tags are an interface
    people's configuration names: untranslated (the description beside,
-   on Wayland, is the reader's language), and renamed only as a
-   breaking change.
+   on Wayland, is the reader's language, said again when it changes),
+   and renamed only as a breaking change.
 10. **Turning it on: Settings › "Open and save dialogs"** (the user's
     choice), on General beside the default file manager: a choice its
     owner keeps (ADR-140, 8), the back ends installed that offer the file

@@ -1351,6 +1351,12 @@ top, a device's beside the device. Left: below kio-fuse, a server's
 folder opens by its address until its first click, only then a root of
 the trail; not tried in a window, with a phone or with kio-fuse.
 
+**The Nix package against a nixpkgs of November 2026** (ADR-124, from
+the review of 2026-11-20): its Rust hook links the system's libraries,
+zstd's undone on macOS; `default` built on x86_64-linux against nixpkgs
+0bb8272. Left: `minimal` built against such a nixpkgs; aarch64-darwin
+built on a Mac (evaluated only).
+
 **Notices and questions** (from the review before the release,
 2026-11-20): plugins other than updates still notify without an owner
 (`App::notify_from`), so their timed notices may come after they are
@@ -1374,7 +1380,15 @@ Dolphin); the startup id on Wayland.
 Left: a drag from a window of skwir's own onto a dialog (only another
 program's drop was tried); writing `recently-used.xbel` under GNOME with
 its privacy switch off (read through `gsettings`, not run); a folder
-that remembers its view (ADR-132) in a dialog.
+that remembers its view (ADR-132) in a dialog; the size kept apart from
+a tile, never seen on a tiling compositor (a headless sway would show
+it); drops on a dialog's sidebar and what a screen reader hears of a
+dimmed file, tested and read, not tried in a window nor with a screen
+reader; Xfce's (xfconf's `/Gtk/RecentFilesEnabled`) and MATE's switches
+for recent files, not read; a name to save with a compound extension
+selected to its last dot (`backup.tar` of `backup.tar.gz`); `ui.quit`
+from a script while work is under way and no window of the user's own
+is up, not run in a window.
 
 **Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
 on Linux; checked on a private dbus-daemon with Xvfb, headless sway and
@@ -1383,30 +1397,32 @@ Left: a real asker (Firefox, Chromium, a Flatpak through the document
 portal, Zed), on the user's session; the session's dbus-broker; KWin,
 Mutter and Hyprland keeping the dialog over its asker (only sway was
 seen to float it; X11 had no window manager, the hint alone was read);
-the windows' tags (decision 9, 2026-11-20) on the user's Hyprland
-(their session runs their own skwir, which answers its portal;
-`hyprctl clients -j` shows `xdgTag`), and KWin's and Mutter's rules for
-them; several files chosen from the shelf were not tried (the shelf's
-selection is read as any pane's); a portal before 1.22 reading the copied
-configuration (only 1.22.1's source was read); the windows left are not
-restored when a launch comes to a skwir the bus started for a dialog
-(the start folder opens, as for `--file-manager`); a screen reader on
-the bar (`a11y-check` opens no dialog); a test keeping core-answered
-commands out of `ui.*` (the row's Undo named one so first, found in a
-window). From the review of 2026-11-19: the request's `modal` is passed
-on, not followed (xdg-dialog-v1's `set_modal` on the window parented
-through xdg-foreign, a gpui patch); a request reaching the skwir that
-holds the dialogs between its gate closing and its name let go is
-answered 2 (the ending program would have to wait for its dialogs); the
-row reads the configuration as 1.22.1 does, so its "already" and
-"pending" may be wrong under an older portal; the row offers Skwir on
-its `.portal` file alone, and without the bus's service file a dialog
-fails whenever no skwir runs; the routing of what agents and scripts send
-(`finishing::deliver`) has no automated test, none driving a gpui
-window; finishing in the background with a dialog up was not run in a
-window; the Default file manager row writing through a writable
-dotfiles link to `mimeapps.list` was not looked at (a link into the
-store is refused).
+the windows' tags (decision 9, 2026-11-20) under a rule of Hyprland's
+(only sway's was run): on the user's (their session runs their own
+skwir, which answers its portal; `hyprctl clients -j` shows `xdgTag`),
+and from 0.55 (whose stubs list `xdg_tag`; the guide says 0.56); a KWin
+rule on the tag (read in KWin's strings, not run) and Mutter's; gpui
+0089 compiled for macOS; several files chosen from the shelf were not
+tried (the shelf's selection is read as any pane's); a portal before
+1.22 reading the copied configuration (only 1.22.1's source was read);
+the windows left are not restored when a launch comes to a skwir the bus
+started for a dialog (the start folder opens, as for `--file-manager`);
+a screen reader on the bar (`a11y-check` opens no dialog); a test
+keeping core-answered commands out of `ui.*` (the row's Undo named one
+so first, found in a window). From the review of 2026-11-19: the
+request's `modal` is passed on, not followed (xdg-dialog-v1's
+`set_modal` on the window parented through xdg-foreign, a gpui patch); a
+request reaching the skwir that holds the dialogs between its gate
+closing and its name let go is answered 2 (the ending program would have
+to wait for its dialogs); the row reads the configuration as 1.22.1
+does, so its "already" and "pending" may be wrong under an older portal;
+the row offers Skwir on its `.portal` file alone, and without the bus's
+service file a dialog fails whenever no skwir runs; the routing of what
+agents and scripts send (`finishing::deliver`) has no automated test,
+none driving a gpui window; finishing in the background with a dialog up
+was not run in a window; the Default file manager row writing through a
+writable dotfiles link to `mimeapps.list` was not looked at (a link into
+the store is refused).
 
 **Words in every language** (ADR-139, built 2026-11-16 to 11-18, steps
 A to H [below](#words-in-every-language-adr-139)). Left: the user's
