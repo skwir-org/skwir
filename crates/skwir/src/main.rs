@@ -17,8 +17,8 @@ const ASKED_NOTHING: i32 = 3;
 
 use std::time::Instant;
 
+use skwir_core::App;
 use skwir_core::app::AppConfig;
-use skwir_core::{App, Location};
 
 /// A program of Windows' window subsystem starts without a console: one
 /// started from a terminal prints to it (`skwir --version`, `skwir cmd`),
@@ -163,28 +163,16 @@ fn main() -> anyhow::Result<()> {
     skwir_platform::shell_environment::follow(&app);
 
     // A location on the command line wins: one a plugin opens (`trash:`,
-    // `tags:/family`), else a folder. Otherwise the startup preference: a
-    // chosen folder, or the windows and tabs left open (ADR-122). Started
-    // by the bus, what another program asks is that location, as a launch
-    // naming its folder: nothing restored, the request's folder in the
-    // one window (ADR-140).
-    let folder =
-        |path: std::path::PathBuf| Location::from_path(std::path::absolute(&path).unwrap_or(path));
-    let initial = match args.first() {
-        Some(arg) => Some(skwir_ui::location_of(&app, arg, &cwd)),
-        None if windowless.is_some() => None,
-        None => match skwir_core::tabs::last_windows(&app.settings) {
-            Some(saved) if app.restore_windows(&saved) => None,
-            _ => {
-                let home =
-                    skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
-                Some(folder(skwir_core::settings::startup_folder(
-                    &app.settings,
-                    &home,
-                )))
-            }
-        },
-    };
+    // `tags:/family`), else a folder. Otherwise the startup preference (a
+    // chosen folder, or the windows and tabs left open, ADR-122), chosen
+    // as the user's windows first come up (`finishing::show`): started by
+    // the bus, they come up for a launch later, if one comes. What another
+    // program asks the bus is that location, as a launch naming its
+    // folder: nothing restored, the request's folder in the one window
+    // (ADR-140).
+    let initial = args
+        .first()
+        .map(|arg| skwir_ui::location_of(&app, arg, &cwd));
     // The folder is not logged: it can come from a preference, and paths
     // are private.
     tracing::info!("starting");

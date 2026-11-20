@@ -188,7 +188,8 @@ mod dev_thumbs {
 
 pub use finishing::{Windowless, ended_unasked};
 
-/// Run the UI until the window closes. `initial` is opened in the active pane.
+/// Run the UI until the window closes. `initial` is opened in the active pane;
+/// none, the startup preference chooses (`core.startup`).
 pub fn run(app: Arc<App>, initial: Option<Location>) -> anyhow::Result<()> {
     run_from(app, initial, Instant::now(), None, None)
 }

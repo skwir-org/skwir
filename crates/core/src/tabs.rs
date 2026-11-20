@@ -1010,8 +1010,10 @@ impl App {
 
     /// Put the windows of `saved` in place of the workspace's one untouched
     /// window, their tabs dormant: `resume_shown` opens the shown ones once
-    /// the UI is there to be woken. Returns false when there was nothing to
-    /// restore.
+    /// the UI is there to be woken. That window is the first of the user's
+    /// own, never one answering another program's dialog (ADR-141), which
+    /// may be up and active when a skwir started for it takes a launch.
+    /// Returns false when there was nothing to restore.
     pub fn restore_windows(&self, saved: &SavedWindows) -> bool {
         // What filtered each pane, read before the workspace's lock: the
         // reader is a plugin's (ADR-109).
@@ -1036,8 +1038,12 @@ impl App {
             })
             .collect();
         let mut ws = self.workspace.write();
-        let first_window = ws.active_window_id();
-        let Some(first_tab) = ws.tabs().first().map(|t| t.id) else {
+        let Some((first_window, first_tab)) = ws
+            .windows()
+            .iter()
+            .find(|w| !w.chooses())
+            .and_then(|w| Some((w.id, w.tabs().first()?.id)))
+        else {
             return false;
         };
         let mut first_used = false;

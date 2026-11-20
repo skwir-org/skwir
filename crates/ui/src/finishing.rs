@@ -147,9 +147,10 @@ enum Opened {
 
 impl Global for Finishing {}
 
-/// What this launch opens (`start`): `initial`, in the active pane, and
-/// `asked`, what it was asked to open, should another Skwir of this
-/// instance prove to hold later launches (`take_over`).
+/// What this launch opens (`start`): `initial`, what it names, in the
+/// active pane (none: the startup choice, `start_choice`), and `asked`,
+/// what it was asked to open, should another Skwir of this instance prove
+/// to hold later launches (`take_over`).
 pub(crate) struct Launch {
     pub(crate) initial: Option<Location>,
     pub(crate) asked: Option<Opening>,
@@ -187,9 +188,9 @@ pub fn ended_unasked() -> bool {
 const ASKED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Start the program's life: what it reads once for every window, its
-/// state, the loop taking the core's wakes, what ends it, then a window
-/// for each of the core's (the windows left, restored, else one), the
-/// active pane showing `initial`.
+/// state, the loop taking the core's wakes, what ends it, then the
+/// windows (`show`): the active pane showing `initial`, else the startup
+/// choice.
 pub(crate) fn start(
     cx: &mut App,
     app: Arc<skwir_core::App>,
@@ -337,11 +338,17 @@ fn prepare(app: &Arc<skwir_core::App>, cx: &mut App) {
 }
 
 /// Show the program's windows, none being up: one for each of the core's
-/// (those left, restored at start or asleep since the last closed), the
-/// active one last so that it has the focus; the active pane showing
-/// `initial`; the tabs each shows opened. `token` brings the window
+/// (those left, restored as they first come up or asleep since the last
+/// closed), the active one last so that it has the focus; the active pane
+/// showing `initial`; the tabs each shows opened. `token` brings the window
 /// forward; `activity` opens Activity in it.
 /// The active pane, when it was taken to `initial`.
+///
+/// None of the user's windows shown yet and nothing named, the startup
+/// choice is made now (`start_choice`), whatever brings them up: the
+/// program's start, a launch handed to a skwir the bus started for another
+/// program, a notice clicked there. A window of the user's own is never
+/// shown with nothing in its pane.
 fn show(
     cx: &mut App,
     initial: Option<Location>,
@@ -350,6 +357,11 @@ fn show(
 ) -> Option<PaneId> {
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
+    let initial = match initial {
+        None if state.opened != Opened::Own => start_choice(&app),
+        initial => initial,
+    };
+    let state = cx.global_mut::<Finishing>();
     // What slept while dialogs' windows alone were up wakes now; those
     // that are up stay as they are.
     state.asleep.clear();
@@ -422,6 +434,27 @@ fn show(
     app.set_window_shown();
     cx.global_mut::<Finishing>().raised = Some(active);
     shown
+}
+
+/// What the user's windows first show where nothing is named (a launch
+/// naming no folder): the windows left, restored in place of the
+/// workspace's untouched one, where the startup preference comes back to
+/// them, else the startup folder (`startup_location`).
+fn start_choice(app: &skwir_core::App) -> Option<Location> {
+    if let Some(saved) = skwir_core::tabs::last_windows(&app.settings)
+        && app.restore_windows(&saved)
+    {
+        return None;
+    }
+    Some(startup_location(app))
+}
+
+/// The folder the startup preference opens (`core.startup`): the one
+/// chosen, the last shown, else home.
+fn startup_location(app: &skwir_core::App) -> Location {
+    let home = skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
+    let folder = skwir_core::settings::startup_folder(&app.settings, &home);
+    Location::from_path(std::path::absolute(&folder).unwrap_or(folder))
 }
 
 /// Say `text` as an error in the status of the front window of the
@@ -1678,10 +1711,7 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         reopen_in(cx, &app, window, initial, token, launched, to_select);
         return;
     }
-    let location = initial.unwrap_or_else(|| {
-        let home = skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
-        Location::from_path(skwir_core::settings::startup_folder(&app.settings, &home))
-    });
+    let location = initial.unwrap_or_else(|| startup_location(&app));
     open_new(cx, &app, location, token, to_select);
 }
 
@@ -1724,10 +1754,7 @@ fn reopen_in(
         });
         return;
     }
-    let location = initial.unwrap_or_else(|| {
-        let home = skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
-        Location::from_path(skwir_core::settings::startup_folder(&app.settings, &home))
-    });
+    let location = initial.unwrap_or_else(|| startup_location(app));
     open_new(cx, app, location, token, to_select);
 }
 

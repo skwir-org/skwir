@@ -769,6 +769,41 @@ fn every_window_comes_back_with_its_tabs_and_its_shape() {
     assert_eq!(dormant, 2, "each window opens the one location it shows");
 }
 
+/// A skwir started for another program's dialog makes no startup choice
+/// until a launch comes, its dialog's window up and active then: the
+/// windows left come back in place of the user's own untouched window,
+/// and the dialog's keeps its tab.
+#[test]
+fn windows_come_back_beside_a_dialog_s_window() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    run(
+        &app,
+        "tab.new",
+        serde_json::json!({ "location": dir.path().join("it's a folder"), "show": false }),
+    );
+    let saved = app.saved_windows();
+    assert_eq!(saved.windows.len(), 1);
+
+    let next = common::app(dir.path());
+    let own = active_window(&next);
+    let (dialog, dialog_tab, _) = next
+        .open_window(Location::from_path(dir.path().join("second folder")))
+        .unwrap();
+    next.workspace.write().set_chooses(dialog, true);
+    assert_eq!(active_window(&next), dialog, "the dialog's is in use");
+    assert!(next.restore_windows(&saved));
+
+    let back = windows(&next);
+    assert_eq!(back.len(), 2, "the user's window and the dialog's");
+    assert!(back.contains(&own), "restored in the user's own window");
+    assert_eq!(tabs_of(&next, dialog), vec![dialog_tab]);
+    assert_eq!(tabs_of(&next, own).len(), 2);
+    assert_eq!(active_window(&next), own, "the windows left come forward");
+}
+
 /// Each pane comes back sorted and grouped as it was left, hidden files
 /// with it, while folders first stays the user's; a tab sorted as a new
 /// one keeps no sort, and a sort this Skwir cannot read (a later one's

@@ -2143,6 +2143,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   window used last), else, with `ui.launch_opens` = `tab`, a tab of the
   window in use, a bare launch then bringing that window forward
   (`finishing::reopen`). With none up, the windows come back (ADR-115).
+  **The startup choice is made as the user's windows first come up**
+  (`finishing::show`, `start_choice`: the windows left, restored in place
+  of the core's untouched window, never a dialog's, `App::restore_windows`;
+  else the startup folder), whatever brings them up: the program's start,
+  a launch naming no folder handed to a skwir the bus started for another
+  program (`--portal`, `--file-manager`), a notice clicked there. A window
+  of the user's own is never shown with nothing in its pane.
   Two launches at once both find no one there: the one refused the name
   (`NotTaken::Elsewhere`) hands itself to the one that holds it and ends
   (`handed_away`), never a second program. Taking over is asked for before
