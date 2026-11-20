@@ -115,10 +115,17 @@ Enter `nix develop` (or use the direnv shell). The macOS build needs
 Apple's SDK on this machine: run `just macos-sdk` once (ADR-075; Apple's
 licence is yours to accept); `release-build` stops at once without it.
 Fedora's packages are signed by the repositories' key (ADR-142, amended
-2026-11-20; below, "The repositories' key"): its secret part must be in
-GnuPG's keyring, or `release-build` stops at once too, and gpg asks for
-its passphrase once Fedora's packages are built, past the hour of checks.
-Then:
+2026-11-20; below, "The repositories' key"). `release-build` first checks
+it as `just repositories` will (`tools/package/repository.py
+--check-key`), and stops at once too where it fails: one key in
+`tools/package/repository/skwir.asc`, its secret part in GnuPG's keyring
+and signing there (not a stub whose secret part is kept elsewhere), valid
+for 180 days yet, and what it signs read back with `skwir.asc` alone, as
+systems hold it. gpg asks for its passphrase then, and again once Fedora's
+packages are built, past the hour of checks, unless gpg-agent still holds
+it (by default for 10 minutes after its last use, gpg-agent's
+`default-cache-ttl`): a prompt cancelled or a passphrase refused there
+stops the run, and the next starts with the checks again. Then:
 
 ```sh
 just release-build v0.1.0
@@ -142,7 +149,7 @@ It then runs the existing packagers with separate fresh output directories:
 | `just package-appimage` | Ubuntu 22.04 build root; the AppImage, and its tree as a tarball, each checked in a separate runtime root: ELF/glibc checks, helpers, PDFs, audio and window commands |
 | `just package-try debian` | Debian 13 build; fresh installation of main package alone, then optional packages |
 | `just package-try ubuntu` | Ubuntu 24.04 build, its revision naming the release (`-1ubuntu24.04`); the same installations |
-| `just package-try fedora` | Fedora 44 build, each `.rpm` signed here by the repositories' key (`SKWIR_RPM_KEY`, `tools/package/rpm-sign.sh`); in the fresh root, every package read back as signed by Fedora's rpm with the key alone, then the main package installed alone, then the optional packages |
+| `just package-try fedora` | Fedora 44 build, each `.rpm` signed here by the repositories' key (`SKWIR_RPM_KEY` names its file, `tools/package/rpm-sign.sh`); in the fresh root, every package read back as signed by Fedora's rpm with `skwir.asc` alone, then the main package installed alone, then the optional packages |
 | `just package-try arch` | Arch build; fresh installation of main package alone, then optional packages |
 | `just package-windows` | Windows build to try (ADR-074), made with cargo-zigbuild: a zip and a per-user installer, tried under Wine (programs answering, the archive helper making and listing each format, the media helper playing H.264 and VP9 clips, installing and removing); GStreamer's own build is fetched and installed once into the build cache (ADR-076) |
 | `just package-macos` | macOS build to try for Apple silicon (ADR-075): skwir.app, zipped and in a disk image, looked over (architecture, libraries, seal); nothing runs it here |

@@ -6,10 +6,14 @@ repository-check.sh."""
 import datetime
 import hashlib
 import json
+import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -101,6 +105,60 @@ class Keys(unittest.TestCase):
             self.assertEqual(len(said), 1)
             self.assertIn(" 5y), export it again, raise tools/package/repository/version", said[0])
         self.assertEqual(repository.unfit((OLD, later), (NEW, later), True, NOW), [])
+
+
+@unittest.skipUnless(shutil.which("gpg") and shutil.which("gpgv"), "needs gpg and gpgv")
+class Proven(unittest.TestCase):
+    """With gpg itself, in a keyring of the test's own: the key signs here
+    and its file alone reads what it signs, or the publication stops."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.folder = pathlib.Path(self.directory.name)
+        home = self.folder / "gnupg"
+        home.mkdir(mode=0o700)
+        self.environment = {**os.environ, "GNUPGHOME": str(home)}
+        self.addCleanup(self.directory.cleanup)
+        # The agent gpg started for it, and its sockets' folder, gone after.
+        self.addCleanup(subprocess.run, ["gpgconf", "--remove-socketdir"], env=self.environment, check=False)
+        self.addCleanup(subprocess.run, ["gpgconf", "--kill", "all"], env=self.environment, check=False)
+        # repository.py's gpg too.
+        patched = unittest.mock.patch.dict(os.environ, {"GNUPGHOME": str(home)})
+        patched.start()
+        self.addCleanup(patched.stop)
+        self.keys = {name: self.key(name) for name in ("signs", "other")}
+
+    def gpg(self, *args, **kwargs):
+        return subprocess.run(["gpg", "--batch", "--quiet", *args], env=self.environment, check=True,
+                              capture_output=True, **kwargs).stdout
+
+    def key(self, name):
+        self.gpg("--passphrase", "", "--quick-generate-key", f"Skwir repositories ({name})", "ed25519", "sign",
+                 "never")
+        listing = self.gpg("--with-colons", "--list-keys", f"=Skwir repositories ({name})", text=True)
+        fingerprint = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+        public = self.folder / f"{name}.asc"
+        public.write_bytes(self.gpg("--armor", "--export", fingerprint))
+        return fingerprint, public
+
+    def refused(self, fingerprint, public):
+        with self.assertRaises(SystemExit) as refusal:
+            repository.proven(fingerprint, public)
+        return str(refusal.exception.code)
+
+    def test_a_key_that_signs_and_its_file_read_it(self):
+        fingerprint, public = self.keys["signs"]
+        repository.proven(fingerprint, public)
+
+    def test_a_file_that_does_not_read_what_the_key_signs_is_refused(self):
+        fingerprint, _ = self.keys["signs"]
+        _, other = self.keys["other"]
+        self.assertIn(f"{other}: does not read what {fingerprint} signs", self.refused(fingerprint, other))
+
+    def test_a_key_gpg_cannot_sign_with_is_refused(self):
+        fingerprint, public = self.keys["signs"]
+        self.gpg("--yes", "--delete-secret-keys", fingerprint)
+        self.assertIn(f"{fingerprint}: gpg cannot sign with it here", self.refused(fingerprint, public))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import unittest
 SCRIPT = Path(__file__).with_name("release.py")
 AUR_SCRIPT = SCRIPT.with_name("aur.py")
 TRY_SCRIPT = SCRIPT.parent.parent / "package/try.sh"
+REPOSITORY_SCRIPT = SCRIPT.parent.parent / "package/repository.py"
 AUR_BASES = ("skwir", "skwir-bin", "skwir-git")
 
 # Fakes execute in subprocesses, so tests cover arguments, environment and files.
@@ -43,7 +44,7 @@ elif args == ['package-try', 'ubuntu']:
         (out / f'{name}_1.2.3-1ubuntu24.04_amd64.deb').write_bytes(b'synthetic ubuntu deb')
 elif args == ['package-try', 'fedora']:
     # Signed by the repositories' key, which the release hands it (ADR-142).
-    if os.getenv('SKWIR_RPM_KEY') != 'F6EB0DC17B1A3E878C482DB30CF3A0EA48004329':
+    if not os.getenv('SKWIR_RPM_KEY', '').endswith('tools/package/repository/skwir.asc'):
         sys.exit('fedora: not told which key signs')
     for name in ['skwir', 'skwir-media']:
         (out / f'{name}-1.2.3-1.x86_64.rpm').write_bytes(b'synthetic rpm')
@@ -71,19 +72,38 @@ if os.getenv('WRONG_COMPANION') and args == ['package-appimage']:
         f"{'0' * 64}  skwir-1.2.3-linux-x86_64.tar.gz\n")
 '''
 
-# The repositories' key, as gpg lists the file that holds it, its secret
-# part in the keyring unless NO_SECRET_KEY: never this machine's keyring.
+# The repositories' key, as gpg lists the file that holds it (expiring
+# within 180 days with EXPIRES_SOON), its secret part in the keyring unless
+# NO_SECRET_KEY, signing unless CANNOT_SIGN (a part kept elsewhere, a
+# passphrase not given): never this machine's keyring.
 FAKE_GPG = r'''#!/usr/bin/env python3
-import os, sys
+import os, pathlib, sys, time
 args = sys.argv[1:]
 FINGERPRINT = 'F6EB0DC17B1A3E878C482DB30CF3A0EA48004329'
 if '--show-keys' in args and args[-1].endswith('tools/package/repository/skwir.asc'):
-    print(f'pub:-:255:22:{FINGERPRINT[-16:]}:1795126213:1952806213::-:::scSC:::::ed25519:::0:')
+    expires = int(time.time()) + 30 * 86400 if os.getenv('EXPIRES_SOON') else 1952806213
+    print(f'pub:-:255:22:{FINGERPRINT[-16:]}:1795126213:{expires}::-:::scSC:::::ed25519:::0:')
     print(f'fpr:::::::::{FINGERPRINT}:')
 elif '--list-secret-keys' in args and args[-1] == FINGERPRINT:
     sys.exit(2 if os.getenv('NO_SECRET_KEY') else 0)
+elif '--detach-sign' in args and args[args.index('--local-user') + 1] == FINGERPRINT:
+    if os.getenv('CANNOT_SIGN'):
+        sys.exit('gpg: signing failed: No secret key')
+    pathlib.Path(args[args.index('--output') + 1]).write_text('signed by ' + FINGERPRINT)
+elif args == ['--batch', '--dearmor']:
+    sys.stdout.write(sys.stdin.read())
 else:
     sys.exit('unexpected gpg command')
+'''
+
+# What reads a signature with the key's file alone: it reads the fake's
+# signature, unless OTHER_KEY (a part that signs and that the file lacks).
+FAKE_GPGV = r'''#!/usr/bin/env python3
+import os, pathlib, sys
+args = sys.argv[1:]
+assert args[0] == '--keyring' and len(args) == 4
+if os.getenv('OTHER_KEY') or not pathlib.Path(args[2]).read_text().startswith('signed by '):
+    sys.exit('gpgv: Can\'t check signature: No public key')
 '''
 
 FAKE_GH = r'''#!/usr/bin/env python3
@@ -194,10 +214,11 @@ name = "skwir-media"
         script.parent.mkdir(parents=True)
         shutil.copyfile(SCRIPT, script)
         shutil.copyfile(AUR_SCRIPT, script.with_name("aur.py"))
+        shutil.copyfile(REPOSITORY_SCRIPT, self.root / "tools/package/repository.py")
         self.script = script
         self.bin = Path(self.temp.name) / "bin"
         self.bin.mkdir()
-        for name, text in (("just", FAKE_JUST), ("gh", FAKE_GH), ("gpg", FAKE_GPG)):
+        for name, text in (("just", FAKE_JUST), ("gh", FAKE_GH), ("gpg", FAKE_GPG), ("gpgv", FAKE_GPGV)):
             program = self.bin / name
             program.write_text(text)
             program.chmod(0o755)
@@ -498,11 +519,25 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
         self.assertEqual(self.calls("just"), [])
         self.assertFalse(self.bundle.exists())
 
-    def test_no_secret_key_for_the_packages_stops_before_the_checks(self):
-        said = self.cli("build", ok=False, NO_SECRET_KEY="1")
-        self.assertIn("F6EB0DC17B1A3E878C482DB30CF3A0EA48004329 has no secret part", said)
-        self.assertEqual(self.calls("just"), [])
-        self.assertFalse(self.bundle.exists())
+    def test_a_key_the_repositories_would_refuse_stops_before_the_checks(self):
+        # Each as `just repositories` reads it (repository.py), before the
+        # hour of checks and the builds: no secret part, a key that cannot
+        # sign here, one valid for less than 180 days, a file that does not
+        # read what the key signs.
+        for flag, reason in (
+            ("NO_SECRET_KEY", "F6EB0DC17B1A3E878C482DB30CF3A0EA48004329: its secret part is not in GnuPG's keyring"),
+            ("CANNOT_SIGN", "F6EB0DC17B1A3E878C482DB30CF3A0EA48004329: gpg cannot sign with it here"
+                            " (gpg: signing failed: No secret key)"),
+            ("EXPIRES_SOON", "F6EB0DC17B1A3E878C482DB30CF3A0EA48004329 expires on"),
+            ("OTHER_KEY", "tools/package/repository/skwir.asc: does not read what"
+                          " F6EB0DC17B1A3E878C482DB30CF3A0EA48004329 signs"),
+        ):
+            with self.subTest(flag=flag):
+                said = self.cli("build", ok=False, **{flag: "1"})
+                self.assertIn(reason, said)
+                self.assertIn("Release stopped", said)
+                self.assertEqual(self.calls("just"), [])
+                self.assertFalse(self.bundle.exists())
 
     def test_failed_checks_do_not_package(self):
         self.cli("build", ok=False, FAIL_CHECK="1")

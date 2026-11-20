@@ -8,13 +8,19 @@ sends each request for to (`skwir-site/static/_redirects`: `/apt/pool/` and
 
     tools/package/repository.py target/releases/v0.6.0 --site ../skwir-site/static
 
-needs apt-ftparchive, createrepo_c, gpg, nfpm, rpmkeys and rpmsign (the
-recipe `just repositories` finds them in the flake's nixpkgs), the
+needs apt-ftparchive, createrepo_c, gpg, gpgv, nfpm, rpmkeys and rpmsign
+(the recipe `just repositories` finds them in the flake's nixpkgs), the
 repositories' public
 key in `tools/package/repository/skwir.asc` (or `--key`) and its secret
 part in GnuPG's keyring (`GNUPGHOME`), whose passphrase gpg asks for; while
 the key changes, the key coming in `tools/package/repository/next.asc` (or
 `--next`).
+
+    tools/package/repository.py --check-key
+
+checks the keys alone, as a publication starts by checking them, and prints
+the fingerprint that signs: `release-build` runs it before its hour of
+checks, as it signs Fedora's packages with that key.
 
 What it writes in the site's static folder, replacing what a release before
 wrote there:
@@ -51,6 +57,8 @@ changes: a change is two versions of it, the key coming carried beside the
 one that signs, then, a grace period later, the new key signing alone
 (`docs/RELEASING.md`). Each key must be valid for 180 days yet: one expired
 on a system refuses every index, the update that would extend it included.
+The key that signs must sign here, and what it signs be read back with its
+file alone (`proven`), before anything is signed.
 
 `skwir-repository` is dated by the last commit of `tools/package/repository`
 (or `SOURCE_DATE_EPOCH`), its `.rpm`'s signature too, so it is made again
@@ -181,19 +189,46 @@ def key_of(public):
     return found[0]
 
 
+def proven(fingerprint, public):
+    """Refuse, before anything is signed, a key gpg cannot sign with here, as
+    the indexes and the `.rpm` files are signed (`--local-user`), or whose
+    signature `public` alone does not read, as systems hold it: a secret part
+    kept elsewhere (a stub), a passphrase refused or not given, a part that
+    signs and that `public` lacks. gpg asks for the passphrase now, while
+    whoever publishes is there; gpg-agent keeps it a while."""
+    with tempfile.TemporaryDirectory(prefix="skwir-key-") as folder:
+        said, signature, keyring = (pathlib.Path(folder) / name for name in ("said", "said.sig", "key.gpg"))
+        said.write_text("Skwir's repositories: what their key signs, read back with its public key alone\n")
+        signed = run("gpg", "--batch", "--yes", "--local-user", fingerprint, "--detach-sign", "--output", signature,
+                     said, check=False, capture_output=True, text=True)
+        if signed.returncode:
+            reason = (signed.stderr.strip().splitlines() or ["no reason given"])[-1]
+            sys.exit(f"{fingerprint}: gpg cannot sign with it here ({reason}): its secret part must be in GnuPG's"
+                     " keyring, not kept elsewhere, and its passphrase given when gpg asks (docs/RELEASING.md)")
+        keyring.write_bytes(run("gpg", "--batch", "--dearmor", input=public.read_bytes(), capture_output=True).stdout)
+        read = run("gpgv", "--keyring", keyring, signature, said, check=False, capture_output=True, text=True)
+        if read.returncode:
+            reason = (read.stderr.strip().splitlines() or ["no reason given"])[-1]
+            sys.exit(f"{public}: does not read what {fingerprint} signs ({reason}), and systems hold that file:"
+                     f" export the key again (gpg --armor --export {fingerprint}), docs/RELEASING.md")
+
+
 def signer(public, coming):
     """The fingerprint that signs the indexes: the key of `public`, the key
-    of `coming` (a file, or None) carried beside it."""
+    of `coming` (a file, or None) carried beside it. Each is fit to sign
+    (`unfit`), and the key of `public` signs here (`proven`)."""
     signing = key_of(public)
     next_key = key_of(coming) if coming else None
     secret = subprocess.run(["gpg", "--batch", "--list-secret-keys", signing[0]],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
     if said := unfit(signing, next_key, secret, datetime.datetime.now(datetime.UTC)):
         sys.exit("\n".join(said))
+    proven(signing[0], public)
     for fingerprint, expires in [signing, next_key] if next_key else [signing]:
         if expires is not None:
             when = datetime.datetime.fromtimestamp(expires, datetime.UTC)
-            print(f"key: {fingerprint} expires on {when:%Y-%m-%d}: extend it before {when - LEAD:%Y-%m-%d}")
+            print(f"key: {fingerprint} expires on {when:%Y-%m-%d}: extend it before {when - LEAD:%Y-%m-%d}",
+                  file=sys.stderr)
     return signing[0]
 
 
@@ -338,7 +373,7 @@ def rpm_repository(work, bundle, tag, base, carried, key, version):
     package(work, "skwir-repository", "rpm", version, [(repo, "/etc/yum.repos.d/skwir.repo", True), *keys],
             "Skwir's repository for Fedora, so the system updates Skwir", own)
     # Signed as the release's are, dated as its files are: made again the same.
-    run(ROOT / "tools/package/rpm-sign.sh", key, "--at", epoch(), own, stdout=subprocess.DEVNULL)
+    run(ROOT / "tools/package/rpm-sign.sh", carried[0], "--at", epoch(), own, stdout=subprocess.DEVNULL)
     run("createrepo_c", "--quiet", "--general-compress-type=zstd", root)
     repomd = root / "repodata/repomd.xml"
     run("gpg", "--batch", "--yes", "--local-user", key, "--armor", "--detach-sign", "--output", f"{repomd}.asc", repomd)
@@ -371,9 +406,11 @@ def publish(made, into, names):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("bundle", type=pathlib.Path)
-    parser.add_argument("--site", type=pathlib.Path, required=True,
-                        help="the website's static folder (skwir-site/static)")
+    parser.add_argument("bundle", type=pathlib.Path, nargs="?")
+    parser.add_argument("--site", type=pathlib.Path, help="the website's static folder (skwir-site/static)")
+    parser.add_argument("--check-key", action="store_true",
+                        help="only check the keys as a publication would, and print the fingerprint that signs"
+                        " (release-build, before its checks)")
     parser.add_argument("--key", type=pathlib.Path, default=HERE / "skwir.asc",
                         help="the repositories' public key, which signs (its secret part in GnuPG's keyring)")
     parser.add_argument("--next", help="the key coming while the key changes, carried beside it (by default"
@@ -381,22 +418,27 @@ def main():
     parser.add_argument("--base", help="the site's address (by default Cargo.toml's homepage)")
     parser.add_argument("--version", help="skwir-repository's version (by default tools/package/repository/version)")
     args = parser.parse_args()
-    bundle = args.bundle.resolve()
-    manifest = bundle / "manifest.json"
-    if not manifest.is_file():
-        sys.exit(f"{bundle}: no release bundle (run `just release-build <tag>` first)")
+    if not args.check_key and not (args.bundle and args.site):
+        parser.error("a bundle and --site are needed, unless --check-key")
     if not args.key.is_file():
         sys.exit(f"{args.key}: no key. Make the repositories' key once, then keep its secret part safe:\n"
                  "    gpg --quick-generate-key 'Skwir repositories' ed25519 sign 5y\n"
                  f"    gpg --armor --export <its fingerprint> > {args.key}\n"
                  "and commit the public key (docs/RELEASING.md, Repositories).")
-    tag = released(bundle)["tag"]
-    version = args.version or (HERE / "version").read_text().strip()
-    base = (args.base or homepage()).rstrip("/")
     if args.next is None:
         coming = HERE / "next.asc" if (HERE / "next.asc").is_file() else None
     else:
         coming = pathlib.Path(args.next) if args.next else None
+    if args.check_key:
+        print(signer(args.key, coming))
+        return
+    bundle = args.bundle.resolve()
+    manifest = bundle / "manifest.json"
+    if not manifest.is_file():
+        sys.exit(f"{bundle}: no release bundle (run `just release-build <tag>` first)")
+    tag = released(bundle)["tag"]
+    version = args.version or (HERE / "version").read_text().strip()
+    base = (args.base or homepage()).rstrip("/")
     key = signer(args.key, coming)
     # Before anything is signed: dnf checks each package (`gpgcheck`).
     rpms = sorted(p for p in bundle.iterdir() if RPMS.fullmatch(p.name))

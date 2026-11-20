@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 from urllib.parse import quote, unquote
@@ -252,21 +253,20 @@ def macos_sdk():
 
 
 def rpm_key():
-    """The fingerprint that signs the release's `.rpm` packages (ADR-142,
-    amended): the repositories' key, `tools/package/repository/skwir.asc`,
-    whose secret part must be in GnuPG's keyring. Skwir's dnf repository
-    checks each package, and PackageKit (GNOME Software, Discover) takes
-    only what a key it trusts signed."""
+    """The key that signs the release's `.rpm` packages (ADR-142, amended),
+    named by its public file: the repositories' key,
+    `tools/package/repository/skwir.asc`. Skwir's dnf repository checks each
+    package, and PackageKit (GNOME Software, Discover) takes only what a key
+    it trusts signed. Checked now as `just repositories` checks it
+    (`repository.py --check-key`), so that a key the publication would
+    refuse stops the release before its hour of checks: one key, its secret
+    part in GnuPG's keyring and signing here (gpg asks for its passphrase
+    now), valid for 180 days yet, what it signs read back with the file
+    alone."""
     public = ROOT / "tools/package/repository/skwir.asc"
     require(public.is_file(), "No repositories' key (tools/package/repository/skwir.asc): docs/RELEASING.md")
-    listing = run("gpg", "--batch", "--with-colons", "--show-keys", str(public), capture=True)
-    fingerprints = [line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:")]
-    require(fingerprints, f"{public.relative_to(ROOT)} holds no key")
-    secret = subprocess.run(["gpg", "--batch", "--list-secret-keys", fingerprints[0]], cwd=ROOT,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-    require(secret, f"The repositories' key {fingerprints[0]} has no secret part in GnuPG's keyring,"
-                    " and it signs the release's .rpm packages (docs/RELEASING.md)")
-    return fingerprints[0]
+    run(sys.executable, "tools/package/repository.py", "--check-key", "--key", str(public), capture=True)
+    return public
 
 
 def patterns(version):
@@ -355,8 +355,9 @@ def build(tag, destination, commit, version, date, notes):
     # now, not after the hour of checks.
     require((macos_sdk() / "env.sh").is_file(),
             "No macOS SDK for its build: run `just macos-sdk` first (Apple's licence is yours to accept)")
-    # The key that signs Fedora's packages, said now too; gpg asks for its
-    # passphrase once they are built.
+    # The key that signs Fedora's packages, proven now too: gpg asks for its
+    # passphrase here, and again once they are built unless gpg-agent still
+    # holds it.
     key = rpm_key()
     run("just", "release-check")
     require(source(tag) == commit, "Source changed during release checks")
@@ -368,7 +369,7 @@ def build(tag, destination, commit, version, date, notes):
         for distro, command in PACKAGES:
             output = work / distro
             output.mkdir()
-            run("just", *command, env={**os.environ, "SKWIR_PACKAGE_OUT": str(output), "SKWIR_RPM_KEY": key})
+            run("just", *command, env={**os.environ, "SKWIR_PACKAGE_OUT": str(output), "SKWIR_RPM_KEY": str(key)})
             for asset in select(output, expected[distro]):
                 shutil.copy2(asset, bundle / asset.name)
         require(source(tag) == commit, "Source changed during packaging")

@@ -15,10 +15,12 @@
 # tools/package/linux/check.sh checks it there. The package lands in
 # target/package/linux.
 # Set SKWIR_PACKAGE_OUT to collect checked packages in a different directory.
-# Set SKWIR_RPM_KEY to the repositories' key (its fingerprint, as
-# `release-build` sets it) for Fedora's packages signed by it, here and not
-# in the root (tools/package/rpm-sign.sh), then read back with it alone by
-# the fresh root's own rpm before they are installed (ADR-142, amended).
+# Set SKWIR_RPM_KEY to the repositories' public key, a file
+# (`tools/package/repository/skwir.asc`, as `release-build` sets it), for
+# Fedora's packages signed by its key, here and not in the root
+# (tools/package/rpm-sign.sh), then read back with that file alone, what
+# systems hold, by the fresh root's own rpm before they are installed
+# (ADR-142, amended).
 #
 #     tools/package/try.sh debian|ubuntu|fedora|arch
 set -eu
@@ -216,7 +218,7 @@ debian | ubuntu)
 fedora)
     # Signed, each says so to Fedora's own rpm, which has the key alone.
     if [ -n "${SKWIR_RPM_KEY:-}" ]; then
-        gpg --batch --armor --export "$SKWIR_RPM_KEY" > "$fresh/package/key.asc"
+        cp "$SKWIR_RPM_KEY" "$fresh/package/key.asc"
         # shellcheck disable=SC2016 # expanded in the root
         enter "$fresh" 0 sh -c 'rpmkeys --import /package/key.asc &&
             for package in /package/main/*.rpm /package/extra/*.rpm; do
@@ -226,7 +228,7 @@ fedora)
                 *) echo "not signed by the key: $said" >&2; exit 1 ;;
                 esac
             done'
-        echo "== fedora: every package signed by $SKWIR_RPM_KEY, as Fedora's rpm reads it"
+        echo "== fedora: every package signed by the key of $SKWIR_RPM_KEY, as Fedora's rpm reads it"
     fi
     enter "$fresh" 0 sh -c 'dnf -y -q install --setopt=install_weak_deps=False /package/main/*.rpm' >/dev/null
     ;;

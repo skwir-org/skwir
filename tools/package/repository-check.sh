@@ -78,7 +78,7 @@ signed_by() {
     for package in "$bundle"/*.deb "$bundle"/*.rpm; do
         cp "$package" "$released/"
     done
-    "$tree/tools/package/rpm-sign.sh" "$(fingerprint "$1")" "$released"/*.rpm >/dev/null
+    "$tree/tools/package/rpm-sign.sh" "$work/$1.asc" "$released"/*.rpm >/dev/null
     python3 - "$bundle/manifest.json" "$released" <<'PYTHON'
 import hashlib, json, pathlib, sys
 manifest, released = json.loads(pathlib.Path(sys.argv[1]).read_text()), pathlib.Path(sys.argv[2])
@@ -235,7 +235,7 @@ done
 # refuses it.
 signed_by old
 make 8 old
-"$tree/tools/package/rpm-sign.sh" "$(fingerprint stranger)" "$work/site/rpm/fedora/own/skwir-repository.rpm" >/dev/null
+"$tree/tools/package/rpm-sign.sh" "$work/stranger.asc" "$work/site/rpm/fedora/own/skwir-repository.rpm" >/dev/null
 createrepo_c --quiet --general-compress-type=zstd "$work/site/rpm/fedora"
 gpg --batch --yes --local-user "$(fingerprint old)" --armor --detach-sign \
     --output "$work/site/rpm/fedora/repodata/repomd.xml.asc" "$work/site/rpm/fedora/repodata/repomd.xml"

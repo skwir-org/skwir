@@ -357,8 +357,9 @@ winget tag:
 
 # A Linux package built in a distribution's own root and installed in a
 # fresh one, from any Linux with bubblewrap (ADR-040): debian, ubuntu, fedora,
-# arch. With SKWIR_RPM_KEY (a fingerprint, as release-build sets it), Fedora's
-# signed by that key, rpmsign from the flake's nixpkgs (ADR-142).
+# arch. With SKWIR_RPM_KEY (the repositories' public key file, as
+# release-build sets it), Fedora's signed by its key, rpmsign from the
+# flake's nixpkgs (ADR-142).
 package-try distribution:
     #!/usr/bin/env bash
     set -euo pipefail

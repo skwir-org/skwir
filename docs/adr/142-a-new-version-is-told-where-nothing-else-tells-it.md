@@ -378,17 +378,20 @@ it trusts a package by its signed index. The user chose signing.
   (`tools/package/repository/skwir.asc`), its secret part in the
   keyring of whoever makes the release. `tools/package/rpm-sign.sh`
   signs (nixpkgs' rpmsign, rpm 4.20, a header signature) and reads each
-  file back with that key alone.
-- **When**: in `release-build`, which reads the key's fingerprint and
-  refuses to start without its secret part, as it refuses without
-  macOS's SDK. `try.sh fedora`, given `SKWIR_RPM_KEY`, signs what the
+  file back with `skwir.asc` alone, what systems hold.
+- **When**: in `release-build`, which first checks the key as `just
+  repositories` does (`repository.py --check-key`: its secret part
+  signing here, `skwir.asc` alone reading what it signs, 180 days left)
+  and refuses to start otherwise, as it refuses without macOS's SDK; gpg
+  asks for the passphrase then. `try.sh fedora`, given `SKWIR_RPM_KEY`
+  (the key's file), signs what the
   Fedora root built, on this machine, never in the root. The fresh root
-  reads every package back with Fedora's own rpm and the key alone
+  reads every package back with Fedora's own rpm and `skwir.asc` alone
   before installing it. What is checked, given its digests and uploaded
   is the signed file, so it stays the release's (ADR-053). gpg asks for
-  the passphrase when Fedora's packages are built, past the hour of
-  checks. A package built elsewhere (CI's fallback) is unsigned, and
-  the repositories refuse it.
+  the passphrase again when Fedora's packages are built, past the hour
+  of checks, unless gpg-agent still holds it. A package built elsewhere
+  (CI's fallback) is unsigned, and the repositories refuse it.
 - **The repositories**: `just repositories` refuses a release whose
   `.rpm` the key that signs the indexes did not sign, before signing
   anything. `skwir-repository.rpm` is signed too, its signature dated by
