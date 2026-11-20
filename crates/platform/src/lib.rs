@@ -79,6 +79,7 @@ pub mod network;
 #[cfg(target_os = "linux")]
 mod omarchy;
 pub mod open;
+pub mod os_release;
 pub mod package;
 pub mod picture;
 pub mod places;

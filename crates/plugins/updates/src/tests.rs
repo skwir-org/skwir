@@ -99,6 +99,10 @@ struct Fixture {
     day: Arc<AtomicI64>,
     minutes: Arc<AtomicU64>,
     metered: Arc<AtomicBool>,
+    /// The system the copy runs on, as its os-release would say, and how
+    /// many times it was read.
+    family: Arc<Mutex<Option<Family>>>,
+    family_reads: Arc<AtomicU64>,
 }
 
 impl Fixture {
@@ -143,6 +147,9 @@ impl Fixture {
         let (today, elapsed, costly) =
             (Arc::clone(&day), Arc::clone(&minutes), Arc::clone(&metered));
         let started = Instant::now();
+        let family = Arc::new(Mutex::new(None));
+        let family_reads = Arc::new(AtomicU64::new(0));
+        let (system, reads) = (Arc::clone(&family), Arc::clone(&family_reads));
         let plugin = Arc::new(UpdatesPlugin::with(Setup {
             site: site.into(),
             running: Some(running),
@@ -150,6 +157,10 @@ impl Fixture {
             today: Arc::new(move || today.load(Ordering::SeqCst)),
             metered: Arc::new(move || Some(costly.load(Ordering::SeqCst))),
             now: Arc::new(move || started + Duration::from_mins(elapsed.load(Ordering::SeqCst))),
+            family: Arc::new(move |_| {
+                reads.fetch_add(1, Ordering::SeqCst);
+                *system.lock()
+            }),
         }));
         app.plugins
             .add(Arc::clone(&plugin) as Arc<dyn Plugin>, &app);
@@ -162,6 +173,8 @@ impl Fixture {
             day,
             minutes,
             metered,
+            family,
+            family_reads,
         };
         fixture.wait_until("the copy's channel is read", |f| {
             f.plugin.inner.here().is_some()
@@ -254,7 +267,6 @@ impl Fixture {
 const DOWNLOADED: Here = Here {
     channel: Some(Channel::AppImage),
     repository: false,
-    family: None,
 };
 
 fn file(latest: &str) -> String {
@@ -576,12 +588,10 @@ fn a_copy_something_else_updates_is_never_checked() {
         Here {
             channel: None,
             repository: false,
-            family: None,
         },
         Here {
             channel: Some(Channel::Deb),
             repository: true,
-            family: None,
         },
     ] {
         let f = Fixture::new(&site.address, Version(0, 5, 1), here);
@@ -611,12 +621,20 @@ fn a_copy_something_else_updates_is_never_checked() {
         Here {
             channel: Some(Channel::Deb),
             repository: false,
-            family: Some(Family::Ubuntu),
         },
     );
+    *f.family.lock() = Some(Family::Ubuntu);
     f.look_on(20_000);
+    assert_eq!(f.family_reads.load(Ordering::SeqCst), 0, "nothing asked");
     f.look_on(20_002);
     let question = f.said().pop().unwrap();
+    f.look_on(20_002);
+    f.look_on(20_003);
+    assert_eq!(
+        f.family_reads.load(Ordering::SeqCst),
+        2,
+        "os-release read only as the question is asked"
+    );
     let labels: Vec<String> = question.actions.iter().map(|a| a.label.english()).collect();
     assert_eq!(labels, ["Yes", "No", "Update with your system…"]);
     let answers: Vec<bool> = question.actions.iter().map(|a| a.answers).collect();
@@ -633,46 +651,82 @@ fn a_copy_something_else_updates_is_never_checked() {
     );
 }
 
-/// The repository's page names the system the copy runs on, read from its
-/// os-release for a `.deb`: Ubuntu's for Ubuntu and what is like it,
-/// Debian's for Debian and what is like it alone; the site guesses where
-/// neither is said.
+/// The repository's page names the system the copy runs on, as its
+/// os-release says it, where the site has that system's commands: Fedora
+/// for an `.rpm` on Fedora or a system like it, never another rpm system;
+/// Ubuntu for a `.deb` on Ubuntu or what is like it, else Debian for
+/// Debian or what is like it. The site guesses where none is said.
 #[test]
 fn the_repository_page_names_the_system_the_copy_runs_on() {
     let page = |channel: Channel, os: Option<&str>| {
         let family = Family::of(channel, || {
-            os.map(skwir_platform::about::OsRelease::of_text)
+            os.map(skwir_platform::os_release::OsRelease::of_text)
         });
         crate::repository_page("https://skwir.org", family)
     };
     let package = |word: &str| format!("https://skwir.org/download?package={word}#repository");
-    let guessed = "https://skwir.org/download#repository";
-    assert_eq!(page(Channel::Rpm, None), package("fedora"), "an .rpm");
-    for (system, os, expected) in [
-        ("Ubuntu", "ID=ubuntu\nID_LIKE=debian\n", package("ubuntu")),
+    let guessed = "https://skwir.org/download#repository".to_owned();
+    for (system, channel, os, expected) in [
+        ("Fedora", Channel::Rpm, "ID=fedora\n", package("fedora")),
+        (
+            "Rocky Linux",
+            Channel::Rpm,
+            "ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n",
+            package("fedora"),
+        ),
+        (
+            "openSUSE",
+            Channel::Rpm,
+            "ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n",
+            guessed.clone(),
+        ),
+        ("Mageia", Channel::Rpm, "ID=mageia\n", guessed.clone()),
+        (
+            "Ubuntu",
+            Channel::Deb,
+            "ID=ubuntu\nID_LIKE=debian\n",
+            package("ubuntu"),
+        ),
         (
             "Linux Mint",
+            Channel::Deb,
             "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n",
             package("ubuntu"),
         ),
         (
             "Pop!_OS",
+            Channel::Deb,
             "ID=pop\nID_LIKE=\"ubuntu debian\"\n",
             package("ubuntu"),
         ),
-        ("Debian", "ID=debian\n", package("debian")),
-        ("LMDE", "ID=linuxmint\nID_LIKE=debian\n", package("debian")),
+        (
+            "elementary OS",
+            Channel::Deb,
+            "# ID=debian\r\n\r\nID=elementary\r\nID_LIKE=ubuntu\r\n",
+            package("ubuntu"),
+        ),
+        ("Debian", Channel::Deb, "ID=debian\n", package("debian")),
+        (
+            "LMDE",
+            Channel::Deb,
+            "ID=linuxmint\nID_LIKE=debian\n",
+            package("debian"),
+        ),
         (
             "another",
+            Channel::Deb,
             "ID=other\nID_LIKE=\"something else\"\n",
-            guessed.to_owned(),
+            guessed.clone(),
         ),
     ] {
-        assert_eq!(page(Channel::Deb, Some(os)), expected, "{system}");
+        assert_eq!(page(channel, Some(os)), expected, "{system}");
     }
     assert_eq!(page(Channel::Deb, None), guessed, "no os-release");
+    assert_eq!(page(Channel::Rpm, None), guessed, "no os-release");
     assert_eq!(
-        Family::of(Channel::AppImage, || panic!("read only for a .deb")),
+        Family::of(Channel::AppImage, || panic!(
+            "read only for a .deb or an .rpm"
+        )),
         None
     );
 }
@@ -685,7 +739,6 @@ fn what_is_new_is_said_once_after_an_update() {
     let managed = Here {
         channel: None,
         repository: false,
-        family: None,
     };
     let f = Fixture::new(&site.address, Version(0, 5, 1), managed);
     f.look_on(20_000);
@@ -776,7 +829,6 @@ fn a_copy_the_system_comes_to_update_is_checked_no_more() {
         Arc::new(move || Here {
             channel: Some(Channel::Deb),
             repository: added.load(Ordering::SeqCst),
-            family: None,
         }),
     );
     assert!(
@@ -974,7 +1026,6 @@ fn deb_copy(site: &Site) -> (Fixture, Arc<AtomicBool>, Notification) {
         Arc::new(move || Here {
             channel: Some(Channel::Deb),
             repository: added.load(Ordering::SeqCst),
-            family: None,
         }),
     );
     f.look_on(20_000);

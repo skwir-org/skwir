@@ -87,9 +87,6 @@ pub struct Here {
     pub channel: Option<Channel>,
     /// Whether the system has Skwir's repository for it.
     pub repository: bool,
-    /// The system a `.deb` or an `.rpm` runs on, where the site has its
-    /// repository's commands.
-    pub family: Option<Family>,
 }
 
 impl Here {
@@ -99,8 +96,6 @@ impl Here {
         Here {
             channel,
             repository: channel.is_some_and(skwir_platform::channel::repository_added),
-            family: channel
-                .and_then(|channel| Family::of(channel, skwir_platform::about::OsRelease::read)),
         }
     }
 
@@ -132,28 +127,30 @@ impl Family {
         }
     }
 
-    /// The system a copy that came by `channel` runs on: Fedora for an
-    /// `.rpm`; for a `.deb` (one word for Debian's and Ubuntu's builds,
-    /// whose repository packages differ), Ubuntu where its os-release
-    /// (`os`, read only then) says it is or is like Ubuntu (Linux Mint,
-    /// Pop!_OS, elementary OS, Zorin OS), else Debian where it says it is
-    /// or is like Debian (LMDE, MX Linux); neither, `None`, and the site
+    /// The system a copy that came by `channel` runs on, as its os-release
+    /// says it (`os`, read only for a `.deb` or an `.rpm`), where the site
+    /// has its repository's commands. For an `.rpm`, Fedora where the
+    /// system is or is like Fedora (its spins, Nobara; Red Hat's and
+    /// those built from it, Rocky Linux among them, which say they are like
+    /// it); another rpm system (openSUSE, Mageia) is none, the site serving
+    /// Fedora alone.
+    /// For a `.deb` (one word for Debian's and Ubuntu's builds, whose
+    /// repository packages differ), Ubuntu where the system is or is like
+    /// Ubuntu (Linux Mint, Pop!_OS, elementary OS, Zorin OS), else Debian
+    /// where it is or is like Debian (LMDE, MX Linux). None named, the site
     /// guesses.
     pub fn of(
         channel: Channel,
-        os: impl FnOnce() -> Option<skwir_platform::about::OsRelease>,
+        os: impl FnOnce() -> Option<skwir_platform::os_release::OsRelease>,
     ) -> Option<Family> {
+        let known = |os: &skwir_platform::os_release::OsRelease, family: Family| {
+            os.is_like(family.word()).then_some(family)
+        };
         match channel {
-            Channel::Rpm => Some(Family::Fedora),
+            Channel::Rpm => known(&os()?, Family::Fedora),
             Channel::Deb => {
                 let os = os()?;
-                if os.is_like("ubuntu") {
-                    Some(Family::Ubuntu)
-                } else if os.is_like("debian") {
-                    Some(Family::Debian)
-                } else {
-                    None
-                }
+                known(&os, Family::Ubuntu).or_else(|| known(&os, Family::Debian))
             }
             _ => None,
         }
@@ -172,6 +169,7 @@ fn repository_page(site: &str, family: Option<Family>) -> String {
 }
 
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
+type Families = Arc<dyn Fn(Channel) -> Option<Family> + Send + Sync>;
 
 /// The run a worker was started for ended (the plugin turned off): what
 /// it read is let go.
@@ -187,6 +185,9 @@ pub struct Setup {
     /// The user's calendar day (`calendar::Calendar::day_of`).
     pub today: Clock,
     pub metered: Arc<dyn Fn() -> Option<bool> + Send + Sync>,
+    /// The system a `.deb` or an `.rpm` runs on (`Family::of`, from its
+    /// os-release): read only as the question is asked, for its link.
+    pub family: Families,
     /// The clock the hour after a check that got no answer is counted on
     /// (`Instant::now`).
     pub now: Arc<dyn Fn() -> Instant + Send + Sync>,
@@ -202,6 +203,9 @@ impl Default for Setup {
                 skwir_platform::calendar::Calendar::system().day_of(SystemTime::now())
             }),
             metered: Arc::new(skwir_platform::network::metered),
+            family: Arc::new(|channel| {
+                Family::of(channel, skwir_platform::os_release::OsRelease::read)
+            }),
             now: Arc::new(Instant::now),
         }
     }
@@ -761,6 +765,11 @@ impl Inner {
         // keep the answer: nothing is asked of it, where `updates.tell` is
         // said as the rest is declared.
         let answerable = asks && !app.settings.read_only();
+        // The system, for the question's link: read only as it may be
+        // asked.
+        let family = downloaded
+            .filter(|channel| answerable && channel.has_repository())
+            .and_then(|channel| (self.setup.family)(channel));
         let (check, changed) = {
             let _held = self.kept.lock();
             let before = Kept::read(&app.settings);
@@ -798,7 +807,7 @@ impl Inner {
                 if answerable && kept.asks(today) {
                     kept.asked += 1;
                     kept.asked_on = Some(today);
-                    self.ask(app, channel, here.and_then(|here| here.family));
+                    self.ask(app, channel, family);
                 }
                 check = checks && !kept.checked_today(today);
             }
@@ -1074,7 +1083,6 @@ impl Inner {
             let unknown = Here {
                 channel: None,
                 repository: false,
-                family: None,
             };
             if let Some(why) = not_checked(here.unwrap_or(unknown), tells(&app)) {
                 let asked = {

@@ -182,7 +182,13 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
      the check runs.
    - *What is asked.* `GET https://skwir.org/updates/1.json` (1 is the
      format), with `If-None-Match`. The User-Agent is `skwir` alone. No
-     version, system, language, identifier or cookie is sent.
+     version, system, language, identifier or cookie is sent. (Amended
+     2026-11-20: the question's link, a page the user opens in the
+     browser, names the system's family, one of three fixed ids of the
+     site's own: `fedora`, `debian`, `ubuntu`. Skwir sends nothing
+     there; the browser asks for the page, and Cloudflare sees the word
+     with the IP address, as it sees the browser's user agent. Nothing
+     else os-release says leaves the machine.)
    - *The file.* `{"latest": "0.6.2", "important_since": "0.6.1"}`:
      `latest` is the newest release, and `important_since` the newest
      release that fixes a loss of data or a hole in security (optional).
@@ -484,16 +490,21 @@ it trusts a package by its signed index. The user chose signing.
   the plugin said goes with it, queued or shown.
 - **The question's link names the system** (decision 5): it opens
   `/download?package=<id>#repository`, the site showing that system's
-  card and scrolling to its commands. `fedora` for an `.rpm`; for a
-  `.deb`, one word for Debian's and Ubuntu's builds whose repository
-  packages differ, os-release says which (the platform's `OsRelease`,
-  the reader About's system name uses, read where how the copy came
-  is): `ubuntu` where `ID` is ubuntu or `ID_LIKE` names it
-  (Linux Mint, Pop!_OS, elementary OS, Zorin OS), else `debian` where
-  `ID` is debian or `ID_LIKE` names it (LMDE, MX Linux). Neither said,
+  card and scrolling to its commands, where the site has that system's:
+  os-release says which (`skwir_platform::os_release`, the one reader of
+  it, About's name for the system included), read only as the question
+  is asked. For an `.rpm`, `fedora` where `ID` is fedora or `ID_LIKE`
+  names it (its spins, Nobara, RHEL and those built from it); another
+  rpm system (openSUSE, Mageia) gets no query, as the site serves Fedora
+  alone. For a `.deb`, one word for Debian's and Ubuntu's builds whose
+  repository packages differ: `ubuntu` where `ID` is ubuntu or `ID_LIKE`
+  names it (Linux Mint, Pop!_OS, elementary OS, Zorin OS), else `debian`
+  where `ID` is debian or `ID_LIKE` names it (LMDE, MX Linux). None said,
   `?package=` is left out and the site guesses from the browser, which
   rarely names the distribution. `#repository` alone is what older pages
-  and bookmarks read, and the site still takes it.
+  and bookmarks read, and the site still takes it. `/etc/os-release` is
+  read alone where it is there, `/usr/lib/os-release` only where it is
+  not (os-release(5)).
 - **Two copies and the clock** (`Kept`). Of two checks on the same day,
   the merge keeps the answer naming the newer version, whichever merges
   which. What no build reads any more (an earlier build's `etag`) is
