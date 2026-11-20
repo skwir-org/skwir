@@ -7158,7 +7158,7 @@ pub(crate) fn content(
                 document.is_none() && interactive && !shell.shows_player(),
                 |d| {
                     d.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                        if crate::elements::pan::double_click(event) {
+                        if crate::elements::pan::double_click(event, &this.preview.grab) {
                             this.preview_fullscreen(window, cx);
                         }
                     }))

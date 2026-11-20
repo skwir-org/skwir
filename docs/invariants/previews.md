@@ -1592,9 +1592,12 @@ is still to come are in `docs/preview-frame.md`.
   show or for a move that changes an offset, held within its bounds as
   gpui will hold it in prepaint (`pan::within`; the list's against
   `max_offset_for_scrollbar`): a drag against an edge, or over what
-  fits, draws nothing. gpui tells a click at a drag's release too: what
-  a click does over what moves asks whether the pointer stayed
-  (`pan::double_click`, the picture's whole screen).
+  fits, draws nothing. gpui tells a click at a drag's release too, and
+  a double click by where the second press is, whatever the first did:
+  what a click does over what moves asks the grab, which hears every
+  press on the layer, taken or not, whether both were clicks by the
+  path their pointer took (`pan::double_click`, the picture's whole
+  screen; one definition of a drag, `past_click`, as a page's link's).
 - What a zoom key does follows from what is shown, never from a
   per-format switch; the user asks for bigger or smaller and never
   chooses the mechanism. Text in reading mode changes size (the

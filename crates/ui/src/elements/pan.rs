@@ -24,20 +24,28 @@ use std::{cell::Cell, rc::Rc};
 /// A press that moved less than this is a click, not a drag.
 pub const CLICK_SLOP: f32 = 4.;
 
+/// Whether the pointer at `at` has gone past a click's reach of a press at
+/// `from`: the one definition of a drag, for what moves, a selection's
+/// release and a double click alike.
+fn past_click(from: Point<Pixels>, at: Point<Pixels>) -> bool {
+    let gone = at - from;
+    f32::from(gone.x).hypot(f32::from(gone.y)) > CLICK_SLOP
+}
+
 /// Whether `event` is a double click, not the release of a drag: gpui
 /// tells a click at any release over what was pressed, however far the
 /// pointer went, and counts a second press near the first as a double one,
-/// so two quick drags from about the same place would be one. A key's or a
-/// tap's click has no drag to tell.
-pub fn double_click(event: &gpui::ClickEvent) -> bool {
-    let stayed = match event {
-        gpui::ClickEvent::Mouse(click) => {
-            let gone = click.up.position - click.down.position;
-            f32::from(gone.x).hypot(f32::from(gone.y)) <= CLICK_SLOP
+/// whatever the first did, so two quick drags from about the same place,
+/// one that wandered and came back, or a flick and a click where it began
+/// would be one. Both presses must have been clicks, as `grab` heard them
+/// (a press the layer did not hear is none of its). A key's or a tap's
+/// click has no drag to tell.
+pub fn double_click(event: &gpui::ClickEvent, grab: &Grab) -> bool {
+    event.click_count() == 2
+        && match event {
+            gpui::ClickEvent::Mouse(click) => grab.clicked_twice(click.down.position),
+            gpui::ClickEvent::Keyboard(_) | gpui::ClickEvent::Touch(_) => true,
         }
-        gpui::ClickEvent::Keyboard(_) | gpui::ClickEvent::Touch(_) => true,
-    };
-    stayed && event.click_count() == 2
 }
 
 /// A press holding what a view shows, kept between frames by whoever shows
@@ -51,6 +59,18 @@ struct Shared {
     /// What the layer moves is larger than its room, as last painted: a
     /// hand shows only where it can move something.
     movable: Cell<bool>,
+    /// The last two presses heard, the newest last, held or not (one where
+    /// nothing moves is heard too): what a double click asks.
+    heard: Cell<[Option<Heard>; 2]>,
+}
+
+/// A press heard: where it was made, with which button, and whether its
+/// pointer then went past a click's reach while it was held.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Heard {
+    button: MouseButton,
+    from: Point<Pixels>,
+    dragged: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -88,6 +108,42 @@ impl Grab {
             last: at,
             dragged: false,
         }));
+        self.heard(at, button);
+    }
+
+    /// A press at `at` heard, whoever takes it.
+    fn heard(&self, at: Point<Pixels>, button: MouseButton) {
+        let [_, last] = self.0.heard.get();
+        self.0.heard.set([
+            last,
+            Some(Heard {
+                button,
+                from: at,
+                dragged: false,
+            }),
+        ]);
+    }
+
+    /// The pointer at `at`, `pressed` held: the press heard last is a drag
+    /// once it goes past a click's reach.
+    fn went(&self, at: Point<Pixels>, pressed: Option<MouseButton>) {
+        let [before, last] = self.0.heard.get();
+        if let Some(mut last) = last
+            && !last.dragged
+            && pressed == Some(last.button)
+            && past_click(last.from, at)
+        {
+            last.dragged = true;
+            self.0.heard.set([before, Some(last)]);
+        }
+    }
+
+    /// Whether the press at `at` and the one heard before it were both
+    /// clicks: the press at `at` must be the one heard last.
+    fn clicked_twice(&self, at: Point<Pixels>) -> bool {
+        let [before, last] = self.0.heard.get();
+        last.is_some_and(|last| last.from == at && !last.dragged)
+            && before.is_none_or(|before| !before.dragged)
     }
 
     /// Hold what is shown from `at` with the left button: what is drawn
@@ -167,9 +223,9 @@ impl Grab {
     /// behind peek or the whole screen has none).
     fn follow(&self, at: Point<Pixels>) -> Option<Point<Pixels>> {
         let mut held = self.0.held.get()?;
+        self.went(at, Some(held.button));
         if !held.dragged {
-            let gone = at - held.from;
-            if f32::from(gone.x).hypot(f32::from(gone.y)) <= CLICK_SLOP {
+            if !past_click(held.from, at) {
                 return None;
             }
             held.dragged = true;
@@ -308,11 +364,17 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
                     _ => false,
                 };
                 // What is under the press (a double click, the focus) hears
-                // it too: nothing here stops it.
-                if phase.bubble() && takes && pressed.movable() && hit.is_hovered(window) {
-                    pressed.press(event.position, event.button, By::Layer);
-                    // The hand closes.
-                    window.refresh();
+                // it too: nothing here stops it. One it does not take is
+                // heard all the same, for the double click it may be half
+                // of.
+                if phase.bubble() && hit.is_hovered(window) {
+                    if takes && pressed.movable() {
+                        pressed.press(event.position, event.button, By::Layer);
+                        // The hand closes.
+                        window.refresh();
+                    } else {
+                        pressed.heard(event.position, event.button);
+                    }
                 }
             });
             let followed = grab.clone();
@@ -321,6 +383,8 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
                     return;
                 }
                 let Some(held) = followed.0.held.get() else {
+                    // A press the layer did not take still tells a drag.
+                    followed.went(event.position, event.pressed_button);
                     return;
                 };
                 // A release outside the window is never told here.
@@ -458,37 +522,55 @@ mod tests {
         assert_eq!(down_within(px(100.), px(30.), px(500.)), px(130.));
     }
 
+    /// A double click is two presses the grab heard as clicks, by the
+    /// path their pointer took, not by where they were let go: a drag that
+    /// came back, a flick before a click, a press nothing moved (heard, not
+    /// taken) dragged away are none.
     #[test]
-    fn a_drag_released_is_no_double_click() {
-        let click = |from: Point<Pixels>, to: Point<Pixels>| {
+    fn a_double_click_is_two_clicks_heard() {
+        let twice = |at: Point<Pixels>, count: usize| {
             gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
                 down: MouseDownEvent {
                     button: MouseButton::Left,
-                    position: from,
-                    click_count: 2,
+                    position: at,
+                    click_count: count,
                     ..MouseDownEvent::default()
                 },
                 up: MouseUpEvent {
                     button: MouseButton::Left,
-                    position: to,
-                    click_count: 2,
+                    position: at,
+                    click_count: count,
                     ..MouseUpEvent::default()
                 },
             })
         };
-        assert!(double_click(&click(at(10., 10.), at(12., 13.))));
+        let left = Some(MouseButton::Left);
+        let grab = Grab::default();
+        grab.heard(at(10., 10.), MouseButton::Left);
+        grab.went(at(12., 11.), left);
+        grab.heard(at(11., 12.), MouseButton::Left);
+        assert!(double_click(&twice(at(11., 12.), 2), &grab));
+        assert!(!double_click(&twice(at(11., 12.), 1), &grab), "one click");
         assert!(
-            !double_click(&click(at(10., 10.), at(40., 10.))),
-            "the second of two quick drags"
+            !double_click(&twice(at(50., 50.), 2), &grab),
+            "a press the grab did not hear"
         );
-        let once = gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
-            down: MouseDownEvent::default(),
-            up: MouseUpEvent {
-                click_count: 1,
-                ..MouseUpEvent::default()
-            },
-        });
-        assert!(!double_click(&once));
+        // The second press went away and came back before its release.
+        grab.heard(at(10., 10.), MouseButton::Left);
+        grab.went(at(40., 10.), left);
+        grab.went(at(11., 10.), left);
+        assert!(!double_click(&twice(at(10., 10.), 2), &grab));
+        // A flick, then a still click where it began.
+        grab.press(at(10., 10.), MouseButton::Left, By::Layer);
+        assert_eq!(grab.follow(at(60., 10.)), Some(at(50., 0.)));
+        grab.let_go();
+        grab.heard(at(10., 10.), MouseButton::Left);
+        assert!(!double_click(&twice(at(10., 10.), 2), &grab));
+        // Another button held moves no press of the left one.
+        grab.heard(at(10., 10.), MouseButton::Left);
+        grab.went(at(60., 10.), Some(MouseButton::Middle));
+        grab.heard(at(10., 10.), MouseButton::Left);
+        assert!(double_click(&twice(at(10., 10.), 2), &grab));
     }
 
     #[test]
