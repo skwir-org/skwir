@@ -234,6 +234,12 @@ pub struct Asked {
     pub choices: Vec<Choice>,
     /// Where to start: the folder suggested, or the saved file's.
     pub folder: Option<PathBuf>,
+    /// Opening files: whether the desktop's recently used files had
+    /// something to give as it asked (`recent::offered`, read then, on a
+    /// thread of its own): Recent comes first among the places and is
+    /// where a request naming no folder may start (ADR-144, 7). Not what
+    /// the program asks: what the desktop said as it asked.
+    pub recent: bool,
 }
 
 impl Asked {
@@ -349,19 +355,18 @@ impl Choosing {
     }
 
     fn made(asked: Asked) -> (Choosing, Arc<Reply>) {
-        static NEXT: AtomicU64 = AtomicU64::new(1);
         let reply = Arc::new(Reply::default());
-        let holder = Arc::new(Holder {
-            reply: Arc::clone(&reply),
-        });
-        (
-            Choosing {
-                asked: Arc::new(asked),
-                holder,
-                id: NEXT.fetch_add(1, Ordering::Relaxed),
-            },
-            reply,
-        )
+        (Choosing::around(asked, Arc::clone(&reply)), reply)
+    }
+
+    /// The request asking `asked`, answered at `reply`.
+    fn around(asked: Asked, reply: Arc<Reply>) -> Choosing {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Choosing {
+            asked: Arc::new(asked),
+            holder: Arc::new(Holder { reply }),
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
+        }
     }
 }
 
@@ -529,12 +534,6 @@ pub(crate) mod linux {
         pub(crate) options: Options,
     }
 
-    /// A request made of what the portal gave, and what waits for its
-    /// answer; none for one that is refused (`asked`).
-    pub(crate) fn request(raw: &Raw) -> Option<(Choosing, Arc<Reply>)> {
-        asked(raw).map(Choosing::made)
-    }
-
     /// What `raw` asks, as data. None when a name the program gives
     /// (`current_name`, each of `files`) is not one name (`one_name`): it
     /// would put the file outside the folder the user chooses, and only
@@ -608,6 +607,7 @@ pub(crate) mod linux {
                 })
                 .collect(),
             folder,
+            recent: false,
         })
     }
 
@@ -720,24 +720,84 @@ pub(crate) mod linux {
         raw: Raw,
         take: impl FnOnce(Choosing) -> bool,
     ) -> (u32, Results) {
-        let Some((choosing, reply)) = request(&raw) else {
+        let Some(mut asked) = asked(&raw) else {
             // Its window never opens: the name it gives is not one name.
             tracing::info!("another program's dialog gave a name that is a path: refused");
             return results(Answer::Failed);
         };
+        let reply = Arc::new(Reply::default());
         let exported = server.at(&handle, Request(Arc::clone(&reply))).await;
         if let Err(error) = &exported {
             tracing::debug!("a request's dialog cannot be closed by its program: {error}");
         }
-        if !take(choosing) {
+        if matches!(
+            asked.kind,
+            Kind::Open {
+                directory: false,
+                ..
+            }
+        ) {
+            asked.recent = recent_offered().await;
+        }
+        let choosing = Choosing::around(asked, Arc::clone(&reply));
+        // Given up on meanwhile: no window opens for it, and it is answered
+        // as it was closed.
+        let closed = choosing.is_settled();
+        if closed || !take(choosing) {
             let _ = server.remove::<Request, _>(&handle).await;
-            return results(Answer::Failed);
+            return results(if closed {
+                reply.wait().await
+            } else {
+                Answer::Failed
+            });
         }
         let answer = reply.wait().await;
         if matches!(exported, Ok(true)) {
             let _ = server.remove::<Request, _>(&handle).await;
         }
         results(answer)
+    }
+
+    /// How long a request waits to know whether Recent has something to
+    /// give (`recent_offered`) before its window opens without it: a
+    /// desktop's setting read in a moment, or not at all.
+    const RECENT_PATIENCE: std::time::Duration = std::time::Duration::from_millis(500);
+
+    /// Whether an Open dialog's Recent has something to give
+    /// (`recent::offered`), read on a thread of its own: the bus's
+    /// connection is never held while the desktop's settings and its list
+    /// are read. Not known within `RECENT_PATIENCE`, none.
+    async fn recent_offered() -> bool {
+        let told = Arc::new((
+            parking_lot::Mutex::new(None::<bool>),
+            event_listener::Event::new(),
+        ));
+        let telling = Arc::clone(&told);
+        let started = std::thread::Builder::new()
+            .name("skwir-chooser-recent".into())
+            .spawn(move || {
+                let offered = crate::recent::offered();
+                *telling.0.lock() = Some(offered);
+                telling.1.notify(usize::MAX);
+            });
+        if let Err(error) = started {
+            tracing::debug!("whether Recent has files is not read: {error}");
+            return false;
+        }
+        let answered = async {
+            loop {
+                let listener = told.1.listen();
+                if let Some(offered) = *told.0.lock() {
+                    return offered;
+                }
+                listener.await;
+            }
+        };
+        let waited = async {
+            async_io::Timer::after(RECENT_PATIENCE).await;
+            false
+        };
+        futures_lite::future::or(answered, waited).await
     }
 
     /// What takes a request: whether it took it.
@@ -1134,6 +1194,7 @@ mod tests {
             current_filter: None,
             choices: Vec::new(),
             folder: None,
+            recent: false,
         }
     }
 

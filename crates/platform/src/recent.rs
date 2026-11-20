@@ -55,36 +55,187 @@ pub fn path() -> Option<PathBuf> {
     crate::xdg::data_home().map(|data| data.join("recently-used.xbel"))
 }
 
-/// Whether the desktop remembers the files used: not where GTK is told
-/// to remember none (`gtk-recent-files-enabled` false, or a
-/// `gtk-recent-files-max-age` of 0, in its `settings.ini`), nor where
-/// GNOME's privacy settings say so (`remember-recent-files`), as GTK's own
-/// dialog reads them. Runs `gsettings` on a GNOME desktop: on a worker.
+/// How the desktop remembers the files used, where it does
+/// (`remembered`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Remembered {
+    /// For how many days, where a setting says (GTK's and GNOME's age):
+    /// one used longer ago goes, as GTK lets it go.
+    pub days: Option<u32>,
+}
+
+/// Whether the desktop remembers the files used, and for how long: not
+/// where one of its switches says to remember none, read as each program
+/// that keeps the list reads its own, each where it is cheap to read:
+/// GTK's `settings.ini` as GTK cascades them (the user's, `/etc`'s, those
+/// of `XDG_CONFIG_DIRS`; GTK 4's and GTK 3's: `gtk-recent-files-enabled`,
+/// `gtk-recent-files-max-age`), GNOME's privacy settings, which GTK 4
+/// reads through the settings portal (`remember-recent-files`,
+/// `recent-files-max-age`), Cinnamon's on Cinnamon, and KDE's
+/// `kdeglobals`, which its own programs read before they add a file
+/// (`[RecentDocuments]` `UseRecent`, `MaxEntries`). One that says none
+/// is enough; the shortest age is kept. Runs `gsettings`: on a worker.
 /// Elsewhere than Linux, never: no program there keeps this list, and no
 /// dialog of another program is Skwir's (ADR-141, 11).
 #[cfg(target_os = "linux")]
-pub fn remembered() -> bool {
-    let off = |value: &str| matches!(value.to_ascii_lowercase().as_str(), "false" | "0");
-    if crate::desktop_settings::gtk_settings("gtk-recent-files-enabled")
-        .first()
-        .is_some_and(|value| off(value))
-        || crate::desktop_settings::gtk_settings("gtk-recent-files-max-age")
-            .first()
-            .is_some_and(|value| value.trim() == "0")
-    {
-        return false;
+pub fn remembered() -> Option<Remembered> {
+    let gtk: Vec<Vec<String>> = ["gtk-4.0", "gtk-3.0"]
+        .iter()
+        .map(|version| {
+            let file = std::path::Path::new(version).join("settings.ini");
+            crate::xdg::config_home()
+                .into_iter()
+                .chain(std::iter::once(PathBuf::from("/etc")))
+                .chain(crate::xdg::config_dirs())
+                .filter_map(|folder| {
+                    crate::file::read_regular_text(&folder.join(&file), crate::file::DESKTOP_FILE)
+                        .ok()
+                })
+                .collect()
+        })
+        .collect();
+    let schema = |schema: &str| {
+        crate::desktop_settings::printed(Path::new("gsettings"), &["list-recursively", schema])
+            .map_or_else(Said::default, |printed| gsettings_said(&printed))
+    };
+    let cinnamon = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktops| {
+        desktops
+            .split(':')
+            .any(|d| d.eq_ignore_ascii_case("X-Cinnamon") || d.eq_ignore_ascii_case("Cinnamon"))
+    });
+    let mut said = gtk_said(&gtk)
+        .and(schema("org.gnome.desktop.privacy"))
+        .and(kde_said(&crate::desktop_settings::kdeglobals_cascade()));
+    if cinnamon {
+        said = said.and(schema("org.cinnamon.desktop.privacy"));
     }
-    let gnome = std::env::var("XDG_CURRENT_DESKTOP")
-        .is_ok_and(|desktops| desktops.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")));
-    !(gnome
-        && crate::desktop_settings::gsettings("org.gnome.desktop.privacy", "remember-recent-files")
-            .is_some_and(|value| value.trim() == "false"))
+    (!said.off).then_some(Remembered { days: said.days })
 }
 
 /// See the Linux one: elsewhere, never.
 #[cfg(not(target_os = "linux"))]
-pub fn remembered() -> bool {
-    false
+pub fn remembered() -> Option<Remembered> {
+    None
+}
+
+/// Whether Recent has something to give an Open dialog (ADR-144, 7): the
+/// desktop remembers the files used (`remembered`), and its list names a
+/// file that is there (one on a remote counted, unread: its server may
+/// not answer, ADR-077). Runs `gsettings`, reads the list and stats: on a
+/// thread of its own or a worker.
+pub fn offered() -> bool {
+    remembered().is_some()
+        && path()
+            .and_then(|list| crate::file::read_regular_text(&list, LIMIT).ok())
+            .is_some_and(|text| names_one(&text))
+}
+
+/// Whether the list `text` names a file that is there, read as the jump
+/// plugin's Recent reads it.
+fn names_one(text: &str) -> bool {
+    if crate::inspection::xml_depth(text.as_bytes()).is_err() {
+        return false;
+    }
+    let Ok(doc) = roxmltree::Document::parse(text) else {
+        return false;
+    };
+    doc.descendants()
+        .filter(|node| node.has_tag_name("bookmark"))
+        .filter_map(|node| crate::uri::path_of(node.attribute("href")?))
+        .any(|path| skwir_core::fs::reach::of(&path).is_some() || path.exists())
+}
+
+/// What the desktop's switches say of remembering the files used.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Said {
+    /// None remembered.
+    off: bool,
+    /// For so many days.
+    days: Option<u32>,
+}
+
+impl Said {
+    /// What both say: none where either says none, the shorter age.
+    fn and(self, other: Said) -> Said {
+        Said {
+            off: self.off || other.off,
+            days: match (self.days, other.days) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            },
+        }
+    }
+
+    /// A switch: off where it says so (a key file's `false` or `0`).
+    fn switch(value: Option<&str>) -> Said {
+        Said {
+            off: value.is_some_and(|value| {
+                matches!(value.trim().to_ascii_lowercase().as_str(), "false" | "0")
+            }),
+            days: None,
+        }
+    }
+
+    /// An age in days, as GTK reads one: 0 remembers none, a negative one
+    /// for ever.
+    fn age(value: Option<&str>) -> Said {
+        match value.and_then(|value| value.trim().parse::<i64>().ok()) {
+            Some(0) => Said {
+                off: true,
+                days: None,
+            },
+            Some(days) if days > 0 => Said {
+                off: false,
+                days: u32::try_from(days).ok(),
+            },
+            _ => Said::default(),
+        }
+    }
+}
+
+/// What GTK's `settings.ini`s say, each GTK's (`versions`) in the order
+/// it reads them, the first that says a key saying it.
+fn gtk_said(versions: &[Vec<String>]) -> Said {
+    let value = |texts: &[String], key: &str| {
+        texts
+            .iter()
+            .find_map(|text| crate::desktop_settings::keyfile_value(text, "Settings", key))
+    };
+    versions.iter().fold(Said::default(), |said, texts| {
+        said.and(Said::switch(
+            value(texts, "gtk-recent-files-enabled").as_deref(),
+        ))
+        .and(Said::age(
+            value(texts, "gtk-recent-files-max-age").as_deref(),
+        ))
+    })
+}
+
+/// What a privacy schema says, as `gsettings list-recursively` prints it
+/// (`schema key value` a line).
+fn gsettings_said(printed: &str) -> Said {
+    let value = |key: &str| {
+        printed.lines().find_map(|line| {
+            let mut words = line.split_whitespace();
+            let (_, said, value) = (words.next()?, words.next()?, words.next()?);
+            (said == key).then_some(value)
+        })
+    };
+    Said::switch(value("remember-recent-files")).and(Said::age(value("recent-files-max-age")))
+}
+
+/// What KDE's `kdeglobals` say, the user's first (`cascade`).
+fn kde_said(cascade: &[String]) -> Said {
+    let value = |key: &str| {
+        cascade
+            .iter()
+            .find_map(|text| crate::desktop_settings::keyfile_value(text, "RecentDocuments", key))
+    };
+    let none = value("MaxEntries").is_some_and(|entries| entries.trim() == "0");
+    Said::switch(value("UseRecent").as_deref()).and(Said {
+        off: none,
+        days: None,
+    })
 }
 
 /// Add `paths`, chosen now, to the desktop's recently used files, each
@@ -102,9 +253,12 @@ pub fn remembered() -> bool {
 /// When the list cannot be read or written.
 pub fn add(paths: &[PathBuf]) -> anyhow::Result<()> {
     static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    if paths.is_empty() || !remembered() {
+    if paths.is_empty() {
         return Ok(());
     }
+    let Some(remembering) = remembered() else {
+        return Ok(());
+    };
     let Some(target) = path() else {
         return Ok(());
     };
@@ -122,9 +276,16 @@ pub fn add(paths: &[PathBuf]) -> anyhow::Result<()> {
     let _one = WRITING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let now = date(jiff::Timestamp::now());
+    let at = jiff::Timestamp::now();
+    let now = date(at);
+    // As GTK counts a file's age: whole days of 24 hours since it was
+    // modified, one older than the age kept going.
+    let before = remembering.days.and_then(|days| {
+        at.checked_sub(jiff::SignedDuration::from_hours(24 * (i64::from(days) + 1)))
+            .ok()
+    });
     crate::file::rewrite_words_within(&target, LIMIT, read_only, |text| {
-        let written = added(Some(text), &entries, &now);
+        let written = added(Some(text), &entries, &now, before);
         if written.is_none() {
             tracing::warn!(
                 "the recently used files do not read as GLib reads them: left as they are"
@@ -167,11 +328,17 @@ fn date(at: jiff::Timestamp) -> String {
 
 /// `text` (the list as it is, `None` or blank where there is none) with
 /// `entries` (each file and its type) used at `now`, each file once: one
-/// the list names visited, another added after the others, those first in
-/// the list dropped past [`KEPT`] (never one used now). `None` where the
-/// text does not read as `GLib` reads a list, or where what would be written
-/// would not. Pure: what `add` writes.
-fn added(text: Option<&str>, entries: &[(PathBuf, String)], now: &str) -> Option<String> {
+/// the list names visited, another added after the others; as GTK keeps
+/// the list, one last modified `before` dropped, then those first in it
+/// past [`KEPT`] (never one used now). `None` where the text does not read
+/// as `GLib` reads a list, or where what would be written would not. Pure:
+/// what `add` writes.
+fn added(
+    text: Option<&str>,
+    entries: &[(PathBuf, String)],
+    now: &str,
+    before: Option<jiff::Timestamp>,
+) -> Option<String> {
     let text = match text {
         Some(text) if !text.trim().is_empty() => text,
         _ => EMPTY,
@@ -214,14 +381,27 @@ fn added(text: Option<&str>, entries: &[(PathBuf, String)], now: &str) -> Option
             fresh.push(bookmark(&href, mime, now, &prefixes));
         }
     }
-    let mut over = (bookmarks.len() + fresh.len()).saturating_sub(KEPT);
+    let aged: Vec<bool> = bookmarks
+        .iter()
+        .enumerate()
+        .map(|(at, node)| {
+            !used.contains(&at)
+                && before.is_some_and(|before| {
+                    node.attribute("modified")
+                        .and_then(|modified| modified.parse::<jiff::Timestamp>().ok())
+                        .is_some_and(|modified| modified < before)
+                })
+        })
+        .collect();
+    let left = bookmarks.len() - aged.iter().filter(|aged| **aged).count();
+    let mut over = (left + fresh.len()).saturating_sub(KEPT);
     for (at, node) in bookmarks.iter().enumerate() {
-        if over == 0 {
-            break;
-        }
-        if !used.contains(&at) {
+        let dropped = aged[at] || (over > 0 && !used.contains(&at));
+        if dropped {
+            if !aged[at] {
+                over -= 1;
+            }
             edits.put(whole_lines(*node, text), String::new());
-            over -= 1;
         }
     }
     let fresh = &fresh[over.min(fresh.len())..];
@@ -709,7 +889,7 @@ mod tests {
     #[test]
     fn a_new_list_holds_what_was_chosen() {
         let path = "/tmp/l'été/notes & plans.txt";
-        let written = added(None, &[entry(path, "text/plain")], NOW).unwrap();
+        let written = added(None, &[entry(path, "text/plain")], NOW, None).unwrap();
         assert_eq!(
             bookmarks(&written),
             [(
@@ -746,7 +926,7 @@ mod tests {
             entry("/home/a/photo.png", "image/png"),
             entry("/home/a/new.txt", "text/plain"),
         ];
-        let written = added(Some(&before), &entries, NOW).unwrap();
+        let written = added(Some(&before), &entries, NOW, None).unwrap();
         let after = bookmarks(&written);
         assert_eq!(after.len(), 3);
         assert_eq!(after[0].1, NOW);
@@ -782,7 +962,7 @@ mod tests {
             entry("/home/a/listed.jpg", "image/jpeg"),
             entry("/home/a/new.jpg", "image/jpeg"),
         ];
-        let written = added(Some(&before), &entries, NOW).unwrap();
+        let written = added(Some(&before), &entries, NOW, None).unwrap();
         let after = bookmarks(&written);
         assert_eq!(after.len(), 2, "{written}");
         assert_eq!(after[0].3, [("skwir".into(), "10".into())]);
@@ -796,7 +976,7 @@ mod tests {
             entry("/home/a/bare.txt", "text/plain"),
             entry("/home/a/bare.txt", "text/plain"),
         ];
-        let written = added(Some(&bare), &twice, NOW).unwrap();
+        let written = added(Some(&bare), &twice, NOW, None).unwrap();
         assert_eq!(bookmarks(&written)[0].3, [("skwir".into(), "2".into())]);
         assert_eq!(written.matches("modified=").count(), 2, "{written}");
         assert_eq!(written.matches("visited=").count(), 1, "{written}");
@@ -822,10 +1002,10 @@ mod tests {
                 glib_list("").trim_start_matches("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
             ),
         ] {
-            assert_eq!(added(Some(&broken), &entries, NOW), None, "{broken}");
+            assert_eq!(added(Some(&broken), &entries, NOW, None), None, "{broken}");
         }
         assert!(
-            added(Some("   "), &entries, NOW).is_some(),
+            added(Some("   "), &entries, NOW, None).is_some(),
             "an empty one is made anew"
         );
     }
@@ -839,7 +1019,7 @@ mod tests {
         let own = format!(
             "<?xml version=\"1.0\"?>\n<xbel version=\"1.0\" xmlns:b=\"{BOOKMARK_NS}\" xmlns:t=\"{MIME_NS}\">\n</xbel>\n"
         );
-        let written = added(Some(&own), &entries, NOW).unwrap();
+        let written = added(Some(&own), &entries, NOW, None).unwrap();
         assert!(
             written.contains("<t:mime-type type=\"text/plain\"/>"),
             "{written}"
@@ -854,7 +1034,7 @@ mod tests {
             "<xbel version=\"1.0\"/>",
             "<?xml version=\"1.0\"?>\n<xbel version=\"1.0\"\n/>\n",
         ] {
-            let written = added(Some(none), &entries, NOW).unwrap();
+            let written = added(Some(none), &entries, NOW, None).unwrap();
             assert!(
                 written.contains(&format!("xmlns:bookmark=\"{BOOKMARK_NS}\"")),
                 "{written}"
@@ -865,7 +1045,7 @@ mod tests {
         // A prefix of the usual name taken by another namespace: left
         // alone.
         let taken = "<xbel version=\"1.0\" xmlns:bookmark=\"urn:other\"></xbel>";
-        assert_eq!(added(Some(taken), &entries, NOW), None);
+        assert_eq!(added(Some(taken), &entries, NOW, None), None);
     }
 
     /// A bookmark another program wrote without applications, metadata or
@@ -882,7 +1062,7 @@ mod tests {
             "  <bookmark href=\"file:///home/a/x.txt\">\n    <info>\n      <metadata owner=\"http://freedesktop.org\">\n        <mime:mime-type type=\"text/plain\"/>\n      </metadata>\n    </info>\n  </bookmark>\n",
             "  <bookmark href=\"file:///home/a/x.txt\">\n    <info>\n      <metadata owner=\"http://freedesktop.org\">\n        <bookmark:applications/>\n      </metadata>\n    </info>\n  </bookmark>\n",
         ] {
-            let written = added(Some(&glib_list(bare)), &entries, NOW).unwrap();
+            let written = added(Some(&glib_list(bare)), &entries, NOW, None).unwrap();
             let after = bookmarks(&written);
             assert_eq!(after.len(), 1, "{written}");
             assert_eq!(after[0].1, NOW, "{written}");
@@ -903,7 +1083,7 @@ mod tests {
             entry("/home/a/new1.txt", "text/plain"),
             entry("/home/a/new2.txt", "text/plain"),
         ];
-        let written = added(Some(&before), &entries, NOW).unwrap();
+        let written = added(Some(&before), &entries, NOW, None).unwrap();
         let after = bookmarks(&written);
         assert_eq!(after.len(), KEPT);
         let names: Vec<String> = after
@@ -913,6 +1093,131 @@ mod tests {
         assert_eq!(names[..3], ["0.txt", "3.txt", "4.txt"], "1 and 2 went");
         assert_eq!(names[KEPT - 2..], ["new1.txt", "new2.txt"]);
         assert!(!written.contains("\n\n"), "no line left where one went");
+    }
+
+    /// A bookmark last modified longer ago than the desktop keeps files is
+    /// dropped as GTK drops it, never one used now; one of another age, or
+    /// of a date not said, stays (CH-3).
+    #[test]
+    fn the_list_forgets_what_the_desktop_forgets() {
+        let body = [
+            theirs("file:///home/a/old.txt", "gedit", 1),
+            theirs("file:///home/a/old-used.txt", "gedit", 1),
+            theirs("file:///home/a/new.txt", "gedit", 1).replace(
+                "modified=\"2026-01-01T00:00:00Z\"",
+                "modified=\"2026-11-19T00:00:00Z\"",
+            ),
+            theirs("file:///home/a/undated.txt", "gedit", 1)
+                .replace(" modified=\"2026-01-01T00:00:00Z\" visited", " visited"),
+        ]
+        .concat();
+        let before: jiff::Timestamp = "2026-11-01T00:00:00Z".parse().unwrap();
+        let entries = [entry("/home/a/old-used.txt", "text/plain")];
+        let written = added(Some(&glib_list(&body)), &entries, NOW, Some(before)).unwrap();
+        let names: Vec<String> = bookmarks(&written)
+            .iter()
+            .map(|b| b.0.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["old-used.txt", "new.txt", "undated.txt"]);
+    }
+
+    /// Each desktop's switch is read where it keeps it: GTK's
+    /// `settings.ini`s, the first saying a key for each GTK, an age of 0
+    /// remembering none; GNOME's or Cinnamon's privacy schema as
+    /// `gsettings` prints it; KDE's `kdeglobals`, the user's first. Any
+    /// that says none is enough; the shortest age is kept (CH-3).
+    #[test]
+    fn the_desktop_s_switches_are_read_where_each_keeps_its_own() {
+        let ini = |body: &str| format!("[Settings]\n{body}\n");
+        let on = Said::default();
+        let off = Said {
+            off: true,
+            days: None,
+        };
+        let days = |days| Said {
+            off: false,
+            days: Some(days),
+        };
+        assert_eq!(gtk_said(&[]), on);
+        assert_eq!(
+            gtk_said(&[vec![ini("gtk-recent-files-enabled=false")], vec![]]),
+            off
+        );
+        assert_eq!(
+            gtk_said(&[
+                vec![
+                    ini("gtk-recent-files-enabled=true"),
+                    ini("gtk-recent-files-enabled=false")
+                ],
+                vec![],
+            ]),
+            on,
+            "the user's said first"
+        );
+        assert_eq!(
+            gtk_said(&[
+                vec![],
+                vec![String::new(), ini("gtk-recent-files-max-age=0")]
+            ]),
+            off,
+            "the system's, where the user's says nothing; GTK 3's too"
+        );
+        assert_eq!(
+            gtk_said(&[
+                vec![ini("gtk-recent-files-max-age=14")],
+                vec![ini("gtk-recent-files-max-age=7")],
+            ]),
+            days(7)
+        );
+        assert_eq!(gtk_said(&[vec![ini("gtk-recent-files-max-age=-1")]]), on);
+        let printed = |remember: &str, age: &str| {
+            format!(
+                "org.gnome.desktop.privacy disable-camera false\n\
+                 org.gnome.desktop.privacy recent-files-max-age {age}\n\
+                 org.gnome.desktop.privacy remember-recent-files {remember}\n"
+            )
+        };
+        assert_eq!(gsettings_said(&printed("true", "-1")), on);
+        assert_eq!(gsettings_said(&printed("false", "-1")), off);
+        assert_eq!(gsettings_said(&printed("true", "30")), days(30));
+        assert_eq!(gsettings_said(""), on, "no such schema");
+        let kde = |body: &str| format!("[General]\nUseRecent=false\n[RecentDocuments]\n{body}\n");
+        assert_eq!(kde_said(&[kde("UseRecent=false")]), off);
+        assert_eq!(
+            kde_said(&[kde("UseRecent=true"), kde("UseRecent=false")]),
+            on
+        );
+        assert_eq!(kde_said(&[kde(""), kde("MaxEntries=0")]), off);
+        assert_eq!(kde_said(&[kde("MaxEntries=300")]), on);
+        assert_eq!(
+            days(7).and(off),
+            Said {
+                off: true,
+                days: Some(7)
+            }
+        );
+        assert_eq!(days(7).and(days(30)).and(on), days(7));
+    }
+
+    /// Recent has something to give where its list names a file that is
+    /// there; a list of none, of files gone or of another host's, or that
+    /// does not read, has none (CH-13).
+    #[test]
+    fn recent_has_something_where_a_file_it_names_is_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let here = tmp.path().join("l'été.txt");
+        std::fs::write(&here, "x").unwrap();
+        let href = crate::uri::file_uri(&here);
+        assert!(names_one(&glib_list(&theirs(&href, "gedit", 1))));
+        let gone = crate::uri::file_uri(&tmp.path().join("gone.txt"));
+        assert!(!names_one(&glib_list(&theirs(&gone, "gedit", 1))));
+        assert!(!names_one(&glib_list(&theirs(
+            "file://elsewhere/x",
+            "gedit",
+            1
+        ))));
+        assert!(!names_one(&glib_list("")));
+        assert!(!names_one("<xbel><bookmark"));
     }
 
     /// A date is written as `GLib` writes one: its microseconds only where
@@ -1014,9 +1319,9 @@ mod tests {
         ];
         let mut files = Vec::new();
         for (at, (before, entries)) in cases.iter().enumerate() {
-            let once = added(Some(before), entries, NOW).unwrap();
+            let once = added(Some(before), entries, NOW, None).unwrap();
             // Written again, by a later answer.
-            let twice = added(Some(&once), entries, "2026-11-21T08:00:00Z").unwrap();
+            let twice = added(Some(&once), entries, "2026-11-21T08:00:00Z", None).unwrap();
             for (round, text) in [once, twice].into_iter().enumerate() {
                 let file = tmp.path().join(format!("{at}-{round}.xbel"));
                 std::fs::write(&file, text).unwrap();

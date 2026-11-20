@@ -93,20 +93,27 @@ amended as built (decisions 1, 4, 6, 7 and 10).
    new filter's first plain pattern's, else its first type's (the type
    database's first glob); an extension the user typed that none of them
    takes is theirs, kept, and All files changes nothing.
-7. **Recent files.** Opening, Recent is the first of the places, the
-   program's filter applied there as in any folder; a request naming no
-   folder from a program that chose in none starts there (amends
-   ADR-141, 7; saving still starts in the home folder). What is chosen
-   is added to the desktop's recently used files
+7. **Recent files.** Opening, Recent comes first in its group of the
+   places, the program's filter applied there as in any folder; a
+   request naming no folder from a program that chose in none starts
+   there (amends ADR-141, 7; saving still starts in the home folder).
+   What is chosen is added to the desktop's recently used files
    (`recently-used.xbel`), as the desktop's own dialog adds it, unless
-   the desktop is told to remember none (`gtk-recent-files-enabled` false
-   or `gtk-recent-files-max-age` 0 in GTK's settings, GNOME's privacy
-   `remember-recent-files` off): a bookmark the list holds is visited and
-   Skwir's count of it goes up, another is added, typed by what the file
-   is, each file once, the rest kept byte for byte, the list kept to the
-   thousand bookmarks GTK keeps; a list GLib's reader would refuse is left
-   for its programs to mend, and Skwir never writes one it would refuse
-   (amended as reviewed, 2026-11-20).
+   the desktop is told to remember none: `gtk-recent-files-enabled` false
+   or `gtk-recent-files-max-age` 0 in GTK's settings (the user's, then
+   the system's), GNOME's privacy `remember-recent-files` off (which GTK
+   4 reads through the settings portal on any desktop), Cinnamon's on
+   Cinnamon, KDE's `[RecentDocuments]` `UseRecent` false or `MaxEntries` 0
+   in `kdeglobals`; one of them is enough. A bookmark the list holds is
+   visited and Skwir's count of it goes up, another is added, typed by
+   what the file is, each file once, the rest kept byte for byte, the
+   list kept as GTK keeps it (a file older than an age a setting says
+   dropped, then the thousand bookmarks it keeps); a list GLib's reader
+   would refuse is left for its programs to mend, and Skwir never writes
+   one it would refuse. Where the desktop remembers none, or its list
+   names no file that is there (read as the request comes, half a second
+   at most), Recent is neither first nor where the window starts, which
+   is home (amended as reviewed, 2026-11-20).
 8. **A program's recent folders**: the folders each program last chose
    in, five at most, newest first, are offered in the bar
    (`ui.chooser_folders`, which keeps them for the 50 programs that

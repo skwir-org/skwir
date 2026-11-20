@@ -337,8 +337,9 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
 pub(crate) type ArrangedAt = (u64, Sections, Arranging, std::sync::Arc<[Arranged]>);
 
 /// For whom the places are arranged (ADR-144, 3 and 7): a window of the
-/// user's own, a dialog's, or a dialog's opening files, where what lists
-/// the files used lately comes first.
+/// user's own, a dialog's, or a dialog's opening files where the files
+/// used lately have one to give (`Chooser::offers_recent`), where what
+/// lists them comes first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Arranging {
     Own,
@@ -356,7 +357,7 @@ impl Shell {
         let revision = self.app.registry.places.revision();
         let arranging = match &self.chooser {
             None => Arranging::Own,
-            Some(chooser) if chooser.opens_files() => Arranging::DialogOpening,
+            Some(chooser) if chooser.offers_recent() => Arranging::DialogOpening,
             Some(_) => Arranging::Dialog,
         };
         let mut kept = self.arranged_places.borrow_mut();
@@ -390,7 +391,8 @@ impl Shell {
 }
 
 /// What lists the files used lately first in its group, the rest as they
-/// were arranged (ADR-144, 7: a dialog opening files).
+/// were arranged (ADR-144, 7: a dialog opening files, where they have one
+/// to give).
 fn recent_first(arranged: &mut [Arranged], recent: impl Fn(&Place) -> bool) {
     let mut first: HashMap<String, usize> = HashMap::new();
     for (at, one) in arranged.iter().enumerate() {

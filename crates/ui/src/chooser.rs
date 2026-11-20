@@ -96,8 +96,9 @@ fn with_folder(mut kept: toml::Table, app: &str, folder: &str, now: i64) -> toml
 
 /// Where the window starts: the request's folder, else the one its
 /// program last chose in, else, opening files, what lists the files used
-/// lately (ADR-144, 7), else home (ADR-141, 7). Nothing is read: a folder
-/// gone says so in the pane, as any.
+/// lately, where the desktop remembers them and it has one to give as the
+/// request came (`Asked::recent`, ADR-144, 7), else home (ADR-141, 7).
+/// Nothing is read: a folder gone says so in the pane, as any.
 pub(crate) fn start_location(app: &skwir_core::App, asked: &Asked) -> Location {
     // A folder the request names that is no folder's path (a relative
     // one) is passed over, as one it does not name.
@@ -118,7 +119,7 @@ pub(crate) fn start_location(app: &skwir_core::App, asked: &Asked) -> Location {
             ..
         }
     );
-    let recent = opens_files
+    let recent = (opens_files && asked.recent)
         .then(|| {
             app.registry
                 .places
@@ -237,6 +238,12 @@ impl Chooser {
                 ..
             }
         )
+    }
+
+    /// Whether it opens files where Recent has something to give
+    /// (`Asked::recent`): Recent comes first among the places (ADR-144, 7).
+    pub(crate) fn offers_recent(&self) -> bool {
+        self.opens_files() && self.asked().recent
     }
 
     /// The choices as set, as the answer gives them (id, value).
@@ -1747,6 +1754,7 @@ mod tests {
             current_filter: None,
             choices: Vec::new(),
             folder: None,
+            recent: false,
         };
         let none = crate::menu::SelectionCtx::default();
         assert_eq!(accept_label(&asked, &none).say(), "Open");
