@@ -579,7 +579,9 @@ def main():
                  " but by the release after (docs/RELEASING.md, A new key)")
     carried = [args.key, coming] if coming else [args.key]
     site = args.site.resolve()
-    with tempfile.TemporaryDirectory(prefix="skwir-repositories-") as work:
+    # Beside the bundle, on its filesystem, so its packages are hard links
+    # into the pools, never copies in $TMPDIR (a tmpfs, in memory).
+    with tempfile.TemporaryDirectory(prefix=".skwir-repositories-", dir=bundle.parent) as work:
         work = pathlib.Path(work)
         apt = apt_repository(work, bundle, tag, base, carried, key, version)
         rpm = rpm_repository(work, bundle, tag, base, carried, key, version, retired)
