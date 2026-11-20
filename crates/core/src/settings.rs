@@ -3638,26 +3638,41 @@ impl Settings {
                 }
             }
         }
+        // What this process holds of the keys kept in `store`.
+        let held = |store: Store| -> anyhow::Result<toml::Table> {
+            let mut table = toml::Table::new();
+            for (key, _) in kept.iter().filter(|(_, s)| **s == store) {
+                if let Some(value) = Self::lookup(values, key) {
+                    Self::insert(&mut table, key, value.clone())?;
+                }
+            }
+            Ok(table)
+        };
         let mut apart = toml::Table::new();
         for (&store, path) in &self.apart {
             let (Some(keys), Some(path)) = (apart_keys.get(&store), path) else {
                 // Nothing of it changed, or it is saved nowhere: as this
                 // process holds it.
-                for (key, _) in kept.iter().filter(|(_, s)| **s == store) {
-                    if let Some(value) = Self::lookup(values, key) {
-                        Self::insert(&mut apart, key, value.clone())?;
-                    }
-                }
+                Self::merge_into(&mut apart, held(store)?);
                 continue;
             };
-            let disk = match store {
+            let (disk, read) = match store {
                 // The user's: never written over when it cannot be read.
-                Store::Data => Self::on_disk(path)?,
-                // skwir's own: one that is no TOML is started over.
-                _ => Self::on_disk(path).unwrap_or_default(),
+                Store::Data => (Self::on_disk(path)?, true),
+                // skwir's own: one that is no TOML (cut short, an edit gone
+                // wrong) is started over from all this process holds of
+                // it, not only what it changed, so neither the file nor
+                // this process loses the rest.
+                _ => match Self::on_disk(path) {
+                    Ok(disk) => (disk, true),
+                    Err(error) => {
+                        tracing::warn!("started over: {error:#}");
+                        (held(store)?, false)
+                    }
+                },
             };
             let merged = Self::overlay(disk.clone(), values, keys)?;
-            if merged != disk {
+            if !read || merged != disk {
                 Self::write_whole(path, store, &merged)?;
             }
             self.apart_read.lock().insert(store, merged.clone());

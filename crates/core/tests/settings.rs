@@ -1215,6 +1215,44 @@ fn a_broken_settings_file_is_never_saved_over() {
     assert_eq!(saved["sample"]["budget"].as_integer(), Some(99));
 }
 
+/// A state file that is no TOML (cut short) is started over from all this
+/// process holds of what it keeps, not only what it changed: neither the
+/// file nor this process loses the rest.
+#[test]
+fn a_broken_state_file_is_started_over_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, state) = (
+        dir.path().join("settings.toml"),
+        dir.path().join("state.toml"),
+    );
+    let settings = Settings::load(&path).with_state(&state);
+    settings.declare(state_spec("ui.session"));
+    settings.declare(state_spec("ui.hints"));
+    let one = |key: &str, n: i64| {
+        let mut table = toml::Table::new();
+        table.insert(key.into(), toml::Value::Integer(n));
+        toml::Value::Table(table)
+    };
+    settings.set("ui.session", one("panes", 2));
+    settings.set("ui.hints", one("shown", 1));
+    settings.save().unwrap();
+    std::fs::write(&state, "[ui\nsession = ").unwrap();
+    settings.set("ui.session", one("panes", 3));
+    settings.save().unwrap();
+    let saved = table(&state);
+    assert_eq!(saved["ui"]["session"]["panes"].as_integer(), Some(3));
+    assert_eq!(
+        saved["ui"]["hints"]["shown"].as_integer(),
+        Some(1),
+        "what was not changed is kept in the file"
+    );
+    assert_eq!(
+        settings.get::<toml::Value>("ui.hints"),
+        Some(one("shown", 1)),
+        "and in memory"
+    );
+}
+
 /// A settings file that is no TOML stops only a change of its own keys:
 /// the window's state and the user's data are saved all the same, and the
 /// data file is taken in when another process changes it (ADR-057).
