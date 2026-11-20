@@ -2244,9 +2244,15 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   way it goes answers it (cancelled unless it answered: its close
   button, Ctrl+W, Quit from another window and its answers, finishing in
   the background, its request closed; `Shell::leave`, `chooser_let_go`).
-  Quit asked in a dialog's window (Ctrl+Q there) cancels that dialog
-  alone (`Shell::quit`): the user's own windows were not what they were
-  leaving. Its core window goes
+  A dialog's window offers no Quit: its Ctrl+Q is the dialog's Cancel,
+  bound where the window's root says `choosing`, so wherever the keyboard
+  is there (`keymap`); `ui.quit` keeps one meaning everywhere. Quit asked
+  from elsewhere (a script, an agent) while no window of the user's own
+  is up is done at once, never left for a window opened later
+  (`finishing::quit_as_asked`): every dialog answered cancelled, the
+  program quitting, or, with something under way and no one to ask,
+  finishing it without a window as Quit's first answer does; Close
+  window then has nothing to close. Its core window goes
   from the core whatever else is there, never kept as the last window
   nor turned into an ordinary one (`App::close_dialog_window`: were it
   the last, a window of the user's own on the startup folder takes its

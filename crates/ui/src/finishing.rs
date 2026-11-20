@@ -18,7 +18,8 @@
 //! it asks (or a tab, `settings::LAUNCH_OPENS_KEY`), as one program's.
 //!
 //! Quit asks while something is under way (`Shell::quit`): finish without
-//! the window, or stop now. Logging out or shutting down is held off
+//! the window, or stop now. Asked from elsewhere with no window of the
+//! user's own up, it is done at once (`quit_as_asked`). Logging out or shutting down is held off
 //! meanwhile (`Work::tell`); on macOS the system asks first
 //! (`may_quit`); a signal to end (Unix) stops what runs and quits, as Stop
 //! and quit does.
@@ -119,6 +120,10 @@ pub(crate) struct Finishing {
     /// What a window that closed held and no other has taken yet: the next
     /// `deliver` hands it on (`hand_on`).
     handed: Inbox,
+    /// What scripts and agents asked of the window while none of the
+    /// user's own was up (`take_asked_meanwhile`), oldest first: the next
+    /// one up takes it before what is asked since.
+    waiting: Vec<skwir_core::command::Invocation>,
     /// A signal asked the program to end.
     ending: Arc<AtomicBool>,
     /// The presence shown, while no window is up.
@@ -229,6 +234,7 @@ pub(crate) fn start(
         choosings: Arc::default(),
         asleep: HashSet::new(),
         handed: Inbox::default(),
+        waiting: Vec::new(),
         ending,
         shown: None,
         opened: Opened::Never,
@@ -539,7 +545,14 @@ fn woken(cx: &mut App) -> bool {
         // No window since one was up: the program takes it in.
         if state.opened != Opened::Never {
             sync(cx);
-        } else if state
+            return false;
+        }
+        // Started without a window: Quit asked meanwhile is done now.
+        if take_asked_meanwhile(cx) && quit_as_asked(cx) {
+            return false;
+        }
+        if cx
+            .global::<Finishing>()
             .windowless
             .as_ref()
             .is_some_and(|over| over.load(Ordering::Acquire))
@@ -780,9 +793,10 @@ fn deliver(cx: &mut App) {
         inbox.clashes = app.take_clash_questions();
         inbox.secrets = app.take_secret_questions();
         inbox.forms = app.take_forms();
-        let handed = std::mem::take(&mut cx.global_mut::<Finishing>().handed);
-        inbox.take_in(handed);
-        for request in app.take_front_requests() {
+        let state = cx.global_mut::<Finishing>();
+        inbox.take_in(std::mem::take(&mut state.handed));
+        let waited = std::mem::take(&mut state.waiting);
+        for request in waited.into_iter().chain(app.take_front_requests()) {
             // Asked for a pane: the window that shows it, never one
             // answering another program's dialog.
             let named = request
@@ -799,6 +813,7 @@ fn deliver(cx: &mut App) {
             inboxes.entry(window).or_default().front.push(request);
         }
     }
+    let quit_asked = own_front.is_none() && take_asked_meanwhile(cx);
     let windows = cx.global::<Finishing>().windows.clone();
     for (id, window) in windows {
         if let Some(inbox) = inboxes.remove(&id) {
@@ -806,6 +821,79 @@ fn deliver(cx: &mut App) {
         }
     }
     answer_desktop(cx, asked);
+    if quit_asked {
+        quit_as_asked(cx);
+    }
+}
+
+/// What scripts and agents asked of the window (`App::take_front_requests`)
+/// while no window of the user's own is up to take it (ADR-141, 8): what
+/// ends a window never waits for one opened later, which it would then
+/// quit or close. Close window finds none of the user's to close, and is
+/// let go; the rest waits for one (`Finishing::waiting`). Whether Quit was
+/// asked.
+fn take_asked_meanwhile(cx: &mut App) -> bool {
+    let state = cx.global_mut::<Finishing>();
+    let asked = state.app.take_front_requests();
+    let (quit, waiting) = sort_asked_meanwhile(asked);
+    state.waiting.extend(waiting);
+    quit
+}
+
+/// `take_asked_meanwhile`'s answer for what was asked: whether Quit was
+/// among it, and what waits, in the order it was asked.
+fn sort_asked_meanwhile(
+    asked: Vec<skwir_core::command::Invocation>,
+) -> (bool, Vec<skwir_core::command::Invocation>) {
+    let mut quit = false;
+    let mut waiting = Vec::new();
+    for request in asked {
+        match &*request.name {
+            "ui.quit" => quit = true,
+            "ui.close_window" => {
+                tracing::debug!("not run: no window of the user's own to close");
+            }
+            _ => waiting.push(request),
+        }
+    }
+    (quit, waiting)
+}
+
+/// Quit asked from elsewhere (a script, an agent) with no window of the
+/// user's own up to carry it out (`take_asked_meanwhile`): done now
+/// (ADR-115, 2; ADR-141, 8). With nothing under way the program quits,
+/// every dialog's window answered cancelled. With something under way no
+/// one is there to ask, and it is what Quit's first answer does: every
+/// window goes, a dialog's answered cancelled, and what runs finishes
+/// without them, the program ending after. Whether it quit at once.
+fn quit_as_asked(cx: &mut App) -> bool {
+    let state = cx.global::<Finishing>();
+    if state.quitting || state.stopping {
+        return true;
+    }
+    let busy = under_way(&state.app);
+    match state.windows.first().map(|(_, handle)| *handle) {
+        Some(window) => {
+            let _ = window.update(cx, |shell, window, cx| {
+                if busy {
+                    shell.close_every_window(window, cx);
+                } else {
+                    shell.stop_and_quit(window, cx);
+                }
+            });
+            false
+        }
+        None if busy => {
+            tracing::info!(
+                "Quit asked without a window: what runs finishes, then the program ends"
+            );
+            false
+        }
+        None => {
+            quit(cx);
+            true
+        }
+    }
 }
 
 impl Inbox {
@@ -1304,8 +1392,12 @@ fn stop_taking_over(state: &Finishing) {
 }
 
 /// No window is up: take in what the core sent, tell the desktop, show
-/// the presence, do what it was asked; end once nothing keeps the program.
+/// the presence, do what it was asked (Quit from elsewhere too,
+/// `take_asked_meanwhile`); end once nothing keeps the program.
 fn sync(cx: &mut App) {
+    if take_asked_meanwhile(cx) && quit_as_asked(cx) {
+        return;
+    }
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
     let shared = Rc::clone(&state.work);
@@ -2068,7 +2160,7 @@ mod tests {
     use skwir_core::workspace::WindowId;
     use skwir_platform::desktop::Standing;
 
-    use super::{front_of, presence};
+    use super::{front_of, presence, sort_asked_meanwhile};
     use crate::activity::{Stopped, Under};
     use crate::toast::Running;
     use crate::work::Work;
@@ -2098,6 +2190,29 @@ mod tests {
             "the active one is not up"
         );
         assert_eq!(front_of::<&str>(&[], WindowId(1)), None);
+    }
+
+    /// What scripts ask of the window while none of the user's own is up:
+    /// Quit is done now, Close window let go, never left for a window
+    /// opened later; the rest waits, in the order asked.
+    #[test]
+    fn what_ends_a_window_never_waits_for_one() {
+        use skwir_core::command::Invocation;
+        let asked = [
+            "ui.toggle_sidebar",
+            "ui.close_window",
+            "ui.quit",
+            "ui.palette",
+        ]
+        .map(Invocation::new)
+        .to_vec();
+        let (quit, waiting) = sort_asked_meanwhile(asked);
+        assert!(quit);
+        let names: Vec<&str> = waiting.iter().map(|asked| &*asked.name).collect();
+        assert_eq!(names, ["ui.toggle_sidebar", "ui.palette"]);
+        let (quit, waiting) = sort_asked_meanwhile(vec![Invocation::new("ui.close_window")]);
+        assert!(!quit);
+        assert!(waiting.is_empty());
     }
 
     /// Without a window, the presence says what runs as the strip does,

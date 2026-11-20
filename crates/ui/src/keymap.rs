@@ -651,6 +651,11 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // dialog's does, once the pane shows everything again (below).
     ("escape", "ui.chooser_cancel", "{}", Some("pane choosing")),
     ("escape", "ui.chooser_cancel", "{}", Some("chooser")),
+    // Ctrl+Q there is the dialog's Cancel, which Quit is not offered
+    // beside (ADR-144, 1): wherever the keyboard is in that window, whose
+    // root says `choosing` too. After Ctrl+Q's Quit, which it wins over
+    // there, and after Escape, which the Cancel button names.
+    ("secondary-q", "ui.chooser_cancel", "{}", Some("choosing")),
     // A pane filtered by name shows everything again before Escape
     // deselects (`select_none`, the plugins' binding).
     ("escape", "filter", "{}", Some("pane filtered")),
@@ -3441,6 +3446,49 @@ mod tests {
             run(&format!("{pane} typing")).as_deref(),
             Some("ui.type_end")
         );
+    }
+
+    /// In a dialog's window Ctrl+Q is the dialog's Cancel wherever the
+    /// keyboard is, the files, the address or the sidebar, as GPUI reads
+    /// the bindings `install` makes; in a window of the user's own it is
+    /// Quit (ADR-144, 1).
+    #[test]
+    fn ctrl_q_cancels_a_dialog_and_quits_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        let keymap = gpui::Keymap::new(super::gpui_bindings(&super::bindings(&app, &[])));
+        let run = |root: &str, place: &str| -> Option<String> {
+            let stack = [
+                gpui::KeyContext::parse(root).unwrap(),
+                gpui::KeyContext::parse(place).unwrap(),
+            ];
+            let stroke = super::parse_keystroke("secondary-q").unwrap();
+            let (found, _) = keymap.bindings_for_input(&[stroke], &stack);
+            found.first().map(|binding| {
+                let run = binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<super::RunCommand>();
+                run.expect("a command").name.clone()
+            })
+        };
+        let (root, pane) = (super::ROOT, super::PANE);
+        let dialog = format!("{root} choosing");
+        for place in [
+            format!("{pane} choosing"),
+            super::ADDRESS.to_owned(),
+            super::SIDEBAR.to_owned(),
+        ] {
+            assert_eq!(
+                run(&dialog, &place).as_deref(),
+                Some("ui.chooser_cancel"),
+                "{place}"
+            );
+        }
+        for place in [pane, super::ADDRESS, super::SIDEBAR] {
+            assert_eq!(run(root, place).as_deref(), Some("ui.quit"), "{place}");
+        }
     }
 
     /// The arrows go to what has the keyboard in a preview, deepest first,

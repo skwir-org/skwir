@@ -3243,13 +3243,9 @@ impl Shell {
     /// finishes it without its window (the answer Enter gives, and Quit
     /// again), or stops now. With nothing under way, quit at once: an
     /// action an error stopped, still shown in the strip, is let go.
-    /// In a window answering another program's dialog, Quit cancels that
-    /// dialog alone: the user's own windows were not what they left.
+    /// A window answering another program's dialog offers no Quit: its
+    /// Ctrl+Q is the dialog's Cancel (`keymap`, ADR-144, 1).
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.chooser.is_some() {
-            self.chooser_cancel(window, cx);
-            return;
-        }
         if self
             .confirm
             .as_ref()
@@ -5312,6 +5308,11 @@ impl Render for Shell {
                 context.add(keymap::ROOT);
                 if self.plans.making() {
                     context.add("planning");
+                }
+                // A dialog's keys wherever the keyboard is in its window
+                // (Ctrl+Q cancels it); the pane says it too, for Escape's.
+                if self.chooser.is_some() {
+                    context.add("choosing");
                 }
                 context
             })
