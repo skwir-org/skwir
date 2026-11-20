@@ -345,8 +345,20 @@ highlight_not_found = { $theme } (not found)
 # A choice of which grammars color code: the tree-sitter grammars found, unless only bat's know the language.
 highlight_tree_sitter_first = Tree-sitter first
 
+# Why a request failed: the connection was lost before the server's whole answer came.
+http_broke_off = the connection to the server broke off
+
+# Why a request failed: no network, or none that leads to the server.
+http_no_route = the network does not reach the server
+
 # Why a request was not made: what it was to be sent to is no web address.
 http_not_address = not an address
+
+# Why a request failed: the server's certificate, or its encryption, was not accepted.
+http_not_secure = no secure connection to the server could be made
+
+# Why a request failed: nothing listens at the server's address.
+http_refused = the server refused the connection
 
 # Why a request was not made: what makes them broke down.
 http_stopped = the requests stopped
@@ -354,8 +366,11 @@ http_stopped = the requests stopped
 # Why a request failed: the server it was sent to was waited for long enough.
 http_timed_out = the server did not answer in time
 
-# Why a request failed: what the server sent could not be read whole. error: what the network library said, in English.
-http_unread = the answer could not be read: { $error }
+# Why a request failed: what the server sent is larger than what is read of it.
+http_too_large = the server's answer is larger than expected
+
+# Why a request failed: no connection to it could be made (its name not found, for one).
+http_unreachable = the server could not be reached
 
 # A preview's notice: only the beginning of a long document is shown; Source is the button that shows the file's own text.
 inspection_blocks_notice = { $count ->

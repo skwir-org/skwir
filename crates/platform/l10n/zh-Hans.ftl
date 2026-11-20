@@ -346,7 +346,19 @@ highlight_not_found = { $theme }（未找到）
 highlight_tree_sitter_first = Tree-sitter 优先
 
 # draft
+http_broke_off = 与服务器的连接中断了
+
+# draft
+http_no_route = 网络无法到达服务器
+
+# draft
 http_not_address = 不是有效的地址
+
+# draft
+http_not_secure = 无法与服务器建立安全连接
+
+# draft
+http_refused = 服务器拒绝了连接
 
 # draft
 http_stopped = 请求已停止
@@ -355,7 +367,10 @@ http_stopped = 请求已停止
 http_timed_out = 服务器未及时应答
 
 # draft
-http_unread = 无法读取应答：{ $error }
+http_too_large = 服务器的应答比预期的大
+
+# draft
+http_unreachable = 无法连接到服务器
 
 # draft
 inspection_blocks_notice = { $count ->

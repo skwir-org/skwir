@@ -512,3 +512,17 @@ it trusts a package by its signed index. The user chose signing.
   and run only by the question's buttons (`Declared::asked_only`): the
   palette and the Keyboard page offer it nowhere, as they offer no
   other command only its own place runs.
+- **HTTP's failures and its deadline** (`skwir_platform::http`). Why a
+  request got no answer is said in Skwir's words (the server refused
+  the connection, the network does not reach it, no secure connection
+  could be made, it could not be reached, the connection broke off, the
+  answer is larger than expected), never as the network library's
+  English, which is logged. The deadline is a timer of the caller's
+  runtime, which cannot fire while the system's certificate check runs:
+  on Windows and macOS that check may ask the network whether a
+  certificate was revoked (Windows waits up to 10 s), and a request
+  then takes that much longer; on Linux it reads this machine alone.
+  Map tiles share the deadline's rule: the tiles of a view sent to a
+  server not yet connected to share their 15 s with the first one's
+  connection, so a server that never answers fails them all at once,
+  and on a slow link the others have what the first one left.

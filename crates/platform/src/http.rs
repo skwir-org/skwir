@@ -24,7 +24,11 @@ use skwir_core::words;
 
 /// A request takes at most this long, from its call to the last byte (the
 /// wait for another request's connection to the server and a second try
-/// included), unless the client says otherwise (`Http::limited`).
+/// included), unless the client says otherwise (`Http::limited`). The
+/// requests of a burst to a server not yet connected to share it with the
+/// first one's connection: on a slow link, a view's other map tiles have
+/// what the first tile left them, and a server that never answers fails
+/// them all at once, not one after another.
 const DEADLINE: Duration = Duration::from_secs(15);
 /// An answer larger than this is refused, unless the client says
 /// otherwise: a tile larger is not a tile.
@@ -105,7 +109,14 @@ impl Http {
     /// they name one, within the client's deadline. A connection that
     /// fails is tried once more: a server closes idle ones, and the first
     /// request on one it closed fails. The first request to a server not
-    /// connected to goes alone (`servers`).
+    /// connected to goes alone (`servers`). Why it got no answer is said
+    /// in Skwir's words; what the network library said is logged.
+    ///
+    /// The deadline is a timer of the caller's runtime, which cannot fire
+    /// while the system's certificate check runs: on Windows and macOS
+    /// that check may ask the network itself whether a certificate was
+    /// revoked (Windows waits up to 10 s for it), and a request then takes
+    /// that much longer. On Linux the check reads only this machine.
     pub async fn get(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
         tokio::time::timeout(self.deadline, self.get_gated(url, headers))
             .await
@@ -161,37 +172,53 @@ impl Http {
         url: &str,
         headers: &[(String, String)],
     ) -> anyhow::Result<Answer> {
-        match self.get_once(url, headers).await {
-            Err(error) if error.is::<hyper_util::client::legacy::Error>() => {
+        let failed = match self.get_once(url, headers).await {
+            Err(Failure::Connection(_)) => {
                 tracing::debug!("http: asking again after a failed connection");
                 self.get_once(url, headers).await
             }
             result => result,
-        }
+        };
+        failed.map_err(|failure| match failure {
+            Failure::Connection(error) => {
+                tracing::debug!("http: {error:#}");
+                anyhow::Error::new(unreached(&error))
+            }
+            Failure::Other(error) => error,
+        })
     }
 
-    async fn get_once(&self, url: &str, headers: &[(String, String)]) -> anyhow::Result<Answer> {
+    async fn get_once(&self, url: &str, headers: &[(String, String)]) -> Result<Answer, Failure> {
         let mut request = hyper::Request::get(url)
             .body(Empty::<Bytes>::new())
-            .context(words!(http_not_address = "not an address"))?;
+            .context(words!(http_not_address = "not an address"))
+            .map_err(Failure::Other)?;
         let map = request.headers_mut();
         map.insert(USER_AGENT, self.user_agent.clone());
         for (name, value) in headers {
-            map.insert(
-                HeaderName::from_bytes(name.as_bytes())?,
-                HeaderValue::from_str(value)?,
-            );
+            let name = HeaderName::from_bytes(name.as_bytes()).map_err(Failure::other)?;
+            map.insert(name, HeaderValue::from_str(value).map_err(Failure::other)?);
         }
-        let response = self.client.request(request).await?;
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(Failure::Connection)?;
         let (parts, body) = response.into_parts();
         let body = Limited::new(body, self.max_body)
             .collect()
             .await
             .map_err(|error| {
-                anyhow::anyhow!(words!(
-                    http_unread = "the answer could not be read: { $error }",
-                    error = error.to_string(),
-                    note = "Why a request failed: what the server sent could not be read whole. error: what the network library said, in English."
+                tracing::debug!("http: the answer was not read whole: {error}");
+                Failure::Other(anyhow::anyhow!(
+                    if error.is::<http_body_util::LengthLimitError>() {
+                        words!(
+                            http_too_large = "the server's answer is larger than expected",
+                            note = "Why a request failed: what the server sent is larger than what is read of it."
+                        )
+                    } else {
+                        broke_off()
+                    }
                 ))
             })?
             .to_bytes()
@@ -203,6 +230,76 @@ impl Http {
             version: parts.version,
         })
     }
+}
+
+/// Why a request got no answer: its connection (none made, or one lost
+/// before the answer), tried once more; or anything else.
+enum Failure {
+    Connection(hyper_util::client::legacy::Error),
+    Other(anyhow::Error),
+}
+
+impl Failure {
+    fn other(error: impl Into<anyhow::Error>) -> Failure {
+        Failure::Other(error.into())
+    }
+}
+
+/// Why no connection to the server answered, in Skwir's words, from what
+/// the network library and the system said (`error` and its causes).
+fn unreached(error: &hyper_util::client::legacy::Error) -> skwir_core::words::Words {
+    use std::io::ErrorKind as K;
+    let not_secure = || {
+        words!(
+            http_not_secure = "no secure connection to the server could be made",
+            note = "Why a request failed: the server's certificate, or its encryption, was not accepted."
+        )
+    };
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(link) = cause {
+        if link.is::<rustls::Error>() {
+            return not_secure();
+        }
+        let io = link.downcast_ref::<std::io::Error>();
+        match io.map(std::io::Error::kind) {
+            Some(K::ConnectionRefused) => {
+                return words!(
+                    http_refused = "the server refused the connection",
+                    note = "Why a request failed: nothing listens at the server's address."
+                );
+            }
+            Some(K::NetworkUnreachable | K::HostUnreachable | K::NetworkDown) => {
+                return words!(
+                    http_no_route = "the network does not reach the server",
+                    note = "Why a request failed: no network, or none that leads to the server."
+                );
+            }
+            _ => {}
+        }
+        // An io error's `source` is its inner error's own: the inner one
+        // (a TLS error the connector wrapped) is the next link.
+        cause = match io.and_then(std::io::Error::get_ref) {
+            Some(inner) => Some(inner),
+            None => link.source(),
+        };
+    }
+    if error.is_connect() {
+        words!(
+            http_unreachable = "the server could not be reached",
+            note = "Why a request failed: no connection to it could be made (its name not found, for one)."
+        )
+    } else {
+        broke_off()
+    }
+}
+
+/// A connection lost before the whole answer came.
+fn broke_off() -> skwir_core::words::Words {
+    words!(
+        http_broke_off = "the connection to the server broke off",
+        note =
+            "Why a request failed: the connection was lost before the server's whole answer came."
+    )
 }
 
 #[cfg(test)]
@@ -335,7 +432,8 @@ mod tests {
     async fn a_limited_client_reads_no_more_and_waits_no_longer() {
         let (address, _, _) = server(Duration::ZERO).await;
         let small = client().limited(DEADLINE, 4);
-        assert!(small.get(&format!("{address}/a"), &[]).await.is_err());
+        let refused = small.get(&format!("{address}/a"), &[]).await;
+        assert_eq!(said(refused), "the server's answer is larger than expected");
         let enough = client().limited(DEADLINE, 64);
         assert_eq!(
             enough.get(&format!("{address}/a"), &[]).await.unwrap().body,
@@ -373,10 +471,31 @@ mod tests {
         let (address, _, _) = server(Duration::ZERO).await;
         // The system's authorities never signed the test's certificate.
         let http = Http::system("skwir/test").unwrap();
-        assert!(
-            http.get(&format!("{address}/0/0/0.png"), &[])
-                .await
-                .is_err()
+        assert_eq!(
+            said(http.get(&format!("{address}/0/0/0.png"), &[]).await),
+            "no secure connection to the server could be made"
         );
+    }
+
+    /// Why no answer came is said in Skwir's words, never the network
+    /// library's: a server that refuses the connection says so.
+    #[tokio::test]
+    async fn a_refused_connection_is_said_in_skwirs_words() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let http = client();
+        assert_eq!(
+            said(http.get(&format!("http://127.0.0.1:{port}/a"), &[]).await),
+            "the server refused the connection"
+        );
+    }
+
+    /// What a failed request says, in English.
+    fn said(answer: anyhow::Result<Answer>) -> String {
+        match answer {
+            Ok(answer) => panic!("answered {}", answer.status),
+            Err(error) => skwir_core::words::Words::of_error(error).english(),
+        }
     }
 }

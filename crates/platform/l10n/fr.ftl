@@ -346,7 +346,19 @@ highlight_not_found = { $theme } (introuvable)
 highlight_tree_sitter_first = Tree-sitter d’abord
 
 # draft
+http_broke_off = la connexion au serveur a été interrompue
+
+# draft
+http_no_route = le réseau n’atteint pas le serveur
+
+# draft
 http_not_address = ce n’est pas une adresse
+
+# draft
+http_not_secure = aucune connexion sécurisée au serveur n’a pu être établie
+
+# draft
+http_refused = le serveur a refusé la connexion
 
 # draft
 http_stopped = les requêtes se sont arrêtées
@@ -355,7 +367,10 @@ http_stopped = les requêtes se sont arrêtées
 http_timed_out = le serveur n’a pas répondu à temps
 
 # draft
-http_unread = la réponse n’a pas pu être lue : { $error }
+http_too_large = la réponse du serveur est plus grande que prévu
+
+# draft
+http_unreachable = le serveur n’a pas pu être joint
 
 # draft
 inspection_blocks_notice = { $count ->
