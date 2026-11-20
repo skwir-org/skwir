@@ -167,8 +167,8 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   and More saying it until you update. **Check for a new version** in the
   palette answers at once; Settings › Privacy › Updates turns the daily
   check on or off. A downloaded `.deb` or `.rpm` also offers **Update with
-  your system…**, which opens the download page at your system's commands
-  for the repository (Fedora's, Debian's, or Ubuntu's and its kin's);
+  your system…**, which opens the repository commands of your system
+  (Fedora, or Debian or Ubuntu and the systems like them);
   copies a package manager updates (the AUR's, Nix's, a repository's), and
   one whose settings file cannot be written (one Home Manager keeps: set
   `updates.tell` there), never ask. What's new is said once after each
