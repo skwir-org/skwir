@@ -391,6 +391,28 @@ impl State {
         ready.or_else(|| self.keeping.get(key).cloned())
     }
 
+    /// What `asker` is told of `key` without asking a provider: its
+    /// picture, landed (`ready`); that it has none; or that it is on its
+    /// way, `asker` joining its flight with `priority`. `None` if it is
+    /// none of these. Both of `Thumbnails::ask`'s looks ask it, before and
+    /// after the providers' `accepts`: what changed meanwhile is seen.
+    fn known(
+        &mut self,
+        key: &Key,
+        asker: Asker,
+        priority: Priority,
+        take: bool,
+    ) -> Option<ThumbState> {
+        if let Some(img) = self.ready(key, take) {
+            return Some(ThumbState::Ready(img));
+        }
+        if self.unavailable.contains(key) {
+            return Some(ThumbState::Unavailable);
+        }
+        self.join(key, asker, priority)
+            .then_some(ThumbState::Pending)
+    }
+
     /// `asker` asks for `key` in flight, with `priority`: woken when it
     /// lands. False if it is not in flight.
     fn join(&mut self, key: &Key, asker: Asker, priority: Priority) -> bool {
@@ -618,17 +640,8 @@ impl Thumbnails {
         take: bool,
     ) -> ThumbState {
         let key = req.key();
-        {
-            let mut s = self.state.lock();
-            if let Some(img) = s.ready(&key, take) {
-                return ThumbState::Ready(img);
-            }
-            if s.unavailable.contains(&key) {
-                return ThumbState::Unavailable;
-            }
-            if s.join(&key, asker, priority) {
-                return ThumbState::Pending;
-            }
+        if let Some(known) = self.state.lock().known(&key, asker, priority, take) {
+            return known;
         }
         // Plugin code runs outside the state lock. A cache may hold a
         // picture another application made of a type none here makes.
@@ -647,12 +660,10 @@ impl Thumbnails {
             s.mark_unavailable(key);
             return ThumbState::Unavailable;
         }
-        // Another caller queued it, or it landed, while we asked.
-        if let Some(img) = s.ready(&key, take) {
-            return ThumbState::Ready(img);
-        }
-        if s.join(&key, asker, priority) {
-            return ThumbState::Pending;
+        // Another caller queued it, it landed, or it was found to have no
+        // picture, while we asked.
+        if let Some(known) = s.known(&key, asker, priority, take) {
+            return known;
         }
         let frame = s.frame_of(asker);
         s.in_flight.insert(
@@ -1028,6 +1039,9 @@ mod tests {
         during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
         /// Called while it keeps a picture, before it is kept.
         storing: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+        /// Called while it is asked whether it takes a request, before it
+        /// answers.
+        accepting: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     }
 
     impl Fake {
@@ -1041,6 +1055,7 @@ mod tests {
                 failures: AtomicUsize::new(0),
                 during: Mutex::new(None),
                 storing: Mutex::new(None),
+                accepting: Mutex::new(None),
             })
         }
     }
@@ -1086,6 +1101,10 @@ mod tests {
             self.stage
         }
         fn accepts(&self, _: &ThumbRequest) -> bool {
+            let accepting = self.accepting.lock().take();
+            if let Some(accepting) = accepting {
+                accepting();
+            }
             true
         }
         fn thumbnail(&self, _: &ThumbRequest, _: &CancelToken) -> anyhow::Result<Option<Image>> {
@@ -1144,6 +1163,66 @@ mod tests {
             }
         }
         panic!("thumbnail never resolved");
+    }
+
+    /// A request another window starts while the providers are asked of a
+    /// second (`accepts`, outside the lock) is joined by the second: drawn
+    /// once, both woken.
+    #[test]
+    fn a_second_look_joins_a_flight_begun_meanwhile() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let slow = Fake::new("slow", Stage::Generate, true);
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let (taken, started) = std::sync::mpsc::channel::<()>();
+        *slow.during.lock() = Some(Box::new(move || {
+            let _ = taken.send(());
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        }));
+        let service = Arc::downgrade(&t);
+        *slow.accepting.lock() = Some(Box::new(move || {
+            let t = service.upgrade().expect("the service");
+            std::thread::spawn(move || t.get_for(Asker(1), req(1), Priority::Visible))
+                .join()
+                .unwrap();
+            started
+                .recv_timeout(Duration::from_secs(10))
+                .expect("a worker takes the first window's request");
+        }));
+        t.register("core", slow.clone());
+        assert!(matches!(
+            t.get_for(Asker(2), req(1), Priority::Visible),
+            ThumbState::Pending
+        ));
+        let askers = |t: &Thumbnails| {
+            let s = t.state.lock();
+            let flight = s.in_flight.get(&req(1).key()).expect("in flight");
+            (flight.askers.len(), s.queue.len())
+        };
+        assert_eq!(askers(&t), (2, 0), "one flight, both its askers");
+        release.send(()).unwrap();
+        assert!(matches!(wait_ready(&t, &req(1)), ThumbState::Ready(_)));
+        assert_eq!(slow.calls.load(Ordering::Relaxed), 1, "drawn once");
+    }
+
+    /// A file found to have no picture while the providers are asked of a
+    /// second window is not queued again by that window.
+    #[test]
+    fn a_second_look_sees_a_file_found_meanwhile_to_have_no_picture() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let none = Fake::new("none", Stage::Generate, false);
+        let service = Arc::downgrade(&t);
+        *none.accepting.lock() = Some(Box::new(move || {
+            let t = service.upgrade().expect("the service");
+            let first = std::thread::spawn(move || wait_ready(&t, &req(1)));
+            assert!(matches!(first.join().unwrap(), ThumbState::Unavailable));
+        }));
+        t.register("core", none.clone());
+        assert!(matches!(
+            t.get_for(Asker(2), req(1), Priority::Visible),
+            ThumbState::Unavailable
+        ));
+        assert!(t.state.lock().in_flight.is_empty(), "not queued again");
+        assert_eq!(none.calls.load(Ordering::Relaxed), 1, "tried once");
     }
 
     /// A request goes stale by the frames of the window that asked it
