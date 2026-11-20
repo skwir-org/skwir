@@ -1070,8 +1070,14 @@ fn summarize(pane: &skwir_core::workspace::Pane) -> SelectionCtx {
     for id in pane.selection.iter() {
         ctx.all_places &= id.is_place();
         match pane.entry(id) {
-            Some(e) if e.is_dir() => ctx.all_files = false,
-            Some(_) => ctx.all_dirs = false,
+            Some(e) if e.is_dir() => {
+                ctx.all_files = false;
+                ctx.dirs += 1;
+            }
+            Some(_) => {
+                ctx.all_dirs = false;
+                ctx.files += 1;
+            }
             None => {}
         }
     }

@@ -337,11 +337,18 @@ pub(crate) fn title(asked: &Asked) -> Words {
     }
 }
 
+/// What the answer would give now, as its button counts it (ADR-144,
+/// 11): the files and the folders selected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Given {
+    files: usize,
+    folders: usize,
+}
+
 /// The answer's button: the program's words, as it gave them, else what
 /// it does, saying how many where it gives several (ADR-144, 11): the
-/// files or folders selected (`selection`, as the footer counts them),
-/// the files saved.
-fn accept_label(asked: &Asked, selection: &crate::menu::SelectionCtx) -> Words {
+/// files or the folders it would give (`given`), the files saved.
+fn accept_label(asked: &Asked, given: Given) -> Words {
     if let Some(label) = &asked.accept_label {
         // A label written with a mnemonic (GTK's `_Open`, `__` for an
         // underscore) says it plainly.
@@ -355,12 +362,12 @@ fn accept_label(asked: &Asked, selection: &crate::menu::SelectionCtx) -> Words {
         Kind::Open {
             directory: true,
             multiple: true,
-        } if selection.all_dirs && selection.count > 1 => words!(
+        } if given.folders > 1 => words!(
             chooser_accept_folders = "{ $count ->
                 [one] Select { $count } folder
                *[other] Select { $count } folders
             }",
-            count = selection.count,
+            count = given.folders,
             note = "A button of the bar answering another program's dialog: choose the folders selected; count: how many."
         ),
         Kind::Open {
@@ -369,12 +376,12 @@ fn accept_label(asked: &Asked, selection: &crate::menu::SelectionCtx) -> Words {
             chooser_accept_folder = "Select",
             note = "A button of the bar answering another program's dialog: choose the folder."
         ),
-        Kind::Open { multiple: true, .. } if selection.all_files && selection.count > 1 => words!(
+        Kind::Open { multiple: true, .. } if given.files > 1 => words!(
             chooser_accept_open_files = "{ $count ->
                 [one] Open { $count } file
                *[other] Open { $count } files
             }",
-            count = selection.count,
+            count = given.files,
             note = "A button of the bar answering another program's dialog: open the files selected; count: how many."
         ),
         Kind::Open { .. } => words!(
@@ -739,6 +746,25 @@ impl Shell {
             filter: chooser
                 .filter
                 .and_then(|at| chooser.asked().filters.get(at).cloned()),
+        }
+    }
+
+    /// What the answer would give, as its button counts it (`Given`): the
+    /// files and the folders among the selection, from its cached summary
+    /// (`selection_ctx`); none where what the pane lists is not to give,
+    /// as `chooser_selected`.
+    fn chooser_given(&self) -> Given {
+        let gives = self
+            .app
+            .pane_location(self.pane)
+            .is_none_or(|location| self.app.gives_files(&location));
+        if !gives {
+            return Given::default();
+        }
+        let selection = self.selection_ctx();
+        Given {
+            files: selection.files,
+            folders: selection.dirs,
         }
     }
 
@@ -1267,7 +1293,7 @@ pub(crate) fn render(
         .child(modal::pressed(
             controls::button(
                 "chooser-accept",
-                accept_label(asked, &shell.selection_ctx()).say(),
+                accept_label(asked, shell.chooser_given()).say(),
                 Some("check"),
                 ButtonStyle::Plain,
                 &chooser.accept_focus,
@@ -1696,42 +1722,57 @@ mod tests {
             folder: None,
             recent: false,
         };
-        let none = crate::menu::SelectionCtx::default();
-        assert_eq!(accept_label(&asked, &none).say(), "Open");
+        let none = Given::default();
+        assert_eq!(accept_label(&asked, none).say(), "Open");
         asked.accept_label = Some("Save as __draft__".into());
-        assert_eq!(accept_label(&asked, &none).say(), "Save as _draft_");
+        assert_eq!(accept_label(&asked, none).say(), "Save as _draft_");
         asked.title = "Open a picture".into();
         assert_eq!(title(&asked).say(), "Open a picture");
 
         // Skwir's own words count what is given (ADR-144, 11); the
         // program's are said as given.
-        let files = crate::menu::SelectionCtx {
-            count: 3,
-            all_files: true,
-            ..crate::menu::SelectionCtx::default()
+        // Three files and two folders selected: what is counted is what
+        // the answer gives, the files or the folders.
+        let files = Given {
+            files: 3,
+            folders: 0,
         };
-        let folders = crate::menu::SelectionCtx {
-            count: 2,
-            all_dirs: true,
-            ..crate::menu::SelectionCtx::default()
+        let folders = Given {
+            files: 0,
+            folders: 2,
         };
-        assert_eq!(accept_label(&asked, &files).say(), "Save as _draft_");
+        let both = Given {
+            files: 3,
+            folders: 2,
+        };
+        assert_eq!(accept_label(&asked, files).say(), "Save as _draft_");
         asked.accept_label = None;
-        assert_eq!(accept_label(&asked, &files).say(), "Open", "one taken");
+        assert_eq!(accept_label(&asked, files).say(), "Open", "one taken");
         asked.kind = Kind::Open {
             multiple: true,
             directory: false,
         };
-        assert_eq!(accept_label(&asked, &files).say(), "Open 3 files");
-        assert_eq!(accept_label(&asked, &folders).say(), "Open", "no files");
+        assert_eq!(accept_label(&asked, files).say(), "Open 3 files");
+        assert_eq!(accept_label(&asked, folders).say(), "Open", "no files");
+        assert_eq!(
+            accept_label(&asked, both).say(),
+            "Open 3 files",
+            "the files alone, which it gives"
+        );
         asked.kind = Kind::Open {
             multiple: true,
             directory: true,
         };
-        assert_eq!(accept_label(&asked, &folders).say(), "Select 2 folders");
+        assert_eq!(accept_label(&asked, folders).say(), "Select 2 folders");
+        assert_eq!(
+            accept_label(&asked, both).say(),
+            "Select 2 folders",
+            "the folders alone, the dimmed files selected too"
+        );
+        assert_eq!(accept_label(&asked, none).say(), "Select", "in the Trash");
         asked.kind = Kind::SaveFiles {
             files: vec!["a.txt".into(), "b.txt".into()],
         };
-        assert_eq!(accept_label(&asked, &none).say(), "Save 2 files");
+        assert_eq!(accept_label(&asked, none).say(), "Save 2 files");
     }
 }

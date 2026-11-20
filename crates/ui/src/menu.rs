@@ -33,6 +33,10 @@ pub struct SelectionCtx {
     pub count: usize,
     pub all_dirs: bool,
     pub all_files: bool,
+    /// How many of those selected are folders, and how many files (what
+    /// a dialog's answer gives, ADR-144, 11).
+    pub dirs: usize,
+    pub files: usize,
     /// Total size of the selected files, once every one's is known: a
     /// part is never shown as the total, so until then none
     /// (`Shell::sync_selection_hydration` asks for them).
