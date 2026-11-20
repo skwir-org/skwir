@@ -53,7 +53,7 @@ updates_not_started = 无法开始检查
 updates_not_understood = 无法理解 { $site } 的应答
 
 # draft
-updates_off = 此副本不会收到新版本通知：请在 设置 › 常规 中开启
+updates_off = 此副本不会收到新版本通知：请在 设置 › 隐私 中开启
 
 # draft
 updates_out = Skwir { $version } 已发布

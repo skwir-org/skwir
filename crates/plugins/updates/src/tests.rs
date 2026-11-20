@@ -320,6 +320,12 @@ fn a_downloaded_copy_asks_once_then_checks_once_a_day() {
     );
     let labels: Vec<String> = question.actions.iter().map(|a| a.label.english()).collect();
     assert_eq!(labels, ["Yes", "No"], "no repository for an AppImage");
+    let tell = f.app.settings.spec(TELL).expect("a downloaded copy's");
+    assert_eq!(
+        tell.page,
+        skwir_core::settings::page::PRIVACY,
+        "where the window says what leaves the machine"
+    );
     let answer = f
         .app
         .commands

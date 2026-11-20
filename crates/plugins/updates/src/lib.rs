@@ -457,7 +457,7 @@ fn not_checked(here: Here, tells: bool) -> Option<Words> {
     }
     (!tells).then(|| {
         words!(
-            updates_off = "This copy is not told of new versions: turn it on in Settings › General",
+            updates_off = "This copy is not told of new versions: turn it on in Settings › Privacy",
             note = "Why a check for a new version was not made: the setting Tell me when a new version is out is off."
         )
     })
@@ -634,7 +634,8 @@ impl Inner {
                 ),
                 false,
             )
-            .page(page::GENERAL)
+            // Where the window says what leaves this machine.
+            .page(page::PRIVACY)
             .section_of(SECTION, section_title()),
         );
     }
@@ -953,7 +954,7 @@ impl Inner {
                 NotifyLevel::Done,
                 words!(
                     updates_told_no = "Skwir will not ask again; Settings can turn it on",
-                    note = "Said once the question about new versions was answered no: the setting Tell me when a new version is out, in Settings › General."
+                    note = "Said once the question about new versions was answered no: the setting Tell me when a new version is out, in Settings › Privacy."
                 ),
             );
         }

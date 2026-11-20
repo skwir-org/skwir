@@ -32,7 +32,7 @@ updates_check_description = Demander maintenant à { $site } si une version plus
 updates_check_failed = Skwir n’a pas pu chercher de nouvelle version
 
 # draft
-updates_kept_description = Ce que garde l’extension des mises à jour : quand cette copie a été vue et interrogée pour la première fois, la dernière vérification et ce qu’elle a annoncé.
+updates_kept_description = Ce que garde le module des mises à jour : quand cette copie a été vue et interrogée pour la première fois, la dernière vérification et ce qu’elle a annoncé.
 
 # draft
 updates_latest = Ce que la dernière vérification a trouvé
@@ -53,7 +53,7 @@ updates_not_started = La vérification n’a pas pu démarrer
 updates_not_understood = la réponse de { $site } n’a pas été comprise
 
 # draft
-updates_off = Cette copie n’est pas prévenue des nouvelles versions : activez-le dans Réglages › Général
+updates_off = Cette copie n’est pas prévenue des nouvelles versions : activez l’option dans Paramètres › Confidentialité
 
 # draft
 updates_out = Skwir { $version } est paru
@@ -83,7 +83,7 @@ updates_tell_setting_description = Skwir demande à { $site } une fois par jour 
 updates_tell_setting_description_more = Seule une copie téléchargée sur le site le demande : celle qu’un gestionnaire de paquets met à jour en est prévenue par lui.
 
 # draft
-updates_told_no = Skwir ne le demandera plus ; les Réglages peuvent l’activer
+updates_told_no = Skwir ne le demandera plus ; les Paramètres peuvent l’activer
 
 # draft
 updates_told_yes = Skwir vous préviendra quand une nouvelle version paraîtra

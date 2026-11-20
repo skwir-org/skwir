@@ -865,7 +865,7 @@ Settings are grouped by subject, whichever plugin brings them:
 
 | Page | What it sets |
 | --- | --- |
-| General | The language Skwir speaks (Automatic, your system's, else English; French and Simplified Chinese are drafts so far, which the window says), what Skwir does at startup and with folders other programs open in it, on Linux whether it is the default file manager and answers other programs' Open and Save dialogs ([below](#skwir-for-other-programs)), with tabs, the split and the path above the files, with what you drag and drop, and with new versions (Updates) |
+| General | The language Skwir speaks (Automatic, your system's, else English; French and Simplified Chinese are drafts so far, which the window says), what Skwir does at startup and with folders other programs open in it, on Linux whether it is the default file manager and answers other programs' Open and Save dialogs ([below](#skwir-for-other-programs)), with tabs, the split and the path above the files, with what you drag and drop, and what is new after an update (Updates) |
 | Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
 | Folders and views | The order of folders and files, how sizes are counted (Decimal, a thousand bytes to a kilobyte as disks are sold; or Binary, 1024), the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
@@ -873,7 +873,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | Pictures and media | The slideshow, audio and video playback, 3D models, the maps' background |
 | Terminal | The terminal's shell and history, and the shell commands on the selection run in |
 | Network | Every server of the sidebar's Network section (added, edited and removed as from their menus), where those added by their address are kept, and the tools that open an address, in the order tried |
-| Privacy | What leaves the machine; what agents never see is on Exclusions |
+| Privacy | What leaves the machine: whether a copy downloaded from the website asks it for new versions (Updates); what agents never see is on Exclusions |
 | Exclusions | The files and folders skwir leaves out, by kind: of searches and tag counts, of what agents see |
 | Plugins | Every plugin, on or off, what it may do and what it needs |
 | Keyboard | Every action and its keys, changed where they are listed |
@@ -1101,7 +1101,7 @@ with **What's new**, and About and the More menu say it until you update;
 a version that fixes a loss of data or a hole in security is told at
 once, others two weeks after the last you were told of. Skwir never
 downloads or installs anything: the version's page has its files. Settings
-› General › Updates turns it on or off. On a connection your system says
+› Privacy › Updates turns it on or off. On a connection your system says
 is metered, the day's check waits for another; **Check for a new
 version**, in the command palette, asks at once all the same, and says
 what it found: the new version, that Skwir is up to date, or why it could
@@ -1118,7 +1118,7 @@ Lever, and the Windows installer with `winget upgrade`, where winget
 lists Skwir.
 
 Every copy says once what is new after an update, with **What's new**;
-Settings › General › Updates turns that off too.
+Settings › General › Updates turns that off.
 
 ## What Skwir keeps, and where
 

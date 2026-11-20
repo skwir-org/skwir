@@ -526,3 +526,7 @@ it trusts a package by its signed index. The user chose signing.
   server not yet connected to share their 15 s with the first one's
   connection, so a server that never answers fails them all at once,
   and on a slow link the others have what the first one left.
+- **`updates.tell` is on the Privacy page**, under Updates (decision 5
+  named the section alone): where the window says what leaves the
+  machine, as `AGENTS.md`'s Network rule lists the check. What's new,
+  which asks nothing of the network, stays on General under Updates.

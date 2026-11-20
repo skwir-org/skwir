@@ -47,7 +47,7 @@ updates_not_started = The check could not be started
 updates_not_understood = { $site }'s answer was not understood
 
 # Why a check for a new version was not made: the setting Tell me when a new version is out is off.
-updates_off = This copy is not told of new versions: turn it on in Settings › General
+updates_off = This copy is not told of new versions: turn it on in Settings › Privacy
 
 # Said once, and in About until updated, when a newer version of Skwir is out: version is its number (0.6.2).
 updates_out = Skwir { $version } is out
@@ -72,7 +72,7 @@ updates_tell_setting_description = Skwir asks { $site } once a day whether a new
 
 updates_tell_setting_description_more = Only a copy downloaded from the website asks: one a package manager updates is told by it.
 
-# Said once the question about new versions was answered no: the setting Tell me when a new version is out, in Settings › General.
+# Said once the question about new versions was answered no: the setting Tell me when a new version is out, in Settings › Privacy.
 updates_told_no = Skwir will not ask again; Settings can turn it on
 
 # Said once the question about new versions was answered yes.
