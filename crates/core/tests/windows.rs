@@ -768,8 +768,15 @@ fn a_window_with_the_keyboard_is_looked_at_and_tells_the_plugins() {
     app.set_window_focused(second, true);
     app.set_window_focused(first, false);
     assert!(app.looked_at(), "the second has it");
+    assert!(app.looked_at_own(), "a window of the user's own");
+    // Answering another program's dialog (ADR-141), it is looked at, but
+    // not as the user's own: what asks the user waits.
+    app.workspace.write().set_chooses(second, true);
+    assert!(app.looked_at() && !app.looked_at_own());
+    app.workspace.write().set_chooses(second, false);
     app.set_window_focused(second, false);
     assert!(!app.looked_at(), "another program has it");
+    assert!(!app.looked_at_own());
     assert!(app.scheduler.wait_idle(WAIT));
     assert_eq!(told(), 2, "losing the keyboard tells nobody");
 

@@ -96,6 +96,10 @@ pub trait Plugin: Send + Sync {
     /// have changed meanwhile that no watch tells (how full a volume is),
     /// and start what is asked only while someone looks
     /// (`App::looked_at`). On a worker; start work, never wait for it.
+    /// The window may be one answering another program's dialog
+    /// (ADR-141): what asks the user unasked (`App::ask_quietly`) asks,
+    /// and counts it asked, only at a look of the user's own
+    /// (`App::looked_at_own`).
     fn on_looked_at(&self, _app: &App) {}
     /// Release resources the registries do not know about. Called on disable.
     fn on_disable(&self, _app: &App) {}

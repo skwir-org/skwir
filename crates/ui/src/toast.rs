@@ -266,10 +266,8 @@ struct Standing {
     toast: Toast,
     /// Who asked it and which of its questions it is
     /// (`Notification::question`): its owner turned off, or the question
-    /// taken back or asked again, it goes; drawn, its owner hears it.
+    /// taken back or asked again, it goes, and its buttons run nothing.
     asked: Option<Asked>,
-    /// Whether it was drawn, its owner told (`App::question_seen`).
-    seen: bool,
     /// Which one it is (`ToastState::stood`).
     id: u64,
 }
@@ -335,7 +333,6 @@ impl ToastState {
         self.standing = Some(Standing {
             toast,
             asked,
-            seen: false,
             id: self.stood,
         });
         if self.current.is_none() {
@@ -388,17 +385,6 @@ impl ToastState {
             .filter(|standing| standing.id == id)?
             .asked
             .as_ref()
-    }
-
-    /// The question standing is drawn: who asked it, the first time, to be
-    /// told (`App::question_seen`).
-    fn seen(&mut self) -> Option<Asked> {
-        if self.current.is_some() {
-            return None;
-        }
-        let standing = self.standing.as_mut().filter(|standing| !standing.seen)?;
-        standing.seen = true;
-        standing.asked.clone()
     }
 
     /// The one said over what stands goes (its caller done with it, its
@@ -1782,11 +1768,6 @@ pub fn render_answer(
     if let Some((generation, seconds)) = shell.toasts.drawn() {
         shell.time_toast(generation, seconds, cx);
     }
-    // A question that stays is asked once the user can see it (ADR-142,
-    // amended): its owner is told, once, that it was drawn.
-    if let Some(asked) = shell.toasts.seen() {
-        shell.app.question_seen(&asked.owner, asked.question);
-    }
     // An Undo that cannot take its plan back now is said, not offered,
     // with why, as the History says it (`history::undo_held`), rather
     // than refused once pressed.
@@ -2994,30 +2975,6 @@ mod tests {
             owner: owner.to_owned(),
             question,
         }
-    }
-
-    /// A question that stays is seen once it is drawn: never while what is
-    /// said is drawn over it, and once only.
-    #[test]
-    fn a_question_is_seen_once_drawn() {
-        let said =
-            |text: &str| Toast::new(Words::as_written(text.to_owned()), Tone::Info, Vec::new());
-        let mut toasts = ToastState::default();
-        let (over, _) = toasts.say(said("Skwir was updated to 0.6.2"), false);
-        toasts.stand(
-            said("Tell you when a new version is out?"),
-            Some(asked_by("updates", 7)),
-        );
-        assert_eq!(toasts.seen(), None, "beneath what is said, unseen");
-        assert!(toasts.over(over));
-        assert_eq!(toasts.seen(), Some(asked_by("updates", 7)));
-        assert_eq!(toasts.seen(), None, "seen once");
-        // Asked again in its place, the new one is seen in turn.
-        toasts.stand(
-            said("Tell you when a new version is out?"),
-            Some(asked_by("updates", 8)),
-        );
-        assert_eq!(toasts.seen(), Some(asked_by("updates", 8)));
     }
 
     /// A question that stays stands beneath what is said: a toast said

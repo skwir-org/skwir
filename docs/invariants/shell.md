@@ -1348,11 +1348,12 @@ asks the direction.
   elsewhere, `App::take_back_question`) or asking another in its place
   (one question a plugin), checked at each sync (`App::question_stands`;
   what it asked goes, queued or shown, and a button of it pressed before
-  the sync runs nothing). It waits for a window of the user's own, and
-  its plugin hears once one first draws it (`App::question_seen`): what
-  counts as asked is what the user saw, never one queued and let go with
-  a skwir started for another program's dialog. What a plugin says
-  (`App::notify_from`) goes with it too, turned off.
+  the sync runs nothing). It waits for a window of the user's own
+  (ADR-141, 8), and is asked, and counted asked, only at a look of one
+  (`App::looked_at_own`), never at a look of another program's dialog:
+  there it would wait unseen, and go with a skwir started for that
+  dialog. What a plugin says (`App::notify_from`) goes with it too,
+  turned off.
   A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its

@@ -241,9 +241,9 @@ pub struct Notification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     /// Which of its owner's questions it is, for one that stays
-    /// (`App::ask_quietly`): the window tells its owner once it drew it
-    /// (`App::question_seen`), and takes it down once it no longer stands
-    /// (`App::question_stands`): taken back, asked again, or its owner off.
+    /// (`App::ask_quietly`): the window takes it down once it no longer
+    /// stands (`App::question_stands`: taken back, asked again, or its
+    /// owner off), and runs none of its buttons pressed meanwhile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question: Option<u64>,
 }
@@ -267,10 +267,6 @@ fn answers() -> bool {
     true
 }
 
-/// What its owner hears once a window of the user's own drew its question
-/// (`App::ask_quietly`).
-type Seen = Box<dyn FnOnce(&App) + Send>;
-
 /// The questions that stay, one a plugin: the last each asked, while it
 /// stands (`App::ask_quietly`).
 #[derive(Default)]
@@ -278,9 +274,8 @@ struct AskedQuietly {
     /// Counts the questions asked, which a [`Notification::question`]
     /// names.
     asked: u64,
-    /// By owner: which question stands, and what its owner hears once it
-    /// is drawn, until it is.
-    standing: HashMap<String, (u64, Option<Seen>)>,
+    /// By owner: which question stands.
+    standing: HashMap<String, u64>,
 }
 
 /// Construction options.
@@ -2791,6 +2786,21 @@ impl App {
         self.focused.lock().is_some()
     }
 
+    /// Whether a window of the user's own has the keyboard, not one
+    /// answering another program's dialog (ADR-141): the user looks at
+    /// Skwir itself. What asks the user unasked (a question that stays,
+    /// `ask_quietly`) asks only then: a look at a dialog's window would
+    /// spend it unseen.
+    pub fn looked_at_own(&self) -> bool {
+        let Some(window) = *self.focused.lock() else {
+            return false;
+        };
+        self.workspace
+            .read()
+            .window(window)
+            .is_some_and(|tabs| !tabs.chooses())
+    }
+
     /// Wait at most `timeout` for the window to be shown
     /// (`set_window_shown`); whether it is.
     pub fn wait_window_shown(&self, timeout: std::time::Duration) -> bool {
@@ -3218,19 +3228,11 @@ impl App {
     /// closing it. Answered or made moot elsewhere, its owner takes it
     /// back (`App::take_back_question`).
     ///
-    /// The question waits for a window of the user's own (ADR-141, 8), and
-    /// `seen` runs once, on a worker, when one first draws it: what the
-    /// owner counts as asked, as the user has seen it. It never runs for a
-    /// question replaced, taken back, or let go with the program before it
-    /// was drawn (a skwir started for another program's dialog, ended with
-    /// it), nor once its owner is off.
-    pub fn ask_quietly(
-        &self,
-        owner: &str,
-        text: impl Into<Words>,
-        buttons: Vec<NotifyAction>,
-        seen: impl FnOnce(&App) + Send + 'static,
-    ) {
+    /// The question waits for a window of the user's own (ADR-141, 8): ask
+    /// it, and count it asked, only at a look of one (`looked_at_own`),
+    /// never at a look of another program's dialog, where it would wait
+    /// unseen and go with a skwir started for that dialog.
+    pub fn ask_quietly(&self, owner: &str, text: impl Into<Words>, buttons: Vec<NotifyAction>) {
         {
             let mut queued = self.notifications.lock();
             if !self.registry.gate().is_open(owner) {
@@ -3239,9 +3241,7 @@ impl App {
             let mut asked = self.asked_quietly.lock();
             asked.asked += 1;
             let question = asked.asked;
-            asked
-                .standing
-                .insert(owner.to_owned(), (question, Some(Box::new(seen))));
+            asked.standing.insert(owner.to_owned(), question);
             // The one it asked before, not yet taken by a window, goes; one
             // a window shows goes at its next sync (`question_stands`).
             queued.retain(|n| !(n.stays && n.owner.as_deref() == Some(owner)));
@@ -3284,42 +3284,7 @@ impl App {
                 .lock()
                 .standing
                 .get(owner)
-                .is_some_and(|(standing, _)| *standing == question)
-    }
-
-    /// A window of the user's own drew `owner`'s `question`: its owner hears
-    /// it, once, on a worker (`ask_quietly`'s `seen`), while it stands.
-    pub fn question_seen(&self, owner: &str, question: u64) {
-        if !self.registry.gate().is_open(owner) {
-            return;
-        }
-        let seen = {
-            let mut asked = self.asked_quietly.lock();
-            let Some((standing, seen)) = asked.standing.get_mut(owner) else {
-                return;
-            };
-            if *standing != question {
-                return;
-            }
-            seen.take()
-        };
-        let Some(seen) = seen else {
-            return;
-        };
-        let weak = self.weak();
-        let owner = owner.to_owned();
-        self.scheduler.spawn(
-            Priority::Background,
-            "question-seen",
-            self.lifetime.clone(),
-            move || {
-                if let Some(app) = weak.upgrade()
-                    && app.registry.gate().is_open(&owner)
-                {
-                    seen(&app);
-                }
-            },
-        );
+                .is_some_and(|standing| *standing == question)
     }
 
     /// Say what a user's edit did, with `inverse` as its Undo, or its Redo
@@ -6203,7 +6168,7 @@ mod tests {
                 .collect()
         };
         let said = |text: &str| crate::words::Words::as_written(text.to_owned());
-        app.ask_quietly("asker", said("Asked?"), Vec::new(), |_| {});
+        app.ask_quietly("asker", said("Asked?"), Vec::new());
         app.notify(NotifyLevel::Info, said("Said"));
         let asked = app.take_notifications();
         assert_eq!(asked[0].owner.as_deref(), Some("asker"));
@@ -6212,7 +6177,7 @@ mod tests {
         assert_eq!(asked[1].question, None);
         let question = asked[0].question.unwrap();
         assert!(app.question_stands("asker", question));
-        app.ask_quietly("asker", said("Asked?"), Vec::new(), |_| {});
+        app.ask_quietly("asker", said("Asked?"), Vec::new());
         app.notify_from("asker", NotifyLevel::Info, said("Its notice"), Vec::new());
         app.notify(NotifyLevel::Info, said("Said"));
         app.registry.set_owner_enabled("asker", false);
@@ -6223,7 +6188,7 @@ mod tests {
             "what it asked and said goes, not what others said"
         );
         assert!(!app.question_stands("asker", question), "shown, it goes");
-        app.ask_quietly("asker", said("Asked?"), Vec::new(), |_| {});
+        app.ask_quietly("asker", said("Asked?"), Vec::new());
         app.notify_from("asker", NotifyLevel::Info, said("Its notice"), Vec::new());
         assert!(
             texts(&app).is_empty(),
@@ -6240,14 +6205,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
         let said = |text: &str| Words::as_written(text.to_owned());
-        app.ask_quietly("asker", said("First?"), Vec::new(), |_| {});
-        app.ask_quietly("other", said("Other's?"), Vec::new(), |_| {});
-        app.ask_quietly("asker", said("Again?"), Vec::new(), |_| {});
+        app.ask_quietly("asker", said("First?"), Vec::new());
+        app.ask_quietly("other", said("Other's?"), Vec::new());
+        app.ask_quietly("asker", said("Again?"), Vec::new());
         let taken = app.take_notifications();
         let texts: Vec<String> = taken.iter().map(|n| n.text.english()).collect();
         assert_eq!(texts, ["Other's?", "Again?"], "the one before is replaced");
         let shown = taken[1].question.unwrap();
-        app.ask_quietly("asker", said("Third?"), Vec::new(), |_| {});
+        app.ask_quietly("asker", said("Third?"), Vec::new());
         assert!(
             !app.question_stands("asker", shown),
             "the one shown no longer stands once asked again"
@@ -6259,51 +6224,6 @@ mod tests {
         assert!(app.question_stands("other", other), "another's stands");
         app.take_back_question("other");
         assert!(!app.question_stands("other", other), "taken back, shown");
-    }
-
-    /// Its owner hears once that its question was drawn, and only while it
-    /// stands: never for one replaced or taken back first, nor twice.
-    #[test]
-    fn a_question_drawn_is_heard_once_by_its_owner() {
-        use crate::words::Words;
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let tmp = tempfile::tempdir().unwrap();
-        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
-        let heard = Arc::new(AtomicUsize::new(0));
-        let ask = |app: &super::App, text: &str, by: usize| -> u64 {
-            let heard = Arc::clone(&heard);
-            app.ask_quietly(
-                "asker",
-                Words::as_written(text.to_owned()),
-                Vec::new(),
-                move |_| {
-                    heard.fetch_add(by, Ordering::SeqCst);
-                },
-            );
-            app.take_notifications()[0].question.unwrap()
-        };
-        let wait = |want: usize| {
-            assert!(app.scheduler.wait_idle(std::time::Duration::from_secs(10)));
-            assert_eq!(heard.load(Ordering::SeqCst), want);
-        };
-        let first = ask(&app, "First?", 100);
-        let second = ask(&app, "Again?", 1);
-        app.question_seen("asker", first);
-        app.question_seen("asker", second);
-        app.question_seen("asker", second);
-        wait(1);
-        let third = ask(&app, "Third?", 10);
-        app.take_back_question("asker");
-        app.question_seen("asker", third);
-        let fourth = ask(&app, "Fourth?", 1000);
-        app.question_seen("asker", fourth);
-        wait(1001);
-        // Its owner off, a question drawn meanwhile is heard by no one.
-        let fifth = ask(&app, "Fifth?", 10_000);
-        app.registry.set_owner_enabled("asker", false);
-        app.question_seen("asker", fifth);
-        wait(1001);
     }
 
     /// What another program's dialog is given is what is said, never a
@@ -6322,17 +6242,11 @@ mod tests {
             NotifyLevel::Info,
             Words::as_written("Said first".to_owned()),
         );
-        app.ask_quietly(
-            "asker",
-            Words::as_written("Asked?".to_owned()),
-            Vec::new(),
-            |_| {},
-        );
+        app.ask_quietly("asker", Words::as_written("Asked?".to_owned()), Vec::new());
         app.ask_quietly(
             "other",
             Words::as_written("Asked too?".to_owned()),
             Vec::new(),
-            |_| {},
         );
         app.notify(NotifyLevel::Info, Words::as_written("Said then".to_owned()));
         assert_eq!(

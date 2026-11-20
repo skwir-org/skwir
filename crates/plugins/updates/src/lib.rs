@@ -622,7 +622,6 @@ impl Inner {
                 note = "Asked once, in a message that stays, of a copy downloaded from the website. site: the website, as written (skwir.org)."
             ),
             answers,
-            |_| {},
         );
     }
 
