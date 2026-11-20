@@ -55,9 +55,10 @@ pub fn parse(xml: &str) -> Vec<Recent> {
     out
 }
 
-/// Parse the file at `path`; missing or unreadable yields an empty list.
+/// Parse the file at `path`; missing, unreadable, not a regular file or
+/// longer than a list is (`recent::LIMIT`) yields an empty list.
 pub fn load(path: &Path) -> Vec<Recent> {
-    std::fs::read_to_string(path)
+    skwir_platform::file::read_regular_text(path, skwir_platform::recent::LIMIT)
         .map(|s| parse(&s))
         .unwrap_or_default()
 }

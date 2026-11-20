@@ -2179,9 +2179,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `sidebar::recent_first`), else home (`chooser::start_location`). The
   files it answers with (not folders) are added to the desktop's
   recently used files on a worker (`skwir_platform::recent::add`, ADR-144,
-  7: edited into `recently-used.xbel` as it stands, nothing written where
-  GTK's settings or GNOME's privacy say to remember none, nor into a list
-  that does not read). The window chooses until it answers (`Shell::chooser`,
+  7: edited into `recently-used.xbel` as it stands, in the files' lane,
+  each file once and typed by what it is, the list kept to GTK's thousand
+  bookmarks; nothing written where GTK's settings or GNOME's privacy say
+  to remember none, nor into a list GLib's reader would refuse, nor what it
+  would refuse, `recent::glib_reads`). The window chooses until it answers (`Shell::chooser`,
   `chooser.rs`): a bar at its foot (the name typed, its stem selected,
   its extension swapped for the filter chosen's where one of the
   program's filters took it, `swapped_extension`, ADR-144, 6;

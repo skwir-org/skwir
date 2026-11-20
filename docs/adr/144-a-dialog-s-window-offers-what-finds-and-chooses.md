@@ -102,8 +102,11 @@ amended as built (decisions 1, 4, 6, 7 and 10).
    the desktop is told to remember none (`gtk-recent-files-enabled` false
    or `gtk-recent-files-max-age` 0 in GTK's settings, GNOME's privacy
    `remember-recent-files` off): a bookmark the list holds is visited and
-   Skwir's count of it goes up, another is added, the rest kept byte for
-   byte; a list that does not read is left for its programs to mend.
+   Skwir's count of it goes up, another is added, typed by what the file
+   is, each file once, the rest kept byte for byte, the list kept to the
+   thousand bookmarks GTK keeps; a list GLib's reader would refuse is left
+   for its programs to mend, and Skwir never writes one it would refuse
+   (amended as reviewed, 2026-11-20).
 8. **A program's recent folders**: the folders each program last chose
    in, five at most, newest first, are offered in the bar
    (`ui.chooser_folders`, which keeps them for the 50 programs that
@@ -134,7 +137,7 @@ amended as built (decisions 1, 4, 6, 7 and 10).
   first time: written beside and put in its place (`file::take_place`)
   after reading it again, so that what another program wrote just before
   is kept; one written in the same instant may be lost, as with GTK's own
-  writer.
+  writer. Skwir's own answers write it one at a time.
 
 ## Rejected
 

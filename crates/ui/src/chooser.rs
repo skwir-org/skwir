@@ -564,9 +564,11 @@ impl Shell {
                     ..
                 }
             );
+            // In the files' lane: each is typed by what it is, read there.
             if !choosing_folders {
                 let paths = paths.clone();
-                self.app.scheduler.spawn(
+                self.app.scheduler.spawn_in(
+                    crate::shell::lane_of(&paths),
                     skwir_core::scheduler::Priority::Normal,
                     "ui-chooser-recent",
                     self.app.lifetime().child(),
