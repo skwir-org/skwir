@@ -469,6 +469,11 @@ impl Button {
         self
     }
     pub fn render(self, shell: &Shell, cx: &mut Context<Shell>) -> Stateful<Div> {
+        // A window that does not run its command (a dialog's, ADR-144)
+        // draws no button for it, nor room for one.
+        if !shell.runs_here(&self.command) {
+            return div().id(self.id).hidden();
+        }
         let theme = cx.global::<Theme>().clone();
         let pane = shell.pane;
         let command = self.command.clone();

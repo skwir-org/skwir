@@ -1580,6 +1580,7 @@ pub(crate) fn register(app: &App) {
             Ok(Outcome::Done)
         },
     )
+    .in_dialogs()
     .shows();
 
     c.register::<ReopenTabArgs, _>(

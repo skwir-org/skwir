@@ -709,7 +709,8 @@ impl Plugin for OpsBasicPlugin {
                 };
                 Ok(outcome)
             },
-        );
+        )
+        .in_dialogs();
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<TargetsArgs, _>(
             ID,
@@ -737,7 +738,8 @@ impl Plugin for OpsBasicPlugin {
                 };
                 Ok(outcome)
             },
-        );
+        )
+        .in_dialogs();
         app.commands
             .register::<TargetsArgs, _>(
                 ID, Topic::Files,
@@ -752,6 +754,7 @@ impl Plugin for OpsBasicPlugin {
                 ),
                 |a, app| copy_paths(app, a),
             )
+            .in_dialogs()
             .reads();
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<PaneArg, _>(
@@ -772,7 +775,8 @@ impl Plugin for OpsBasicPlugin {
                 app.wake();
                 Ok(Outcome::Done)
             },
-        );
+        )
+        .in_dialogs();
         let cb = Arc::clone(&self.clipboard);
         app.commands
             .register::<PasteArgs, _>(
@@ -788,6 +792,7 @@ impl Plugin for OpsBasicPlugin {
                 ),
                 move |a, app| paste(&cb, a, app),
             )
+            .in_dialogs()
             .plans();
         let cb = Arc::clone(&self.clipboard);
         let weak = app.weak();

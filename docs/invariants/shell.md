@@ -2186,7 +2186,17 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`Confirmed::Replace`, read on a worker in the folder's lane), and a
   request its program closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no
-  call from elsewhere reaches its window (commands.md). What asks the
+  call from elsewhere reaches its window (commands.md). It offers what
+  finds and chooses (ADR-144, commands.md's "In a dialog's window"): a
+  button, a menu's item or a key whose command it does not run is not
+  drawn or not run (`Button::render`, `Shell::items_run_here`,
+  `admit_here`), the palette and the address field's actions list what
+  it offers; it lists no tabs (`tabs_listed`), More has no terminal nor
+  split, views are offered but a lens (`available_views`, `set_view`),
+  Activity does not open there by itself, nothing is pinned to the
+  player, and the sidebar leaves out a place whose files are not to give
+  (`App::gives_files`: the Trash), whose files it never answers with
+  either. What asks the
   user an answer (proposals, questions, clashes, secrets, forms, a
   notice that stays: `App::take_notifications_for`) and what is asked
   from elsewhere (`ui.*` requests) go to a window of the user's own

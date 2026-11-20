@@ -43,12 +43,20 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
    (`CommandSpec::offered_in_dialogs`), by its topic unless it says
    otherwise where it is registered (`Declared::in_dialogs`,
    `not_in_dialogs`): going places, selecting, finding, notes, views,
-   previews, places and the window's own parts are offered; files,
-   tabs and the split, the terminal, the player and Skwir itself are not.
+   previews and what plays in them, places and the window's own parts
+   are offered; files, tabs and the split, the terminal and Skwir itself
+   are not, nor the pinned player (pinning, a menu's Play), Activity, a
+   lens's own commands, a slideshow, nor a picker or a prompt of the
+   window's that leads to what it does not offer (Open With's Other
+   Application…, its source about files).
    Of the files' commands, a dialog offers what a dialog has always
    offered: making a folder, renaming, moving to the Trash, the
    clipboard, Undo and Redo of these, the shelf (several files from
-   several folders), Properties. One rule answers every way to run a
+   several folders), Properties; of the window's, its own buttons, the
+   palette, the list of keys, Close tab (its window's last) and Quit.
+   What no list offers, run by the window's parts where they ask it (the
+   rows' data, a setting a menu's switch saves), runs there too
+   (`CommandSpec::runs_in_dialogs`). One rule answers every way to run a
    command in that window (keys, the palette, menus, toolbar buttons,
    what the window asks of itself; `Shell::offers`): what it does not
    offer is not shown, and refused if asked. Views are offered by their

@@ -250,6 +250,28 @@ pub enum Topic {
 }
 
 impl Topic {
+    /// Whether a window answering another program's Open or Save dialog
+    /// offers its commands (ADR-144, 1), unless a command says otherwise
+    /// (`Declared::in_dialogs`, `not_in_dialogs`): what finds and chooses
+    /// a file (going places, selecting, finding, notes, views, previews
+    /// and what plays in them, places, the window's own parts), never what
+    /// does something else (files, tabs and the split, the terminal, Skwir
+    /// itself).
+    pub fn in_dialogs(self) -> bool {
+        match self {
+            Topic::Go
+            | Topic::Select
+            | Topic::Find
+            | Topic::Notes
+            | Topic::View
+            | Topic::Preview
+            | Topic::Player
+            | Topic::Places
+            | Topic::Window => true,
+            Topic::Files | Topic::Tabs | Topic::Terminal | Topic::Skwir => false,
+        }
+    }
+
     /// In the order F1 lists them.
     pub const ALL: [Topic; 13] = [
         Topic::Go,
@@ -641,6 +663,13 @@ pub struct CommandSpec {
     /// agents.
     #[serde(skip)]
     pub asked_only: bool,
+    /// Whether a window answering another program's dialog offers it,
+    /// said where it is registered (`Declared::in_dialogs`,
+    /// `not_in_dialogs`); `None`, as its topic says
+    /// (`CommandSpec::offered_in_dialogs`, ADR-144). Only the window reads
+    /// it, so it is not said to agents.
+    #[serde(skip)]
+    pub in_dialogs: Option<bool>,
     /// When a key held down runs it again (ADR-066): a step along
     /// something (the cursor, a page, the volume, the next tab), never an
     /// act or a switch, which the key's repeats would run over and over.
@@ -651,6 +680,20 @@ pub struct CommandSpec {
 }
 
 impl CommandSpec {
+    /// Whether a window answering another program's dialog offers it
+    /// (ADR-144, 1): as it was registered, else as its topic.
+    pub fn offered_in_dialogs(&self) -> bool {
+        self.in_dialogs.unwrap_or_else(|| self.topic.in_dialogs())
+    }
+
+    /// Whether a window answering another program's dialog runs it when
+    /// asked: what it offers, and what no list offers, run only by the
+    /// parts of the window that ask it (data its rows read, a setting a
+    /// menu's switch saves: `data`, `asked_only`).
+    pub fn runs_in_dialogs(&self) -> bool {
+        self.data || self.asked_only || self.offered_in_dialogs()
+    }
+
     /// Whether a key held down runs it again with `args`.
     pub fn repeats_with(&self, args: &serde_json::Value) -> bool {
         self.repeats.is_some_and(|rule| rule(args))
@@ -764,6 +807,29 @@ impl Declared<'_> {
     /// no list of actions offers it.
     pub fn asked_only(&self) {
         self.update(|spec| spec.asked_only = true);
+    }
+
+    /// A window answering another program's dialog offers it, whatever
+    /// its topic says (see `CommandSpec::in_dialogs`): what a dialog has
+    /// always offered among the files' commands (making a folder,
+    /// renaming, the Trash).
+    // Said as it is declared: what it returns only goes on to say more
+    // (`.in_dialogs().plans()`), and may be dropped.
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn in_dialogs(self) -> Self {
+        self.update(|spec| spec.in_dialogs = Some(true));
+        self
+    }
+
+    /// A window answering another program's dialog does not offer it,
+    /// whatever its topic says (see `CommandSpec::in_dialogs`): what is
+    /// about a window of the user's own (Activity, the Settings).
+    // Said as it is declared: what it returns only goes on to say more
+    // (`.in_dialogs().plans()`), and may be dropped.
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn not_in_dialogs(self) -> Self {
+        self.update(|spec| spec.in_dialogs = Some(false));
+        self
     }
 
     /// A key held down runs it again where `rule` says, by its arguments
@@ -1096,6 +1162,7 @@ impl CommandRegistry {
             data: false,
             same_as: None,
             asked_only: false,
+            in_dialogs: None,
             repeats: None,
         };
         let mut commands = self.commands.write();
@@ -1131,6 +1198,27 @@ impl CommandRegistry {
             .get(name)
             .and_then(|stack| stack.last())
             .map(|(s, _, _)| s.clone())
+    }
+
+    /// Whether a window answering another program's dialog offers the
+    /// command `name` (`CommandSpec::offered_in_dialogs`), read in place:
+    /// not one that is not registered.
+    pub fn offered_in_dialogs(&self, name: &str) -> bool {
+        self.commands
+            .read()
+            .get(name)
+            .and_then(|stack| stack.last())
+            .is_some_and(|(spec, _, _)| spec.offered_in_dialogs())
+    }
+
+    /// Whether a window answering another program's dialog runs `name`
+    /// when asked (`CommandSpec::runs_in_dialogs`), read in place.
+    pub fn runs_in_dialogs(&self, name: &str) -> bool {
+        self.commands
+            .read()
+            .get(name)
+            .and_then(|stack| stack.last())
+            .is_some_and(|(spec, _, _)| spec.runs_in_dialogs())
     }
 
     /// Whether a command of that name is registered now.

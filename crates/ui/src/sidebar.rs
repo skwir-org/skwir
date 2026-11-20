@@ -334,27 +334,35 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
 
 /// The places arranged (`arrange`) for a revision of the places and an
 /// arrangement of them.
-pub(crate) type ArrangedAt = (u64, Sections, std::sync::Arc<[Arranged]>);
+pub(crate) type ArrangedAt = (u64, Sections, bool, std::sync::Arc<[Arranged]>);
 
 impl Shell {
     /// Every place as the user arranged them (`arrange`), kept until the
     /// places or their arrangement change: the sidebar draws them at
-    /// every frame, and arranging copies and sorts every place.
+    /// every frame, and arranging copies and sorts every place. A dialog's
+    /// window leaves out a place whose files are not to give (the Trash,
+    /// `App::gives_files`, ADR-144, 3).
     pub fn arranged_places(&self) -> std::sync::Arc<[Arranged]> {
         let revision = self.app.registry.places.revision();
+        let dialog = self.chooser.is_some();
         let mut kept = self.arranged_places.borrow_mut();
-        if let Some((at, sections, arranged)) = kept.as_ref()
+        if let Some((at, sections, was_dialog, arranged)) = kept.as_ref()
             && *at == revision
             && *sections == self.sidebar_sections
+            && *was_dialog == dialog
         {
             return std::sync::Arc::clone(arranged);
         }
         // Read after the revision: a change meanwhile arranges again.
-        let arranged: std::sync::Arc<[Arranged]> =
-            arrange(self.app.registry.places.all(), &self.sidebar_sections).into();
+        let mut places = self.app.registry.places.all();
+        if dialog {
+            places.retain(|place| self.app.gives_files(&place.location));
+        }
+        let arranged: std::sync::Arc<[Arranged]> = arrange(places, &self.sidebar_sections).into();
         *kept = Some((
             revision,
             self.sidebar_sections.clone(),
+            dialog,
             std::sync::Arc::clone(&arranged),
         ));
         arranged
@@ -2383,7 +2391,12 @@ impl Shell {
         if items.is_empty() {
             return;
         }
-        self.menu = Some(crate::menu::MenuState::open(position, items, window, cx));
+        self.menu = Some(crate::menu::MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 

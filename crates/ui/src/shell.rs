@@ -1432,7 +1432,8 @@ impl Shell {
     /// second read behind a waiting writer would never be granted
     /// (`parking_lot` locks are fair).
     pub fn tabs_listed(&self) -> bool {
-        self.prefs.single_tab || self.tab_count > 1
+        // A dialog's window has no tabs to list (ADR-144, 2).
+        (self.prefs.single_tab || self.tab_count > 1) && self.runs_here("tab.new")
     }
 
     /// Whether the sidebar lists the tabs, as its first group, when it is
@@ -2440,6 +2441,9 @@ impl Shell {
 
     /// The registry controls availability; panes retain only live renderers.
     pub fn available_views(&self) -> Vec<skwir_core::registry::ViewSpec> {
+        // A dialog's window shows its files in a listing's shape, never
+        // through a lens that answers a question of its own (ADR-144, 1).
+        let dialog = self.chooser.is_some();
         let mut specs: Vec<_> = self
             .app
             .registry
@@ -2447,6 +2451,7 @@ impl Shell {
             .all()
             .into_iter()
             .filter(|s| self.ui().views.contains_key(&*s.id))
+            .filter(|s| !dialog || s.role != skwir_core::registry::ViewRole::Lens)
             .collect();
         specs.sort_by_key(|s| s.order);
         specs
@@ -2582,6 +2587,10 @@ impl Shell {
                     .views
                     .find(|s| &*s.id == k)
                     .is_some_and(|s| s.role == skwir_core::registry::ViewRole::Lens);
+                // A dialog's window has no lens (ADR-144, 1).
+                if lens && self.chooser.is_some() {
+                    return;
+                }
                 // Where the folder shown remembers its order, a view a
                 // folder may remember is that folder's (ADR-132); any other
                 // is the pane's own.
@@ -2945,6 +2954,12 @@ impl Shell {
     /// drawn first. Moving between tabs keeps holding, so cycling through
     /// them draws only the one it stops on.
     fn admit_here(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // A dialog's window runs what it offers (ADR-144, 1): what else is
+        // asked there, by a key, a list or a button, is not run.
+        if !self.runs_here(name) {
+            tracing::debug!(name, "not run: a dialog's window does not offer it");
+            return false;
+        }
         if !self.takes_now(name) {
             if self.settings.is_none() && self.shortcuts.is_some() {
                 self.toggle_shortcuts(window, cx);
@@ -2962,6 +2977,56 @@ impl Shell {
             ui.list.end_hold();
         }
         true
+    }
+
+    /// Whether this window runs the command `name` (ADR-144, 1): every one
+    /// in a window of the user's own; in one answering another program's
+    /// dialog, what finds and chooses, and what its own parts ask of
+    /// themselves (`CommandSpec::runs_in_dialogs`). The one answer for its
+    /// keys, menus and buttons; the palette lists what it offers.
+    pub(crate) fn runs_here(&self, name: &str) -> bool {
+        self.chooser.is_none() || self.app.commands.runs_in_dialogs(name)
+    }
+
+    /// Whether this window lists the command `name` among what it offers
+    /// (the palette): every one in a window of the user's own; in one
+    /// answering another program's dialog, what finds and chooses
+    /// (`CommandSpec::offered_in_dialogs`, ADR-144).
+    pub(crate) fn offers(&self, name: &str) -> bool {
+        self.chooser.is_none() || self.app.commands.offered_in_dialogs(name)
+    }
+
+    /// Whether what this window would open with `args` leads to what it
+    /// offers: a picker (`ui.choose`) lists what its source, a command of
+    /// its own, is about (Open With's applications, `open_with.choices`,
+    /// are about files); a prompt (`ui.ask`) runs its command with the
+    /// answer. A dialog's window may offer neither though the picker and
+    /// the prompt are its own (ADR-144, 1).
+    pub(crate) fn leads_to_what_it_offers(&self, name: &str, args: &serde_json::Value) -> bool {
+        let then = match name {
+            "ui.choose" => args["source"]["name"].as_str(),
+            "ui.ask" => args["command"].as_str(),
+            _ => None,
+        };
+        then.is_none_or(|then| self.offers(then))
+    }
+
+    /// The menu items this window runs (`runs_here`), in their order: a
+    /// picker's and a prompt's only where they lead to what it offers.
+    pub(crate) fn items_run_here(
+        &self,
+        items: Vec<skwir_core::registry::MenuItem>,
+    ) -> Vec<skwir_core::registry::MenuItem> {
+        if self.chooser.is_none() {
+            return items;
+        }
+        items
+            .into_iter()
+            .filter(|item| {
+                self.runs_here(&item.command.name)
+                    && self.leads_to_what_it_offers(&item.command.name, &item.command.args)
+            })
+            .collect()
     }
 
     /// `run` for a core command the views send by the thousand, with its

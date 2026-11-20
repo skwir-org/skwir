@@ -43,6 +43,19 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   keys under it, agents read it. A plugin from outside says it in its
   manifest (`topic`), else its category's. A new topic takes a place in
   `Topic::ALL`, F1's order.
+- **In a dialog's window (ADR-144).** A window answering another
+  program's Open or Save dialog offers what finds and chooses a file: a
+  command by its topic (`Topic::in_dialogs`) unless it says otherwise
+  where it is registered (`Declared::in_dialogs`, `not_in_dialogs`; the
+  shell's in `commands::IN_DIALOGS` and `NOT_IN_DIALOGS`), which a test
+  holds to saying the opposite of its topic. What no list offers (data,
+  `asked_only`) runs there where the window's parts ask it
+  (`CommandSpec::runs_in_dialogs`). The window asks one question for its
+  keys, menus and buttons (`Shell::runs_here`) and its lists
+  (`Shell::offers`), and a picker or a prompt of its own only where what
+  it leads to is offered (`Shell::leads_to_what_it_offers`: `ui.choose`'s
+  source, `ui.ask`'s command). A new command about files is not offered
+  there unless it says so; never test for the dialog beside a feature.
 - **Families (ADR-100).** Forms of one command that only go elsewhere
   share a family (`Form::in_family`: Extend the selection up, down, to
   the first item): F1 lists its keys on one row, in the forms' order.

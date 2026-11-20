@@ -744,7 +744,12 @@ impl Shell {
         if items.is_empty() {
             return;
         }
-        self.menu = Some(MenuState::open(position, items, window, cx));
+        self.menu = Some(MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -990,7 +995,12 @@ impl Shell {
                 "window-new",
             ));
         }
-        self.menu = Some(MenuState::open(position, items, window, cx));
+        self.menu = Some(MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1125,7 +1135,12 @@ impl Shell {
             return;
         }
         items.sort_by_key(|m| m.order);
-        self.menu = Some(MenuState::open(position, items, window, cx));
+        self.menu = Some(MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1147,7 +1162,12 @@ impl Shell {
             return;
         }
         items.sort_by_key(|m| m.order);
-        self.menu = Some(MenuState::open(position, items, window, cx));
+        self.menu = Some(MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1211,7 +1231,12 @@ impl Shell {
             200,
             skwir_core::command::Invocation::new("ui.columns_reset"),
         ));
-        self.menu = Some(MenuState::open(position, items, window, cx));
+        self.menu = Some(MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1319,7 +1344,12 @@ impl Shell {
                 ),
             ));
         }
-        self.menu = Some(MenuState::open(position, items, window, cx));
+        self.menu = Some(MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1403,7 +1433,12 @@ impl Shell {
                 skwir_core::command::Invocation::with_args("ui.preview_invoke", &args),
             ));
         }
-        self.menu = Some(MenuState::open(position, items, window, cx));
+        self.menu = Some(MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1545,7 +1580,12 @@ impl Shell {
         }
         items.sort_by_key(|item| item.order);
         let keyboard = at.is_none();
-        self.menu = Some(MenuState::open(at.unwrap_or_default(), items, window, cx));
+        self.menu = Some(MenuState::open(
+            at.unwrap_or_default(),
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         if keyboard && let Some(menu) = &mut self.menu {
             menu.highlighted = Some(0);
             menu.keyboard = Some(KeyboardAnchor::new(MenuHost::Terminal));
@@ -1572,7 +1612,7 @@ impl Shell {
         self.menu = None;
         let mut menu = MenuState::open(
             asked.at.unwrap_or_default(),
-            asked.items.clone(),
+            self.items_run_here(asked.items.clone()),
             window,
             cx,
         );

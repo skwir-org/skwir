@@ -473,7 +473,16 @@ impl Shell {
 
     /// What is selected in the pane, each with whether it is a folder, the
     /// cursor's first.
+    /// Nothing, where what the pane lists is not to give (the Trash, gone
+    /// to by its address, ADR-144, 3).
     fn chooser_selected(&self) -> Vec<(PathBuf, bool)> {
+        let gives = self
+            .app
+            .pane_location(self.pane)
+            .is_none_or(|location| self.app.gives_files(&location));
+        if !gives {
+            return Vec::new();
+        }
         let ws = self.app.workspace.read();
         let Some(p) = ws.pane(self.pane) else {
             return Vec::new();

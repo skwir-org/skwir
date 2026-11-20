@@ -619,63 +619,71 @@ impl Plugin for ShelfPlugin {
         );
 
         let st = Arc::clone(&self.state);
-        app.commands.register::<AddArgs, _>(
-            ID,
-            Topic::Files,
-            "shelf.add",
-            words!(shelf_add = "Add to shelf"),
-            words!(shelf_add_description = "Put the selection (or the given entries) on the shelf"),
-            move |a, app| {
-                let items = if a.entries.is_empty() {
-                    selection_items(app, app.pane_or_active(a.pane), &a.ids)?
-                } else {
-                    skwir_core::op::EntryArg::refs(a.entries)?
-                        .iter()
-                        .filter_map(dropped_item)
-                        .collect()
-                };
-                let n = ShelfPlugin::add(&st, items);
-                Ok(Outcome::Value(serde_json::json!({ "added": n })))
-            },
-        );
+        app.commands
+            .register::<AddArgs, _>(
+                ID,
+                Topic::Files,
+                "shelf.add",
+                words!(shelf_add = "Add to shelf"),
+                words!(
+                    shelf_add_description = "Put the selection (or the given entries) on the shelf"
+                ),
+                move |a, app| {
+                    let items = if a.entries.is_empty() {
+                        selection_items(app, app.pane_or_active(a.pane), &a.ids)?
+                    } else {
+                        skwir_core::op::EntryArg::refs(a.entries)?
+                            .iter()
+                            .filter_map(dropped_item)
+                            .collect()
+                    };
+                    let n = ShelfPlugin::add(&st, items);
+                    Ok(Outcome::Value(serde_json::json!({ "added": n })))
+                },
+            )
+            .in_dialogs();
         let st = Arc::clone(&self.state);
-        app.commands.register::<RemoveArgs, _>(
-            ID,
-            Topic::Files,
-            "shelf.remove",
-            words!(shelf_remove = "Remove from shelf"),
-            words!(shelf_remove_description = "Take entries off the shelf"),
-            move |a, app| {
-                let ids = if a.ids.is_empty() {
-                    let ws = app.workspace.read();
-                    let pane = ws
-                        .pane(
-                            a.pane
-                                .unwrap_or_else(|| skwir_core::app::asked_or_active(&ws)),
-                        )
-                        .ok_or_else(|| {
-                            anyhow::Error::from(words!(shelf_no_such_pane = "no such pane"))
-                        })?;
-                    skwir_core::app::chosen(pane).iter().collect()
-                } else {
-                    a.ids
-                };
-                let n = ShelfPlugin::remove(&st, &ids);
-                Ok(Outcome::Value(serde_json::json!({ "removed": n })))
-            },
-        );
+        app.commands
+            .register::<RemoveArgs, _>(
+                ID,
+                Topic::Files,
+                "shelf.remove",
+                words!(shelf_remove = "Remove from shelf"),
+                words!(shelf_remove_description = "Take entries off the shelf"),
+                move |a, app| {
+                    let ids = if a.ids.is_empty() {
+                        let ws = app.workspace.read();
+                        let pane = ws
+                            .pane(
+                                a.pane
+                                    .unwrap_or_else(|| skwir_core::app::asked_or_active(&ws)),
+                            )
+                            .ok_or_else(|| {
+                                anyhow::Error::from(words!(shelf_no_such_pane = "no such pane"))
+                            })?;
+                        skwir_core::app::chosen(pane).iter().collect()
+                    } else {
+                        a.ids
+                    };
+                    let n = ShelfPlugin::remove(&st, &ids);
+                    Ok(Outcome::Value(serde_json::json!({ "removed": n })))
+                },
+            )
+            .in_dialogs();
         let st = Arc::clone(&self.state);
-        app.commands.register::<NoArgs, _>(
-            ID,
-            Topic::Files,
-            "shelf.clear",
-            words!(shelf_clear = "Clear shelf"),
-            words!(shelf_clear_description = "Empty the shelf"),
-            move |_, _| {
-                ShelfPlugin::clear(&st);
-                Ok(Outcome::Done)
-            },
-        );
+        app.commands
+            .register::<NoArgs, _>(
+                ID,
+                Topic::Files,
+                "shelf.clear",
+                words!(shelf_clear = "Clear shelf"),
+                words!(shelf_clear_description = "Empty the shelf"),
+                move |_, _| {
+                    ShelfPlugin::clear(&st);
+                    Ok(Outcome::Done)
+                },
+            )
+            .in_dialogs();
         app.commands
             .register::<PaneArg, _>(
                 ID,
@@ -688,6 +696,7 @@ impl Plugin for ShelfPlugin {
                     Ok(Outcome::Done)
                 },
             )
+            .in_dialogs()
             .shows();
         let st = Arc::clone(&self.state);
         app.commands

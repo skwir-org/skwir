@@ -772,6 +772,11 @@ impl Shell {
             &self.group_keys(),
         )
         .into_iter()
+        // A dialog's window lists what it offers (ADR-144, 1): no setting,
+        // no tab, nothing that does other than find and choose.
+        .filter(|offer| {
+            self.offers(&offer.name) && self.leads_to_what_it_offers(&offer.name, &offer.args)
+        })
         .map(|offer| PaletteItem {
             keys: self.keys_for(&offer.name, &offer.args),
             name: offer.name,

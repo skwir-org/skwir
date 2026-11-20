@@ -394,7 +394,12 @@ impl crate::shell::Shell {
                 summary,
             ),
         ];
-        self.menu = Some(crate::menu::MenuState::open(position, items, window, cx));
+        self.menu = Some(crate::menu::MenuState::open(
+            position,
+            self.items_run_here(items),
+            window,
+            cx,
+        ));
         cx.notify();
     }
 }

@@ -576,6 +576,15 @@ pub trait LocationProvider: Send + Sync {
         self.searches(location)
     }
 
+    /// Whether what `location` lists may be handed to another program as
+    /// the files a person chose for it (ADR-144, 3): true, but for a place
+    /// whose files are not where they were (the trash), which a window
+    /// answering another program's dialog offers nowhere. Answered from the
+    /// text alone, as `title` is.
+    fn gives_files(&self, _location: &Location) -> bool {
+        true
+    }
+
     /// Whether words typed in the address field can search what `location`
     /// lists, with it as their scope (ADR-098): a folder and its
     /// subfolders, a tag's place and every tag's (ADR-108), Recent's. The

@@ -1374,7 +1374,9 @@ impl Shell {
         if self.preview_is_pinned() {
             return;
         }
-        if self.prefs.player.keep_playing {
+        // A dialog's window pins nothing (ADR-144, 2): what it plays ends
+        // with its preview.
+        if self.prefs.player.keep_playing && self.runs_here("ui.media_pin") {
             self.pin_preview(cx);
         } else if self.set_pin(None).is_some() {
             cx.notify();

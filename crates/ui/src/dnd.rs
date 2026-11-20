@@ -700,7 +700,8 @@ impl Shell {
             900,
             Invocation::new("ui.menu_close"),
         ));
-        let mut menu = crate::menu::MenuState::open(position, items, window, cx);
+        let mut menu =
+            crate::menu::MenuState::open(position, self.items_run_here(items), window, cx);
         menu.keys = DropOp::ALL
             .iter()
             .map(|how| Some(crate::keymap::display_keys(how.keys())))

@@ -731,6 +731,9 @@ impl Shell {
             }
         } else if self.activity.open.is_none()
             && !self.activity.folded
+            // Not in a dialog's window, which has no Activity (ADR-144, 2):
+            // its strip says what runs.
+            && self.runs_here("ui.activity")
             && self
                 .work
                 .borrow()

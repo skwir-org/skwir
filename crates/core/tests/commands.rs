@@ -421,3 +421,52 @@ fn typed_arguments_reach_their_command_without_json() {
         .expect_err("it failed");
     assert!(error.to_string().contains("stopped on a fault"), "{error}");
 }
+
+/// A window answering another program's dialog offers a command by its
+/// topic unless it says otherwise where it is registered, and runs what no
+/// list offers (data, what one place asks) wherever it is asked (ADR-144,
+/// 1).
+#[test]
+fn a_dialog_offers_a_command_by_its_topic_unless_it_says_otherwise() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let register = |topic, name: &'static str| {
+        app.commands.register::<NoArgs, _>(
+            "dialogs",
+            topic,
+            name,
+            Words::as_written(name),
+            Words::as_written(""),
+            |_, _| Ok(Outcome::Done),
+        )
+    };
+    register(Topic::Find, "dialogs.find");
+    register(Topic::Files, "dialogs.compress");
+    register(Topic::Tabs, "dialogs.new_tab");
+    register(Topic::Files, "dialogs.mkdir").in_dialogs();
+    register(Topic::Window, "dialogs.activity").not_in_dialogs();
+    register(Topic::Files, "dialogs.rows").data();
+    register(Topic::Skwir, "dialogs.save_settings").asked_only();
+    let offered = |name| app.commands.offered_in_dialogs(name);
+    let runs = |name| app.commands.runs_in_dialogs(name);
+    assert!(offered("dialogs.find") && runs("dialogs.find"));
+    assert!(!offered("dialogs.compress") && !runs("dialogs.compress"));
+    assert!(!offered("dialogs.new_tab") && !runs("dialogs.new_tab"));
+    assert!(offered("dialogs.mkdir") && runs("dialogs.mkdir"));
+    assert!(!offered("dialogs.activity") && !runs("dialogs.activity"));
+    // Run where they are asked, listed nowhere.
+    assert!(!offered("dialogs.rows") && runs("dialogs.rows"));
+    assert!(!offered("dialogs.save_settings") && runs("dialogs.save_settings"));
+    // Not one that is not registered.
+    assert!(!offered("dialogs.none") && !runs("dialogs.none"));
+    // The core's own: making a folder, renaming, the Trash, Undo, Redo and
+    // Close tab (which closes a dialog's window, its last tab) are offered;
+    // deleting at once, copying and moving given where to, a new tab or a
+    // new window are not.
+    for name in ["mkdir", "rename", "trash", "undo", "redo", "tab.close"] {
+        assert!(offered(name), "{name}");
+    }
+    for name in ["delete", "copy", "move", "tab.new", "window.new"] {
+        assert!(!offered(name), "{name}");
+    }
+}

@@ -1390,6 +1390,46 @@ const KEY_FORMS: &[(&str, &str, fn() -> Words)] = &[
     }),
 ];
 
+/// The shell's commands a window answering another program's dialog
+/// offers though their topic is not offered there (ADR-144, 1): making a
+/// folder and renaming, Properties and copying what it says, a plan's
+/// Cancel and a review's answers, the window's own buttons, the palette
+/// and the list of keys, and Quit, which cancels the dialog there.
+const IN_DIALOGS: &[&str] = &[
+    "ui.mkdir_prompt",
+    "ui.rename_prompt",
+    "ui.properties",
+    "ui.properties_count",
+    "ui.properties_fold",
+    "ui.copy_text",
+    "ui.plan_cancel",
+    "ui.review_apply",
+    "ui.review_cancel",
+    "ui.close_window",
+    "ui.maximize_window",
+    "ui.minimize_window",
+    "ui.palette",
+    "ui.shortcuts",
+    "ui.quit",
+];
+
+/// The shell's commands a window answering another program's dialog does
+/// not offer though their topic is offered there (ADR-144, 1): what a
+/// window of the user's own shows (Activity, the pinned player and what
+/// plays there from a menu), a lens's own (Usage's), a slideshow, opening a
+/// preview in another program.
+const NOT_IN_DIALOGS: &[&str] = &[
+    "ui.activity",
+    "ui.activity_earlier",
+    "ui.usage_mode",
+    "ui.usage_refresh",
+    "ui.slideshow",
+    "ui.slideshow_pace",
+    "ui.preview_open_external",
+    "ui.media_pin",
+    "ui.media_play",
+];
+
 /// The shell's commands whose keys may change but never all go (ADR-024):
 /// the palette, which reaches every command, and what gets the keyboard
 /// out of a dialog or a menu, or through the settings.
@@ -1810,6 +1850,13 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     if let Some(rule) = repeats_of(name) {
         declared.repeats(rule);
     }
+    let declared = if IN_DIALOGS.contains(&name) {
+        declared.in_dialogs()
+    } else if NOT_IN_DIALOGS.contains(&name) {
+        declared.not_in_dialogs()
+    } else {
+        declared
+    };
     declared.effect(effect_of(name));
 }
 
@@ -3801,6 +3848,23 @@ mod tests {
         for name in super::KEEP_A_KEY {
             assert!(
                 app.commands.get(name).is_some_and(|spec| spec.keeps_a_key),
+                "{name}"
+            );
+        }
+        // What a dialog's window offers apart from its topic says the
+        // opposite of the topic (ADR-144, 1): a line that says what the
+        // topic already says is not one.
+        for name in super::IN_DIALOGS {
+            let spec = app.commands.get(name).expect(name);
+            assert!(
+                spec.offered_in_dialogs() && !spec.topic.in_dialogs(),
+                "{name}"
+            );
+        }
+        for name in super::NOT_IN_DIALOGS {
+            let spec = app.commands.get(name).expect(name);
+            assert!(
+                !spec.offered_in_dialogs() && spec.topic.in_dialogs(),
                 "{name}"
             );
         }

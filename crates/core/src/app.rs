@@ -1525,6 +1525,14 @@ impl App {
             .is_some_and(|provider| provider.searchable(location))
     }
 
+    /// Whether what `location` lists may be handed to another program as
+    /// the files a person chose (`LocationProvider::gives_files`, ADR-144):
+    /// true but where its provider says not.
+    pub fn gives_files(&self, location: &Location) -> bool {
+        self.provider(&location.scheme)
+            .is_none_or(|provider| provider.gives_files(location))
+    }
+
     /// How deep words look in `location`, a place that is no folder
     /// (`LocationProvider::depths`, ADR-108): `None` for a folder.
     pub fn depths(&self, location: &Location) -> Option<crate::location::Depths> {
@@ -4718,7 +4726,8 @@ mod builtin {
                 invocation.args["pane"] = serde_json::json!(pane);
                 app.dispatch(&invocation)
             },
-        );
+        )
+        .in_dialogs();
 
         c.register::<SelectArgs, _>(
             "core",
@@ -5449,6 +5458,7 @@ mod builtin {
                 )))
             },
         )
+        .in_dialogs()
         .plans();
 
         c.register::<TransferArgs, _>(
@@ -5689,6 +5699,7 @@ mod builtin {
                 }))
             },
         )
+        .in_dialogs()
         .plans();
 
         c.register::<TargetsArgs, _>(
@@ -5749,6 +5760,7 @@ mod builtin {
                 )))
             },
         )
+        .in_dialogs()
         .plans();
 
         c.register::<MkdirArgs, _>(
@@ -5911,7 +5923,8 @@ mod builtin {
                 .ok_or_else(nothing_to_undo)?;
                 Ok(replayed("undone", &result.entry_title, &result))
             },
-        );
+        )
+        .in_dialogs();
 
         c.register::<RedoArgs, _>(
             "core", Topic::Files,
@@ -5943,7 +5956,8 @@ mod builtin {
                 .ok_or_else(nothing_to_redo)?;
                 Ok(replayed("redone", &result.entry_title, &result))
             },
-        );
+        )
+        .in_dialogs();
 
         c.register::<NoArgs, _>(
             "core", Topic::Files,
@@ -5988,7 +6002,8 @@ mod builtin {
                     .ok_or_else(nothing_to_retry)?;
                 Ok(replayed("retried", &title, &result))
             },
-        );
+        )
+        .in_dialogs();
 
         c.register::<NoArgs, _>(
             "core", Topic::Files,

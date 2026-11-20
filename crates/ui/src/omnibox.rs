@@ -2725,6 +2725,9 @@ impl Shell {
                 let rows = answer
                     .rows
                     .iter()
+                    // What the window does not run (a dialog's, ADR-144) is
+                    // not offered: an action named, a tab to go to.
+                    .filter(|row| row.run.as_ref().is_none_or(|run| self.runs_here(&run.name)))
                     .cloned()
                     .map(|mut row| {
                         if !keep {

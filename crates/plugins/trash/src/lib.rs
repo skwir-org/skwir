@@ -537,6 +537,12 @@ impl LocationProvider for TrashProvider {
         true
     }
 
+    /// A trashed file is gone from where it was: never one to hand another
+    /// program as chosen (ADR-144, 3).
+    fn gives_files(&self, _location: &Location) -> bool {
+        false
+    }
+
     fn title(&self, location: &Location) -> Option<Words> {
         Some(match folder_of(location) {
             // A trashed folder's name is as it was.
