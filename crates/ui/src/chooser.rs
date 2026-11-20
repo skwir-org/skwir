@@ -31,7 +31,9 @@ use crate::theme::Theme;
 /// The folders each program last chose in (ADR-141, 7; ADR-144, 8), by
 /// its id, the host's programs (no id) under "": a table each, its
 /// `folders` newest first and when it last chose (`used`, seconds since
-/// 1970). A program before was given its one folder as a string.
+/// 1970). A folder is written as a path is, losslessly: its text, or its
+/// bytes where they are not UTF-8 (`os_path::PathArg`). A program before
+/// was given its one folder as a string.
 pub(crate) const FOLDERS_KEY: &str = "ui.chooser_folders";
 
 /// The folders a program's dialogs offer (ADR-144, 8).
@@ -43,34 +45,37 @@ const PROGRAMS_KEPT: usize = 50;
 /// The folders program `app` last chose in, newest first, as `kept` (the
 /// value of `FOLDERS_KEY`) holds them: only folders' paths (absolute).
 pub(crate) fn folders_of(kept: &toml::Table, app: &str) -> Vec<PathBuf> {
-    let folders: Vec<&str> = match kept.get(app) {
-        Some(toml::Value::String(one)) => vec![one.as_str()],
+    let folders: Vec<toml::Value> = match kept.get(app) {
+        Some(one @ toml::Value::String(_)) => vec![one.clone()],
         Some(toml::Value::Table(program)) => program
             .get("folders")
             .and_then(toml::Value::as_array)
-            .map(|folders| folders.iter().filter_map(toml::Value::as_str).collect())
+            .cloned()
             .unwrap_or_default(),
         _ => Vec::new(),
     };
     folders
         .into_iter()
-        .map(PathBuf::from)
+        .filter_map(|folder| folder.try_into::<skwir_core::os_path::PathArg>().ok())
+        .map(skwir_core::os_path::PathArg::into_inner)
         .filter(|folder| folder.is_absolute())
         .collect()
 }
 
 /// `kept` with `folder` the newest of program `app`'s, chosen at `now`:
 /// five folders a program at most, the fifty programs that chose last.
-fn with_folder(mut kept: toml::Table, app: &str, folder: &str, now: i64) -> toml::Table {
-    let mut folders: Vec<toml::Value> = vec![toml::Value::String(folder.to_owned())];
-    folders.extend(
-        folders_of(&kept, app)
-            .into_iter()
-            .filter_map(|kept| kept.to_str().map(str::to_owned))
-            .filter(|kept| kept != folder)
-            .take(FOLDERS_KEPT - 1)
-            .map(toml::Value::String),
-    );
+fn with_folder(mut kept: toml::Table, app: &str, folder: &Path, now: i64) -> toml::Table {
+    let written =
+        |folder: &Path| toml::Value::try_from(skwir_core::os_path::PathArg::from(folder)).ok();
+    let folders: Vec<toml::Value> = std::iter::once(folder.to_path_buf())
+        .chain(
+            folders_of(&kept, app)
+                .into_iter()
+                .filter(|kept| kept != folder)
+                .take(FOLDERS_KEPT - 1),
+        )
+        .filter_map(|folder| written(&folder))
+        .collect();
     let mut program = toml::Table::new();
     program.insert("folders".into(), toml::Value::Array(folders));
     program.insert("used".into(), toml::Value::Integer(now));
@@ -616,16 +621,24 @@ impl Shell {
     }
 
     /// The folder its program chose in, kept first of its folders for its
-    /// next dialog (ADR-141, 7; ADR-144, 8): the one shown, else the first
-    /// path's.
+    /// next dialog (ADR-141, 7; ADR-144, 8): saving, the one saved in (the
+    /// answer's); opening, the one shown, else the first path's.
     fn chooser_remember(&self, asked: &Asked, paths: &[PathBuf]) {
-        let folder = self.app.pane_dir(self.pane).ok().or_else(|| {
+        let answered_in = || {
             paths
                 .first()
                 .and_then(|p| p.parent())
                 .map(Path::to_path_buf)
-        });
-        let Some(folder) = folder.and_then(|f| f.to_str().map(str::to_owned)) else {
+        };
+        // Saving, where the answer saves: the folder selected for several
+        // files, a folder typed with a name.
+        let saves = matches!(asked.kind, Kind::Save { .. } | Kind::SaveFiles { .. });
+        let folder = if saves {
+            answered_in()
+        } else {
+            self.app.pane_dir(self.pane).ok().or_else(answered_in)
+        };
+        let Some(folder) = folder else {
             return;
         };
         let kept = self
@@ -1553,16 +1566,16 @@ mod tests {
         );
         assert!(folders_of(&kept, "relative").is_empty());
         assert!(folders_of(&kept, "org.example.None").is_empty());
-        let kept = with_folder(kept, "org.example.Old", "/home/a/New", 10);
+        let kept = with_folder(kept, "org.example.Old", Path::new("/home/a/New"), 10);
         assert_eq!(
             folders_of(&kept, "org.example.Old"),
             [PathBuf::from("/home/a/New"), PathBuf::from("/home/a/Old")]
         );
         let mut kept = kept;
         for at in 0..7 {
-            kept = with_folder(kept, "", &format!("/home/a/{at}"), 20 + at);
+            kept = with_folder(kept, "", Path::new(&format!("/home/a/{at}")), 20 + at);
         }
-        kept = with_folder(kept, "", "/home/a/3", 30);
+        kept = with_folder(kept, "", Path::new("/home/a/3"), 30);
         let host: Vec<String> = folders_of(&kept, "")
             .iter()
             .map(|f| f.display().to_string())
@@ -1581,13 +1594,31 @@ mod tests {
             kept = with_folder(
                 kept,
                 &format!("org.example.P{at}"),
-                "/home/a",
+                Path::new("/home/a"),
                 100 + i64::try_from(at).unwrap(),
             );
         }
         assert_eq!(kept.len(), PROGRAMS_KEPT);
         assert!(!kept.contains_key("org.example.Old"), "the oldest goes");
         assert!(kept.contains_key("org.example.P0"));
+        // A folder whose name is not UTF-8 is kept as its bytes, and read
+        // back as it was (CH-15).
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let latin = PathBuf::from(std::ffi::OsString::from_vec(b"/srv/caf\xe9".to_vec()));
+            let kept = with_folder(kept, "org.example.P0", &latin, 200);
+            assert_eq!(
+                folders_of(&kept, "org.example.P0"),
+                [latin, PathBuf::from("/home/a")]
+            );
+            let text = toml::to_string(&kept).unwrap();
+            let again: toml::Table = toml::from_str(&text).unwrap();
+            assert_eq!(
+                folders_of(&again, "org.example.P0")[0],
+                folders_of(&kept, "org.example.P0")[0]
+            );
+        }
     }
 
     /// The name saved under is the field's text as typed, its spaces kept,
