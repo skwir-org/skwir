@@ -109,7 +109,11 @@ if make 1 old 2>"$work/refused"; then
     fail "repository.py listed packages the key that signs did not sign"
 fi
 [ ! -e "$work/site" ] || fail "repository.py wrote the site, refusing packages another key signed"
-echo "ok: packages another key signed refused: $(head -1 "$work/refused" | cut -c1-120)"
+# Each package named with the key that signed it.
+stranger_id="$(fingerprint stranger | cut -c33- | tr 'A-F' 'a-f')"
+said="$(grep -m1 "(signed by key ID $stranger_id).*not signed by the key that signs the indexes" "$work/refused")" ||
+    fail "repository.py refused packages another key signed, but not for that: $(tail -1 "$work/refused")"
+echo "ok: packages another key signed refused: $(echo "$said" | cut -c1-120)"
 signed_by old
 make 1 old
 # skwir-repository 1 published, then made again holding another key under

@@ -367,7 +367,8 @@ gpg --armor --export <its fingerprint> > tools/package/repository/skwir.asc
 
 (`next.asc` for the key coming, below), then raise
 `tools/package/repository/version`, commit both and publish the
-repositories (with the next release, or alone from the last one's bundle).
+repositories (with the next release, or alone from the last one's bundle:
+its packages are signed by the same key).
 
 **A new key** reaches a system only through an index signed by a key it
 already has, and dnf refuses an index signed by two, so a change takes two
@@ -376,15 +377,19 @@ a new `skwir-repository` by hand):
 
 1. Make the new key as the first was and export it beside the old
    (`gpg --armor --export <new> > tools/package/repository/next.asc`),
-   raise the version, commit and publish. The old key still signs the
-   indexes, and the update brings the new one to every system that has the
-   old.
+   raise the version, commit and publish (with the next release, or alone
+   from the last one's bundle). The old key still signs the indexes, and
+   the update brings the new one to every system that has the old.
 2. After a grace period of months, which lets the systems that update
    rarely take the first step, put the new key in the old one's place
-   (`git mv tools/package/repository/next.asc
-   tools/package/repository/skwir.asc`), raise the version again, commit
-   and publish: the new key signs the indexes, and the update takes the
-   old one away.
+   (`git mv -f tools/package/repository/next.asc
+   tools/package/repository/skwir.asc`: it replaces the old file), raise
+   the version again and commit, before the tag of the release that
+   publishes it. That release's `.rpm` files are signed by the new key,
+   as the indexes are; a release made before is never published with it
+   (`just repositories` refuses its packages, the old key's), so this
+   step waits for a release. The new key signs the indexes, and the
+   update takes the old one away.
 
 `just repositories` signs with the key of `skwir.asc`, whose secret part
 must be in the keyring, and carries the key of `next.asc` beside it while

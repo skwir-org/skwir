@@ -176,12 +176,24 @@ def unfit(signing, coming, secret, now):
 
 def unsigned(rpms, public):
     """The `.rpm` files of `rpms` that the key of `public` did not sign, as
-    rpm reads them with that key alone."""
+    rpm reads them with that key alone, each with why: the key ID that
+    signed it, none, or a digest that fails."""
+    refused = {}
     with tempfile.TemporaryDirectory(prefix="skwir-rpmkeys-") as keyring:
         run("rpmkeys", "--dbpath", keyring, "--import", public)
-        said = {rpm: run("rpmkeys", "--dbpath", keyring, "--checksig", rpm, capture_output=True, text=True,
-                         check=False, env={**os.environ, "LC_ALL": "C"}).stdout for rpm in rpms}
-    return [rpm for rpm, line in said.items() if not line.rstrip().endswith(" signatures OK")]
+        for rpm in rpms:
+            said = run("rpmkeys", "--dbpath", keyring, "--checksig", "--verbose", rpm, capture_output=True,
+                       text=True, check=False, env={**os.environ, "LC_ALL": "C"}).stdout
+            # Each signature and digest, then its state: all OK, one a signature.
+            states = re.findall(r"^\s+(.*): (\w+)$", said, re.M)
+            signed = [re.search(r"Signature, key ID ([0-9a-f]+)$", what) for what, _ in states]
+            if other := next((m[1] for m, (_, state) in zip(signed, states) if m and state != "OK"), None):
+                refused[rpm] = f"signed by key ID {other}"
+            elif not any(signed):
+                refused[rpm] = "unsigned"
+            elif any(state != "OK" for _, state in states):
+                refused[rpm] = "a digest fails"
+    return refused
 
 
 def key_of(public):
@@ -497,9 +509,11 @@ def main():
     # Before anything is signed: dnf checks each package (`gpgcheck`).
     rpms = sorted(p for p in bundle.iterdir() if RPMS.fullmatch(p.name))
     if refused := unsigned(rpms, args.key):
-        sys.exit(f"{', '.join(p.name for p in refused)}: not signed by the key that signs the indexes"
-                 f" ({key}), and dnf checks each package: `release-build` signs them with the"
-                 " repositories' key in GnuPG's keyring (docs/RELEASING.md)")
+        named = ", ".join(f"{rpm.name} ({why})" for rpm, why in refused.items())
+        sys.exit(f"{named}: not signed by the key that signs the indexes ({key}, {args.key.name}), and dnf"
+                 " checks each package. `release-build` signs a release's with the key of skwir.asc at its tag:"
+                 " a release made before skwir.asc changed (a new key's second step) is never published by it,"
+                 " but by the release after (docs/RELEASING.md, A new key)")
     carried = [args.key, coming] if coming else [args.key]
     site = args.site.resolve()
     with tempfile.TemporaryDirectory(prefix="skwir-repositories-") as work:
