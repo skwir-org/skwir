@@ -56,7 +56,7 @@ open_with_file_manager = Gestionnaire de fichiers par défaut
 open_with_file_manager_another = Un autre programme
 
 # draft
-open_with_file_manager_description = Quelle application ouvre les dossiers pour tous les programmes : le même choix que « Toujours utiliser » d’Ouvrir avec sur un dossier, et que les réglages du bureau.
+open_with_file_manager_description = Quelle application ouvre les dossiers pour tous les programmes : le même choix que « Toujours utiliser » d’Ouvrir avec sur un dossier, et que les réglages du bureau.
 
 # draft
 open_with_file_manager_description_more = Avec Skwir choisi, Afficher dans le dossier d’un autre programme ouvre le dossier dans Skwir, ses fichiers sélectionnés, même quand Skwir n’est pas lancé.
@@ -68,10 +68,10 @@ open_with_file_manager_held = { $program } affiche encore les fichiers que d’a
 open_with_file_manager_list = Le gestionnaire de fichiers par défaut
 
 # draft
-open_with_file_manager_list_description = L’application qui ouvre les dossiers pour tous les programmes, telle que les réglages la listent : les applications qui ouvrent les dossiers, au choix, chacune avec le `open_with.set_default` qui la rend par défaut, et si Skwir affiche les fichiers que d’autres programmes montrent dans leur dossier. Répond de mémoire
+open_with_file_manager_list_description = L’application qui ouvre les dossiers pour tous les programmes, telle que les réglages la listent : les applications qui ouvrent les dossiers, au choix, chacune avec le `open_with.set_default` qui la rend par défaut, et si Skwir affiche les fichiers que d’autres programmes montrent dans leur dossier. Répond de mémoire
 
 # draft
-open_with_file_manager_not_installed = Skwir ne peut pas être choisi ici : son entrée de bureau n’est pas installée
+open_with_file_manager_not_installed = Skwir ne peut pas être choisi ici : son entrée de bureau n’est pas installée
 
 # draft
 open_with_file_manager_offer = Choisi, Skwir affiche aussi les fichiers que d’autres programmes montrent dans leur dossier

@@ -106,6 +106,40 @@ class Messages(unittest.TestCase):
             {"a": False, "b": True, "c": False, "d": False, "e": False, "f": False},
         )
 
+    def test_french_writes_its_own_spaces_beside_its_punctuation(self):
+        nbsp, narrow = " ", " "
+        source = "\n".join(
+            [
+                "# A comment writes as it likes : here ; there",
+                f"right = Aucun{nbsp}: rien{narrow}; vraiment{narrow}? oui{narrow}! «{narrow}nom{narrow}»",
+                "unspaced = 14:02, type:image, `?`",
+                "question = ? un caractère",
+                "plain = Aucun : rien",
+                f"swapped = Aucun{narrow}: rien{nbsp}; et ?",
+                "lines =",
+                "    ? au début d’une ligne",
+                "    puis { $n } : après un argument",
+                f"quoted = « nom{nbsp}»",
+            ]
+        )
+        problems = extract.spacing_problems(Path("sample/fr.ftl"), "fr", source)
+        self.assertEqual(
+            [problem.split(": ", 1)[0] for problem in problems],
+            [
+                "sample/fr.ftl:5:14",
+                "sample/fr.ftl:6:16",
+                "sample/fr.ftl:6:23",
+                "sample/fr.ftl:6:28",
+                "sample/fr.ftl:9:16",
+                "sample/fr.ftl:10:15",
+                "sample/fr.ftl:10:11",
+            ],
+        )
+        self.assertIn("`plain` wants a no-break space (U+00A0) before `:`", problems[0])
+        self.assertIn("`lines` wants", problems[4])
+        # Other languages write no such spaces here.
+        self.assertEqual(extract.spacing_problems(Path("sample/de.ftl"), "de", "a = Keine : nichts"), [])
+
     def test_the_program_s_own_catalogs_are_read_whole(self):
         # Every message begins a line of its own: each is found, and every
         # draft, marked on the line above it.

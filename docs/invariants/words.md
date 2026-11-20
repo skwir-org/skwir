@@ -353,6 +353,11 @@ sentence, never a sentence assembled from pieces.
     `Name`, a `Named`, a `Folder` or a `Path`, or said unquoted (`just words
     --check`; `tools/words/quoted`, which listed those written before the
     check, is empty, and only shrinks);
+  - a translation writes beside its punctuation the spaces its language
+    does, where it writes one there (French's no-break space before `:`,
+    its narrow one before `; ! ?` and `»` and after `«`,
+    `docs/glossary-fr.md`; `just words --check`): a plain space, where a
+    line may break, or the other no-break space is refused;
   - no catalog keeps an id the code no longer says;
   - the languages' shares counted and the record current; for a
     release, no language offered under 75% reviewed.

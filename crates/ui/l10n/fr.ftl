@@ -760,7 +760,7 @@ chooser_choose_folder = Choisissez d’abord un dossier
 chooser_filter = Fichiers affichés
 
 # draft
-chooser_folder_taken = Il y a un dossier nommé { $name } dans { $folder } : choisissez un autre dossier où enregistrer
+chooser_folder_taken = Il y a un dossier nommé { $name } dans { $folder } : choisissez un autre dossier où enregistrer
 
 # draft
 chooser_folders = Dossiers récents
@@ -991,25 +991,25 @@ commands_choose_option_description = Cocher ou décocher l’option du choix (To
 commands_chooser_accept = Répondre à la boîte de dialogue
 
 # draft
-commands_chooser_accept_description = Dans une fenêtre qui répond à la boîte de dialogue Ouvrir ou Enregistrer d’un autre programme : choisir ce qui est sélectionné, ou le nom saisi dans le dossier affiché, comme le programme l’a demandé
+commands_chooser_accept_description = Dans une fenêtre qui répond à la boîte de dialogue Ouvrir ou Enregistrer d’un autre programme : choisir ce qui est sélectionné, ou le nom saisi dans le dossier affiché, comme le programme l’a demandé
 
 # draft
 commands_chooser_cancel = Annuler la boîte de dialogue
 
 # draft
-commands_chooser_cancel_description = Dans une fenêtre qui répond à la boîte de dialogue Ouvrir ou Enregistrer d’un autre programme : ne rien choisir, et fermer la fenêtre
+commands_chooser_cancel_description = Dans une fenêtre qui répond à la boîte de dialogue Ouvrir ou Enregistrer d’un autre programme : ne rien choisir, et fermer la fenêtre
 
 # draft
 commands_chooser_choice = Régler un choix de la boîte de dialogue
 
 # draft
-commands_chooser_choice_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : régler son choix `id` sur `value`, true ou false pour un interrupteur, l’id d’une option pour une liste
+commands_chooser_choice_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : régler son choix `id` sur `value`, true ou false pour un interrupteur, l’id d’une option pour une liste
 
 # draft
 commands_chooser_filter = Afficher les fichiers d’un filtre
 
 # draft
-commands_chooser_filter_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : afficher les fichiers du filtre `index` du programme (à partir de 0), ou tous les fichiers sans lui
+commands_chooser_filter_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : afficher les fichiers du filtre `index` du programme (à partir de 0), ou tous les fichiers sans lui
 
 # draft
 commands_close_window = Fermer la fenêtre
@@ -1209,7 +1209,7 @@ commands_field_reference_description = Afficher sous le champ en cours de saisie
 commands_file_chooser_list = Ce qui répond aux boîtes de dialogue d’ouverture et d’enregistrement
 
 # draft
-commands_file_chooser_list_description = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, comme les Paramètres le présentent : les services du portail du bureau installés pour elles, chacun avec le `dialogs.choose` qui le choisit, et celui que sa configuration nomme. Répond de mémoire
+commands_file_chooser_list_description = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, comme les Paramètres le présentent : les services du portail du bureau installés pour elles, chacun avec le `dialogs.choose` qui le choisit, et celui que sa configuration nomme. Répond de mémoire
 
 # draft
 commands_file_chooser_put_back = Rétablir ce qui répondait aux boîtes de dialogue d’ouverture et d’enregistrement
@@ -2571,7 +2571,7 @@ commands_toolbar_submenu_description = Ouvrir un sous-menu du menu Plus de l’a
 commands_type_end = Arrêter de taper pour trouver
 
 # draft
-commands_type_end_description = Abandonner ce qui a été tapé dans la liste des fichiers pour atteindre un fichier par son nom : son étiquette s’en va, et le caractère suivant commence un nouveau nom
+commands_type_end_description = Abandonner ce qui a été tapé dans la liste des fichiers pour atteindre un fichier par son nom : son étiquette s’en va, et le caractère suivant commence un nouveau nom
 
 # draft
 commands_undo_history = Historique des annulations
@@ -7213,28 +7213,28 @@ settings_file_chooser_already_desktop = Le bureau choisit déjà ce qui répond 
 settings_file_chooser_applies = S’applique au prochain démarrage du portail du bureau, à la prochaine connexion
 
 # draft
-settings_file_chooser_chosen = Boîtes de dialogue Ouvrir et Enregistrer des autres programmes : { $chooser }, dès le prochain démarrage du portail du bureau
+settings_file_chooser_chosen = Boîtes de dialogue Ouvrir et Enregistrer des autres programmes : { $chooser }, dès le prochain démarrage du portail du bureau
 
 # draft
 settings_file_chooser_chosen_desktop = Le bureau choisit ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, dès le prochain démarrage du portail du bureau
 
 # draft
-settings_file_chooser_description = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, ceux qui en demandent une au bureau : les fenêtres de Skwir, ou les boîtes de dialogue d’un autre programme.
+settings_file_chooser_description = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, ceux qui en demandent une au bureau : les fenêtres de Skwir, ou les boîtes de dialogue d’un autre programme.
 
 # draft
-settings_file_chooser_description_more = Le portail du bureau lit ce réglage à son démarrage : un changement s’applique à la prochaine connexion. Les programmes qui dessinent leurs propres boîtes de dialogue les gardent.
+settings_file_chooser_description_more = Le portail du bureau lit ce réglage à son démarrage : un changement s’applique à la prochaine connexion. Les programmes qui dessinent leurs propres boîtes de dialogue les gardent.
 
 # draft
-settings_file_chooser_failed = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer n’a pas changé : { $error }
+settings_file_chooser_failed = Ce qui répond aux boîtes de dialogue Ouvrir et Enregistrer n’a pas changé : { $error }
 
 # draft
-settings_file_chooser_linked = Tenue par un autre programme : votre configuration du portail est un lien vers { $target }, que Skwir laisse tel quel. Faites le choix là
+settings_file_chooser_linked = Tenue par un autre programme : votre configuration du portail est un lien vers { $target }, que Skwir laisse tel quel. Faites le choix là
 
 # draft
-settings_file_chooser_not_installed = Skwir ne peut pas être choisi ici : son fichier de portail n’est pas installé
+settings_file_chooser_not_installed = Skwir ne peut pas être choisi ici : son fichier de portail n’est pas installé
 
 # draft
-settings_file_chooser_pending = Modifié depuis le démarrage du portail du bureau : cela s’applique à son prochain démarrage, à la prochaine connexion
+settings_file_chooser_pending = Modifié depuis le démarrage du portail du bureau : cela s’applique à son prochain démarrage, à la prochaine connexion
 
 # draft
 settings_file_chooser_put_back = Ce qui répondait aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes est rétabli, dès le prochain démarrage du portail du bureau
@@ -7246,7 +7246,7 @@ settings_file_chooser_put_back_gone = Ce choix de ce qui répond aux boîtes de 
 settings_file_chooser_reading = Lecture de la configuration du portail du bureau…
 
 # draft
-settings_file_chooser_refused = Aucun : le portail du bureau n’affiche aucune boîte de dialogue
+settings_file_chooser_refused = Aucun : le portail du bureau n’affiche aucune boîte de dialogue
 
 # draft
 settings_file_chooser_unnamed = Comme le bureau le choisit

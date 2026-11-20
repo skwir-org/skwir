@@ -52,6 +52,11 @@ words, a `Folder` or a `Path`, or is said unquoted. Those the English quoted whe
 came were listed in `tools/words/quoted`, and a sweep took them all out:
 the list never grows, and a line there that quotes nothing any more is
 refused too.
+A translation writes the spaces its language puts beside its punctuation,
+where it puts one there at all (French's, `docs/glossary-fr.md`: a no-break
+space before `:`, a narrow one before `; ! ?` and `»` and after `«`): a
+plain space there, where a line may break, or the other no-break space, is
+refused in either mode.
 Messages of tests (in a tests.rs or a tests/ folder, or whose id begins
 with `test_`) are not a crate's. Also refused: a plugin whose
 `enabled_by_default` answers anything but a literal, and a record naming a
@@ -107,6 +112,19 @@ QUOTED = ROOT / "tools" / "words" / "quoted"
 # Quotes the English writes, on one line, and an argument inside them.
 QUOTES = re.compile(r'“[^”\n]*”|‘[^’\n]*’|"[^"\n]*"|«[^»\n]*»')
 ARGUMENT = re.compile(r"\{ *\$([a-z0-9_]+) *\}")
+
+# The spaces a language writes beside its punctuation (its glossary's
+# typography, `docs/glossary-<language>.md`), each refusing the other kinds
+# of space where a message writes one there: after a word, a placeable or a
+# quote, never a line's indent. No space at all is the message's own
+# (`14:02`, `type:`, a key's `?`).
+SPACES = {
+    "fr": [
+        (re.compile(r"(?<=\S)[  ](?=:)"), "a no-break space (U+00A0) before `:`"),
+        (re.compile(r"(?<=\S)[  ](?=[;!?»])"), "a narrow no-break space (U+202F) before `; ! ?` and `»`"),
+        (re.compile(r"(?<=«)[  ]"), "a narrow no-break space (U+202F) after `«`"),
+    ],
+}
 
 
 def quoted_arguments(english):
@@ -331,6 +349,30 @@ def messages_of(source):
             braces(line[message.end() :])
         comment = []
     return found
+
+
+def spacing_problems(path, language, source):
+    """Where the catalog `source` of `language`, at `path`, writes another
+    space beside its punctuation than its language does (`SPACES`): in its
+    messages' text, never their ids or comments."""
+    problems, id_ = [], None
+    for number, line in enumerate(source.splitlines(), 1):
+        if line.startswith("#") or not line.strip():
+            continue
+        message = MESSAGE.match(line)
+        if message:
+            id_, text, start = message.group(1), line[message.end() :], message.end()
+        else:
+            text, start = line, 0
+        # Fluent's own space after `=` is no message's.
+        skipped = len(text) - len(text.lstrip(" ")) if message else 0
+        for spaced, wanted in SPACES.get(language, ()):
+            for found in spaced.finditer(text, skipped):
+                problems.append(
+                    f"{shown(path)}:{number}:{start + found.start() + 1}: `{id_}` wants {wanted}"
+                    f" (docs/glossary-{language}.md)"
+                )
+    return problems
 
 
 def on_by_default(folder, name):
@@ -640,6 +682,11 @@ def main():
     problems += record_problems
     listed, listed_problems = read_quoted(QUOTED)
     problems += listed_problems + quoted_problems(found, listed)
+    for folder in sorted(found):
+        for language in SPACES:
+            path = folder / "l10n" / f"{language}.ftl"
+            if path.exists():
+                problems += spacing_problems(path, language, path.read_text())
     known = {share["language"] for share in language_shares}
     problems += [
         f"{shown(OFFERED)}: {tag} is no language a catalog is in" for tag in record if tag not in known

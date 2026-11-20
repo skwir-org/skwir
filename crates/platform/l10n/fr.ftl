@@ -581,7 +581,7 @@ places_udisks_unrun = udisksctl n’a pas pu être lancé : { $error }
 portals_changed_since = le fichier a été modifié depuis que Skwir l’a écrit, et il est gardé tel quel
 
 # draft
-portals_linked = c’est un lien vers { $target }, qu’un autre programme tient : faites le choix là
+portals_linked = c’est un lien vers { $target }, qu’un autre programme tient : faites le choix là
 
 # draft
 portals_no_config_folder = Il n’y a aucun dossier de configuration où écrire ce choix
@@ -732,7 +732,7 @@ process_too_much_input = { $program } : entrée trop grande
 process_too_much_output = { $program } : sortie excessive
 
 # draft
-recent_read_only = La liste des fichiers récemment utilisés est en lecture seule ; modifiez-la là où elle est gérée
+recent_read_only = La liste des fichiers récemment utilisés est en lecture seule ; modifiez-la là où elle est gérée
 
 # draft
 rich_preview_page_no_size = la page n’a pas de taille
