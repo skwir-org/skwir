@@ -1119,9 +1119,16 @@ hl.window_rule({
 })
 ```
 
-On i3 (and on sway, for its X11 windows),
-`for_window [class="org.skwir.skwir" window_role="file chooser"] floating enable`;
-on sway, its own windows' tags are in `swaymsg -t get_tree` (`tag`).
+On sway (1.12, whose `tag` criterion matches a Wayland window's tag),
+`for_window [app_id="org.skwir.skwir" tag="file chooser"] floating enable`;
+`swaymsg -t get_tree` shows each window's `tag`. On i3, and on sway for
+X11 windows,
+`for_window [class="org.skwir.skwir" window_role="file chooser"] floating enable`.
+On KDE Plasma windows float already; a window rule (System Settings ›
+Window Management › Window Rules) matching the window class
+`org.skwir.skwir` and the window tag `file chooser` (KWin 6.5 and later;
+the window role for X11 windows) can keep the dialog above others, or
+place and size it.
 
 **Before removing Skwir**, choose another default file manager here, and
 your desktop's own dialogs or another's: Skwir then removes its file
