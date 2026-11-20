@@ -26,6 +26,9 @@ pub const ASK_AFTER: i64 = 2;
 pub const ASKS: u32 = 3;
 /// Days between two notices of a new version, unless one is important.
 pub const SPACING: i64 = 14;
+/// What an earlier build kept that no build reads any more: dropped as it
+/// is read, never carried on with what a later one keeps (`later`).
+const RETIRED: &[&str] = &["etag"];
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -72,7 +75,19 @@ pub struct Telling {
 impl Kept {
     /// What the state file holds, or nothing kept yet.
     pub fn read(settings: &skwir_core::settings::Settings) -> Kept {
-        settings.get::<Kept>(KEY).unwrap_or_default()
+        settings
+            .get::<toml::Value>(KEY)
+            .and_then(Kept::of_value)
+            .unwrap_or_default()
+    }
+
+    /// What `value` keeps, what no build reads any more left out.
+    fn of_value(value: toml::Value) -> Option<Kept> {
+        let mut kept = value.try_into::<Kept>().ok()?;
+        for key in RETIRED {
+            kept.later.remove(*key);
+        }
+        Some(kept)
     }
 
     /// What the state file holds now, if it holds it: another skwir's
@@ -81,9 +96,7 @@ impl Kept {
     /// Reads the disk: on a worker, never under the plugin's lock of what
     /// is kept.
     pub fn on_disk(settings: &skwir_core::settings::Settings) -> Option<Kept> {
-        settings
-            .kept_on_disk(KEY)
-            .and_then(|theirs| theirs.try_into::<Kept>().ok())
+        settings.kept_on_disk(KEY).and_then(Kept::of_value)
     }
 
     /// Written back into the state file (saved by the caller).
@@ -98,9 +111,16 @@ impl Kept {
     /// same state file: two releases side by side, ADR-115), merged field
     /// by field the one way each moves: the earliest day first seen, the
     /// most asks and the last day asked, answered by either, the later
-    /// check's answer, the newest version told with its day, the highest
-    /// version run, and what a later skwir keeps. Neither takes back what
-    /// the other kept.
+    /// check's answer (of two the same day, the one naming the newer
+    /// version), the newest version told with its day, the highest version
+    /// run, and what a later skwir keeps. Neither takes back what the other
+    /// kept, whichever merges which.
+    ///
+    /// No lock is held between processes: one that writes the state file
+    /// between another's read of it (`on_disk`) and that one's save takes
+    /// back what it wrote there, though not from its memory, which its
+    /// next save of this key writes again. The two moments are a save
+    /// apart; at worst, What's new or a notice is said once more.
     #[must_use]
     pub fn merged(mut self, other: &Kept) -> Kept {
         let version = |text: &Option<String>| text.as_deref().and_then(Version::parse);
@@ -111,7 +131,14 @@ impl Kept {
         self.asked = self.asked.max(other.asked);
         self.asked_on = self.asked_on.max(other.asked_on);
         self.answered |= other.answered;
-        if other.checked_on > self.checked_on {
+        let answer = |kept: &Kept| {
+            (
+                kept.checked_on,
+                version(&kept.latest),
+                version(&kept.important_since),
+            )
+        };
+        if answer(other) > answer(&self) {
             self.checked_on = other.checked_on;
             self.latest.clone_from(&other.latest);
             self.important_since.clone_from(&other.important_since);
@@ -130,14 +157,21 @@ impl Kept {
         for (key, value) in &other.later {
             self.later.insert(key.clone(), value.clone());
         }
+        for key in RETIRED {
+            self.later.remove(*key);
+        }
         self
     }
 
-    /// What is kept as of `today`: a day kept after it (a clock once set
-    /// ahead, a dead battery's, a machine's started before its clock was
-    /// set) is read as today, so the question and the notices wait no
-    /// longer than they would have. Called on what was read, before it
-    /// decides anything, so the day is written back so.
+    /// What is kept as of `today`: a day kept more than one after it (a
+    /// clock once set ahead, a dead battery's) is taken back to today, and
+    /// written so, so the question and the notices wait no longer than
+    /// they would have. One a day after it (a clock behind for a moment: a
+    /// boot before it is set, west of UTC around midnight) is kept as it
+    /// is, and read as today where deciding (`asks`, `tells`,
+    /// `checked_today`): once the clock is right again, nothing is asked or
+    /// checked twice that day. Called on what was read, before it decides
+    /// anything.
     pub fn as_of(&mut self, today: i64) {
         for day in [
             &mut self.first_seen,
@@ -148,7 +182,9 @@ impl Kept {
         .into_iter()
         .flatten()
         {
-            *day = (*day).min(today);
+            if *day > today + 1 {
+                *day = today;
+            }
         }
     }
 
@@ -158,10 +194,16 @@ impl Kept {
     pub fn asks(&self, today: i64) -> bool {
         !self.answered
             && self.asked < ASKS
-            && self.asked_on != Some(today)
+            && self.asked_on.is_none_or(|day| day < today)
             && self
                 .first_seen
-                .is_some_and(|first| today >= first + ASK_AFTER)
+                .is_some_and(|first| today >= first.min(today) + ASK_AFTER)
+    }
+
+    /// Whether the day's check got its answer `today` (or on a day kept
+    /// after it: `as_of`).
+    pub fn checked_today(&self, today: i64) -> bool {
+        self.checked_on.is_some_and(|day| day >= today)
     }
 
     /// The last answer's newest version, and the newest important one.
@@ -187,7 +229,7 @@ impl Kept {
         let urgent = important.is_some_and(|important| told.is_none_or(|told| told < important));
         let spaced = self
             .told_on
-            .is_none_or(|told_on| today - told_on >= SPACING);
+            .is_none_or(|told_on| today - told_on.min(today) >= SPACING);
         (urgent || spaced).then_some(Telling {
             version: latest,
             important: important.is_some(),
@@ -371,6 +413,32 @@ mod tests {
         assert_eq!(earlier, kept);
     }
 
+    /// A clock behind for a moment (a boot before it is set) writes no day
+    /// back: asked and checked on day 100, read on day 99, then on 100
+    /// again, nothing is asked or checked twice, and the next day asks.
+    #[test]
+    fn a_clock_behind_for_a_moment_asks_and_checks_nothing_twice() {
+        let mut kept = Kept {
+            first_seen: Some(90),
+            asked: 1,
+            asked_on: Some(100),
+            checked_on: Some(100),
+            told: Some("0.6.0".into()),
+            told_on: Some(100),
+            latest: Some("0.6.1".into()),
+            ..Kept::default()
+        };
+        let before = kept.clone();
+        kept.as_of(99);
+        assert_eq!(kept, before, "a day ahead is kept as it is");
+        assert!(!kept.asks(99) && kept.checked_today(99));
+        assert!(!kept.asks(100) && kept.checked_today(100));
+        assert!(kept.asks(101) && !kept.checked_today(101));
+        let running = Version(0, 5, 1);
+        assert_eq!(kept.tells(running, 99 + SPACING), None, "spaced from 100");
+        assert!(kept.tells(running, 100 + SPACING).is_some());
+    }
+
     #[test]
     fn what_is_new_is_said_once_and_never_on_a_first_run() {
         let mut kept = Kept::default();
@@ -460,5 +528,49 @@ mod merge_tests {
         assert_eq!(newer.clone().merged(&older), merged, "either way");
         assert_eq!(merged.clone().merged(&merged), merged, "once is enough");
         assert_eq!(older.clone().merged(&Kept::default()), older);
+    }
+
+    /// Two checks the same day: the answer naming the newer version is
+    /// kept, whichever merges which, with its important release.
+    #[test]
+    fn of_two_checks_the_same_day_the_newer_answer_is_kept() {
+        let morning = Kept {
+            checked_on: Some(20),
+            latest: Some("0.6.1".into()),
+            important_since: Some("0.6.1".into()),
+            ..Kept::default()
+        };
+        let evening = Kept {
+            checked_on: Some(20),
+            latest: Some("0.6.2".into()),
+            ..Kept::default()
+        };
+        assert_eq!(morning.clone().merged(&evening), evening);
+        assert_eq!(evening.clone().merged(&morning), evening);
+        let important = Kept {
+            important_since: Some("0.6.2".into()),
+            ..evening.clone()
+        };
+        assert_eq!(evening.clone().merged(&important), important);
+        assert_eq!(important.clone().merged(&evening), important);
+    }
+
+    /// What no build reads any more (an earlier build's `etag`) is dropped
+    /// as it is read and as it is merged; what a later build keeps stays.
+    #[test]
+    fn what_no_build_reads_is_dropped_and_a_later_ones_kept() {
+        let mut table = toml::Table::new();
+        table.insert("etag".into(), toml::Value::String("\"a\"".into()));
+        table.insert("to_come".into(), toml::Value::Integer(1));
+        let read = Kept::of_value(toml::Value::Table(table.clone())).unwrap();
+        assert!(!read.later.contains_key("etag"));
+        assert!(read.later.contains_key("to_come"));
+        let other = Kept {
+            later: table.into_iter().collect(),
+            ..Kept::default()
+        };
+        let merged = Kept::default().merged(&other);
+        assert!(!merged.later.contains_key("etag"));
+        assert!(merged.later.contains_key("to_come"));
     }
 }

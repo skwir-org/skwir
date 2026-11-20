@@ -738,7 +738,7 @@ impl Inner {
             Some(_) => {
                 let mut held = Kept::read(&app.settings);
                 held.as_of(today);
-                let checks = tells(app) && held.checked_on != Some(today) && self.checks_daily();
+                let checks = tells(app) && !held.checked_today(today) && self.checks_daily();
                 (held.asks(today) && app.looked_at_own(), checks)
             }
             None => (false, false),
@@ -791,7 +791,7 @@ impl Inner {
                     kept.asked_on = Some(today);
                     self.ask(app, channel, here.and_then(|here| here.family));
                 }
-                check = checks && kept.checked_on != Some(today);
+                check = checks && !kept.checked_today(today);
             }
             let changed = kept != before;
             if changed {

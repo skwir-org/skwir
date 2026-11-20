@@ -408,11 +408,30 @@ it trusts a package by its signed index. The user chose signing.
   published unsigned with `skwir-repository` 1, are never listed again.
 - **A change of key** (3.5) is unchanged: the packages are signed by the
   key that signs the indexes, the key coming carried beside it.
+- **What rpm keeps of a key** (the review's PK-4, tried on Fedora 44:
+  rpm 6.0.2, dnf5 5.4.8): rpm keeps a key as dnf first imported it.
+  Extended, the key reached `/etc/pki/rpm-gpg` through `skwir-repository`
+  and never rpm: once its first expiry had passed, a package signed then
+  was refused ("Problem occurred when opening the package"; dnf imports
+  a key only when rpm has none). A key no longer carried stayed trusted by
+  rpm, and by dnf's keys for the index, kept with its cache. A scriptlet
+  cannot change rpm's keys (the transaction's lock: "can't create
+  transaction lock"). So `skwir-repository` 2's `.rpm` carries
+  `/usr/libexec/skwir-repository/keys`, which its `%posttrans` starts
+  apart and which waits for the transaction to end: each key it carries
+  that rpm holds is imported again (rpm 6 takes the newer copy), and each
+  key `tools/package/repository/retired` names is let go of, by rpm and
+  in dnf's keys for the index. dnf's and PackageKit's own copies of those
+  are removed where they are found, untried. The update every Fedora
+  system takes from the published 1 (unsigned, `gpgcheck=0`) to 2 is
+  tried from 1's own file, then `skwir` installed under 2's
+  `gpgcheck=1`, its key imported.
 - **Removing `skwir-repository`** takes its repository file and key
   file away. A key dnf imported into rpm's own keyring (`gpg-pubkey`)
   stays there, as for any repository whose packages dnf checked: `rpm -e
   gpg-pubkey-<id>` removes it. A package's scriptlet cannot, while the
-  transaction holds rpm's database.
+  transaction holds rpm's database, and the helper above goes with the
+  package.
 - **Checked**: `just repository-check`, its packages signed again by
   each step's throwaway key. Fedora 44's rpm reads `skwir` downloaded
   through the repository as signed by the key `skwir-repository`
@@ -466,3 +485,15 @@ it trusts a package by its signed index. The user chose signing.
   `?package=` is left out and the site guesses from the browser, which
   rarely names the distribution. `#repository` alone is what older pages
   and bookmarks read, and the site still takes it.
+- **Two copies and the clock** (`Kept`). Of two checks on the same day,
+  the merge keeps the answer naming the newer version, whichever merges
+  which. What no build reads any more (an earlier build's `etag`) is
+  dropped as it is read, never carried on with what a later build
+  keeps. No lock is held between processes: what one writes between
+  another's read of the state file and that one's save is taken back
+  from the file, not from its memory, which writes it again at its next
+  save of the key; at worst a notice is said once more. A day kept one
+  after today (a clock behind for a moment, a boot before it is set) is
+  read as today where deciding and never written back, so nothing is
+  asked or checked twice once the clock is right; only a day further
+  ahead is taken back to today.
