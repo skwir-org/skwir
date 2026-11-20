@@ -285,9 +285,13 @@ pub fn layer(grab: &Grab, moves: Moves, left: bool) -> impl IntoElement {
             grab.0.movable.set(movable);
             // The direction the box it moves is laid out in, its sibling's.
             let rtl = window.layout_direction().is_rtl();
+            // A selection's I-beam goes with its drag past the pages' edges,
+            // around and between them.
             if grab.grabbing() {
                 window.set_cursor_style(CursorStyle::ClosedHand, &hitbox);
-            } else if left && movable && !grab.selecting() {
+            } else if grab.selecting() {
+                window.set_cursor_style(CursorStyle::IBeam, &hitbox);
+            } else if left && movable {
                 window.set_cursor_style(CursorStyle::OpenHand, &hitbox);
             }
             let (pressed, hit) = (grab.clone(), hitbox.clone());

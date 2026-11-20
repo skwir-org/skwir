@@ -72,6 +72,49 @@ pub fn selects_at(drags: bool, page: &PageContent, x: f32, y: f32) -> Option<usi
         .position(|ch| ch.bounds.height > 0. && ch.bounds.contains(x, y))
 }
 
+/// The cursor a page drawn at `image` asks for with the pointer at `at`.
+/// While a press holds the pages, none: the hand closed on them is the
+/// layer's, over a link or text too; while one selects, the I-beam,
+/// wherever it goes. Else a link's pointing hand, the I-beam where a press
+/// selects, and elsewhere the open hand where the pages can move. A page
+/// not under the pointer asks for nothing, and looks for nothing under it.
+/// Asked at paint and at each move of the pointer, which draws again only
+/// where the answer changes (gpui sets a cursor only after a draw, or as
+/// the pointer goes onto another hitbox).
+fn cursor_at(
+    grab: &crate::elements::pan::Grab,
+    page: &PageContent,
+    drags: bool,
+    image: Bounds<Pixels>,
+    at: gpui::Point<Pixels>,
+) -> Option<gpui::CursorStyle> {
+    if grab.grabbing() {
+        return None;
+    }
+    if grab.selecting() {
+        return Some(gpui::CursorStyle::IBeam);
+    }
+    if !image.contains(&at) {
+        return None;
+    }
+    let (x, y) = share(image, at);
+    if page.links.iter().any(|link| link.bounds.contains(x, y)) {
+        Some(gpui::CursorStyle::PointingHand)
+    } else if selects_at(drags, page, x, y).is_some() {
+        Some(gpui::CursorStyle::IBeam)
+    } else {
+        grab.movable().then_some(gpui::CursorStyle::OpenHand)
+    }
+}
+
+/// Where `at` is on a page drawn at `image`: its share of the page's width
+/// and height.
+fn share(image: Bounds<Pixels>, at: gpui::Point<Pixels>) -> (f32, f32) {
+    let x = f32::from(at.x - image.origin.x) / f32::from(image.size.width).max(1.);
+    let y = f32::from(at.y - image.origin.y) / f32::from(image.size.height).max(1.);
+    (x, y)
+}
+
 pub fn fitted_rect(
     width: f32,
     height: f32,
@@ -157,35 +200,13 @@ impl Element for DocumentElement {
         _: &mut App,
     ) {
         let image_bounds = prepaint.image;
-        let mouse = window.mouse_position();
-        let x =
-            f32::from(mouse.x - image_bounds.origin.x) / f32::from(image_bounds.size.width).max(1.);
-        let y = f32::from(mouse.y - image_bounds.origin.y)
-            / f32::from(image_bounds.size.height).max(1.);
-        // While a press holds the pages, the hand closed on them is the
-        // layer's, over a link or text too; while one selects, the I-beam
-        // shows wherever it goes. Else a link's pointing hand, the I-beam
-        // over a character a press selects from, and elsewhere the open
-        // hand, where the pages can move. Only the page under the pointer
-        // looks for what is under it.
-        let cursor = if self.grab.grabbing() {
-            None
-        } else if self.grab.selecting() {
-            Some(gpui::CursorStyle::IBeam)
-        } else if !image_bounds.contains(&mouse) {
-            None
-        } else if self
-            .page
-            .links
-            .iter()
-            .any(|link| link.bounds.contains(x, y))
-        {
-            Some(gpui::CursorStyle::PointingHand)
-        } else if selects_at(self.drags, &self.page, x, y).is_some() {
-            Some(gpui::CursorStyle::IBeam)
-        } else {
-            self.grab.movable().then_some(gpui::CursorStyle::OpenHand)
-        };
+        let cursor = cursor_at(
+            &self.grab,
+            &self.page,
+            self.drags,
+            image_bounds,
+            window.mouse_position(),
+        );
         if let Some(cursor) = cursor {
             window.set_cursor_style(cursor, &prepaint.hitbox);
         }
@@ -218,13 +239,7 @@ impl Element for DocumentElement {
                 }
             }
         });
-        let coordinates = move |p: gpui::Point<Pixels>| {
-            let x =
-                f32::from(p.x - image_bounds.origin.x) / f32::from(image_bounds.size.width).max(1.);
-            let y = f32::from(p.y - image_bounds.origin.y)
-                / f32::from(image_bounds.size.height).max(1.);
-            (x, y)
-        };
+        let coordinates = move |p: gpui::Point<Pixels>| share(image_bounds, p);
         let callback = self.on_pointer.clone();
         let hitbox = prepaint.hitbox.clone();
         let (grab, drags, page) = (self.grab.clone(), self.drags, self.page.clone());
@@ -249,17 +264,22 @@ impl Element for DocumentElement {
             },
         );
         let callback = self.on_pointer.clone();
-        let selecting = self.grab.clone();
-        // A drag that moves the pages is the layer's: the page has nothing
-        // to select as it goes.
+        let (grab, page) = (self.grab.clone(), self.page.clone());
         window.on_mouse_event(
             move |ev: &MouseMoveEvent, phase: DispatchPhase, window, cx| {
-                if phase.bubble()
-                    && ev.pressed_button == Some(MouseButton::Left)
-                    && selecting.selecting()
-                {
+                if !phase.bubble() {
+                    return;
+                }
+                // A drag that moves the pages is the layer's: the page has
+                // nothing to select as it goes.
+                if ev.pressed_button == Some(MouseButton::Left) && grab.selecting() {
                     let (x, y) = coordinates(ev.position);
                     callback("move", x, y, window, cx);
+                }
+                // Onto a link, a line of text or the room beside them, or
+                // off the page: drawn again for its cursor, once.
+                if cursor_at(&grab, &page, drags, image_bounds, ev.position) != cursor {
+                    window.refresh();
                 }
             },
         );
@@ -366,6 +386,53 @@ mod tests {
         assert_eq!(selects_at(false, &page, 0.51, 0.1), None);
         // Where the drag across text moves the pages, nothing selects.
         assert_eq!(selects_at(true, &page, 0.11, 0.11), None);
+    }
+
+    /// The cursor is asked for where the pointer is, by one function at
+    /// paint and at each move: a page that is not under it asks for none.
+    #[test]
+    fn the_cursor_is_what_is_under_the_pointer() {
+        use crate::elements::pan::Grab;
+        use gpui::CursorStyle;
+        use skwir_core::document::{Destination, Link, TextChar};
+        let page = PageContent {
+            page: 1,
+            width: 100.,
+            height: 100.,
+            chars: vec![TextChar {
+                text: "a".into(),
+                bounds: Rect {
+                    x: 0.1,
+                    y: 0.1,
+                    width: 0.1,
+                    height: 0.1,
+                },
+            }],
+            links: vec![Link {
+                bounds: Rect {
+                    x: 0.5,
+                    y: 0.5,
+                    width: 0.2,
+                    height: 0.1,
+                },
+                destination: Destination::Page(2),
+            }],
+        };
+        // Drawn at (100, 100), 100 px square: a share is a pixel past 100.
+        let image = Bounds::new(point(px(100.), px(100.)), size(px(100.), px(100.)));
+        let at = |x: f32, y: f32| point(px(100. + x), px(100. + y));
+        let grab = Grab::default();
+        let cursor = |at| cursor_at(&grab, &page, false, image, at);
+        assert_eq!(cursor(at(15., 15.)), Some(CursorStyle::IBeam), "text");
+        assert_eq!(cursor(at(60., 55.)), Some(CursorStyle::PointingHand));
+        assert_eq!(cursor(at(90., 90.)), None, "the room, nothing to move");
+        assert_eq!(cursor(at(-50., 15.)), None, "another page's");
+        // Where a drag across the text moves the pages, no I-beam.
+        assert_eq!(cursor_at(&grab, &page, true, image, at(15., 15.)), None);
+        // A selection's I-beam goes wherever its drag does.
+        grab.select(at(15., 15.));
+        assert_eq!(cursor(at(-50., 15.)), Some(CursorStyle::IBeam));
+        assert_eq!(cursor(at(60., 55.)), Some(CursorStyle::IBeam));
     }
 
     #[test]

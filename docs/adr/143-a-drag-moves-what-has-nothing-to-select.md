@@ -9,7 +9,9 @@ linted for Windows (`just check-windows`); macOS's check leaves the UI
 out. Amended the same day after review: a press on a page where no
 character of its text is under it moves the pages (decisions 1 and 2),
 as nothing was selected from there; the I-beam shows only over
-characters (5).
+characters (5). Amended on 2026-11-20 after the review before the
+release: the cursor follows the pointer within a page, and a
+selection's I-beam goes beside the pages (5).
 
 ## Context
 
@@ -65,7 +67,10 @@ characters (5).
    taken once (a guard: no two layers share a grab). The hand shows open
    where a drag would move something (over a page, where no character or
    link is), and closed while it does; the I-beam shows only over
-   characters, and wherever a selection's drag goes, with no hand. The
+   characters, and wherever a selection's drag goes (the layer asks for
+   it too, beside the pages), with no hand. Each follows the pointer: a
+   move onto a link, text or the room beside them draws once for its
+   cursor (`document::cursor_at`; amended). The
    layer takes a press only where what it moves can move, and draws
    only for what changes (a hand, an offset held within its bounds).
 6. **A film keeps its click**: a click plays or pauses it, so only the

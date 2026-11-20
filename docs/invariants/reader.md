@@ -149,9 +149,15 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   on its page. A page's hitbox is the page drawn, not the letterbox
   around it: a press there is the layer's. While a press holds the
   pages, no page sets a cursor (the layer's closed hand shows); while
-  one selects, the I-beam shows over every page; else a link's is the
-  pointing hand, a character's the I-beam, and the rest of the page the
-  open hand where the pages can move.
+  one selects, the I-beam shows wherever it goes, over every page and
+  the layer around them; else a link's is the pointing hand, a
+  character's the I-beam, and the rest of the page the open hand where
+  the pages can move. The cursor is asked for where the pointer is, at
+  paint and at each move alike (`document::cursor_at`): gpui sets it
+  only after a draw or as the pointer goes onto another hitbox, and a
+  page is one hitbox, so a move that changes the answer (onto a link or
+  text, off them) asks for a frame, once; a move that does not draws
+  nothing.
 - **A page's press is its own only while the grab holds it**
   (`Grab::held_over`). A page is a row of a virtual list: one the pages
   moved out from under the press (or the wheel took away) no longer
