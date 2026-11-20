@@ -156,10 +156,16 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   to its keeper. Home Manager's `programs.skwir.fileChooser.enable` sets it.
 - **A dialog's window kept to finding and choosing** (ADR-144): it offers
   places, the address, search, tags, views, the preview and Properties, the
-  shelf, and only New Folder, Rename, Move to Trash, the clipboard and Undo
-  among what changes files; no tabs, split, terminal, pinned player,
-  Activity, Settings, Open With or Trash, their keys doing nothing there,
-  and Ctrl+Q cancels the dialog alone. The dialogs keep a layout of their
+  shelf; of what changes files, New Folder, Rename, Move to Trash, the
+  clipboard and Paste, a file's tags, rating and comment, and Undo, Redo
+  and Retry of what that dialog did alone. Tabs, the split, the terminal,
+  the pinned player, Activity, Settings, Usage, Open With, printing, the
+  commands of plugins from outside and the Trash place are gone from its
+  menus, buttons, palette, F1 and links, their keys doing there what they
+  would unbound; a place opened in a tab opens in place; Enter and
+  Shift+Enter answer with what they name, never opening another program;
+  what the dialog's own action asks (a password, names taken) is asked in
+  it; Ctrl+Q cancels the dialog alone. The dialogs keep a layout of their
   own (the first takes your window's view and no panel) and the size you
   leave them at, a grid for a program asking for pictures or films;
   opening files, Recent comes first and is where a program with no folder

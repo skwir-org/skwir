@@ -1220,18 +1220,28 @@ dialog alone.
 ## A dialog's window offers what finds and chooses (ADR-144, 2026-11-20)
 
 On the user's ask, before 0.6.0: a window answering another program's
-dialog offers each command by its topic unless it says otherwise
-(`CommandSpec::offered_in_dialogs`; one answer, `Shell::runs_here`, for
-keys, menus, buttons, the palette and the address field's actions): no
-tabs, split, terminal, pinned player, Activity, Settings, Open With, lens
-or Trash (`LocationProvider::gives_files`). The dialogs keep their own
-layout (`ui.chooser_session`), a view apart for pictures and films;
-saving, the filter swaps the extension; Recent first and the start where
-nothing names a folder (`LocationProvider::lists_recent`), what is chosen
-added to `recently-used.xbel` (`skwir_platform::recent`); a program's five
-recent folders in the bar; files dimmed while choosing folders
-(`Admits::folders`); a drop gone to, never copied; the answer counts what
-it gives. Checks in `docs/STATUS-LOG.md` (2026-11-20).
+dialog offers each command by its topic unless it says otherwise, what
+changes files or opens another program only where it says so
+(`App::in_dialogs`, one answer, asked through `Shell::in_window` by
+keys, F1, menus, buttons, the palette, the address field's rows,
+pickers, Properties' links and toasts): no tabs, split, terminal, pinned
+player, Activity, Settings, Open With, lens, Quit or Trash
+(`App::places_offered`, `LocationProvider::gives_files`), nor a command
+of a plugin from outside. The dialogs keep their own layout and size
+(`ui.chooser_session`), a view apart for pictures and films; saving, the
+filter swaps the extension; opening files, Recent first and the start
+where nothing names a folder, where it has a file to give
+(`LocationProvider::lists_recent`, `skwir_platform::recent::offered`),
+what is chosen added to `recently-used.xbel` (`skwir_platform::recent`);
+a program's five recent folders in the bar; files dimmed while choosing
+folders (`Admits::folders`); a drop gone to, never copied; the answer
+counts what it gives. Reviewed and fixed the same day: one answer every
+way to run a command asks, a window of one tab whose `open` is its
+answer, its questions asked in it and its Undo taking back what it did
+alone, Ctrl+Q its Cancel, the recent list written as GLib reads it and
+each desktop's switch heeded, the extension swapped as the filters take
+it, a size never a tile's, a folder whose files the filter hides said
+so. Checks in `docs/STATUS-LOG.md` (2026-11-20).
 
 ## A new version told where nothing else tells it (ADR-142, 2026-11-19)
 
@@ -1388,7 +1398,16 @@ reader; Xfce's (xfconf's `/Gtk/RecentFilesEnabled`) and MATE's switches
 for recent files, not read; a name to save with a compound extension
 selected to its last dot (`backup.tar` of `backup.tar.gz`); `ui.quit`
 from a script while work is under way and no window of the user's own
-is up, not run in a window.
+is up, not run in a window; a preview's web links do nothing in a
+dialog's window and say nothing of it (each renderer draws its links,
+none told the window's rule); a dialog's stopped plan that goes on by
+itself once its server answers (ADR-080, 9) is the program's in Undo,
+not the dialog's; rclone's forms, asked on threads of their own, are not
+tagged with the dialog and wait for a window of the user's own
+(untested); a server's password and a volume's passphrase asked in a
+dialog, not seen in a window (a test covers a worker's question); a
+plugin from outside cannot yet say one of its commands is fit for dialogs,
+so none is offered there.
 
 **Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
 on Linux; checked on a private dbus-daemon with Xvfb, headless sway and

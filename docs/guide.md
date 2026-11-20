@@ -1079,13 +1079,22 @@ where it leads. With Home Manager,
 [README](../README.md#nixos-and-nix)).
 
 A dialog's window offers what finds and chooses a file: places, the
-address, search, tags, views, the preview and Properties, the shelf
-(to choose several files from several folders), and among what changes
-files only New Folder, Rename, Move to Trash, the clipboard and Undo.
-Tabs, the split, the terminal, the pinned player, Activity, Settings,
-Open With and the tools that make files are your windows', and their
-keys do nothing there; Ctrl+Q cancels the dialog alone. The Trash is
-not offered: a trashed file is gone from where it was.
+address, search, tags, views, the preview and Properties, the shelf (to
+choose several files from several folders). Of what changes files it
+offers what a dialog always has (New Folder, Rename, Move to Trash, the
+clipboard and Paste) and a file's tags, rating and comment; its Undo,
+Redo and Retry take back only what you did in that dialog. Tabs, the
+split, the terminal, the pinned player, Activity, Settings, Usage, Open
+With, printing, the tools that make files and the commands of plugins
+from outside are your windows': the dialog shows them nowhere (menus,
+buttons, the palette, F1's list, Properties' links), and their keys do
+there what they would with nothing bound. A place opened in a tab opens
+in place. Enter answers with what is chosen, Shift+Enter on a path
+typed in the address with that file, and nothing opens in another
+program; Ctrl+Q and Ctrl+W cancel the dialog alone. What the dialog's
+own action asks (a server's password, names a paste found taken) is
+asked in the dialog. The Trash is offered nowhere there, and its files
+answer nothing: a trashed file is gone from where it was.
 
 The dialogs keep a layout of their own, apart from your windows': turn
 the preview off in one and the next opens without it, while your own

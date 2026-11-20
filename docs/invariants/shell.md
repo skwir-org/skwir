@@ -2174,123 +2174,124 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   window each (`finishing::open_chooser`), started where the request
   asks, else where its program last chose (`ui.chooser_folders`, by app
   id: its five last folders, newest first, the fifty programs that chose
-  last; the bar's Recent folders offers them, ADR-144, 8), else, opening files, in what lists the files used lately
-  (`App::lists_recent`: Recent, first in its group of places there,
-  `sidebar::recent_first`) where it has one to give and the desktop
-  remembers them (`Asked::recent`, read by the portal's back end as the
-  request comes, on a thread of its own, half a second at most,
-  `recent::offered`), else home (`chooser::start_location`). The
-  files it answers with (not folders) are added to the desktop's
-  recently used files on a worker (`skwir_platform::recent::add`, ADR-144,
-  7: edited into `recently-used.xbel` as it stands, in the files' lane,
-  each file once and typed by what it is, the list kept to GTK's thousand
-  bookmarks and to the age a setting says; nothing written where one of
-  the desktop's switches says to remember none, `recent::remembered`, nor
-  into a list GLib's reader would refuse, nor what it would refuse,
-  `recent::glib_reads`). The window chooses until it answers (`Shell::chooser`,
-  `chooser.rs`): a bar at its foot (the name typed, its stem selected,
-  its extension swapped for the filter chosen's where one of the
-  program's filters takes the name and that one does not, a compound one
-  whole, on the name's bytes, `chooser::swapped_name`, ADR-144, 6;
-  the program's filters, shown as the pane admits them,
+  last; the bar's Recent folders offers them, ADR-144, 8), else, opening
+  files, in what lists the files used lately (`App::lists_recent`:
+  Recent, first in its group of places there, `sidebar::recent_first`)
+  where it has one to give and the desktop remembers them
+  (`Asked::recent`, read by the portal's back end as the request comes,
+  on a thread of its own, half a second at most, `recent::offered`),
+  else home (`chooser::start_location`). The files it answers with (not
+  folders) are added to the desktop's recently used files on a worker
+  (`skwir_platform::recent::add`, ADR-144, 7: edited into
+  `recently-used.xbel` as it stands, in the files' lane, each file once
+  and typed by what it is, the list kept to GTK's thousand bookmarks and
+  to the age a setting says; nothing written where one of the desktop's
+  switches says to remember none, `recent::remembered`, nor into a list
+  GLib's reader would refuse, nor what it would refuse,
+  `recent::glib_reads`). The window chooses until it answers
+  (`Shell::chooser`, `chooser.rs`): a bar at its foot (the name typed,
+  its stem selected, its extension swapped for the filter chosen's where
+  one of the program's filters takes the name and that one does not, a
+  compound one whole, on the name's bytes, `chooser::swapped_name`,
+  ADR-144, 6; the program's filters, shown as the pane admits them,
   `Pane::set_admits`, apart from the filter the user types; its choices;
-  Cancel and the program's accept label, else Skwir's, counting
-  the files or folders it gives, `chooser::accept_label`, ADR-144, 11), its title the request's. While
-  it chooses, `open` is its answer, whatever registers it
-  (`Shell::chooser_open`), and opens nothing in another program: what it
-  names (the address field's Shift+Enter, a file used lately: read in
-  their lane), else the selection (Enter, a double click), and where
-  there is nothing to give it says so (nothing selected; the Trash's
-  files, `chooser_nothing_given`). A folder still opens; choosing
-  folders or where to save files, a file
-  is never opened from there, and choosing folders its files show
-  dimmed, `Admits::folders`, `Pane::untaken`, ADR-144, 9; what is
-  dropped on it, wherever it lands, is gone to, never copied, moved or
-  answered, `Shell::dialog_takes_drop`, ADR-144, 10. Escape (`pane choosing`, the bar's `chooser`) and
-  the close button cancel, Escape first letting go of a name typed to
-  find a file (`pane choosing typing`, `ui.type_end`) and of a filter, a
-  name taken is asked Replace? in skwir
+  Cancel and the program's accept label, else Skwir's, counting the
+  files or folders it gives, `chooser::accept_label`, ADR-144, 11), its
+  title the request's. While it chooses, `open` is its answer, whatever
+  registers it (`Shell::chooser_open`), and opens nothing in another
+  program: what it names (the address field's Shift+Enter, a file used
+  lately: read in their lane), else the selection (Enter, a double
+  click), and where there is nothing to give it says so (nothing
+  selected; the Trash's files, `chooser_nothing_given`). A folder still
+  opens; choosing folders or where to save files, a file is never opened
+  from there, and choosing folders its files show dimmed,
+  `Admits::folders`, `Pane::untaken`, ADR-144, 9; what is dropped on it,
+  wherever it lands, is gone to, never copied, moved or answered,
+  `Shell::dialog_takes_drop`, ADR-144, 10. Escape (`pane choosing`, the
+  bar's `chooser`) and the close button cancel, Escape first letting go
+  of a name typed to find a file (`pane choosing typing`, `ui.type_end`)
+  and of a filter, a name taken is asked Replace? in skwir
   (`Confirmed::Replace`, read on a worker in the folder's lane), and a
   request its program closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no
   call from elsewhere reaches its window (commands.md). It offers what
   finds and chooses (ADR-144, commands.md's "In a dialog's window"), by
   one answer every part of it asks (`Shell::in_window`): a button, a
-  popup's row, a menu's item, a link or a toast's button whose command it
-  does not run is not drawn (`Button::render`,
+  popup's row, a menu's item, a link or a toast's button whose command
+  it does not run is not drawn (`Button::render`,
   `toolbar::menu_part_elements`, `Shell::open_menu`), the palette, F1
   and the address field's actions list what it offers, and a key bound
   to what it does not run does what it would with nothing bound
   (`Shell::on_run_command`); it holds one tab and lists none
   (`WindowTabs::holds_tabs`, `tabs_listed`: a place asked in a tab there
-  opens in place, `App::new_tab`, and Ctrl+W still cancels), More has
-  no terminal nor split (their commands are not offered), its Undo, Redo
+  opens in place, `App::new_tab`, and Ctrl+W still cancels), More has no
+  terminal nor split (their commands are not offered), its Undo, Redo
   and Retry take back what it did alone (`App::dialog_asking`,
   `Executor::undo_in`; the footer's Undo and More's rows say those,
-  `Shell::actions_here`, and no History beside them), views are
-  offered but a lens (`ui.view`'s rule), Activity does not open there,
-  by itself or from the strip and the rows arriving, nothing is pinned to
-  the player, and it offers no place whose files are not to give
+  `Shell::actions_here`, and no History beside them), views are offered
+  but a lens (`ui.view`'s rule), Activity does not open there, by itself
+  or from the strip and the rows arriving, nothing is pinned to the
+  player, and it offers no place whose files are not to give
   (`App::gives_files`: the Trash) wherever places are offered (the
   sidebar, its Places heading's menu, the address field's places:
   `App::places_offered`, `Shell::places_here`), whose files it never
-  answers with either. A question goes to the window whose action asked it
-  (`app::asking_in`, `App::take_questions_to`, `finishing::deliver`):
+  answers with either. A question goes to the window whose action asked
+  it (`app::asking_in`, `App::take_questions_to`, `finishing::deliver`):
   what a window runs, the workers its work starts (the scheduler hands
   the asking pane on), the plans it applies (the executor does) and a
   connection a location opened there makes (the remote provider takes it
   as it opens) ask there, a dialog's window too, the user's answer to
   what the user did there (a server's password, a volume's passphrase,
   names a paste found taken: ADR-144, 1), and `App::can_ask` holds there
-  in a skwir the bus started for a dialog alone. What no window asked (an
-  agent's call, a script's, a plugin's work of its own), what a window
-  gone asked, proposals, a notice that stays
+  in a skwir the bus started for a dialog alone. What no window asked
+  (an agent's call, a script's, a plugin's work of its own), what a
+  window gone asked, proposals, a notice that stays
   (`App::take_notifications_for`) and what is asked from elsewhere
   (`ui.*` requests) go to a window of the user's own (`own_windows`),
   never to a dialog's: while dialogs' windows alone are up, they wait in
   the core as with no window at all, and what the user's last own window
   held, or a dialog's window held as it went, is declined as it closes
-  with none of the user's own up (`hand_on`). A dialog's
-  window is a core window marked so (`WindowTabs::chooses`): never
-  recorded for the next start nor reopened, its shape never the next
-  window's: the dialogs keep a layout of their own (ADR-144, 4 and 5;
-  `ui.chooser_session`, `session::dialog_shape`, `remember_dialog_shape`),
-  the first taking how the user's window shows its files and arranges its
-  sidebar and no panel, a request for pictures or films alone
-  (`chooser::asks_pictures`) the view and zoom kept for those (the grid
-  at first), never a split nor a terminal, the size it was left at while
-  it floated (a dialog's at first; a tile's size never kept,
-  `Placement::of_dialog`) and never maximized, the asking
-  window's child where its identifier names one (`chooser::foreign_parent`,
-  gpui's `WindowOptions::foreign_parent`), and tagged `file chooser`
-  where every window of the user's own is tagged `main window`
-  (`finishing::window_tag`, gpui's `WindowOptions::tag`: Wayland's
-  toplevel tag, X11's window role), for the rules people write; the tags
-  are never translated and are renamed only as a breaking change, while
-  the description beside (Wayland's) is said again in the language chosen
-  (`finishing::tag_again`, gpui's `Window::set_tag`). While dialogs' windows alone
-  are up, the windows asleep stay asleep (`Finishing::asleep`) and a
-  launch goes to a window of the user's own (`ordinary_handle`); nothing
-  is recorded for the next start until one opened in the run
-  (`Opened::Own`), so a skwir the bus started (`--portal`) never
-  replaces the windows the user left. The window answers once, and every
-  way it goes answers it (cancelled unless it answered: its close
-  button, Ctrl+W, Quit from another window and its answers, finishing in
-  the background, its request closed; `Shell::leave`, `chooser_let_go`).
-  A dialog's window offers no Quit: its Ctrl+Q is the dialog's Cancel,
-  bound where the window's root says `choosing`, so wherever the keyboard
-  is there (`keymap`); `ui.quit` keeps one meaning everywhere. Quit asked
-  from elsewhere (a script, an agent) while no window of the user's own
-  is up is done at once, never left for a window opened later
-  (`finishing::quit_as_asked`): every dialog answered cancelled, the
-  program quitting, or, with something under way and no one to ask,
-  finishing it without a window as Quit's first answer does; Close
-  window then has nothing to close. Its core window goes
-  from the core whatever else is there, never kept as the last window
-  nor turned into an ordinary one (`App::close_dialog_window`: were it
-  the last, a window of the user's own on the startup folder takes its
-  place, asleep), and what it admitted goes with it, from a pane moved
-  to another window too.
+  with none of the user's own up (`hand_on`). A dialog's window is a
+  core window marked so (`WindowTabs::chooses`): never recorded for the
+  next start nor reopened, its shape never the next window's: the
+  dialogs keep a layout of their own (ADR-144, 4 and 5;
+  `ui.chooser_session`, `session::dialog_shape`,
+  `remember_dialog_shape`), the first taking how the user's window shows
+  its files and arranges its sidebar and no panel, a request for
+  pictures or films alone (`chooser::asks_pictures`) the view and zoom
+  kept for those (the grid at first), never a split nor a terminal, the
+  size it was left at while it floated (a dialog's at first; a tile's
+  size never kept, `Placement::of_dialog`) and never maximized, the
+  asking window's child where its identifier names one
+  (`chooser::foreign_parent`, gpui's `WindowOptions::foreign_parent`),
+  and tagged `file chooser` where every window of the user's own is
+  tagged `main window` (`finishing::window_tag`, gpui's
+  `WindowOptions::tag`: Wayland's toplevel tag, X11's window role), for
+  the rules people write; the tags are never translated and are renamed
+  only as a breaking change, while the description beside (Wayland's) is
+  said again in the language chosen (`finishing::tag_again`, gpui's
+  `Window::set_tag`). While dialogs' windows alone are up, the windows
+  asleep stay asleep (`Finishing::asleep`) and a launch goes to a window
+  of the user's own (`ordinary_handle`); nothing is recorded for the
+  next start until one opened in the run (`Opened::Own`), so a skwir the
+  bus started (`--portal`) never replaces the windows the user left. The
+  window answers once, and every way it goes answers it (cancelled
+  unless it answered: its close button, Ctrl+W, Quit from another window
+  and its answers, finishing in the background, its request closed;
+  `Shell::leave`, `chooser_let_go`). A dialog's window offers no Quit:
+  its Ctrl+Q is the dialog's Cancel, bound where the window's root says
+  `choosing`, so wherever the keyboard is there (`keymap`); `ui.quit`
+  keeps one meaning everywhere. Quit asked from elsewhere (a script, an
+  agent) while no window of the user's own is up is done at once, never
+  left for a window opened later (`finishing::quit_as_asked`): every
+  dialog answered cancelled, the program quitting, or, with something
+  under way and no one to ask, finishing it without a window as Quit's
+  first answer does; Close window then has nothing to close. Its core
+  window goes from the core whatever else is there, never kept as the
+  last window nor turned into an ordinary one
+  (`App::close_dialog_window`: were it the last, a window of the user's
+  own on the startup folder takes its place, asleep), and what it
+  admitted goes with it, from a pane moved to another window too.
 - **A wake draws the windows it concerns** (`finishing::woken`): the
   listings are pumped once for all the windows, then a window syncs and
   draws if the wake was for all (`App::wake`, an

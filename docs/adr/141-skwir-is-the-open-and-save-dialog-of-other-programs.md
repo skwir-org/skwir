@@ -140,7 +140,11 @@ Recent).
 8. **Only the user answers.** The chooser's commands are the window's
    (`ui.chooser_*`), the user's alone (ADR-044): never an agent's, a
    script's or a plugin's from outside, which cannot see what is asked
-   either. Choosing gives a sandboxed program the files chosen.
+   either. Choosing gives a sandboxed program the files chosen. What
+   the dialog's own action asks the user (a server's password, names a
+   paste found taken) is asked in its window; what agents, scripts and
+   plugins' own work ask waits for a window of the user's own (ADR-144,
+   1, amended after review).
 9. **Attached to the asking window** (the user's choice): `x11:` sets
    `WM_TRANSIENT_FOR`; `wayland:` imports the handle (`xdg-foreign`
    v2) and sets the window its child, a patch of gpui's
