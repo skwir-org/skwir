@@ -19,8 +19,9 @@ downloaded from skwir.org can tell you of a new version.
   bound on the right.
 - **Show in Folder from other programs** opens Skwir once it is the default
   file manager (Settings › General).
-- **Other programs' Open and Save dialogs** in a Skwir window (Settings ›
-  General › Open and save dialogs).
+- **Other programs' Open and Save dialogs** in a Skwir window kept to
+  finding and choosing, with a layout of its own (Settings › General › Open
+  and save dialogs).
 - **New versions told**: a copy downloaded from skwir.org asks once whether to
   be told; skwir.org's apt and dnf repositories update it with the system.
 - **A document or a picture zoomed in moves with a drag**, the middle button's
@@ -155,6 +156,23 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   your portal configuration, applied once the portal starts again (the next
   login), and leaves one a link keeps (Home Manager's, a dotfiles folder's)
   to its keeper. Home Manager's `programs.skwir.fileChooser.enable` sets it.
+- **A dialog's window kept to finding and choosing** (ADR-144): it offers
+  places, the address, search, tags, views, the preview and Properties, the
+  shelf, and only New Folder, Rename, Move to Trash, the clipboard and Undo
+  among what changes files; no tabs, split, terminal, pinned player,
+  Activity, Settings, Open With or Trash, their keys doing nothing there,
+  and Ctrl+Q cancels the dialog alone. The dialogs keep a layout of their
+  own (the first takes your window's view and no panel), a grid for a
+  program asking for pictures or films; opening, Recent comes first and is
+  where a program with no folder starts, and what you choose is added to
+  the desktop's recently used files; Recent folders in the bar lists the
+  five folders the program last chose in; the filter changes a saved
+  name's extension; choosing a folder, its files show dimmed; a file
+  dropped is gone to, never copied; the answer counts ("Open 3 files").
+  Every Skwir window says what it is for, `main window` or `file chooser`
+  (Wayland's toplevel tag, X11's window role), so a compositor rule can
+  float a dialog where nothing else does ([the guide](docs/guide.md#skwir-for-other-programs)
+  gives Hyprland's and i3's).
 - **General's essentials** (ADR-072 amended): the language, Open at startup,
   the startup folder (dimmed unless Open at startup is A chosen folder), the
   default file manager and, on Linux, Open and save dialogs; Ask what dropped

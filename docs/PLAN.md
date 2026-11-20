@@ -1210,6 +1210,26 @@ window Escape lets go of a name typed to find a file before it cancels;
 Home Manager's `programs.skwir.fileChooser` and
 `programs.skwir.defaultFileManager`. Reviewed and fixed the same day
 (the review since 0.5.1). Checks in `docs/STATUS-LOG.md` (2026-11-19).
+On 2026-11-20 every window was tagged for the compositor's rules
+(`main window`, `file chooser`: gpui patch 0089, Wayland's toplevel tag
+and X11's window role), and Quit in a dialog's window cancels that
+dialog alone.
+
+## A dialog's window offers what finds and chooses (ADR-144, 2026-11-20)
+
+On the user's ask, before 0.6.0: a window answering another program's
+dialog offers each command by its topic unless it says otherwise
+(`CommandSpec::offered_in_dialogs`; one answer, `Shell::runs_here`, for
+keys, menus, buttons, the palette and the address field's actions): no
+tabs, split, terminal, pinned player, Activity, Settings, Open With, lens
+or Trash (`LocationProvider::gives_files`). The dialogs keep their own
+layout (`ui.chooser_session`), a view apart for pictures and films;
+saving, the filter swaps the extension; Recent first and the start where
+nothing names a folder (`LocationProvider::lists_recent`), what is chosen
+added to `recently-used.xbel` (`skwir_platform::recent`); a program's five
+recent folders in the bar; files dimmed while choosing folders
+(`Admits::folders`); a drop gone to, never copied; the answer counts what
+it gives. Checks in `docs/STATUS-LOG.md` (2026-11-20).
 
 ## A new version told where nothing else tells it (ADR-142, 2026-11-19)
 
@@ -1347,6 +1367,16 @@ portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
 holding the name, seen to keep it until it ends (a test's holder, not
 Dolphin); the startup id on Wayland.
 
+**A dialog's window, ADR-144** (2026-11-20): the tags on the user's
+Hyprland (their session runs their own skwir, which answers its portal;
+`hyprctl clients -j` shows `xdgTag`), KWin's and mutter's rules; a drag
+from a window of skwir's own onto a dialog (only another program's drop
+was tried); writing `recently-used.xbel` under GNOME with its privacy
+switch off (read through `gsettings`, not run); a folder that remembers
+its view (ADR-132) in a dialog; a dialog whose filter hides every file
+of a folder still says "This folder is empty" (seen, not changed: older
+than ADR-144); macOS and Windows have no such dialogs.
+
 **Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
 on Linux; checked on a private dbus-daemon with Xvfb, headless sway and
 the system's xdg-desktop-portal 1.22.1 run apart from the session's.
@@ -1367,8 +1397,7 @@ through xdg-foreign, a gpui patch); a request reaching the skwir that
 holds the dialogs between its gate closing and its name let go is
 answered 2 (the ending program would have to wait for its dialogs); the
 row reads the configuration as 1.22.1 does, so its "already" and
-"pending" may be wrong under an older portal; `ui.chooser_folders` grows
-by a row a program, never pruned; the row offers Skwir on its `.portal`
+"pending" may be wrong under an older portal; the row offers Skwir on its `.portal`
 file alone, and without the bus's service file a dialog fails whenever
 no skwir runs; the routing of what agents and scripts send
 (`finishing::deliver`) has no automated test, none driving a gpui

@@ -21260,3 +21260,76 @@ round.
   was read by a reviewer other than its author; this round's fixes
   (c1728654..4004e592) had no second review, but 74b872b7's. What they
   left is in PLAN's "What is left".
+
+## 2026-11-20: a dialog's window offers what finds and chooses (ADR-144), and every window says what it is for
+
+- **Asked**: the user wanted the window answering other programs' Open
+  and Save dialogs simpler, with settings of its own (the preview on in
+  their windows, rarely wanted in a dialog), took the proposal whole
+  (what a dialog offers, a layout of the dialogs' own, seven further
+  ideas), and a dotfiles session's handover: tag the dialog's windows so
+  Hyprland can float them, with the two extras (`main window`, X11's
+  role). Before the release, a commit per step.
+- **Built** (1a81b360..dd85c5b5, 9eed98df, then this entry's commit):
+  - gpui 0089 `WindowOptions::tag` (xdg-toplevel-tag-v1 tag and
+    description before the first commit; X11 `WM_WINDOW_ROLE`); skwir's
+    windows tagged `main window`, dialogs' `file chooser` (ADR-141, 9
+    amended).
+  - Quit in a dialog's window cancels that dialog alone.
+  - ADR-144: commands offered in a dialog's window by their topic unless
+    they say otherwise (`Topic::in_dialogs`, `Declared::in_dialogs`,
+    `not_in_dialogs`, the shell's two tables); one answer for keys,
+    menus, buttons, the palette and the address field's actions
+    (`Shell::runs_here`, `offers`, `leads_to_what_it_offers`); no tab
+    list, terminal, split, lens, Activity opening by itself, pinned
+    player; the Trash left out (`LocationProvider::gives_files`).
+  - The dialogs' own layout (`ui.chooser_session`), a view apart for a
+    request asking for pictures or films alone (`Filter::asks_pictures`).
+  - Saving, the filter swaps an extension any of the program's filters
+    takes (first built for the filter before's alone; widened once a
+    window showed PNG, All files, JPEG keeping `.png`).
+  - Recent first and the start where nothing names a folder
+    (`LocationProvider::lists_recent`); what is chosen added to
+    `recently-used.xbel` in place (`skwir_platform::recent`).
+  - A program's five last folders in the bar (`ui.chooser_folders`, fifty
+    programs; the leftover "grows by a row a program, never pruned"
+    closed).
+  - Files dimmed while choosing folders (`Admits::folders`,
+    `Pane::untaken`); Enter on a file there, or saving several files,
+    no longer opens it in another program (older than ADR-144).
+  - A drop on a dialog's window gone to, never copied, moved or
+    answered (`Shell::dialog_takes_drop`, every drop handler).
+  - The answer counts: "Open 3 files", "Select 2 folders", "Save 2
+    files".
+- **Found**: the user's Hyprland 0.57.1 offers `zxdg_importer_v2` and
+  `xdg_toplevel_tag_manager_v1` (read with `wayland-info`, nothing sent
+  to the compositor); the handover had read no xdg-foreign. Why the
+  user's dialog tiled is not known (its asker's window was not seen).
+  A dialog filtered to nothing says "This folder is empty" (left as it
+  is, in PLAN).
+- **Checks**: each step in a window, on an Xvfb of its own with a
+  private bus and scratch folders (the tags also on a headless sway
+  1.12, read with `WAYLAND_DEBUG` and sway's tree): Ctrl+Q; Ctrl+T, F3,
+  F4, the palette, More, a file's menu and the sidebar in a dialog
+  beside a main window; the layout kept apart over two dialogs and the
+  main window's preview turned off; the grid for `image/*`; the
+  extension through JPEG, PNG, All files, JPEG and a typed `.txt`;
+  Recent first, the xbel written, the next dialog's Recent filtered; the
+  recent folders listed and gone to; dimmed files and Enter on one; a
+  file dropped from dragon-drop on a Save and an Open dialog; the
+  counted label. Then rustfmt, clippy `-D warnings` per step on the
+  crates touched, their tests, `just lint`; every test of the default
+  members at once (4035 passed, 3 failed, 32 skipped: the three
+  `remote_login` tests whose units systemd 262 now refuses, NixOS having
+  switched to it at 11:48 that day, its new user sockets put under the
+  test's runtime folder past a socket's 108 bytes; nothing of this set;
+  told to skwir-39); `just check-cross` (it refused the platform crate on
+  Windows first, the recent list reading a Linux-only module: fixed in
+  9eed98df); `tools/words/extract.py --release` (the French and Chinese
+  drafts of the nine new messages written, the one renamed taken out).
+- **Not run**: the tags on the user's Hyprland (their session's portal
+  answers through their own skwir), KWin, mutter; a drag from a window of
+  skwir's own; GNOME's privacy switch; a folder remembering its view in a
+  dialog; a screen reader on the bar's new dropdown; Wine.
+- **Where the next review starts**: 1a81b360, after the release
+  review; skwir-39 reviews it on the user's ask.

@@ -1077,6 +1077,31 @@ keeps it, and the setting says where it leads. With Home Manager,
 `programs.skwir.fileChooser.enable = true;` set the two (see the
 [README](../README.md#nixos-and-nix)).
 
+A dialog's window offers what finds and chooses a file: places, the
+address, search, tags, views, the preview and Properties, the shelf
+(to choose several files from several folders), and among what changes
+files only New Folder, Rename, Move to Trash, the clipboard and Undo.
+Tabs, the split, the terminal, the pinned player, Activity, Settings,
+Open With and the tools that make files are your windows', and their
+keys do nothing there; Ctrl+Q cancels the dialog alone. The Trash is
+not offered: a trashed file is gone from where it was.
+
+The dialogs keep a layout of their own, apart from your windows': turn
+the preview off in one and the next opens without it, while your own
+windows keep theirs. The first takes how your window shows its files,
+and no panel; a program asking for pictures or films alone gets the
+grid, and what you choose for those is kept apart. Opening, Recent
+comes first, and a program that names no folder and chose in none
+starts there; what you choose is added to the desktop's recently used
+files, as the desktop's own dialog does (unless your desktop is told to
+remember none). Recent folders, in the bar, lists the five folders that
+program last chose in. Saving, choosing another filter changes the
+name's extension to the filter's. Choosing a folder, its files show
+dimmed. A file dropped on the dialog, from your own window or another
+program, is gone to (saving, its name is taken): nothing is copied, and
+nothing answered until you do. The answer says how many it gives
+("Open 3 files").
+
 A dialog's window floats over the program that asked where your
 compositor keeps a child over its parent. Where it does not (the program
 gave no window, or yours tiles it), a rule can float it: every Skwir

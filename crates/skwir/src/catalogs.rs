@@ -494,7 +494,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "fr",
         messages: 6_957,
-        translated: 6_948,
+        translated: 6_957,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "Français",
@@ -502,7 +502,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "zh-Hans",
         messages: 6_957,
-        translated: 6_948,
+        translated: 6_957,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "简体中文",

@@ -721,10 +721,28 @@ choose_unreadable = choix illisibles
 chooser_accept_folder = Sélectionner
 
 # draft
+chooser_accept_folders = { $count ->
+        [one] Sélectionner { $count } dossier
+       *[other] Sélectionner { $count } dossiers
+    }
+
+# draft
 chooser_accept_open = Ouvrir
 
 # draft
+chooser_accept_open_files = { $count ->
+        [one] Ouvrir { $count } fichier
+       *[other] Ouvrir { $count } fichiers
+    }
+
+# draft
 chooser_accept_save = Enregistrer
+
+# draft
+chooser_accept_save_files = { $count ->
+        [one] Enregistrer { $count } fichier
+       *[other] Enregistrer { $count } fichiers
+    }
 
 # draft
 chooser_all_files = Tous les fichiers
@@ -743,6 +761,9 @@ chooser_filter = Fichiers affichés
 
 # draft
 chooser_folder_taken = Il y a un dossier nommé { $name } dans { $folder } : choisissez un autre dossier où enregistrer
+
+# draft
+chooser_folders = Dossiers récents
 
 # draft
 chooser_name = Nom
@@ -6952,6 +6973,9 @@ sequence_nothing_follows = Aucun raccourci ne commence par ces touches ici
 sequence_then = puis
 
 # draft
+session_chooser_setting = La vue, l’aperçu et la taille des fenêtres qui répondent aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, et la vue de celles qui demandent des images ou des films
+
+# draft
 session_setting = La vue, la vue divisée, l’aperçu et la chronologie de la dernière fenêtre
 
 # draft
@@ -7018,7 +7042,7 @@ settings_choices = Choix
 settings_choices_none = Aucun choix ne correspond à la saisie
 
 # draft
-settings_chooser_folders_state = Le dossier où chaque programme a choisi en dernier, par la fenêtre qui répond à sa boîte de dialogue Ouvrir ou Enregistrer, selon l’id du programme ("" pour un programme qui n’en a pas)
+settings_chooser_folders_kept_state = Les dossiers où chaque programme a choisi en dernier, par la fenêtre qui répond à sa boîte de dialogue Ouvrir ou Enregistrer, selon l’id du programme ("" pour un programme qui n’en a pas) : ses cinq derniers, du plus récent au plus ancien (folders), et quand il a choisi pour la dernière fois (used, en secondes depuis 1970)
 
 # draft
 settings_close = Fermer
@@ -9469,6 +9493,12 @@ views_tree = Arborescence
 
 # draft
 views_writing = en écriture
+
+# draft
+window_tag_chooser = Sélecteur de fichiers
+
+# draft
+window_tag_main = Fenêtre principale
 
 # draft
 work_told_asks = Skwir attend une réponse

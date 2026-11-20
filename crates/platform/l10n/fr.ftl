@@ -732,6 +732,9 @@ process_too_much_input = { $program } : entrée trop grande
 process_too_much_output = { $program } : sortie excessive
 
 # draft
+recent_read_only = La liste des fichiers récemment utilisés est en lecture seule ; modifiez-la là où elle est gérée
+
+# draft
 rich_preview_page_no_size = la page n’a pas de taille
 
 # draft

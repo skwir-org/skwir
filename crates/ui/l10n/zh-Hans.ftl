@@ -702,10 +702,19 @@ choose_unreadable = 无法读取选项
 chooser_accept_folder = 选择
 
 # draft
+chooser_accept_folders = 选择 { $count } 个文件夹
+
+# draft
 chooser_accept_open = 打开
 
 # draft
+chooser_accept_open_files = 打开 { $count } 个文件
+
+# draft
 chooser_accept_save = 保存
+
+# draft
+chooser_accept_save_files = 保存 { $count } 个文件
 
 # draft
 chooser_all_files = 所有文件
@@ -724,6 +733,9 @@ chooser_filter = 显示的文件
 
 # draft
 chooser_folder_taken = { $folder } 中已有名为 { $name } 的文件夹：请选择另一个文件夹来保存
+
+# draft
+chooser_folders = 最近的文件夹
 
 # draft
 chooser_name = 名称
@@ -6701,6 +6713,9 @@ sequence_nothing_follows = 此处没有以这些按键开头的快捷键
 sequence_then = 然后
 
 # draft
+session_chooser_setting = 应答其他程序“打开”和“保存”对话框的窗口的视图、预览和大小，以及要求图片或影片的对话框的视图
+
+# draft
 session_setting = 上一个窗口的视图、分屏、预览和时间线
 
 # draft
@@ -6767,7 +6782,7 @@ settings_choices = 选项
 settings_choices_none = 没有与输入内容匹配的选项
 
 # draft
-settings_chooser_folders_state = 每个程序上次通过应答其“打开”或“保存”对话框的窗口所选的文件夹，按程序的 id 记录（没有 id 的程序为 ""）
+settings_chooser_folders_kept_state = 每个程序上次通过应答其“打开”或“保存”对话框的窗口所选的文件夹，按程序的 id 记录（没有 id 的程序为 ""）：最近的五个，从新到旧（folders），以及上次选择的时间（used，自 1970 年起的秒数）
 
 # draft
 settings_close = 关闭
@@ -9045,6 +9060,12 @@ views_tree = 树形
 
 # draft
 views_writing = 正在写入
+
+# draft
+window_tag_chooser = 文件选择器
+
+# draft
+window_tag_main = 主窗口
 
 # draft
 work_told_asks = Skwir 需要您的回答

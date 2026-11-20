@@ -5,7 +5,9 @@ window when Skwir answers another program's Open or Save dialog, and
 for its own settings, the preview on in their windows but rarely in a
 dialog; took the proposal whole: what a dialog offers, a layout of the
 dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
-7). Built on Linux, which alone has these dialogs (ADR-141, 11).
+7). Built on Linux, which alone has these dialogs (ADR-141, 11), the
+same day (2f32dfaa..dd85c5b5), each step checked in a window on Xvfb;
+amended as built (decisions 1, 4, 6, 7 and 10).
 
 ## Context
 

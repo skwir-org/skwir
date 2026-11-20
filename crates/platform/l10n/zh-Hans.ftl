@@ -715,6 +715,9 @@ process_too_much_input = { $program }：输入太大
 process_too_much_output = { $program }：输出过多
 
 # draft
+recent_read_only = 最近使用的文件列表是只读的；请在管理它的地方更改
+
+# draft
 rich_preview_page_no_size = 页面没有尺寸
 
 # draft
