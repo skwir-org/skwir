@@ -8,7 +8,7 @@ use crate::{
 use gpui::{AnyElement, ClipboardItem, Context, FocusHandle, RenderImage, Window, div, prelude::*};
 use skwir_core::{
     CancelToken,
-    document::{Destination, DocumentSession, PageContent, Rect, SearchHit},
+    document::{Destination, DocumentSession, PageContent, SearchHit},
     scheduler::Priority,
     words,
     words::Words,
@@ -144,14 +144,14 @@ impl ReaderState {
 
 /// Whether a left drag across `page`'s text moves the pages rather than
 /// selecting it: the user chose it (`drag_moves`), or it has no text to
-/// select (ADR-143). A press on no character of it moves them either way
-/// (`elements::document::selects_at`). The page's element and
+/// select (ADR-143). A press on none of its lines moves them either way
+/// (`elements::document::Page::selects_at`). The page's element and
 /// `Shell::reader_pointer` both ask it.
 pub(crate) fn drags(drag_moves: bool, page: &PageContent) -> bool {
     drag_moves || page.chars.is_empty()
 }
 
-fn page(shell: &Shell) -> Option<&Arc<PageContent>> {
+fn page(shell: &Shell) -> Option<&Arc<crate::elements::document::Page>> {
     let number = shell
         .preview
         .reader
@@ -186,22 +186,6 @@ fn selected_text(page: &PageContent, selection: Option<(usize, usize)>) -> Strin
         .map(|ch| ch.text.as_str())
         .collect()
 }
-fn nearest(page: &PageContent, x: f32, y: f32) -> Option<usize> {
-    page.chars
-        .iter()
-        .enumerate()
-        .filter(|(_, ch)| ch.bounds.height > 0.)
-        .min_by(|(_, a), (_, b)| {
-            let distance = |r: Rect| {
-                let dx = (x - x.clamp(r.x, r.x + r.width.max(0.))).abs();
-                let dy = (y - y.clamp(r.y, r.y + r.height.max(0.))).abs();
-                dx * dx + dy * dy
-            };
-            distance(a.bounds).total_cmp(&distance(b.bounds))
-        })
-        .map(|(i, _)| i)
-}
-
 impl Shell {
     pub fn reader_page_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !matches!(
@@ -328,8 +312,7 @@ impl Shell {
             // nothing and keeps what is selected on them, as the middle
             // button's does (ADR-143); on another page, where its release
             // and its link are read, it takes the selection's page.
-            let from =
-                crate::elements::document::selects_at(drags(reader.drag_moves, &page), &page, x, y);
+            let from = page.selects_at(drags(reader.drag_moves, &page), x, y);
             reader.down = Some(Down {
                 at: (x, y),
                 selects: from.is_some(),
@@ -343,7 +326,7 @@ impl Shell {
             if down.selects
                 && let Some((a, _)) = self.preview.reader.selection
             {
-                self.preview.reader.selection = nearest(&page, x, y).map(|b| (a, b));
+                self.preview.reader.selection = page.nearest(x, y).map(|b| (a, b));
             }
             if phase == "up" {
                 // A press that held the pages clicks where it did not move
@@ -632,7 +615,7 @@ impl Shell {
 pub fn page_element(
     shell: &Shell,
     image: Arc<RenderImage>,
-    page: Arc<PageContent>,
+    page: Arc<crate::elements::document::Page>,
     zoom: Option<f32>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -763,7 +746,7 @@ pub(crate) fn page_placeholder(
 pub(crate) fn page_surface(
     shell: &Shell,
     image: Arc<RenderImage>,
-    page: Arc<PageContent>,
+    page: Arc<crate::elements::document::Page>,
     zoom: Option<f32>,
     fit_width: bool,
     report: Option<crate::elements::document::Report>,
@@ -793,7 +776,7 @@ pub(crate) fn page_surface(
 #[allow(clippy::too_many_arguments)] // All inputs belong to one page's rendering snapshot.
 pub(crate) fn surface(
     image: Arc<RenderImage>,
-    page: Arc<PageContent>,
+    page: Arc<crate::elements::document::Page>,
     zoom: Option<f32>,
     fit_width: bool,
     selection_page: Option<u32>,
@@ -1270,7 +1253,7 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use skwir_core::document::TextChar;
+    use skwir_core::document::{Rect, TextChar};
 
     /// Whatever an engine or a plugin says, the reader shows at most
     /// `MAX_PAGES`: four billion would be as many list items.

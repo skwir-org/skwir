@@ -134,9 +134,12 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   at its top).
 - **A drag moves the pages** (ADR-143, the rule in `previews.md`'s
   "One of each"): a page takes every left press on it, and decides by
-  where it falls (`document::selects_at`, asked by the element and
-  `Shell::reader_pointer` alike). On a character of its text it selects
-  from there (`Grab::select`: the layer moves nothing and shows no hand
+  where it falls (`document::Page::selects_at`, asked by the element
+  and `Shell::reader_pointer` alike). Within a line of its text (on a
+  letter, between words, in the leading between the lines of a
+  paragraph, `LEADING`, a little before its first letter and after its
+  last, `BESIDE`) it selects from the line's nearest letter
+  (`Grab::select`: the layer moves nothing and shows no hand
   meanwhile), unless `reader::drags` says the page moves (the user's
   `reading.drag_moves`, `ui.reader_drag`, read when the reader is made;
   or a page with no text). Anywhere else on the page (a margin, between
@@ -150,14 +153,23 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   around it: a press there is the layer's. While a press holds the
   pages, no page sets a cursor (the layer's closed hand shows); while
   one selects, the I-beam shows wherever it goes, over every page and
-  the layer around them; else a link's is the pointing hand, a
-  character's the I-beam, and the rest of the page the open hand where
-  the pages can move. The cursor is asked for where the pointer is, at
+  the layer around them; else a link's is the pointing hand, a line's
+  the I-beam, and the rest of the page the open hand where the pages
+  can move. The cursor is asked for where the pointer is, at
   paint and at each move alike (`document::cursor_at`): gpui sets it
   only after a draw or as the pointer goes onto another hitbox, and a
   page is one hitbox, so a move that changes the answer (onto a link or
   text, off them) asks for a frame, once; a move that does not draws
   nothing.
+- **A page's lines are found once**, as it arrives, on the worker that
+  read it (`document::Page::new`, which the preview's content and the
+  pages kept hold): a character goes on the line of the one read before
+  it where they share more than half the lower one's height, and a line
+  break the engine reads ends one. What a press, a selection's drag and
+  the cursor ask (`selects_at`, `nearest`) is a search among the lines
+  by their tops and across one line by its letters' starts, never a
+  walk of the page's characters, of which a page holds up to
+  `document::MAX_PAGE_CHARS`; `nearest` answers what that walk would.
 - **A page's press is its own only while the grab holds it**
   (`Grab::held_over`). A page is a row of a virtual list: one the pages
   moved out from under the press (or the wheel took away) no longer

@@ -10,8 +10,11 @@ out. Amended the same day after review: a press on a page where no
 character of its text is under it moves the pages (decisions 1 and 2),
 as nothing was selected from there; the I-beam shows only over
 characters (5). Amended on 2026-11-20 after the review before the
-release: the cursor follows the pointer within a page, and a
-selection's I-beam goes beside the pages (5).
+release: a press selects from anywhere within a line of the text
+(between words, in a paragraph's leading, a little before its first
+letter and after its last), the margins, pictures and the room between
+paragraphs moving the pages (1, 2); the cursor follows the pointer
+within a page, and a selection's I-beam goes beside the pages (5).
 
 ## Context
 
@@ -34,14 +37,17 @@ selection's I-beam goes beside the pages (5).
 1. **Where there is nothing to select, a drag moves what is shown, with
    no switch.** A picture zoomed past its room (in the panel, peek and
    the whole screen), a page with no text (a scan, a comic, a DjVu
-   without its text layer: `reader::drags`), a page where no character
-   of its text is under the press (its margins, between its paragraphs,
-   a picture in it: `document::selects_at`; amended), and the room
+   without its text layer: `reader::drags`), a page outside the lines
+   of its text (its margins, between its paragraphs, a picture in it:
+   `document::Page::selects_at`; amended), and the room
    around and between pages: the press holds what is shown, which then
    moves as far as the pointer, the point grabbed under it, until the
    button is let go.
-2. **On a page's text (a press on one of its characters), a drag
-   selects, unless the reader's switch says to move.** The reader's bar
+2. **On a page's text (a press within one of its lines: on a letter,
+   between words, in the leading between the lines of a paragraph, a
+   little before its first letter and after its last; amended), a drag
+   selects from its nearest letter, unless the reader's switch says to
+   move.** The reader's bar
    has **Drag to move the page** (`ui.reader_drag`, lit while on), the
    same choice as the setting `reading.drag_moves` (Settings › Reading ›
    Pages), off by default: as Continuous scrolling, it is the user's,
@@ -65,9 +71,9 @@ selection's I-beam goes beside the pages (5).
    with the pages, which hold it themselves where their drag moves them
    and tell a click by it, and mark it while they select. Each move is
    taken once (a guard: no two layers share a grab). The hand shows open
-   where a drag would move something (over a page, where no character or
-   link is), and closed while it does; the I-beam shows only over
-   characters, and wherever a selection's drag goes (the layer asks for
+   where a drag would move something (over a page, outside its lines
+   and links), and closed while it does; the I-beam shows only over the
+   lines of its text, and wherever a selection's drag goes (the layer asks for
    it too, beside the pages), with no hand. Each follows the pointer: a
    move onto a link, text or the room beside them draws once for its
    cursor (`document::cursor_at`; amended). The
@@ -84,7 +90,7 @@ selection's I-beam goes beside the pages (5).
   around it read a page at a time: the hand shows there, and a press
   there is the layer's.
 - What a press on text does is unchanged with the switch off; a press
-  beside a page, or on a page where no character is, which did nothing,
+  beside a page, or on a page outside the lines of its text, which did nothing,
   now holds the pages.
 - Nothing shows the cursor in a capture on Xvfb: the hands were read in
   the code, not seen.

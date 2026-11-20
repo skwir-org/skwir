@@ -7,15 +7,16 @@ use gpui::{
     ScrollHandle, Window, div, point, prelude::*, px,
 };
 use skwir_core::words::Words;
-use skwir_core::{CancelToken, document::PageContent, scheduler::Priority};
+use skwir_core::{CancelToken, scheduler::Priority};
 
-use crate::{preview::PreviewContent, shell::Shell, theme::Theme};
+use crate::{elements::document::Page, preview::PreviewContent, shell::Shell, theme::Theme};
 
 const CACHE_BYTES: usize = 64 * 1024 * 1024;
 #[derive(Clone)]
 pub(crate) struct CachedPage {
     pub image: Arc<RenderImage>,
-    pub content: Arc<PageContent>,
+    /// Its text in lines, found as it was read (`document::Page`).
+    pub content: Arc<Page>,
     bytes: usize,
     /// The side it was asked at: drawn again only when pages are shown
     /// larger than that, whatever pixels the engine could give.
@@ -993,7 +994,7 @@ impl Shell {
                         })?;
                         Ok(CachedPage {
                             image,
-                            content: page.content,
+                            content: Arc::new(Page::new(page.content)),
                             bytes,
                             side,
                         })
@@ -1223,7 +1224,7 @@ impl Shell {
 pub fn continuous_element(
     shell: &Shell,
     image: Arc<RenderImage>,
-    page: Arc<PageContent>,
+    page: Arc<Page>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let reader = &shell.preview.reader;
@@ -1579,13 +1580,13 @@ mod tests {
                 number,
                 CachedPage {
                     image: crate::thumbs::owned_render_image(1, 1, vec![0; 4]).unwrap(),
-                    content: Arc::new(PageContent {
+                    content: Arc::new(Page::new(Arc::new(skwir_core::document::PageContent {
                         page: number,
                         width: 600.,
                         height: 800.,
                         chars: Vec::new(),
                         links: Vec::new(),
-                    }),
+                    }))),
                     // Exercise accounting with tiny synthetic buffers.
                     bytes: CACHE_BYTES / 4,
                     side: 1024,
@@ -1615,13 +1616,13 @@ mod tests {
         let image = crate::thumbs::owned_render_image(1, 1, vec![0; 4]).unwrap();
         let page = |number, side| CachedPage {
             image: Arc::clone(&image),
-            content: Arc::new(PageContent {
+            content: Arc::new(Page::new(Arc::new(skwir_core::document::PageContent {
                 page: number,
                 width: 600.,
                 height: 800.,
                 chars: Vec::new(),
                 links: Vec::new(),
-            }),
+            }))),
             bytes: 4,
             side,
         };

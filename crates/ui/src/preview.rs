@@ -50,7 +50,9 @@ pub enum PreviewContent {
         width: u32,
         height: u32,
         detail: Option<PreviewInfo>,
-        document: Option<Arc<skwir_core::document::PageContent>>,
+        /// The document's page it shows, its text in lines
+        /// (`elements::document::Page`).
+        document: Option<Arc<crate::elements::document::Page>>,
         /// What the file says about the picture (EXIF), read on the worker
         /// that decoded it, for the panel's Properties.
         facts: Vec<skwir_core::inspection::Detail>,
@@ -4282,7 +4284,9 @@ impl Shell {
                                             page: page.content.page,
                                             pages: crate::reader::page_count(session.as_ref()),
                                         }),
-                                        document: Some(page.content),
+                                        document: Some(Arc::new(
+                                            crate::elements::document::Page::new(page.content),
+                                        )),
                                         facts: Vec::new(),
                                         pixels: Pixels::Own,
                                         ink: None,

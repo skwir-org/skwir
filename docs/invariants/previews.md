@@ -1572,9 +1572,9 @@ is still to come are in `docs/preview-frame.md`.
   zoom keys keep their place.
 - **A drag moves a picture or pages larger than their room** (ADR-143):
   the left button where nothing is selected by it (a picture, the room
-  around and between pages, a page where no character of its text is
-  under the press, its text too while the reader's Drag to move the page
-  is on), the middle button anywhere. One layer under what is shown does
+  around and between pages, a page outside the lines of its text, its
+  text too while the reader's Drag to move the page is on), the middle
+  button anywhere. One layer under what is shown does
   it (`elements::pan::layer`, drawn first in the view's room, so what is
   over it hears a press first and keeps what it takes), moving the
   handles the arrows and the scrollbars move (`pan::Moves`), never by an
