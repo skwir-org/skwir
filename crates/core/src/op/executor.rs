@@ -39,6 +39,7 @@ use crate::cancel::CancelToken;
 use crate::registry::Contributions;
 use crate::scheduler::{Priority, Scheduler};
 use crate::words::Words;
+use crate::workspace::PaneId;
 
 /// Progress of one step.
 #[derive(Clone, Debug, Serialize)]
@@ -408,6 +409,13 @@ pub type ChangeObserver = Arc<dyn Fn(&[Change]) + Send + Sync>;
 /// the same changes, applied.
 pub type PlanObserver = Arc<dyn Fn(PlanId, &[Change]) + Send + Sync>;
 
+/// Whether what was asked in `asking`'s window is `only`'s, when a window is
+/// named: another program's dialog's Undo, Redo and Retry take back what
+/// that window did alone (ADR-144, 1).
+fn asked_in(only: Option<PaneId>, asking: Option<PaneId>) -> bool {
+    only.is_none_or(|pane| asking == Some(pane))
+}
+
 /// One journaled change and the plan that takes it back.
 #[derive(Debug)]
 pub struct JournalEntry {
@@ -446,6 +454,10 @@ pub struct JournalEntry {
     /// history lists it as going; it leaves its stack, or stays as it was
     /// with what that run did, once the run ends.
     going: bool,
+    /// The pane whose window's action put it on its stack, as its run went
+    /// (`app::asking_pane`): another program's dialog's Undo and Redo take
+    /// back what that window did alone (`Executor::undo_in`, ADR-144, 1).
+    asking: Option<PaneId>,
 }
 
 impl JournalEntry {
@@ -703,6 +715,10 @@ struct Stopped {
     partial: Option<super::staging::Partial>,
     /// The server it waits for, to go on by itself (ADR-080, 9).
     waits: Waits,
+    /// The pane whose window asked it, as its run went
+    /// (`app::asking_pane`): another program's dialog's Retry takes what
+    /// stopped there alone.
+    asking: Option<PaneId>,
 }
 
 impl Stopped {
@@ -830,7 +846,7 @@ struct Job {
     /// The pane whose window asked it (`app::asking_pane`, as it was
     /// queued): what it asks the user as it runs (names taken, room, a
     /// password) is asked in that window.
-    asking: Option<crate::workspace::PaneId>,
+    asking: Option<PaneId>,
 }
 
 /// Undo with what came after, as one action (ADR-079, 13): its undos run
@@ -868,6 +884,8 @@ struct Begun {
     /// Its entry, an undo's or a redo's: no other takes it.
     target: Option<(Direction, u64)>,
     cancel: CancelToken,
+    /// The pane whose window asked it (`Job::asking`).
+    asking: Option<PaneId>,
 }
 
 /// What waits and what runs (module documentation).
@@ -2270,7 +2288,18 @@ impl Executor {
     /// The plan a step's error stopped last, which Retry takes when told
     /// no other.
     pub fn last_stopped(&self) -> Option<PlanId> {
-        self.stopped.lock().back().map(|s| s.plan)
+        self.last_stopped_of(None)
+    }
+
+    /// [`Executor::last_stopped`] of what `only`'s window asked, when one is
+    /// named (another program's dialog's, ADR-144, 1).
+    pub fn last_stopped_of(&self, only: Option<PaneId>) -> Option<PlanId> {
+        self.stopped
+            .lock()
+            .iter()
+            .rev()
+            .find(|s| asked_in(only, s.asking))
+            .map(|s| s.plan)
     }
 
     /// Run again what the plan `plan` had left when a step's error stopped
@@ -2702,6 +2731,58 @@ impl Executor {
         }
     }
 
+    /// Undo what `pane`'s window asked last (another program's dialog's,
+    /// ADR-144, 1): its latest entry in the history, or its plan still
+    /// waiting or running, once it ends, as [`Executor::undo_entry`] takes
+    /// an entry. `None` when that window asked nothing Undo takes back.
+    pub fn undo_in(self: &Arc<Self>, pane: PaneId, cancel: CancelToken) -> Option<PlanId> {
+        let seq = self.latest_asked_in(Some(pane))?;
+        Some(self.undo_entry(seq, cancel))
+    }
+
+    /// Redo what `pane`'s window undid last (another program's dialog's,
+    /// ADR-144, 1), as [`Executor::redo_entry`] takes an entry. `None` when
+    /// it undid nothing Redo applies again.
+    pub fn redo_in(self: &Arc<Self>, pane: PaneId, cancel: CancelToken) -> Option<PlanId> {
+        let seq = self
+            .journal
+            .lock()
+            .redo
+            .iter()
+            .rev()
+            .find(|e| !e.going && asked_in(Some(pane), e.asking))
+            .map(|e| e.seq)?;
+        Some(self.redo_entry(seq, cancel))
+    }
+
+    /// The place in the history of what `only`'s window (any, with none)
+    /// asked last that Undo takes back: a plan waiting or running, else an
+    /// entry of the undo stack.
+    fn latest_asked_in(&self, only: Option<PaneId>) -> Option<u64> {
+        let pending = {
+            let lane = self.lane.lock();
+            let queued = lane.queue.iter().filter_map(|job| match &job.work {
+                Work::Execute { .. } if asked_in(only, job.asking) => Some(job.seq),
+                _ => None,
+            });
+            let running = lane
+                .started
+                .iter()
+                .filter(|b| b.title.is_some() && asked_in(only, b.asking))
+                .map(|b| b.seq);
+            queued.chain(running).max()
+        };
+        let entry = self
+            .journal
+            .lock()
+            .undo
+            .iter()
+            .rev()
+            .find(|e| !e.going && asked_in(only, e.asking))
+            .map(|e| e.seq);
+        pending.max(entry)
+    }
+
     /// Redo the most recently undone plan when its turn comes (module
     /// documentation): the id its run goes by, as [`Executor::undo`]'s.
     pub fn redo(self: &Arc<Self>, cancel: CancelToken) -> Option<PlanId> {
@@ -2721,7 +2802,17 @@ impl Executor {
 
     /// Whether an entry is there to redo: one being redone is not.
     pub fn can_redo(&self) -> bool {
-        self.journal.lock().redo.iter().any(|e| !e.going)
+        self.can_redo_of(None)
+    }
+
+    /// [`Executor::can_redo`] of what `only`'s window undid, when one is
+    /// named (another program's dialog's, ADR-144, 1).
+    pub fn can_redo_of(&self, only: Option<PaneId>) -> bool {
+        self.journal
+            .lock()
+            .redo
+            .iter()
+            .any(|e| !e.going && asked_in(only, e.asking))
     }
 
     /// The title of what Undo would take back, without copying the stack.
@@ -2737,12 +2828,18 @@ impl Executor {
 
     /// The title of what Redo would apply again.
     pub fn last_redo_title(&self) -> Option<Words> {
+        self.last_redo_title_of(None)
+    }
+
+    /// [`Executor::last_redo_title`] of what `only`'s window undid, when
+    /// one is named (another program's dialog's, ADR-144, 1).
+    pub fn last_redo_title_of(&self, only: Option<PaneId>) -> Option<Words> {
         let journal = self.journal.lock();
         journal
             .redo
             .iter()
             .rev()
-            .find(|e| !e.going)
+            .find(|e| !e.going && asked_in(only, e.asking))
             .map(|e| e.title.clone())
     }
 
@@ -2750,17 +2847,26 @@ impl Executor {
     /// in the history, by its title, and whether it has not ended (Undo
     /// waits for it then); `None` with nothing to undo.
     pub fn undo_target(&self) -> Option<(Words, bool)> {
+        self.undo_target_of(None)
+    }
+
+    /// [`Executor::undo_target`] of what `only`'s window asked, when one is
+    /// named (another program's dialog's, ADR-144, 1: `undo_in`).
+    pub fn undo_target_of(&self, only: Option<PaneId>) -> Option<(Words, bool)> {
         let lane = self.lane.lock();
         let pending = lane
             .queue
             .iter()
             .filter_map(|job| match &job.work {
-                Work::Execute { plan, .. } => Some((job.seq, plan.title.clone())),
-                Work::Replay(..) => None,
+                Work::Execute { plan, .. } if asked_in(only, job.asking) => {
+                    Some((job.seq, plan.title.clone()))
+                }
+                _ => None,
             })
             .chain(
                 lane.started
                     .iter()
+                    .filter(|b| asked_in(only, b.asking))
                     .filter_map(|b| b.title.clone().map(|title| (b.seq, title))),
             )
             .max_by_key(|(seq, _)| *seq);
@@ -2770,7 +2876,7 @@ impl Executor {
             .undo
             .iter()
             .rev()
-            .find(|e| !e.going)
+            .find(|e| !e.going && asked_in(only, e.asking))
             .map(|e| (e.stacked, e.title.clone()));
         match (pending, entry) {
             (Some((seq, title)), entry) if entry.as_ref().is_none_or(|(at, _)| seq > *at) => {
@@ -3792,6 +3898,7 @@ impl Executor {
                 adds: job.work.adds(),
                 target: direction.zip(job.target),
                 cancel: job.cancel.clone(),
+                asking: job.asking,
             });
             begun.push(job);
         }
@@ -4195,6 +4302,7 @@ impl Executor {
                             touched: Arc::clone(&kept),
                             blocked_by: BTreeSet::new(),
                             going: false,
+                            asking: crate::app::asking_pane(),
                         },
                         &met,
                         &exact,
@@ -4265,6 +4373,7 @@ impl Executor {
                 rest,
                 partial,
                 waits,
+                asking: crate::app::asking_pane(),
             });
             let over = stopped.len().saturating_sub(STOPPED_KEPT);
             stopped.drain(..over).collect::<Vec<_>>()
@@ -4545,6 +4654,7 @@ impl Executor {
                         touched: Arc::clone(&left),
                         blocked_by: BTreeSet::new(),
                         going: false,
+                        asking: crate::app::asking_pane(),
                     };
                     j.put(other, other_entry, &met, &exact);
                     if let (Some(lane), Some(plans)) = (lane.as_mut(), plans.as_ref()) {
@@ -6569,6 +6679,7 @@ mod tests {
             adds: Direction::Undo,
             target: None,
             cancel: CancelToken::new(),
+            asking: None,
         };
         let lane = Lane {
             started: vec![
@@ -7290,6 +7401,7 @@ mod tests {
                 touched: Arc::default(),
                 blocked_by: BTreeSet::new(),
                 going: false,
+                asking: None,
             });
         }
         big.bound();

@@ -1661,6 +1661,14 @@ impl App {
         !chooses || self.gives_files(location)
     }
 
+    /// The pane of another program's dialog's window whose action runs on
+    /// this thread (`asking_pane`): its Undo, Redo and Retry take back what
+    /// that window did alone (ADR-144, 1), never what the user did in a
+    /// window of their own. `None` elsewhere.
+    pub fn dialog_asking(&self) -> Option<PaneId> {
+        asking_pane().filter(|pane| self.chooses_in(*pane))
+    }
+
     /// Whether the window `pane` is in answers another program's dialog
     /// (`WindowTabs::chooses`): not for a pane in no window.
     pub fn chooses_in(&self, pane: PaneId) -> bool {
@@ -6073,9 +6081,11 @@ mod builtin {
                         }
                         (None, Some(entry)) => vec![app.executor.undo_entry(entry, cancel)],
                         (None, None) => vec![
-                            app.executor
-                                .undo(cancel)
-                                .ok_or_else(nothing_to_undo)?,
+                            match app.dialog_asking() {
+                                Some(pane) => app.executor.undo_in(pane, cancel),
+                                None => app.executor.undo(cancel),
+                            }
+                            .ok_or_else(nothing_to_undo)?,
                         ],
                     };
                     return Ok(Outcome::Value(serde_json::json!({ "runs": runs })));
@@ -6141,10 +6151,11 @@ mod builtin {
                     let cancel = app.lifetime().child();
                     let run = match a.entry {
                         Some(entry) => app.executor.redo_entry(entry, cancel),
-                        None => app
-                            .executor
-                            .redo(cancel)
-                            .ok_or_else(nothing_to_redo)?,
+                        None => match app.dialog_asking() {
+                            Some(pane) => app.executor.redo_in(pane, cancel),
+                            None => app.executor.redo(cancel),
+                        }
+                        .ok_or_else(nothing_to_redo)?,
                     };
                     return Ok(Outcome::Value(serde_json::json!({ "runs": [run] })));
                 }
@@ -6186,7 +6197,7 @@ mod builtin {
             |a, app| {
                 let plan = a
                     .plan
-                    .or_else(|| app.executor.last_stopped())
+                    .or_else(|| app.executor.last_stopped_of(app.dialog_asking()))
                     .ok_or_else(nothing_to_retry)?;
                 if crate::scheduler::on_window_thread() {
                     anyhow::ensure!(

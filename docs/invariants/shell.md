@@ -2224,7 +2224,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`Shell::on_run_command`); it holds one tab and lists none
   (`WindowTabs::holds_tabs`, `tabs_listed`: a place asked in a tab there
   opens in place, `App::new_tab`, and Ctrl+W still cancels), More has
-  no terminal nor split (their commands are not offered), views are
+  no terminal nor split (their commands are not offered), its Undo, Redo
+  and Retry take back what it did alone (`App::dialog_asking`,
+  `Executor::undo_in`; the footer's Undo and More's rows say those,
+  `Shell::actions_here`, and no History beside them), views are
   offered but a lens (`ui.view`'s rule), Activity does not open there,
   by itself or from the strip and the rows arriving, nothing is pinned to
   the player, and it offers no place whose files are not to give

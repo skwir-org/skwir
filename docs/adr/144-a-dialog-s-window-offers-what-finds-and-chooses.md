@@ -9,7 +9,8 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
 same day (2f32dfaa..dd85c5b5), each step checked in a window on Xvfb;
 amended as built (decisions 1, 4, 6, 7 and 10), and after review
 (decision 1: one answer every way to run a command asks, questions
-asked where the dialog's action asked them; decision 2: one tab).
+asked where the dialog's action asked them, Undo of its own; decision 2:
+one tab).
 
 ## Context
 
@@ -68,7 +69,10 @@ asked where the dialog's action asked them; decision 2: one tab).
    With's picker, Print…, the split's panes placed by `ui.layout`).
    Of what changes files, a dialog offers what a dialog has always
    offered: making a folder, renaming, moving to the Trash, the
-   clipboard and a paste, Undo and Redo of these, the shelf (several
+   clipboard and a paste, Undo, Redo and Retry of what that window did
+   alone, never of the user's actions in their own windows
+   (`Executor::undo_in`, `redo_in`, `last_stopped_of`; its footer's Undo
+   and More name those, and the History is not offered), the shelf (several
    files from several folders), Properties, and the notes a file is
    found by (its tags, rating and comment; never a tag renamed or taken
    from every file); of what opens another program, `open`, which

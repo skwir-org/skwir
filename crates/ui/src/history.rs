@@ -468,6 +468,15 @@ fn with_keys(tip: Words, keys: Option<String>) -> SharedString {
     .into()
 }
 
+impl Shell {
+    /// Whose actions this window's Undo, Redo and Retry take back: in
+    /// another program's dialog's window, its own (its pane's, as the core
+    /// takes them, `App::dialog_asking`, ADR-144, 1); else every window's.
+    pub(crate) fn actions_here(&self) -> Option<skwir_core::workspace::PaneId> {
+        self.chooser.is_some().then_some(self.pane)
+    }
+}
+
 /// The footer's Undo, split in two (the left part takes back the latest,
 /// the chevron opens the History), with the History above it when open;
 /// `None` while there is nothing to undo or redo.
@@ -476,9 +485,10 @@ pub fn undo_control(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    let target = shell.app.executor.undo_target();
+    let only = shell.actions_here();
+    let target = shell.app.executor.undo_target_of(only);
     let open = shell.undo_history_open();
-    if target.is_none() && !shell.app.executor.can_redo() && !open {
+    if target.is_none() && !shell.app.executor.can_redo_of(only) && !open {
         return None;
     }
     // As the strip's: no stops of the Tab order (module documentation).
@@ -521,6 +531,9 @@ pub fn undo_control(
         .into(),
     };
     let history_tip = with_keys(history_name(), keys(shell, "ui.undo_history"));
+    // The History beside it where the window offers it: not another
+    // program's dialog's (ADR-144, 1), whose Undo takes back its own.
+    let history = shell.runs_here("ui.undo_history", &serde_json::json!({}));
     let (accent, hover) = (theme.accent, theme.hover);
     let color = if enabled {
         theme.text
@@ -542,7 +555,13 @@ pub fn undo_control(
         .gap_1()
         .h(sized(20.))
         .px_2()
-        .rounded_start(gpui::rems(0.375))
+        .map(|d| {
+            if history {
+                d.rounded_start(gpui::rems(0.375))
+            } else {
+                d.rounded(gpui::rems(0.375))
+            }
+        })
         .border_1()
         .border_color(gpui::transparent_black())
         .text_color(color)
@@ -550,12 +569,14 @@ pub fn undo_control(
         .focus(move |s| s.border_color(accent))
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
         // A right click opens the History.
-        .on_mouse_down(
-            gpui::MouseButton::Right,
-            cx.listener(|this, _, window, cx| {
-                this.run("ui.undo_history", serde_json::json!({}), window, cx);
-            }),
-        )
+        .when(history, |d| {
+            d.on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(|this, _, window, cx| {
+                    this.run("ui.undo_history", serde_json::json!({}), window, cx);
+                }),
+            )
+        })
         .child(controls::glyph("revert", theme.text_muted, 13.))
         .child(
             words!(
@@ -616,8 +637,10 @@ pub fn undo_control(
             .items_center()
             .child(shell.undo_history.anchor.marker())
             .child(left)
-            .child(div().w(px(1.)).h(sized(12.)).bg(theme.border))
-            .child(chevron)
+            .when(history, |d| {
+                d.child(div().w(px(1.)).h(sized(12.)).bg(theme.border))
+                    .child(chevron)
+            })
             .children(popup)
             .into_any_element(),
     )

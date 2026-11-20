@@ -557,6 +557,92 @@ fn a_question_goes_to_the_window_that_asked_it() {
     assert_eq!(app.take_questions().len(), 1, "still asked");
 }
 
+/// Another program's dialog's Undo, Redo and Retry take back what that
+/// window did alone, never the user's last action in a window of their
+/// own (ADR-144, 1); a window of the user's own takes back anyone's.
+#[test]
+fn a_dialog_s_undo_takes_back_what_it_did_alone() {
+    use skwir_core::app::asking_in;
+    use skwir_core::op::ExecEvent;
+    let dir = home_tempdir();
+    let app = app(dir.path());
+    let own = active(&app);
+    let (dialog_window, _, dialog) = app.open_window(Location::from_path(dir.path())).unwrap();
+    app.workspace.write().set_chooses(dialog_window, true);
+    let finished = || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let event = app
+                .executor
+                .events()
+                .recv_deadline(deadline)
+                .expect("it finishes");
+            if matches!(event, ExecEvent::Finished { .. }) {
+                return;
+            }
+        }
+    };
+    let make = |pane, name: &str| {
+        let args = serde_json::json!({ "name": name, "in": dir.path() });
+        let Outcome::Plan(plan) = run(&app, "mkdir", args) else {
+            panic!("mkdir makes a plan");
+        };
+        let _asking = asking_in(Some(pane));
+        app.apply_whole(plan);
+        finished();
+    };
+    make(dialog, "made in the dialog");
+    make(own, "made in their window");
+    let title = |only| {
+        app.executor
+            .undo_target_of(only)
+            .map(|(title, _)| title.english())
+            .unwrap_or_default()
+    };
+    assert!(
+        title(Some(dialog)).contains("made in the dialog"),
+        "{}",
+        title(Some(dialog))
+    );
+    assert!(
+        title(None).contains("made in their window"),
+        "{}",
+        title(None)
+    );
+    {
+        // Asked in the dialog's window, as its Ctrl+Z is.
+        let _asking = asking_in(Some(dialog));
+        assert!(
+            app.executor
+                .undo_in(dialog, app.lifetime().child())
+                .is_some()
+        );
+    }
+    finished();
+    assert!(
+        !dir.path().join("made in the dialog").exists(),
+        "the dialog's taken back"
+    );
+    assert!(
+        dir.path().join("made in their window").exists(),
+        "the user's kept"
+    );
+    // What it undid, it redoes; a window of the user's own undid nothing.
+    assert!(app.executor.can_redo_of(Some(dialog)));
+    assert!(!app.executor.can_redo_of(Some(own)));
+    {
+        let _asking = asking_in(Some(dialog));
+        assert!(
+            app.executor
+                .redo_in(dialog, app.lifetime().child())
+                .is_some()
+        );
+    }
+    finished();
+    assert!(dir.path().join("made in the dialog").exists(), "made again");
+    assert!(app.executor.redo_in(own, app.lifetime().child()).is_none());
+}
+
 #[test]
 fn the_active_pane_is_in_the_active_window() {
     let dir = home_tempdir();

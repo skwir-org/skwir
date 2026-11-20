@@ -1495,8 +1495,10 @@ fn redo_verb() -> Words {
 /// The More menu's Undo and Redo, each named by what it takes back and off
 /// when there is nothing to, and the History (ADR-079, 13).
 fn undo_rows(shell: &Shell) -> Vec<MenuPart> {
-    let undo = shell.app.executor.undo_target();
-    let redo = shell.app.executor.last_redo_title();
+    // What this window's Undo and Redo take (a dialog's, its own).
+    let only = shell.actions_here();
+    let undo = shell.app.executor.undo_target_of(only);
+    let redo = shell.app.executor.last_redo_title_of(only);
     let (undo_said, redo_said) = undo_words(undo.as_ref(), redo.as_ref());
     [
         menu_item(
