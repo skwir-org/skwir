@@ -607,6 +607,91 @@ impl Shell {
         self.save_settings_later();
     }
 
+    /// Files dropped on a dialog's window, from a window of the user's own
+    /// or another program (ADR-144, 10): gone to, never copied or moved,
+    /// nor answered. Opening, the first's folder is shown and what of them
+    /// is in it selected (the first alone where the request takes one);
+    /// saving, a folder dropped is gone into, a file's folder shown and
+    /// its name taken. Whether the window took the drop: any, in a
+    /// dialog's. Whether the first is a folder is read on a worker, in its
+    /// lane.
+    pub(crate) fn dialog_takes_drop(
+        &mut self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.chooser.is_none() {
+            return false;
+        }
+        let Some(first) = paths.first().cloned() else {
+            return true;
+        };
+        let paths = paths.to_vec();
+        self.off_thread(
+            crate::shell::lane_of(std::slice::from_ref(&first)),
+            "ui-chooser-drop",
+            move || std::fs::metadata(&first).is_ok_and(|meta| meta.is_dir()),
+            move |shell, first_is_folder, window, cx| {
+                shell.chooser_go_to_dropped(&paths, first_is_folder, window, cx);
+            },
+            window,
+            cx,
+        );
+        true
+    }
+
+    /// `dialog_takes_drop`, once whether the first is a folder is known.
+    fn chooser_go_to_dropped(
+        &mut self,
+        paths: &[PathBuf],
+        first_is_folder: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(chooser) = &self.chooser else {
+            return;
+        };
+        let Some(first) = paths.first() else {
+            return;
+        };
+        let saving = matches!(chooser.asked().kind, Kind::Save { .. });
+        let several = matches!(chooser.asked().kind, Kind::Open { multiple: true, .. });
+        let field = chooser.name.clone();
+        if saving && first_is_folder {
+            let go = skwir_core::command::Invocation::navigate(&Location::from_path(first.clone()));
+            self.run(&go.name, go.args, window, cx);
+            return;
+        }
+        let Some(folder) = first.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let go = skwir_core::command::Invocation::navigate(&Location::from_path(folder.clone()));
+        self.run(&go.name, go.args, window, cx);
+        if saving {
+            if let (Some(input), Some(name)) = (field, first.file_name()) {
+                let shown = name.to_string_lossy().into_owned();
+                if let Some(chooser) = &mut self.chooser {
+                    chooser.given = Some(name.to_os_string());
+                }
+                input.update(cx, |input, cx| {
+                    let stem = stem_len(&shown);
+                    input.set_text(shown, cx);
+                    input.select_range(0..stem, cx);
+                });
+            }
+            return;
+        }
+        let names: Vec<OsString> = paths
+            .iter()
+            .filter(|path| path.parent() == Some(folder.as_path()))
+            .take(if several { usize::MAX } else { 1 })
+            .filter_map(|path| path.file_name().map(OsStr::to_os_string))
+            .collect();
+        self.app.reveal_names(self.pane, names);
+        cx.notify();
+    }
+
     /// Cancel: the program is told nothing was chosen.
     pub(crate) fn chooser_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.chooser.is_some() {

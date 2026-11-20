@@ -108,11 +108,13 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
    asked last, its one folder a program before read as its list).
 9. **Choosing folders, files are shown dimmed**: they say where one is,
    and none can be chosen.
-10. **A file dropped on a dialog's window is gone to**: opening, its
-    folder is shown and it is selected (several, if the request takes
-    several and they share a folder; else the shelf takes them); saving,
-    its folder is shown and its name taken. A drop never answers by
-    itself, nor copies or moves anything.
+10. **A file dropped on a dialog's window is gone to**, from a window of
+    the user's own or another program, wherever it lands (the files, a
+    folder, a place): opening, the first's folder is shown and it is
+    selected, with the others dropped from that folder where the request
+    takes several; saving, a folder dropped is gone into, a file's
+    folder shown and its name taken. A drop never answers by itself, nor
+    copies or moves anything.
 11. **The answer says how many**: "Open 3 files", "Select 2 folders",
     where the label is Skwir's; a program's own label (`accept_label`)
     is said as it gave it.

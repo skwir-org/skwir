@@ -457,6 +457,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A dialog's window goes to what is dropped (ADR-144, 10).
+        if self.dialog_takes_drop(paths, window, cx) {
+            return;
+        }
         if self.is_own_drag(paths) {
             self.drop_into(self.pane, dest, None, window, cx);
             return;
@@ -515,6 +519,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A dialog's window goes to what is dropped (ADR-144, 10).
+        if self.chooser.is_some() {
+            let paths = self.drag_paths(from);
+            self.dialog_takes_drop(&paths, window, cx);
+            return;
+        }
         // A place dragged into a folder is copied there as its location
         // says (`Verbs::export`: a tag's, a folder of its files); files go
         // as files do.
@@ -788,6 +798,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A dialog's window goes to what is dropped (ADR-144, 10).
+        if self.dialog_takes_drop(paths, window, cx) {
+            return;
+        }
         let Some(dest) = self.pane_folder(self.pane) else {
             // A location that takes files (a tag's) says what a drop does.
             let shown = self.app.pane_location(self.pane);
@@ -945,6 +959,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // A dialog's window goes to what is dropped (ADR-144, 10).
+        if self.chooser.is_some() {
+            let paths = self.drag_paths(from);
+            return self.dialog_takes_drop(&paths, window, cx);
+        }
         let verbs = self.app.verbs(place);
         let Some(drop) = verbs.drop else {
             return false;
@@ -1009,6 +1028,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // A dialog's window goes to what is dropped (ADR-144, 10).
+        if self.dialog_takes_drop(paths, window, cx) {
+            return true;
+        }
         if self.is_own_drag(paths) {
             return self.drop_on_place(self.pane, place, None, window, cx);
         }

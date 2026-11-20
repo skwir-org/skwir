@@ -2191,7 +2191,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   it chooses, `open` (Enter, a double click) answers with a file (a
   folder still opens; choosing folders or where to save files, a file
   is never opened from there, and choosing folders its files show
-  dimmed, `Admits::folders`, `Pane::untaken`, ADR-144, 9), Escape (`pane choosing`, the bar's `chooser`) and
+  dimmed, `Admits::folders`, `Pane::untaken`, ADR-144, 9; what is
+  dropped on it, wherever it lands, is gone to, never copied, moved or
+  answered, `Shell::dialog_takes_drop`, ADR-144, 10), Escape (`pane choosing`, the bar's `chooser`) and
   the close button cancel, Escape first letting go of a name typed to
   find a file (`pane choosing typing`, `ui.type_end`) and of a filter, a
   name taken is asked Replace? in skwir
