@@ -536,6 +536,47 @@ mod tests {
         }
     }
 
+    /// The plasma at 400 × 300, encoded again at quality 30 in 4:4:4, 4:2:2
+    /// and grey (`cjpeg -sample 1x1`, `-sample 2x1`, `-grayscale`), each
+    /// sequential (`jpegtran -optimize`) and progressive with a restart
+    /// marker every row of blocks (`-restart 1`, `-scans`): in 4:4:4 by
+    /// `PLASMA_DC_APART`'s script, the luma's AC before the colours' DC; in
+    /// 4:2:2 every DC whole first, then each component's AC; in grey its DC,
+    /// then its AC in two bands.
+    const PLASMA_444: &[u8] = include_bytes!("../testdata/synthetic-plasma-444.jpg");
+    const PLASMA_444_RESTART: &[u8] =
+        include_bytes!("../testdata/synthetic-plasma-444-restart.jpg");
+    const PLASMA_422: &[u8] = include_bytes!("../testdata/synthetic-plasma-422.jpg");
+    const PLASMA_422_RESTART: &[u8] =
+        include_bytes!("../testdata/synthetic-plasma-422-restart.jpg");
+    const PLASMA_GREY: &[u8] = include_bytes!("../testdata/synthetic-plasma-grey.jpg");
+    const PLASMA_GREY_RESTART: &[u8] =
+        include_bytes!("../testdata/synthetic-plasma-grey-restart.jpg");
+
+    /// At an eighth, a progressive JPEG whose DC comes whole draws exactly
+    /// its sequential one in every layout: 4:4:4, 4:2:2 and grey, its AC
+    /// scans passed over across their restart markers.
+    #[test]
+    fn every_layout_at_an_eighth_is_drawn_as_its_sequential_one() {
+        let reduced = |bytes: &[u8]| {
+            let mut cursor = Cursor::new(bytes);
+            let (image, _) = jpeg_reduced(&mut cursor, 50, Threads::Caller, REDUCED_BYTES)
+                .unwrap()
+                .unwrap();
+            image
+        };
+        for (layout, sequential, progressive) in [
+            ("4:4:4", PLASMA_444, PLASMA_444_RESTART),
+            ("4:2:2", PLASMA_422, PLASMA_422_RESTART),
+            ("grey", PLASMA_GREY, PLASMA_GREY_RESTART),
+        ] {
+            let drawn = reduced(sequential);
+            assert_eq!((drawn.width(), drawn.height()), (50, 38), "{layout}");
+            assert_eq!(drawn, reduced(progressive), "{layout}");
+        }
+        assert!(reduced(PLASMA_GREY).as_luma8().is_some(), "grey stays grey");
+    }
+
     /// A reduced decode holds what its caller allows, or the picture is
     /// decoded whole: a progressive JPEG at a half keeps two bytes a sample
     /// of each component for the whole picture (800 × 608 × 3 × 2, 2.9 MB,

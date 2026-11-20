@@ -102,7 +102,10 @@ same changes.
     (`crates/platform/testdata/synthetic-plasma-*.jpg`): progressive with
     every DC whole first, or the luma's AC before the colours' DC, draws
     exactly the sequential one; libjpeg's progression stays within 6
-    levels, and half a level on average.
+    levels, and half a level on average. The same plasma encoded again
+    in 4:4:4, 4:2:2 and grey, progressive with a restart marker every
+    row of blocks (`synthetic-plasma-{444,422,grey}*.jpg`), draws exactly
+    its sequential one: the AC scans passed over step across the markers.
 - `0004-the-caller-chooses-its-threads.patch`: whoever asks for a decode
   says whether it may take threads of its own
   (`Decoder::set_worker_threads`), as it knows who waits for it. The
