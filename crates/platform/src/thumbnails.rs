@@ -264,37 +264,80 @@ impl ThumbCache {
     }
 }
 
-/// `image` as the PNG the cache keeps, `chunks` its text: the smaller of
-/// two quick encodings. fdeflate's (`Compression::Fast`) codes a photo as
-/// small as zlib's default does, in a fiftieth of its time, but finds no
-/// repeat farther than a run: a document's page, a drawing, a screenshot
-/// came out up to twice as large. zlib's second level finds those in a
-/// millisecond or so. Thumbnails of 256 px, fdeflate's, zlib's second
-/// level's and zlib's default, release: a photo's 88, 96 and 91 KB in
-/// 0.3, 2 and 11 ms; a text page's 58, 30 and 28 KB in 0.3, 0.8 and 4 ms.
+/// `image` as the PNG the cache keeps, `chunks` its text: fdeflate's
+/// (`Compression::Fast`), and zlib's second level's where it may be
+/// smaller, the smaller of the two. fdeflate codes a photo as small as
+/// zlib's default does, in a fiftieth of its time, but finds no repeat
+/// farther than a run: a document's page, a drawing, a screenshot, a photo
+/// in grey came out up to twice as large. zlib's second level finds those
+/// in a millisecond or so, and only those repeat the differences between
+/// their pixels ([`repeats`]): a photo's thumbnail is encoded once.
+/// Thumbnails of 256 px, fdeflate's, zlib's second level's and zlib's
+/// default, release: a photo's 88, 96 and 91 KB in 0.3, 2 and 11 ms; a
+/// text page's 58, 30 and 28 KB in 0.3, 0.8 and 4 ms.
 fn encoded(image: &Image, chunks: &[(&str, String)]) -> anyhow::Result<Vec<u8>> {
-    let encode = |deflate| -> anyhow::Result<Vec<u8>> {
-        let mut png = Vec::new();
-        let mut enc = png::Encoder::new(&mut png, image.width, image.height);
-        enc.set_color(png::ColorType::Rgba);
-        enc.set_depth(png::BitDepth::Eight);
-        enc.set_filter(png::Filter::Adaptive);
-        enc.set_deflate_compression(deflate);
-        for (keyword, text) in chunks {
-            enc.add_text_chunk((*keyword).to_owned(), text.clone())?;
-        }
-        let mut writer = enc.write_header()?;
-        writer.write_image_data(&image.rgba)?;
-        writer.finish()?;
-        Ok(png)
-    };
-    let fast = encode(png::DeflateCompression::FdeflateUltraFast)?;
-    let matched = encode(png::DeflateCompression::Level(2))?;
+    let fast = encode(image, chunks, png::DeflateCompression::FdeflateUltraFast)?;
+    if !repeats(&image.rgba) {
+        return Ok(fast);
+    }
+    let matched = encode(image, chunks, png::DeflateCompression::Level(2))?;
     Ok(if matched.len() < fast.len() {
         matched
     } else {
         fast
     })
+}
+
+/// `image` as a PNG, `chunks` its text, its rows filtered as each fits
+/// best, compressed by `deflate`.
+fn encode(
+    image: &Image,
+    chunks: &[(&str, String)],
+    deflate: png::DeflateCompression,
+) -> anyhow::Result<Vec<u8>> {
+    let mut png = Vec::new();
+    let mut enc = png::Encoder::new(&mut png, image.width, image.height);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.set_filter(png::Filter::Adaptive);
+    enc.set_deflate_compression(deflate);
+    for (keyword, text) in chunks {
+        enc.add_text_chunk((*keyword).to_owned(), text.clone())?;
+    }
+    let mut writer = enc.write_header()?;
+    writer.write_image_data(&image.rgba)?;
+    writer.finish()?;
+    Ok(png)
+}
+
+/// Whether the differences between the picture's neighbouring pixels
+/// repeat, so that zlib's matches may code it smaller than fdeflate's runs:
+/// a PNG's filters code those differences. Told from 1024 pixels spread
+/// over it and each one's left neighbour, at most half of them apart, in a
+/// few hundredths of a millisecond. A photo's are its grain, mostly apart
+/// (651 to 1020 of 1024 at 256 px), and zlib's second level writes it 9 to
+/// 11 % larger in five times fdeflate's time; a page, a diagram, a
+/// drawing, a gradient, a screenshot, an icon, a photo in grey or on a
+/// plain ground repeat theirs (3 to 285 apart), and zlib writes all but
+/// the last up to half as large.
+fn repeats(rgba: &[u8]) -> bool {
+    const SAMPLES: usize = 1024;
+    // A prime step, so that the pixels taken do not line up in columns.
+    const STEP: usize = 7919;
+    let pixels = rgba.len() / 4;
+    if pixels < 2 {
+        return true;
+    }
+    let taken = SAMPLES.min(pixels - 1);
+    let mut differences: Vec<[u8; 4]> = (0..taken)
+        .map(|k| {
+            let at = (1 + k * STEP % (pixels - 1)) * 4;
+            std::array::from_fn(|c| rgba[at + c].wrapping_sub(rgba[at - 4 + c]))
+        })
+        .collect();
+    differences.sort_unstable();
+    differences.dedup();
+    differences.len() * 2 <= taken
 }
 
 #[cfg(unix)]
@@ -528,6 +571,64 @@ mod tests {
         assert!(
             noise_kept <= noise_fast + 512,
             "{noise_kept} bytes kept, {noise_fast} fast"
+        );
+    }
+
+    /// The plasma of the pictures' tests (`picture.rs`), as a photo's
+    /// thumbnail: 256 × 192.
+    fn photo() -> Image {
+        let plasma = include_bytes!("../testdata/synthetic-plasma-sequential.jpg");
+        let rgba = image::load_from_memory(plasma)
+            .unwrap()
+            .thumbnail(256, 256)
+            .into_rgba8();
+        Image {
+            width: rgba.width(),
+            height: rgba.height(),
+            rgba: rgba.into_raw().into(),
+        }
+    }
+
+    /// A photo is encoded once, fdeflate's, which is smaller than zlib's
+    /// second level's; in grey, the differences between its pixels repeat,
+    /// and zlib's is kept, far smaller.
+    #[test]
+    fn a_photo_is_encoded_once_and_one_in_grey_twice() {
+        let fast =
+            |image: &Image| encode(image, &[], png::DeflateCompression::FdeflateUltraFast).unwrap();
+        let matched =
+            |image: &Image| encode(image, &[], png::DeflateCompression::Level(2)).unwrap();
+        let photo = photo();
+        assert_eq!(photo.width, 256);
+        assert!(!repeats(&photo.rgba));
+        let kept = encoded(&photo, &[]).unwrap();
+        assert_eq!(kept, fast(&photo), "fdeflate's alone");
+        assert!(
+            kept.len() < matched(&photo).len(),
+            "{} bytes kept, zlib's {}",
+            kept.len(),
+            matched(&photo).len()
+        );
+        let grey = Image {
+            rgba: photo
+                .rgba
+                .chunks(4)
+                .flat_map(|p| {
+                    let [r, g, b] = [p[0], p[1], p[2]].map(u32::from);
+                    let luma = u8::try_from((r * 299 + g * 587 + b * 114) / 1000).unwrap();
+                    [luma, luma, luma, 255]
+                })
+                .collect(),
+            ..photo
+        };
+        assert!(repeats(&grey.rgba));
+        let kept = encoded(&grey, &[]).unwrap();
+        assert_eq!(kept, matched(&grey), "zlib's");
+        assert!(
+            kept.len() * 3 < fast(&grey).len() * 2,
+            "{} bytes kept, fdeflate's {}",
+            kept.len(),
+            fast(&grey).len()
         );
     }
 
