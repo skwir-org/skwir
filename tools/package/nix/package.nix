@@ -39,6 +39,7 @@
   expat,
   dbus,
   sqlite,
+  zstd,
   libiconv,
 
   # What the helpers link, each behind its flag.
@@ -221,6 +222,9 @@ rustPlatform.buildRustPackage {
         expat
         dbus
         sqlite
+        # zstd-sys links the system zstd: nixpkgs' cargoSetupHook asks it
+        # to (ZSTD_SYS_USE_PKG_CONFIG), as it does sqlite's.
+        zstd
       ]
     )
     ++ lib.optional stdenv.hostPlatform.isDarwin libiconv
