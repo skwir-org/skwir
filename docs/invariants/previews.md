@@ -241,7 +241,8 @@ A name that says nothing is not a binary file.
   through `picture::decode_fitted`, as a thumbnail is): a JPEG twice
   that side and more at its least reduced scale still covering it (a
   24-megapixel photo computes and holds a quarter of its pixels), any
-  other whole, then shrunk. A progressive JPEG holds besides the
+  other whole, a lossless JPEG too (it has no reduced scale), then
+  shrunk. A progressive JPEG holds besides the
   coefficients of the whole picture, 64 a block, two bytes a pixel of
   each component, except at an eighth: there it keeps and reads only
   every block's DC coefficient, all an eighth draws, to the first scans

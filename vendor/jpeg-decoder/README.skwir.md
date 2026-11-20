@@ -18,10 +18,11 @@ with zune-jpeg 0.5.15, the thumbnail of a synthetic 5464×8192 photo of
 megapixels), against 60–64 ms here, and held 134 MB of pixels against
 2 MB; a progressive one 353–369 ms, holding as much, where here one of
 5.5 MB takes 19–28 ms and holds 7 MB (`0001`, `0003`). Its
-`jpeg_set_max_scans` is a limit that fails the decode, not a stop. 0.5.16 (release candidates in 2026) adds an
-incremental mode and previews of a progressive file, still at full size.
-Remove this copy, and decode every JPEG through zune-jpeg, once it
-decodes at a reduced scale.
+`jpeg_set_max_scans` is a limit that fails the decode, not a stop.
+0.5.16 (release candidates in 2026) adds an incremental mode and
+previews of a progressive file, still at full size. Remove this copy,
+and decode every JPEG through zune-jpeg, once it decodes at a reduced
+scale.
 
 Left out:
 - the registry's `.cargo-ok`;
@@ -116,3 +117,15 @@ same changes.
     the caller's thread, one decode took 15–20 % longer (141–163 ms,
     with threads 122–136, load 4–11), which the preview waits for: there
     the threads stay (105–112 ms either way).
+- `0005-a-lossless-picture-keeps-its-size.patch`: `Decoder::scale` keeps
+  a lossless JPEG's full size, and says so. A lossless image has no DCT
+  to scale, and its scan is decoded at its full size whatever was asked:
+  the published crate gave the smaller size, and drew the first samples
+  of each component at it (a grey one came whole, its size wrong), so a
+  thumbnail was the picture's first rows in stripes, kept so in the
+  desktop's cache. Upstream takes changes for lossless JPEGs.
+  - **Tests:** `crates/platform/src/picture.rs` asks for a quarter of a
+    plasma's side, lossless in RGB and in grey
+    (`crates/platform/testdata/synthetic-lossless-*.jpg`): neither is
+    decoded reduced, and Skwir takes no pixels of another size than
+    asked.

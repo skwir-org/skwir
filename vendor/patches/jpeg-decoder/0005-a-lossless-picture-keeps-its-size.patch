@@ -1,0 +1,18 @@
+--- a/src/decoder.rs
++++ b/src/decoder.rs
+@@ -291,9 +291,15 @@ impl<R: Read> Decoder<R> {
+     ///
+     /// To generate a thumbnail of an exact size, pass the desired size and
+     /// then scale to the final size using a traditional resampling algorithm.
++    ///
++    /// A lossless image has no DCT to scale: it is decoded at its full size,
++    /// which is what this returns.
+     pub fn scale(&mut self, requested_width: u16, requested_height: u16) -> Result<(u16, u16)> {
+         self.read_info()?;
+         let frame = self.frame.as_mut().unwrap();
++        if frame.coding_process == CodingProcess::Lossless {
++            return Ok((frame.output_size.width, frame.output_size.height));
++        }
+         let idct_size = crate::idct::choose_idct_size(
+             frame.image_size,
+             Dimensions {

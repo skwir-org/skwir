@@ -84,9 +84,9 @@ const REDUCED_BYTES: usize = 512 << 20;
 /// A JPEG decoded at the least of its reduced scales (an eighth, a quarter,
 /// a half) still at least `side` on its longer side, and how to turn it:
 /// a photo eight times the side has an eighth of its pixels computed and
-/// held. `None`, `reader` back where it was, when no smaller scale fits, or
-/// for a JPEG this decoder reads otherwise than `image` (CMYK, 16 bits,
-/// arithmetic coding): it is decoded whole.
+/// held. `None`, `reader` back where it was, when no smaller scale fits (a
+/// lossless JPEG has none), or for a JPEG this decoder reads otherwise than
+/// `image` (CMYK, 16 bits, arithmetic coding): it is decoded whole.
 fn jpeg_reduced<R: BufRead + Seek>(
     reader: &mut R,
     side: u32,
@@ -118,6 +118,17 @@ fn jpeg_reduced<R: BufRead + Seek>(
             .unwrap_or(Orientation::NoTransforms);
         let pixels = jpeg.decode().ok()?;
         let (width, height) = (u32::from(width), u32::from(height));
+        // The pixels of the size it said, or no picture: `from_raw` takes a
+        // buffer longer than it needs, and pixels of another size would be
+        // drawn as stripes of the picture's first rows.
+        let channels = if full.pixel_format == jpeg_decoder::PixelFormat::L8 {
+            1
+        } else {
+            3
+        };
+        if pixels.len() as u64 != u64::from(width) * u64::from(height) * channels {
+            return None;
+        }
         let image = match full.pixel_format {
             jpeg_decoder::PixelFormat::L8 => {
                 DynamicImage::ImageLuma8(image::GrayImage::from_raw(width, height, pixels)?)
@@ -398,6 +409,38 @@ mod tests {
                 mean.abs() < 0.5,
                 "channel {channel}: {mean} levels on average"
             );
+        }
+    }
+
+    /// 64 × 48, the plasma in eight bits, lossless (`cjpeg -lossless 1`), in
+    /// RGB (`-rgb`) and in grey.
+    const LOSSLESS_RGB: &[u8] = include_bytes!("../testdata/synthetic-lossless-rgb.jpg");
+    const LOSSLESS_GREY: &[u8] = include_bytes!("../testdata/synthetic-lossless-grey.jpg");
+
+    /// A lossless JPEG has no reduced scale, and is never decoded at one:
+    /// the decoder drew its first rows at the smaller size, the desktop's
+    /// cache kept them, and grey ones came with every pixel of the whole.
+    #[test]
+    fn a_lossless_jpeg_is_never_decoded_reduced() {
+        for bytes in [LOSSLESS_RGB, LOSSLESS_GREY] {
+            let mut jpeg = jpeg_decoder::Decoder::new(Cursor::new(bytes));
+            assert_eq!(jpeg.scale(16, 16).unwrap(), (64, 48), "its full size");
+            let mut cursor = Cursor::new(bytes);
+            assert!(jpeg_reduced(&mut cursor, 16).unwrap().is_none());
+            assert_eq!(cursor.position(), 0, "decoded whole from where it was");
+            // What the whole decode makes of it, if anything (zune-jpeg
+            // reads no lossless JPEG): the picture, shrunk.
+            if let Ok(fitted) = decode_fitted(reader(bytes), 16) {
+                let whole = jpeg_decoder::Decoder::new(Cursor::new(bytes))
+                    .decode()
+                    .unwrap();
+                let whole = if whole.len() == 64 * 48 {
+                    DynamicImage::ImageLuma8(image::GrayImage::from_raw(64, 48, whole).unwrap())
+                } else {
+                    DynamicImage::ImageRgb8(image::RgbImage::from_raw(64, 48, whole).unwrap())
+                };
+                assert_eq!(fitted.to_rgb8(), whole.thumbnail(16, 16).to_rgb8());
+            }
         }
     }
 
