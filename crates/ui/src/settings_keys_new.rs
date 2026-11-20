@@ -207,7 +207,7 @@ fn finds(words: &skwir_core::collate::Words, (spec, _, title): &Candidate) -> bo
 fn candidates(app: &skwir_core::App) -> Vec<Candidate> {
     let mut all = Vec::new();
     for spec in app.commands.list() {
-        if matches!(&*spec.name, "settings.apply" | "plugins.set_enabled") || spec.data {
+        if spec.asked_only || spec.data {
             continue;
         }
         let shell = &*spec.owner == crate::commands::OWNER;

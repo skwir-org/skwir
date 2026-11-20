@@ -2275,7 +2275,9 @@ pub(crate) fn register(app: &crate::App) {
             }
             Ok(crate::command::Outcome::Value(serde_json::json!(id)))
         },
-    );
+    )
+    // The Settings window's save: no list of actions runs it.
+    .asked_only();
 }
 
 /// The languages the setting offers: Automatic, English, each language the

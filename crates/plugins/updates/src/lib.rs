@@ -373,8 +373,8 @@ struct AnswerArgs {
 }
 
 impl UpdatesPlugin {
-    /// The commands of every copy; `updates.check` is a downloaded copy's
-    /// alone (`Inner::take_here`).
+    /// The commands of every copy; `updates.check` and `updates.answer` are
+    /// a downloaded copy's alone (`Inner::register_downloaded`).
     fn register_commands(&self, app: &App) {
         let inner = Arc::clone(&self.inner);
         app.commands
@@ -389,24 +389,6 @@ impl UpdatesPlugin {
                 move |_, app| Ok(Outcome::Value(inner.latest(app))),
             )
             .data();
-        let inner = Arc::clone(&self.inner);
-        app.commands
-            .register::<AnswerArgs, _>(
-                ID,
-                Topic::Skwir,
-                "updates.answer",
-                words!(updates_answer = "Answer whether to be told of new versions"),
-                words!(
-                    updates_answer_description = "The answer to the question a downloaded copy asks once: whether to ask { $site } once a day",
-                    site = host(&self.inner.setup.site),
-                    note = "site: Skwir's website, as written (skwir.org)."
-                ),
-                move |args, app| {
-                    inner.answer(app, args.tell);
-                    Ok(Outcome::Done)
-                },
-            )
-            .effect(Effect::UserOnly);
     }
 }
 
@@ -578,7 +560,7 @@ impl Inner {
             match (was, here.downloaded().is_some()) {
                 (false, true) => {
                     self.declare_tell(app);
-                    self.register_check(app);
+                    self.register_downloaded(app);
                 }
                 (true, false) => {
                     // `updates.check` stays until the next start, saying
@@ -596,8 +578,28 @@ impl Inner {
         true
     }
 
-    /// `updates.check`, a downloaded copy's.
-    fn register_check(self: &Arc<Self>, app: &App) {
+    /// A downloaded copy's commands: `updates.check`, and `updates.answer`,
+    /// which only the question's buttons run (`Declared::asked_only`: no
+    /// list of actions offers it), a person's alone.
+    fn register_downloaded(self: &Arc<Self>, app: &App) {
+        let inner = Arc::clone(self);
+        let answer = app.commands.register::<AnswerArgs, _>(
+            ID,
+            Topic::Skwir,
+            "updates.answer",
+            words!(updates_answer = "Answer whether to be told of new versions"),
+            words!(
+                updates_answer_description = "The answer to the question a downloaded copy asks once: whether to ask { $site } once a day",
+                site = host(&self.setup.site),
+                note = "site: Skwir's website, as written (skwir.org)."
+            ),
+            move |args, app| {
+                inner.answer(app, args.tell);
+                Ok(Outcome::Done)
+            },
+        );
+        answer.asked_only();
+        answer.effect(Effect::UserOnly);
         let inner = Arc::clone(self);
         app.commands.register::<NoArgs, _>(
             ID,

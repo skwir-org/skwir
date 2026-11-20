@@ -502,3 +502,7 @@ it trusts a package by its signed index. The user chose signing.
   would tell, are each said once, so a look at another program's dialog
   Skwir answers starts nothing; the next look at a window of the user's
   own says them.
+- **`updates.answer`** is a downloaded copy's, as `updates.check` is,
+  and run only by the question's buttons (`Declared::asked_only`): the
+  palette and the Keyboard page offer it nowhere, as they offer no
+  other command only its own place runs.

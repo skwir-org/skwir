@@ -320,6 +320,15 @@ fn a_downloaded_copy_asks_once_then_checks_once_a_day() {
     );
     let labels: Vec<String> = question.actions.iter().map(|a| a.label.english()).collect();
     assert_eq!(labels, ["Yes", "No"], "no repository for an AppImage");
+    let answer = f
+        .app
+        .commands
+        .get("updates.answer")
+        .expect("a downloaded copy's");
+    assert!(
+        answer.asked_only,
+        "run by its buttons alone, no list offers it"
+    );
     f.look_on(20_002);
     assert!(f.said().is_empty(), "asked once a day");
 
@@ -610,8 +619,8 @@ fn a_copy_something_else_updates_is_never_checked() {
             "no setting: {here:?}"
         );
         assert!(
-            !f.app.commands.contains("updates.check"),
-            "nothing to check: {here:?}"
+            !f.app.commands.contains("updates.check") && !f.app.commands.contains("updates.answer"),
+            "nothing to check or answer: {here:?}"
         );
         let latest = f.app.dispatch(&Invocation::new("updates.latest")).unwrap();
         let skwir_core::command::Outcome::Value(latest) = latest else {

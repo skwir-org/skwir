@@ -273,7 +273,9 @@ pub(crate) fn register(app: &App) {
             );
             Ok(crate::command::Outcome::Done)
         },
-    );
+    )
+    // The Plugins page's switch: no list of actions runs it.
+    .asked_only();
     app.commands
         .register::<crate::command::NoArgs, _>(
             "core",

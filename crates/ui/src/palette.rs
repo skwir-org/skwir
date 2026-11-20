@@ -631,15 +631,13 @@ pub fn offered(
 ) -> Vec<Offer> {
     let mut offers: Vec<Offer> = Vec::new();
     for spec in app.commands.list() {
-        // Structured preference batches are edited by the Settings dialog;
+        // What is run only where it is asked for (the Settings dialog's
+        // save, a question's buttons) is not offered;
         // the shell's own are offered as `UI_COMMANDS` says, most being
         // keys of a place (a menu's arrows), nothing to run from here; and
         // what is data (an agent's question, a panel's rows) shows nothing
         // run from here.
-        if matches!(&*spec.name, "settings.apply" | "plugins.set_enabled")
-            || &*spec.owner == crate::commands::OWNER
-            || spec.data
-        {
+        if spec.asked_only || &*spec.owner == crate::commands::OWNER || spec.data {
             continue;
         }
         offers.push(Offer {
@@ -1107,6 +1105,33 @@ mod tests {
         // The core's own data: the tabs, the entries, the commands.
         for data in ["List tabs", "List entries"] {
             assert!(!offered.iter().any(|t| t == data), "{data}");
+        }
+    }
+
+    /// What is run only where it is asked for (a question's buttons, the
+    /// Settings window's save, its Plugins page's switch) is not offered:
+    /// run from here, it would lack what that place gives it.
+    #[test]
+    fn what_is_run_only_where_asked_is_not_offered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.commands
+            .register::<NoArgs, _>(
+                "test",
+                skwir_core::command::Topic::Skwir,
+                "test.answer",
+                Words::as_written("Answer a test question"),
+                Words::as_written(""),
+                |_, _| Ok(Outcome::Done),
+            )
+            .asked_only();
+        let offered = titles(&app, &[SortKey::Name]);
+        for asked in [
+            "Answer a test question",
+            "Save settings",
+            "Enable or disable a plugin",
+        ] {
+            assert!(!offered.iter().any(|t| t == asked), "{asked}");
         }
     }
 

@@ -324,9 +324,7 @@ fn unkeyed<'a>(
         .collect();
     specs
         .iter()
-        .filter(|spec| {
-            !matches!(&*spec.name, "settings.apply" | "plugins.set_enabled") && !spec.data
-        })
+        .filter(|spec| !spec.asked_only && !spec.data)
         .flat_map(|spec| {
             let shell = &*spec.owner == crate::commands::OWNER;
             let mut args: Vec<Value> = spec

@@ -632,6 +632,15 @@ pub struct CommandSpec {
     /// this, never by their titles (`docs/invariants/words.md`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub same_as: Option<Arc<str>>,
+    /// It is run only where it is asked for, with the arguments that place
+    /// makes (`Declared::asked_only`): a question's buttons
+    /// (`updates.answer`), the Settings window's save (`settings.apply`),
+    /// its Plugins page's switch (`plugins.set_enabled`). No list of
+    /// actions offers it (the palette, the Keyboard page's), which would
+    /// run it without them. Only those lists read it, so it is not said to
+    /// agents.
+    #[serde(skip)]
+    pub asked_only: bool,
     /// When a key held down runs it again (ADR-066): a step along
     /// something (the cursor, a page, the volume, the next tab), never an
     /// act or a switch, which the key's repeats would run over and over.
@@ -749,6 +758,12 @@ impl Declared<'_> {
     /// `CommandSpec::same_as`): a list of actions shows one of them.
     pub fn same_as(&self, twin: &str) {
         self.update(|spec| spec.same_as = Some(twin.into()));
+    }
+
+    /// It is run only where it is asked for (see `CommandSpec::asked_only`):
+    /// no list of actions offers it.
+    pub fn asked_only(&self) {
+        self.update(|spec| spec.asked_only = true);
     }
 
     /// A key held down runs it again where `rule` says, by its arguments
@@ -1080,6 +1095,7 @@ impl CommandRegistry {
             keeps_a_key: false,
             data: false,
             same_as: None,
+            asked_only: false,
             repeats: None,
         };
         let mut commands = self.commands.write();

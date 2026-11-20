@@ -106,6 +106,12 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   plugin from outside's command, whose answer the window says) is
   `.reads()` and offered. `keymap_titles.rs` names those, so a new
   command that reads says which it is.
+- **Asked only.** A command run only where it is asked for, with the
+  arguments that place makes (a question's buttons, `updates.answer`;
+  the Settings window's save, `settings.apply`; its Plugins page's
+  switch, `plugins.set_enabled`), is declared `.asked_only()`: the
+  palette and the Keyboard page leave it out, as they would run it
+  without them. No list of actions names a command to leave out.
 
 ## Agents and scripts drive the window (ADR-043)
 
