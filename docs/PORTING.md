@@ -556,6 +556,32 @@ Left:
 - **Bench**: the raw listing is the system's own (readdir and fstatat on
   macOS, `std::fs` on Windows), compiled, never run; its budgets are
   Linux's (step L).
+- **Words in every language** (ADR-139): the window's languages are the
+  system's, the formats' locale (numbers, dates, the order of names,
+  paper) the region's: on macOS `NSLocale` (its preferred languages, the
+  app's own first, and the current locale), compiled only **(5b)**; on
+  Windows the display languages and the user's locale
+  (`GetUserPreferredUILanguages`, `GetUserDefaultLocaleName`), under Wine,
+  which answers from the Unix locale it runs in. The desktop's 12- or
+  24-hour switch (`platform/desktop_style.rs`): macOS's
+  `AppleICUForce24HourTime` and `AppleICUForce12HourTime`, compiled only;
+  Windows' short time format (`LOCALE_SSHORTTIME`), its region's key
+  followed **(5b)**. Names are ordered by ICU4X on every system, by the
+  region's collation there. Right-to-left text: DirectWrite's runs by
+  their level (gpui patch 0070) and its reading direction, Core Text's
+  base writing direction (0084), compiled only **(5b)**: Wine's DirectWrite
+  selects no font, so gpui_windows's text tests do not run there.
+  Shortcuts on layouts without Latin letters (0076) are Linux's; what
+  Windows and macOS name a key typed on one is gpui's own, never tried.
+  The forms of Chinese characters are the system's choice there (0074 is
+  cosmic-text's), and the warning naming a font to install is Linux's
+  **(c)**. The screen reader is told the window's language through
+  AccessKit (0073), heard on no system yet. macOS's bundle declares each
+  language offered, drafts included (`.lproj`), not made since French and
+  Chinese were drafted; its Window menu is found by a flag (0083), and
+  Skwir builds no menu bar yet. User folders' names as the system shows
+  them (ADR-139, 16) and `core.folder_names` are not written **(u)**.
+  Windows' installer stays English.
 - **Metered connections** (ADR-142): `skwir_platform::network::metered`
   asks Linux's portal (`NetworkMonitor.GetMetered`). Windows' connection
   cost (`NetworkInformation`) and macOS's `NWPath.isExpensive` are not

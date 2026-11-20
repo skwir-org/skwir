@@ -132,6 +132,16 @@ new. Intel Macs have no build yet.
    a tab. Say where the lights sit and whether anything overlaps them
    (ADR-138).
 
+14. **Your language** (try). With French or Simplified Chinese first in
+   System Settings › General › Language & Region (or chosen for Skwir
+   alone there), the window speaks it, saying once that it is a draft;
+   dates, times, numbers and the order of names are your region's (sorted
+   by name, a Swedish region puts Ä after Z), the 12- or 24-hour switch
+   followed. Hebrew or Arabic in a file's name, a text field and a
+   Markdown document is drawn, wrapped and edited right, and a code
+   file's line that starts with an Arabic comment keeps its `//` at the
+   left. Compiled only (ADR-139, PORTING "10–15").
+
 ## Windows
 
 A build to try is made on Linux (ADR-074) and offered on each release's
@@ -204,6 +214,16 @@ window: everything below is new.
    window, a double click maximizes it (beside the tabs, opens a tab
    instead), the right button opens its menu; System gives Windows' bar
    back, on the open window too, at the window's new size (ADR-138).
+
+14. **Your language** (try). With Windows' display language French or
+   Simplified Chinese (Settings › Time & language › Language & region),
+   the window speaks it, saying once that it is a draft; dates, times
+   (Windows' short time, 12 or 24 hours), numbers and the order of names
+   follow the region's formats. Hebrew or Arabic in a file's name, a text
+   field and a Markdown document is drawn, wrapped and edited right
+   (DirectWrite's right-to-left runs, never drawn yet), and a code file's
+   line that starts with an Arabic comment keeps its `//` at the left. The
+   installer stays in English (ADR-139, PORTING "10–15").
 
 ## When a system is ready
 
