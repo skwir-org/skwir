@@ -93,9 +93,11 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   default), numbers, dates and the order of names by the locale, text in
   every script and right to left (gpui 0069 to 0084, 0086, 0087),
   printing right to left (ADR-111 revised), plugins from outside on
-  protocol 2; shortcuts
-  on other keyboard layouts (gpui 0076); Show in folder and the Open and
-  Save dialogs for other programs (ADR-140, ADR-141); new versions told,
+  protocol 2; shortcuts on other keyboard layouts (gpui 0076); Show in
+  folder and the Open and Save dialogs for other programs (ADR-140,
+  ADR-141), a dialog's window offering what finds and chooses, with the
+  dialogs' own layout (ADR-144), every window tagged for the
+  compositor's rules (gpui 0089); new versions told,
   the apt and dnf repositories published and Fedora's packages signed
   (ADR-142); a drag that moves what has nothing to select (ADR-143);
   thumbnails shown before they are kept, a progressive JPEG's read from
@@ -1367,15 +1369,14 @@ portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
 holding the name, seen to keep it until it ends (a test's holder, not
 Dolphin); the startup id on Wayland.
 
-**A dialog's window, ADR-144** (2026-11-20): the tags on the user's
-Hyprland (their session runs their own skwir, which answers its portal;
-`hyprctl clients -j` shows `xdgTag`), KWin's and mutter's rules; a drag
-from a window of skwir's own onto a dialog (only another program's drop
-was tried); writing `recently-used.xbel` under GNOME with its privacy
-switch off (read through `gsettings`, not run); a folder that remembers
-its view (ADR-132) in a dialog; a dialog whose filter hides every file
-of a folder still says "This folder is empty" (seen, not changed: older
-than ADR-144); macOS and Windows have no such dialogs.
+**A dialog's window offers what finds and chooses** (ADR-144, built
+2026-11-20): on Linux, each step checked in a window on Xvfb.
+Left: a drag from a window of skwir's own onto a dialog (only another
+program's drop was tried); writing `recently-used.xbel` under GNOME with
+its privacy switch off (read through `gsettings`, not run); a folder
+that remembers its view (ADR-132) in a dialog; a dialog whose filter
+hides every file of a folder still says "This folder is empty" (seen,
+not changed: older than ADR-144).
 
 **Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
 on Linux; checked on a private dbus-daemon with Xvfb, headless sway and
@@ -1384,7 +1385,10 @@ Left: a real asker (Firefox, Chromium, a Flatpak through the document
 portal, Zed), on the user's session; the session's dbus-broker; KWin,
 Mutter and Hyprland keeping the dialog over its asker (only sway was
 seen to float it; X11 had no window manager, the hint alone was read);
-several files chosen from the shelf were not tried (the shelf's
+the windows' tags (decision 9, 2026-11-20) on the user's Hyprland
+(their session runs their own skwir, which answers its portal;
+`hyprctl clients -j` shows `xdgTag`), and KWin's and Mutter's rules for
+them; several files chosen from the shelf were not tried (the shelf's
 selection is read as any pane's); a portal before 1.22 reading the copied
 configuration (only 1.22.1's source was read); the windows left are not
 restored when a launch comes to a skwir the bus started for a dialog
@@ -1397,9 +1401,9 @@ through xdg-foreign, a gpui patch); a request reaching the skwir that
 holds the dialogs between its gate closing and its name let go is
 answered 2 (the ending program would have to wait for its dialogs); the
 row reads the configuration as 1.22.1 does, so its "already" and
-"pending" may be wrong under an older portal; the row offers Skwir on its `.portal`
-file alone, and without the bus's service file a dialog fails whenever
-no skwir runs; the routing of what agents and scripts send
+"pending" may be wrong under an older portal; the row offers Skwir on
+its `.portal` file alone, and without the bus's service file a dialog
+fails whenever no skwir runs; the routing of what agents and scripts send
 (`finishing::deliver`) has no automated test, none driving a gpui
 window; finishing in the background with a dialog up was not run in a
 window; the Default file manager row writing through a writable

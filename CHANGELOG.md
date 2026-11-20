@@ -19,9 +19,7 @@ downloaded from skwir.org can tell you of a new version.
   bound on the right.
 - **Show in Folder from other programs** opens Skwir once it is the default
   file manager (Settings › General).
-- **Other programs' Open and Save dialogs** in a Skwir window kept to
-  finding and choosing, with a layout of its own (Settings › General › Open
-  and save dialogs).
+- **Skwir answers other programs' Open and Save dialogs** (Settings › General).
 - **New versions told**: a copy downloaded from skwir.org asks once whether to
   be told; skwir.org's apt and dnf repositories update it with the system.
 - **A document or a picture zoomed in moves with a drag**, the middle button's

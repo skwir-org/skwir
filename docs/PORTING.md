@@ -344,8 +344,12 @@ Left:
   another application). `--portal` errors "not available on \<system\>
   yet" **(n)**; nothing serves the back end and the Settings row is not
   declared **(n)**; the window's code compiles everywhere (`Choosing`,
-  core's `Admits`), unused there. gpui's `WindowOptions::foreign_parent`
-  is read on X11 and Wayland alone (patch 0085).
+  core's `Admits`), unused there. What a dialog chooses is added to the
+  desktop's recently used files on Linux alone (`platform/recent.rs`,
+  ADR-144, 7: `recent::remembered` is false elsewhere **(u)**). gpui's
+  `WindowOptions::foreign_parent` is read on X11 and Wayland alone
+  (patch 0085), and so is `WindowOptions::tag`, what every window is for
+  (`main window`, `file chooser`; patch 0089).
 - Owners: Windows entries carry none (SIDs not read). macOS's are uids named
   through `/etc/passwd` **(c)**, which misses Directory Services' users.
 

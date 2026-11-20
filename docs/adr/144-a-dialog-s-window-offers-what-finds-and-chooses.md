@@ -107,7 +107,7 @@ amended as built (decisions 1, 4, 6, 7 and 10).
 8. **A program's recent folders**: the folders each program last chose
    in, five at most, newest first, are offered in the bar
    (`ui.chooser_folders`, which keeps them for the 50 programs that
-   asked last, its one folder a program before read as its list).
+   chose last, its one folder a program before read as its list).
 9. **Choosing folders, files are shown dimmed**: they say where one is,
    and none can be chosen.
 10. **A file dropped on a dialog's window is gone to**, from a window of

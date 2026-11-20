@@ -156,9 +156,10 @@ Recent).
    (an `x11:` id from a program on Xwayland, while skwir is on
    Wayland), or a compositor that leaves the child tiled (a dialog was
    seen to tile on the user's Hyprland 0.57.1, which offers xdg-foreign;
-   what its asker gave was not seen). The tags are an interface people's configuration
-   names: untranslated (the description beside, on Wayland, is the
-   reader's language), and renamed only as a breaking change.
+   what its asker gave was not seen). The tags are an interface
+   people's configuration names: untranslated (the description beside,
+   on Wayland, is the reader's language), and renamed only as a
+   breaking change.
 10. **Turning it on: Settings › "Open and save dialogs"** (the user's
     choice), on General beside the default file manager: a choice its
     owner keeps (ADR-140, 8), the back ends installed that offer the file
