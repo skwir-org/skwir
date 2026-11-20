@@ -18,8 +18,11 @@ For user folders' names (16) they asked for the system's way by
 default, a setting to keep the names on disk, and a check of Linux,
 where Dolphin shows "Dossier personnel".
 
-Designed; nothing is built. The steps are PLAN.md's "Words in every
-language".
+Built from 2026-11-16 to 2026-11-18, as PLAN.md's "Words in every
+language" records step by step (A to H; the checks in
+`docs/STATUS-LOG.md`): every crate's words are messages, French and
+Simplified Chinese drafted and spoken as drafts (13, amended below), not
+yet reviewed. What it leaves is in PLAN.md's "What is left".
 
 Amended 2026-11-18, on the user's choice of the design recommended to
 them: Skwir's nouns (a place's title) carry their gender and forms in

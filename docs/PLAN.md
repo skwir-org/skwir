@@ -31,17 +31,23 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-16)
+## Current status (2026-11-20)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
   version 0.5.1, released 2026-11-16 on GitHub and the AUR's three
   bases; 0.5.0 was released 2026-11-14, 0.4.0 2026-11-10, 0.3.1
   2026-11-05, 0.3.0 2026-11-03, 0.2.0 2026-10-20, 0.1.0
-  [released](#release-01-linux) 2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
+  [released](#release-01-linux) 2026-10-13. Since 2026-11-20 skwir.org
+  also serves signed apt and dnf repositories (ADR-142), holding 0.5.1.
+  The next release, the words in every language, is being prepared: the
+  review before it and its fixes (2026-11-20), its changelog section
+  written for the user's review. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
   everywhere are built, their gates not closed, as is much that no phase
   planned ([Built beyond the plan](#built-beyond-the-plan)).
-- **Next:** the [words in every language](#words-in-every-language-adr-139)
-  (ADR-139, accepted 2026-11-16), then skwird's steps (ADR-050) and
+- **Next:** that release; the user's review of the French drafts and a
+  speaker's of the Simplified Chinese
+  ([words in every language](#words-in-every-language-adr-139), step G);
+  then skwird's steps (ADR-050) and
   Phase 7, which the user put after the release (2026-10-07). [Remote folders](#remote-folders)
   were built on 2026-10-21 (ADR-077): what they leave is in their
   section. [What is left](#what-is-left) gathers
@@ -66,13 +72,52 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 - **Budgets:** idle own share **83.2 MiB of 100, within**: `just
   idle-pss` on the session's display, the `dist` build with code laid out
   as a start runs it (ADR-128; 2026-11-09, machine loaded), first frame
-  132 to 143 ms against 150. 0.3.0 and 0.3.1 were released over the
+  132 to 143 ms against 150; 0.5.1's tarball 69.0 to 69.2 MiB, the
+  medians of three rounds of three starts on a headless sway drawn by the
+  Intel GPU (2026-11-16). The
+  words (ADR-139) add about 6 MiB to an English window once the startup
+  list is made again, 23 with 0.5.1's list, the first frame unchanged
+  (Xvfb, 2026-11-18): `just startup-order`, then `just idle-pss`, are owed
+  before the next tag. 0.3.0 and 0.3.1 were released over the
   budget, the user's choice: 0.3.1's tarball read 103.8 MiB
   (2026-11-05), 0.3.0's 103.2 the same evening (103.7 on 11-03), 0.2.0's
   91.3; first frames of the two, the least 147 and 116 ms of nine starts
-  alternated, medians 159 and 154. `just bench-check` meets all 51
-  budgets (2026-11-05, quiet).
-- **Since 0.3.1 (2026-11-06):** About's buttons on one line; a shared
+  alternated, medians 159 and 154. `just bench-check` met its 53 budgets
+  in 0.5.1's release checks (2026-11-16) and all 58 on 2026-11-17, five
+  added for the names' order (ADR-139, 15; machine loaded); the
+  thumbnails' (`thumbs_cold_*`, `thumbs_warm_*`) are not measured since
+  the cache is written after showing (2026-11-19).
+- **Since 0.5.1 (2026-11-16 to 11-20):** the words in every language
+  (ADR-139, steps A to H): every word a message, French and Simplified
+  Chinese drafted and spoken as drafts, sizes by a setting (Decimal by
+  default), numbers, dates and the order of names by the locale, text in
+  every script and right to left (gpui 0069 to 0084, 0086, 0087),
+  printing right to left (ADR-111 revised), plugins from outside on
+  protocol 2; shortcuts
+  on other keyboard layouts (gpui 0076); Show in folder and the Open and
+  Save dialogs for other programs (ADR-140, ADR-141); new versions told,
+  the apt and dnf repositories published and Fedora's packages signed
+  (ADR-142); a drag that moves what has nothing to select (ADR-143);
+  thumbnails shown before they are kept, a progressive JPEG's read from
+  its DC scans; the reviews since 0.5.1 fixed (2026-11-19, 2026-11-20).
+- **Work in 0.5.1 (2026-11-14 to 11-16):** the title bar where the user
+  wants it (ADR-138, #11), fields that say what they take (ADR-137), the
+  player following its file (ADR-136), what changes files worked out
+  beside the window, renames followed into view, the sidebar following
+  other programs, an extraction merging into its folder, the volume a
+  slider; the AppImage's films playing on (GStreamer 1.28.8).
+- **Work in 0.5.0 (2026-11-10 to 11-14):** groups (ADR-130, ADR-131),
+  Git's state and history (ADR-133, ADR-134), what a copy brings shown
+  where it lands (ADR-135), a folder's own order and view (ADR-132),
+  Folders first a setting (#10), every sort a column, formulas typeset
+  (ADR-129), a folder's README or cover, play from the files' menu,
+  Activity one floating panel.
+- **Work in 0.4.0 (2026-11-06 to 11-10):** several windows (ADR-122),
+  cards (ADR-123), Exclusions (ADR-125, #6), filters that show the
+  folders leading to a match and a search laid out as a tree (ADR-126,
+  ADR-127), the Nix package in variants (ADR-124, #7), XML and CSV (#8,
+  #9), code laid out as a start runs it (ADR-128); and, the first days
+  after 0.3.1 (2026-11-06): About's buttons on one line; a shared
   slider (the seek bar, Settings' sliders); the window's grounds each
   painted once, then see-through at the opacity chosen, the files', a
   preview's (every kind on one ground, its bands tints of it) and the
@@ -125,6 +170,10 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05; the desktop shells' colors (G) 2026-11-07 (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
+| [Grammars and printing](#grammars-and-printing) | G0 to G8 and P1 to P6 built 2026-10-31 to 11-01 (ADR-110, ADR-111); P7, right to left and a booklet bound on the right, 2026-11-18 | — |
+| [Smaller copies](#smaller-copies) | S1 to S6 built 2026-11-01 (ADR-112) | — |
+| [Speed and time left](#speed-and-time-left) | T1 to T5 built 2026-11-02 (ADR-113), two layers for a mount that sends after 2026-11-17 | — |
+| [Words in every language (ADR-139)](#words-in-every-language-adr-139) | A to H built 2026-11-16 to 11-18; French and Simplified Chinese drafted, spoken as drafts, not reviewed | — |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
 ---
@@ -1293,6 +1342,27 @@ window; finishing in the background with a dialog up was not run in a
 window; the Default file manager row writing through a writable
 dotfiles link to `mimeapps.list` was not looked at (a link into the
 store is refused).
+
+**Words in every language** (ADR-139, built 2026-11-16 to 11-18, steps
+A to H [below](#words-in-every-language-adr-139)). Left: the user's
+review of the French drafts in the window, and of `fr.po`'s nine; a
+speaker's review of the Simplified Chinese drafts and `zh_CN.po`
+(`docs/glossary-zh-Hans.md`'s "For the reviewer"); Hosted Weblate, on
+hold until its Libre plan can be asked (a project three months old with
+contributors), translations coming as pull requests meanwhile; a real
+right-to-left catalog and its review (only the pseudo-language `ar-XB`
+mirrors the window); `dir` on an element inside a page and CSS's
+`direction` (a block reads in its text's direction); AccessKit's AT-SPI
+adapter answers `Locale` with nothing, so Orca cannot use the window's
+language (upstream); a macOS menu bar, for gpui 0083's Window menu flag;
+user folders' shown names on Windows and macOS, and
+`core.folder_names`; Skwir's refusals a plugin from outside echoes reach
+the window in English; a grid's names balanced on two lines may cut a
+long word in any script; `just idle-pss` with the ICU data and the
+catalogs after `just startup-order` (owed before the next tag), and an
+ICU4X data export keeping only the kinds of data Skwir uses if it ever
+weighs; Orca by ear, and Weblate's editing of attributes the English
+lacks, not tried. macOS and Windows: `docs/PORTING.md`'s ADR-139 lines.
 
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as
@@ -3845,7 +3915,10 @@ the card's line not yet said to a screen reader.
 
 ADR-139 was accepted on 2026-11-16, on the user's answers. The research
 is `docs/i18n.md` and the binding rules are `docs/invariants/words.md`.
-Nothing is built.
+Steps A to H were built from 2026-11-16 to 2026-11-18, each below with
+its date, French and Simplified Chinese drafted and spoken as drafts
+(ADR-139, 13 amended). Left: the reviews of the drafts; what each step
+and track leaves is below, gathered in "What is left".
 
 **Goal:** a window that says everything in the user's language, French
 first, while agents keep reading English. English stays unchanged until
