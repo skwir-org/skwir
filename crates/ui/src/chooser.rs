@@ -9,7 +9,6 @@
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, Focusable, Subscription, Window, div, prelude::*,
@@ -244,7 +243,7 @@ impl Chooser {
 }
 
 /// What the filter at `filter` admits, folders always (`Admits`): while
-/// choosing folders, no file.
+/// choosing folders, no file, its files shown dimmed (ADR-144, 9).
 fn admits_of(asked: &Asked, filter: Option<usize>) -> Option<Admits> {
     if matches!(
         asked.kind,
@@ -253,10 +252,10 @@ fn admits_of(asked: &Asked, filter: Option<usize>) -> Option<Admits> {
             ..
         }
     ) {
-        return Some(Admits(Arc::new(|_| false)));
+        return Some(Admits::folders());
     }
     let filter = asked.filters.get(filter?)?;
-    Some(Admits(Arc::new(filter.admits())))
+    Some(Admits::taking(filter.admits()))
 }
 
 /// What of `paths` is taken: how many (a file, a link, anything there),
@@ -946,11 +945,13 @@ impl Shell {
         let selected = self.chooser_selected();
         let files = selected.iter().any(|(_, dir)| !dir);
         match kind {
-            // A folder opens; choosing folders, the button answers.
+            // A folder opens; choosing folders, the button answers, and a
+            // file is never opened in another program from here: it only
+            // says where one is (ADR-144, 9).
             Kind::Open {
                 directory: true, ..
             }
-            | Kind::SaveFiles { .. } => false,
+            | Kind::SaveFiles { .. } => files,
             Kind::Open { .. } if files => {
                 self.chooser_accept(window, cx);
                 true

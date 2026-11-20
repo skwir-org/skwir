@@ -2189,7 +2189,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `Pane::set_admits`, apart from the filter the user types; its choices;
   Cancel and the program's accept label), its title the request's. While
   it chooses, `open` (Enter, a double click) answers with a file (a
-  folder still opens), Escape (`pane choosing`, the bar's `chooser`) and
+  folder still opens; choosing folders or where to save files, a file
+  is never opened from there, and choosing folders its files show
+  dimmed, `Admits::folders`, `Pane::untaken`, ADR-144, 9), Escape (`pane choosing`, the bar's `chooser`) and
   the close button cancel, Escape first letting go of a name typed to
   find a file (`pane choosing typing`, `ui.type_end`) and of a filter, a
   name taken is asked Replace? in skwir

@@ -2025,15 +2025,42 @@ fn lent_renamed(gone: impl Iterator<Item = EntryId>, came: &[EntryId]) -> Vec<(E
 }
 
 /// What another program's dialog takes (ADR-141, 6): the files its
-/// filter in use admits; a folder always shows, the way to them. Set on
-/// the pane apart from its filter (`Pane::set_admits`), which the user
-/// types while choosing: both hold.
+/// filter in use admits (`takes`); a folder always shows, the way to them.
+/// Set on the pane apart from its filter (`Pane::set_admits`), which the
+/// user types while choosing: both hold. What it does not take is left
+/// out, or shown dimmed where it `dims` (a dialog choosing folders: its
+/// files say where one is, and none is chosen; ADR-144, 9).
 #[derive(Clone)]
-pub struct Admits(pub Arc<dyn Fn(&Entry) -> bool + Send + Sync>);
+pub struct Admits {
+    pub takes: Arc<dyn Fn(&Entry) -> bool + Send + Sync>,
+    pub dims: bool,
+}
 
 impl Admits {
+    /// What the filter takes, the rest left out.
+    pub fn taking(takes: impl Fn(&Entry) -> bool + Send + Sync + 'static) -> Admits {
+        Admits {
+            takes: Arc::new(takes),
+            dims: false,
+        }
+    }
+
+    /// Folders alone taken, files shown dimmed (ADR-144, 9).
+    pub fn folders() -> Admits {
+        Admits {
+            takes: Arc::new(|_| false),
+            dims: true,
+        }
+    }
+
+    /// Whether `entry` is taken: a folder always.
+    fn takes(&self, entry: &Entry) -> bool {
+        entry.is_dir() || (self.takes)(entry)
+    }
+
+    /// Whether `entry` shows: taken, or dimmed.
     fn admits(&self, entry: &Entry) -> bool {
-        entry.is_dir() || (self.0)(entry)
+        self.dims || self.takes(entry)
     }
 }
 
@@ -2615,7 +2642,7 @@ impl Pane {
     /// as the filter does.
     pub fn set_admits(&mut self, admits: Option<Admits>) {
         let same = match (&self.admits, &admits) {
-            (Some(a), Some(b)) => Arc::ptr_eq(&a.0, &b.0),
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.takes, &b.takes) && a.dims == b.dims,
             (None, None) => true,
             _ => false,
         };
@@ -3230,6 +3257,9 @@ impl Pane {
     /// finds, read from the order made (`FilterCache`): no plugin is asked
     /// per row drawn.
     pub fn only_leads(&self, id: EntryId) -> bool {
+        if self.untaken(id) {
+            return true;
+        }
         if self.is_way(id) {
             return true;
         }
@@ -3245,6 +3275,16 @@ impl Pane {
             return cache.dimmed.contains(&id);
         }
         self.entry(id).is_some_and(|e| dimmed(lens, e))
+    }
+
+    /// Whether `id` shows dimmed as what a dialog choosing folders does
+    /// not take (`Admits::dims`, ADR-144, 9): drawn as a folder that only
+    /// leads is (`only_leads`).
+    pub fn untaken(&self, id: EntryId) -> bool {
+        self.admits
+            .as_ref()
+            .filter(|admits| admits.dims)
+            .is_some_and(|admits| self.entry(id).is_some_and(|e| !admits.takes(e)))
     }
 
     /// Show hidden files, or no longer: those selected leave the
@@ -7555,9 +7595,9 @@ mod tests {
             shown
         };
         p.selection.set([file(1).id, file(2).id]);
-        p.set_admits(Some(Admits(Arc::new(|e: &Entry| {
+        p.set_admits(Some(Admits::taking(|e: &Entry| {
             e.name.as_encoded_bytes().ends_with(b"2")
-        }))));
+        })));
         assert_eq!(ids(&mut p), [file(2).id, folder_id, file(12).id]);
         assert_eq!(items(&p.selection), [2], "what it leaves out is deselected");
         p.set_filter(Some("1"), None);
@@ -7565,6 +7605,11 @@ mod tests {
         p.set_filter(None, None);
         p.set_admits(None);
         assert_eq!(ids(&mut p).len(), 4);
+        // Choosing folders, the files show dimmed (ADR-144, 9).
+        p.set_admits(Some(Admits::folders()));
+        assert_eq!(ids(&mut p).len(), 4);
+        assert!(p.untaken(file(1).id) && p.only_leads(file(1).id));
+        assert!(!p.untaken(folder_id));
     }
 
     fn sized(ino: u64, size: u64) -> Entry {
