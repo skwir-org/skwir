@@ -648,9 +648,34 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("right", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
     ("down", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
     // Answering another program's dialog, Escape cancels it, as a
-    // dialog's does, once the pane shows everything again (below).
+    // dialog's does, wherever the keyboard is in its window, whose root
+    // says `choosing` (a plan being made lets go first). What is open or
+    // typed there takes it first: a menu, a popup, a list of the bar, the
+    // address edited (the field's own), a filter and a name typed (below);
+    // a selection does not. In the files, before the pane's own Escape;
+    // in the sidebar and the timeline, before theirs, which only give the
+    // keyboard back to the files.
+    (
+        "escape",
+        "ui.chooser_cancel",
+        "{}",
+        Some("choosing !planning"),
+    ),
     ("escape", "ui.chooser_cancel", "{}", Some("pane choosing")),
-    ("escape", "ui.chooser_cancel", "{}", Some("chooser")),
+    (
+        "escape",
+        "ui.chooser_cancel",
+        "{}",
+        Some("sidebar choosing"),
+    ),
+    (
+        "escape",
+        "ui.chooser_cancel",
+        "{}",
+        Some("timeline choosing"),
+    ),
+    // A list of the bar open (a filter's, a choice's), Escape closes it.
+    ("escape", "ui.toolbar_close", "{}", Some("chooser lists")),
     // Ctrl+Q there is the dialog's Cancel, which Quit is not offered
     // beside (ADR-144, 1): wherever the keyboard is in that window, whose
     // root says `choosing` too. After Ctrl+Q's Quit, which it wins over
@@ -1670,6 +1695,18 @@ pub(crate) const PLACES: &[Place] = &[
     inside("setting_keys", "SettingKeys").of("settings"),
     inside("setting_exclusions", "SettingExclusions").of("settings"),
 ];
+
+/// The key context of place `name` (`SIDEBAR`, `TIMELINE`), saying
+/// `choosing` in a window answering another program's dialog: Escape there
+/// cancels the dialog before what the place does with it (ADR-144).
+pub fn placed(name: &str, choosing: bool) -> gpui::KeyContext {
+    let mut context = gpui::KeyContext::default();
+    context.add(name);
+    if choosing {
+        context.add("choosing");
+    }
+    context
+}
 
 /// Map a registry `when` string to a GPUI context predicate. A token of
 /// `PLACES` names a place; anything else is a flag the pane sets on its
@@ -3445,6 +3482,63 @@ mod tests {
         assert_ne!(
             run(&format!("{pane} typing")).as_deref(),
             Some("ui.type_end")
+        );
+    }
+
+    /// In a dialog's window Escape cancels it wherever the keyboard is
+    /// (the files, the sidebar, the timeline, the bar, a button of the
+    /// header), unless what is open there takes it first (a list of the
+    /// bar, a plan being made); in a window of the user's own the sidebar
+    /// gives the keyboard back to the files, and nothing cancels.
+    #[test]
+    fn escape_cancels_a_dialog_wherever_the_keyboard_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        let keymap = gpui::Keymap::new(super::gpui_bindings(&super::bindings(&app, &[])));
+        let run = |root: &str, place: &str| -> Option<String> {
+            let stack = [
+                gpui::KeyContext::parse(root).unwrap(),
+                gpui::KeyContext::parse(place).unwrap(),
+            ];
+            let stroke = super::parse_keystroke("escape").unwrap();
+            let (found, _) = keymap.bindings_for_input(&[stroke], &stack);
+            found.first().map(|binding| {
+                let run = binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<super::RunCommand>();
+                run.expect("a command").name.clone()
+            })
+        };
+        let root = super::ROOT;
+        let dialog = format!("{root} choosing");
+        for place in [
+            format!("{} choosing", super::PANE),
+            format!("{} choosing", super::SIDEBAR),
+            format!("{} choosing", super::TIMELINE),
+            super::CHOOSER.to_owned(),
+            super::VIEW_BUTTONS.to_owned(),
+        ] {
+            assert_eq!(
+                run(&dialog, &place).as_deref(),
+                Some("ui.chooser_cancel"),
+                "{place}"
+            );
+        }
+        assert_eq!(
+            run(&dialog, &format!("{} lists", super::CHOOSER)).as_deref(),
+            Some("ui.toolbar_close"),
+            "a list of the bar open"
+        );
+        assert_eq!(
+            run(&format!("{dialog} planning"), super::VIEW_BUTTONS).as_deref(),
+            Some("ui.plan_cancel")
+        );
+        assert_eq!(run(root, super::SIDEBAR).as_deref(), Some("ui.focus_pane"));
+        assert_ne!(
+            run(root, super::VIEW_BUTTONS).as_deref(),
+            Some("ui.chooser_cancel")
         );
     }
 

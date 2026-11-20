@@ -981,7 +981,10 @@ pub fn render(
         // The keyboard comes here with F6 only: a click opens a place and
         // leaves the keyboard where it was, with the files.
         .track_focus(&shell.sidebar_keys.focus)
-        .key_context(crate::keymap::SIDEBAR)
+        .key_context(crate::keymap::placed(
+            crate::keymap::SIDEBAR,
+            shell.chooser.is_some(),
+        ))
         .on_any_mouse_down(|_, window, _| window.prevent_default())
         .when(theme.lines(), |d| d.border_end(px(1.)).border_color(theme.border))
         .py_1()

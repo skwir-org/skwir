@@ -2232,10 +2232,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   from there, and choosing folders its files show dimmed,
   `Admits::folders`, `Pane::untaken`, ADR-144, 9; what is dropped on it,
   wherever it lands, is gone to, never copied, moved or answered,
-  `Shell::dialog_takes_drop`, ADR-144, 10. Escape (`pane choosing`, the
-  bar's `chooser`) and the close button cancel, Escape first letting go
-  of a name typed to find a file (`pane choosing typing`, `ui.type_end`)
-  and of a filter, a name taken is asked Replace? in skwir
+  `Shell::dialog_takes_drop`, ADR-144, 10. Escape and the close button
+  cancel: Escape wherever the keyboard is in the window (bound where its
+  root says `choosing`, as Ctrl+Q is; the files, the sidebar and the
+  timeline say `choosing` too, `keymap::placed`, so their own Escape gives
+  way), what is open or typed there taking it first: a menu, a popup, a
+  list of the bar (`chooser lists`), the address edited, a filter, a name
+  typed to find a file (`pane choosing typing`, `ui.type_end`), a plan
+  being made; a selection does not. A name taken is asked Replace? in skwir
   (`Confirmed::Replace`, read on a worker in the folder's lane), and a
   request its program closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no

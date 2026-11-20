@@ -1439,7 +1439,10 @@ pub fn render(
         .relative()
         .h(sized(CHART_H))
         .w_full()
-        .key_context(crate::keymap::TIMELINE);
+        .key_context(crate::keymap::placed(
+            crate::keymap::TIMELINE,
+            shell.chooser.is_some(),
+        ));
     if let Some(focus) = &focus {
         chart_area = chart_area.track_focus(focus);
     }

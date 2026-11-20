@@ -1511,7 +1511,24 @@ pub(crate) fn render(
             .id("chooser-bar")
             .role(gpui::Role::Group)
             .when(shell.a11y, |d| d.aria_label(title(asked).say()))
-            .key_context(keymap::CHOOSER)
+            .key_context({
+                // A list open says so: Escape closes it before the dialog.
+                let mut context = gpui::KeyContext::default();
+                context.add(keymap::CHOOSER);
+                if chooser.open.is_some() {
+                    context.add("lists");
+                }
+                context
+            })
+            .on_action(cx.listener(|this, action: &keymap::RunCommand, _, cx| {
+                if action.name == "ui.toolbar_close"
+                    && this.chooser.as_ref().is_some_and(|c| c.open.is_some())
+                {
+                    this.chooser_list(None, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .flex_none()
             .w_full()
             .min_h(sized(44.))
