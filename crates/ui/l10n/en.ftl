@@ -675,11 +675,29 @@ choose_unreadable = unreadable choices
 # A button of the bar answering another program's dialog: choose the folder.
 chooser_accept_folder = Select
 
+# A button of the bar answering another program's dialog: choose the folders selected; count: how many.
+chooser_accept_folders = { $count ->
+        [one] Select { $count } folder
+       *[other] Select { $count } folders
+    }
+
 # A button of the bar answering another program's dialog: open the files chosen.
 chooser_accept_open = Open
 
+# A button of the bar answering another program's dialog: open the files selected; count: how many.
+chooser_accept_open_files = { $count ->
+        [one] Open { $count } file
+       *[other] Open { $count } files
+    }
+
 # A button of the bar answering another program's dialog: save there.
 chooser_accept_save = Save
+
+# A button of the bar answering another program's dialog: save the files it names in the folder shown; count: how many.
+chooser_accept_save_files = { $count ->
+        [one] Save { $count } file
+       *[other] Save { $count } files
+    }
 
 # In the filter dropdown of the bar answering another program's dialog: show every file.
 chooser_all_files = All files

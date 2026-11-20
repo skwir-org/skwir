@@ -2187,7 +2187,8 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   program's filters took it, `swapped_extension`, ADR-144, 6;
   the program's filters, shown as the pane admits them,
   `Pane::set_admits`, apart from the filter the user types; its choices;
-  Cancel and the program's accept label), its title the request's. While
+  Cancel and the program's accept label, else Skwir's, counting
+  the files or folders it gives, `chooser::accept_label`, ADR-144, 11), its title the request's. While
   it chooses, `open` (Enter, a double click) answers with a file (a
   folder still opens; choosing folders or where to save files, a file
   is never opened from there, and choosing folders its files show
