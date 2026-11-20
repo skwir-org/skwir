@@ -237,8 +237,8 @@ The account must own or co-maintain the `skwir`, `skwir-bin` and
 `skwir-git` package bases; pushing to an unused package base creates it.
 Configure SSH for `aur@aur.archlinux.org` and verify the server's host
 key normally. Split packages share their base's repository on the AUR:
-`skwir.git` holds `skwir`, `skwir-mermaid` and `skwir-mupdf`, `skwir-git.git`
-their `-git` twins.
+`skwir.git` holds `skwir`, `skwir-mermaid`, `skwir-math` and `skwir-mupdf`,
+`skwir-git.git` their `-git` twins.
 
 Each base has its PKGBUILD in `tools/package/aur`: `skwir` builds the
 release's source, `skwir-bin` installs its portable tarball in `/opt/skwir`

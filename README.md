@@ -76,6 +76,7 @@ phones KDE holds; the rest is optional:
 | `skwir-poppler`   | PDFs through Poppler (GPL), beside PDFium             |
 | `skwir-djvulibre` | DjVu through DjVuLibre (GPL), beside djvu-rs          |
 | `skwir-mermaid`   | Mermaid diagrams in Markdown                          |
+| `skwir-math`      | Formulas typeset in Markdown, notebooks and HTML      |
 | `skwir-mupdf`     | PDFs and books laid out in pages through MuPDF (AGPL) |
 
 Some previews use programs you may already have, such as LibreOffice or
@@ -90,9 +91,11 @@ zip. They are made on Linux and have never run on Windows or a Mac:
 
 ### Debian 13 and Ubuntu 24.04
 
-Download the `.deb` files for your system from the release: Debian's end in
-`-1_amd64.deb`, Ubuntu's in `-1ubuntu24.04_amd64.deb`. Then, in the folder
-holding them:
+Skwir's own apt repository keeps it updated with the rest of the system: the
+[download page](https://skwir.org/download#repository) gives the command that
+adds it. Or download the `.deb` files for your system from the release:
+Debian's end in `-1_amd64.deb`, Ubuntu's in `-1ubuntu24.04_amd64.deb`. Then, in
+the folder holding them:
 
 ```sh
 sudo apt install ./skwir_0.5.1-1_amd64.deb             # Ubuntu: ./skwir_0.5.1-1ubuntu24.04_amd64.deb
@@ -100,6 +103,11 @@ sudo apt install ./skwir-media_0.5.1-1_amd64.deb       # optional, and so on
 ```
 
 ### Fedora 44
+
+Skwir's own dnf repository keeps it updated with the rest of the system: the
+[download page](https://skwir.org/download#repository) gives the command that
+adds it. Or download the `.rpm` files from the release and, in the folder
+holding them:
 
 ```sh
 sudo dnf install ./skwir-0.5.1-1.x86_64.rpm
@@ -116,13 +124,13 @@ git clone https://aur.archlinux.org/skwir.git && cd skwir && makepkg -si
 ```
 
 Arch's `skwir` holds the player and the Poppler and DjVuLibre readers;
-install `gst-plugins-base`, `poppler-glib` and `djvulibre` to use them. `skwir-mermaid` and
-`skwir-mupdf` are packages of their own.
+install `gst-plugins-base`, `poppler-glib` and `djvulibre` to use them.
+`skwir-mermaid`, `skwir-math` and `skwir-mupdf` are packages of their own.
 
 Two other packages stand in for those: `skwir-bin` installs the release's
 own build, the tarball below, in `/opt/skwir`, every reader and the player
 with it; `skwir-git` builds the latest commit, in the same packages as
-`skwir` (`skwir-mermaid-git`, `skwir-mupdf-git`).
+`skwir` (`skwir-mermaid-git`, `skwir-math-git`, `skwir-mupdf-git`).
 
 ### Any other distribution: AppImage or tarball
 
