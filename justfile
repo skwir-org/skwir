@@ -209,10 +209,10 @@ lint:
     tools/build/prune.py --if-below 40G --quiet
 
 # Each crate's English catalog (l10n/en.ftl), made from its words! calls, and
-# the catalogs shipped with how much of each language they say (ADR-139):
-# `--check` fails where one is behind, `--release` also where a language
-# offered (tools/words/offered) is under 75% reviewed, or one offered as a
-# draft is short of the draft's bar (ADR-139, 13).
+# the catalogs shipped with how much of each language they say (ADR-139,
+# 13): `--check` fails where one is behind, `--release` also where a
+# language offered as reviewed (tools/words/offered, no `draft`) is under
+# 75% reviewed, or one offered as a draft is short of the draft's bar.
 words *args:
     tools/words/extract.py {{args}}
 
@@ -311,11 +311,6 @@ package-aur:
     cd tools/package/aur/skwir-bin && makepkg --printsrcinfo > .SRCINFO
     cd tools/package/aur/skwir-git && makepkg --printsrcinfo > .SRCINFO
 
-# The desktop entry's and the AppStream metainfo's translations, which each
-# Linux package merges (ADR-139, tools/package/linux/po): `check` whether
-# po/skwir.pot is what the two files say, each language's PO sound and
-# merged with it, and what they make valid; `update` makes skwir.pot again
-# and merges each PO with it.
 # The desktop entry's and metainfo's translations: check them, or `update` after their English changed.
 package-l10n action="check":
     tools/package/linux/l10n.sh {{action}}

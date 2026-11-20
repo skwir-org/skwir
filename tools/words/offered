@@ -14,10 +14,10 @@
 # gone).
 #
 # Only a person takes a language out, which lists it as incomplete again:
-# a release refuses one here with less than 75% of its messages reviewed,
-# and one here as a draft short of the draft's bar (`just words
-# --release`: new messages are drafted before a release), while between
-# releases each stays offered, what it lacks said in English. Its line
-# comes back only once it meets a bar again.
+# a release refuses one here as reviewed (no `draft` after it) with less
+# than 75% of its messages reviewed, and one here as a draft short of the
+# draft's bar (`just words --release`: new messages are drafted before a
+# release), while between releases each stays offered, what it lacks said
+# in English. Its line comes back only once it meets a bar again.
 fr draft
 zh-Hans draft

@@ -49,8 +49,9 @@ workers, check performance or build packages.
    counts each language's share into `crates/skwir/src/catalogs.rs`.
    Only a person takes a language out: between releases it stays offered
    whatever it lacks, said in English, but a release refuses one offered
-   with less than 75% of its messages reviewed, and one offered as a
-   draft short of the draft's bar. Draft its new messages (each marked
+   as reviewed (no `draft` after it) with less than 75% of its messages
+   reviewed, and one offered as a draft short of the draft's bar (a draft
+   needs no review). Draft its new messages (each marked
    `# draft`), review more of it, or take its line out of
    `tools/words/offered`, which lists it as incomplete again until it
    meets a bar anew; then run `just words` and commit both files.
@@ -171,7 +172,10 @@ The final bundle is `target/releases/v0.1.0/`. It contains the lowercase
 with its companion checksum, all current-version Debian, Ubuntu, RPM and
 Arch split packages, Windows' `.msi` and `.zip` and macOS's `.dmg` and `.zip`
 (`skwir-0.1.0-windows-x86_64.*`, `skwir-0.1.0-macos-arm64.*`), each with its
-companion checksum, `notes.md`, `manifest.json` and `SHA256SUMS`. The
+companion checksum, the AppImage's `skwir-x86_64.AppImage.zsync` (named
+without a version, so its updaters find the latest by its name; it holds
+the image's own checksums, and has no companion), `notes.md`,
+`manifest.json` and `SHA256SUMS`. The
 package manifests supply the expected split package names. Missing,
 duplicate, unexpected or old-version assets fail the build. The manifest
 records the source commit, platform, checks and each asset's size and SHA256.
@@ -319,7 +323,16 @@ After the GitHub release is published:
   notice. The next release that brings such a fix moves it; it is never
   taken back. `/updates/1.json` stays a file the site serves itself,
   never one `_redirects` sends on: a copy follows no redirect and takes
-  one for a failed check, so it would never be told.
+  one for a failed check, so it would never be told. Then, as the site's
+  README says: `pnpm sync-docs` (the release's notes and the contributor
+  docs on skwir.org/docs, from the tag), `pnpm sync-l10n` (the languages
+  the release offers), and, for a feature release (0.6.0, not 0.5.1), the
+  front page's notice (`releaseNews` in `site.ts`), whose build fails
+  while it names the last series. The site has no draft state: a
+  language the release offers, as a draft too (`zh-Hans draft` in
+  `tools/words/offered`), goes live at its prefix (`/zh-hans`), with
+  `hreflang`, wherever the site has its catalog; decide that before
+  running `pnpm sync-l10n`.
 - **The AppImage.** Nothing to do: the bundle's
   `skwir-x86_64.AppImage.zsync`, uploaded with the release, is what the
   image's update information names through `skwir.org/latest/`, and
