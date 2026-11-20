@@ -169,14 +169,17 @@ folders are a group of the sidebar, not a dropdown of the bar.
    at most), Recent is neither first nor where the window starts, which
    is home (amended as reviewed, 2026-11-20).
 8. **A program's recent folders**: the folders each program last chose
-   in, five at most, newest first (`ui.chooser_folders`, which keeps
-   them for the 50 programs that chose last, its one folder a program
-   before read as its list), are the sidebar's Recent Folders, a group
-   first as the sidebar ships, folded, moved and put away as any other.
-   Each is taken out alone (Remove From Sidebar) and the heading's menu
-   empties the group (Clear Recent Folders), which forgets where the
-   program chose: its next dialog starts as one that chose nowhere
-   would. Two folders of one name are told apart after it by the first
+   in, newest first (`ui.chooser_folders`, ten a program, for the 50
+   programs that chose last, its one folder a program before read as its
+   list), are the sidebar's Recent Folders, a group first as the sidebar
+   ships, folded, moved and put away as any other: five at most, none
+   gone (looked for as the request comes, half a second at most, kept in
+   the record, where the program's next choices replace it), none that
+   another place the sidebar shows leads to (in a section folded too).
+   The dialog starts in the first of them there. Each is taken out alone
+   (Remove From Sidebar) and the heading's menu empties the group (Clear
+   Recent Folders), each with its Undo, which forgets where the program
+   chose: its next dialog starts as one that chose nowhere would. Two folders of one name are told apart after it by the first
    folder above that differs (`skwir/…`), as any two places of a group
    shown under one name are, and a folder's place says its whole path
    in its tooltip (amended 2026-11-20: they were a dropdown of the bar,

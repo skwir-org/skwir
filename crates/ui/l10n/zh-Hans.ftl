@@ -732,7 +732,19 @@ chooser_choose_folder = 请先选择一个文件夹
 chooser_filter = 显示的文件
 
 # draft
+chooser_folder_forgotten = 已从最近的文件夹中移除 { $folder }
+
+# draft
+chooser_folder_put_back = 已将 { $folder } 放回最近的文件夹
+
+# draft
 chooser_folder_taken = { $folder } 中已有名为 { $name } 的文件夹：请选择另一个文件夹来保存
+
+# draft
+chooser_folders_cleared = 已清除最近的文件夹
+
+# draft
+chooser_folders_put_back = 已恢复最近的文件夹
 
 # draft
 chooser_name = 名称
@@ -969,7 +981,7 @@ commands_chooser_filter_description = 在应答其他程序对话框的窗口中
 commands_chooser_forget_folders = 忘记程序选择过的位置
 
 # draft
-commands_chooser_forget_folders_description = 在应答其他程序对话框的窗口中：从该程序最近选择过的文件夹中移除 `folder`，不带它则全部移除；其下一个对话框将像从未选择过任何位置的程序一样开始
+commands_chooser_forget_folders_description = 在应答其他程序对话框的窗口中：从该程序最近选择过的文件夹中移除 `folder`，不带它则全部移除，其下一个对话框将像从未选择过任何位置的程序一样开始；`restore` 按从新到旧的顺序放回所给的文件夹，以及上次选择的时间（`used`），如同撤销一样
 
 # draft
 commands_close_window = 关闭窗口
@@ -6800,7 +6812,7 @@ settings_choices = 选项
 settings_choices_none = 没有与输入内容匹配的选项
 
 # draft
-settings_chooser_folders_kept_state = 每个程序上次通过应答其“打开”或“保存”对话框的窗口所选的文件夹，按程序的 id 记录（没有 id 的程序为 ""）：最近的五个，从新到旧（folders），以及上次选择的时间（used，自 1970 年起的秒数）
+settings_chooser_folders_kept_state = 每个程序上次通过应答其“打开”或“保存”对话框的窗口所选的文件夹，按程序的 id 记录（没有 id 的程序为 ""）：最近的十个，从新到旧（folders），以及上次选择的时间（used，自 1970 年起的秒数）
 
 # draft
 settings_close = 关闭

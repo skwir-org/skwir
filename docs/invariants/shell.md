@@ -1577,7 +1577,13 @@ asks the direction.
   order does not name comes where it ships (`Sections::rank`). Each is
   a place the user keeps: Remove From Sidebar forgets it, the heading's
   Clear Recent Folders forgets them all (`ui.chooser_forget_folders`),
-  and the next dialog starts as one that chose nowhere would.
+  and the next dialog starts as one that chose nowhere would, each said
+  with its Undo. It shows five at most of the ten a program keeps
+  (`chooser::FOLDERS_SHOWN`), none another shown place leads to
+  (`sidebar::shown_nowhere`, a folded section showing its places), none
+  gone: the request waits for that, half a second at most, before its
+  window opens (`chooser::Asking`, read on a thread of its own, a
+  server's folder never asked), and the dialog starts in the first there.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
   command, which keeps what the pane shows as it shows it (ADR-109): the
   location and the pane's filter go to the `Keeper` that keeps them, the

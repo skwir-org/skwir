@@ -321,11 +321,7 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
             let role = Role::of(&place);
             let key = place.key();
             let arrangement = sections.places.get(&place.group);
-            let shown = !role.hides()
-                || arrangement
-                    .and_then(|a| a.shown.get(&key))
-                    .copied()
-                    .unwrap_or(!place.hidden);
+            let shown = shown_in_group(&place, sections);
             let mut moves = place.reorder.clone();
             if role == Role::Offered {
                 // The name the user gave it is as they wrote it.
@@ -470,6 +466,49 @@ fn above(path: &Path, home: Option<&Path>) -> Vec<String> {
     words
 }
 
+/// Whether the sidebar shows `place` as the user arranged it: its group
+/// not put away (folded, it still holds it), and the place not hidden by
+/// the user (`Arrangement::shown`) nor offered hidden (`Place::hidden`),
+/// unless the user keeps it (`Role::Kept`), which is never hidden.
+fn shows(place: &Place, sections: &Sections) -> bool {
+    !sections.hidden.contains(&place.group) && shown_in_group(place, sections)
+}
+
+/// Whether `place` is shown in its group: one the user keeps always, any
+/// other as the user showed or hid it there, else as its owner offers it.
+fn shown_in_group(place: &Place, sections: &Sections) -> bool {
+    !Role::of(place).hides()
+        || sections
+            .places
+            .get(&place.group)
+            .and_then(|a| a.shown.get(&place.key()))
+            .copied()
+            .unwrap_or(!place.hidden)
+}
+
+/// Of `more` (what a section of the shell's own lists from what was used:
+/// the folders a program chose in), those no place of `places` the
+/// sidebar shows leads to, `limit` at most, in their order: one click
+/// reaches the others already, and a dialog's sidebar is short of room
+/// (ADR-144, 8).
+pub(crate) fn shown_nowhere(
+    places: &[Place],
+    more: Vec<Place>,
+    sections: &Sections,
+    limit: usize,
+) -> Vec<Place> {
+    let shown: std::collections::HashSet<&Location> = places
+        .iter()
+        .filter(|place| shows(place, sections))
+        .map(|place| &place.location)
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    more.into_iter()
+        .filter(|place| !shown.contains(&place.location) && seen.insert(place.location.clone()))
+        .take(limit)
+        .collect()
+}
+
 /// The places arranged (`arrange`) for a revision of the places, of the
 /// folders a dialog's program chose in, of what words say, and an
 /// arrangement of them.
@@ -500,7 +539,13 @@ impl Shell {
     pub(crate) fn places_here(&self) -> Vec<Place> {
         let mut places = self.app.places_offered(self.chooser.is_some());
         if let Some(chooser) = &self.chooser {
-            places.extend(chooser.folder_places());
+            let recent = shown_nowhere(
+                &places,
+                chooser.folder_places(),
+                &self.sidebar_sections,
+                crate::chooser::FOLDERS_SHOWN,
+            );
+            places.extend(recent);
         }
         places
     }
@@ -2926,6 +2971,51 @@ mod tests {
             Some(["~", "wip", "one", "src"].join(sep).as_str())
         );
         assert_eq!(arranged[3].path.as_deref(), Some("/elsewhere"));
+    }
+
+    /// What a section of the shell's own lists from what was used leaves
+    /// out what another place the sidebar shows leads to (in a section
+    /// folded too), a place hidden or a section put away showing nothing,
+    /// and lists each once, `limit` at most.
+    #[test]
+    fn what_another_place_shows_is_not_listed_again() {
+        let offered = vec![
+            place("places", "/home/a/Downloads"),
+            {
+                let mut hidden = place("places", "/home/a/Templates");
+                hidden.hidden = true;
+                hidden
+            },
+            place("devices", "/media/stick"),
+        ];
+        let recent = |paths: &[&str]| -> Vec<skwir_core::registry::Place> {
+            paths
+                .iter()
+                .map(|path| place("recent_folders", path))
+                .collect()
+        };
+        let mut sections = Sections::default();
+        sections.folded.insert("places".to_owned());
+        let left = super::shown_nowhere(
+            &offered,
+            recent(&[
+                "/home/a/Downloads",
+                "/home/a/Templates",
+                "/srv/x",
+                "/srv/x",
+                "/srv/y",
+            ]),
+            &sections,
+            2,
+        );
+        assert_eq!(titles_of(&left), ["home/a/Templates", "srv/x"]);
+        sections.hidden.insert("devices".to_owned());
+        let left = super::shown_nowhere(&offered, recent(&["/media/stick"]), &sections, 5);
+        assert_eq!(titles_of(&left), ["media/stick"], "its section put away");
+    }
+
+    fn titles_of(places: &[skwir_core::registry::Place]) -> Vec<String> {
+        places.iter().map(|p| p.title.english()).collect()
     }
 
     fn titles(arranged: &[super::Arranged]) -> Vec<String> {

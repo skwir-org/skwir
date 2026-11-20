@@ -714,8 +714,20 @@ chooser_choose_folder = Choose a folder first
 # What the filter dropdown of the bar answering another program's dialog is called, for a screen reader.
 chooser_filter = Files shown
 
+# Said in a window answering another program's dialog once a folder is taken out of the sidebar's Recent Folders, with Undo beside; folder: its name.
+chooser_folder_forgotten = { $folder } taken out of Recent Folders
+
+# Said once the Undo of a folder taken out of the sidebar's Recent Folders puts it back; folder: its name.
+chooser_folder_put_back = { $folder } put back in Recent Folders
+
 # Said where another program saves several files in a folder holding a folder of the name of one of them, which no file can replace: name: that folder's name; folder: where it is.
 chooser_folder_taken = There is a folder named { $name } in { $folder }: choose another folder to save in
+
+# Said in a window answering another program's dialog once the sidebar's Recent Folders are cleared, with Undo beside.
+chooser_folders_cleared = Recent Folders cleared
+
+# Said once the Undo of the sidebar's Recent Folders cleared puts them back.
+chooser_folders_put_back = Recent Folders put back
 
 # Before the name field of the bar answering another program's Save dialog.
 chooser_name = Name
@@ -947,7 +959,7 @@ commands_chooser_filter_description = In a window answering another program's di
 
 commands_chooser_forget_folders = Forget where the program chose
 
-commands_chooser_forget_folders_description = In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it; its next dialog starts as one that chose nowhere would
+commands_chooser_forget_folders_description = In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it, its next dialog then starting as one that chose nowhere would; `restore` puts back the folders given, newest first, with when it last chose (`used`), as Undo does
 
 commands_close_window = Close window
 
@@ -6320,7 +6332,7 @@ settings_choices = Choices
 settings_choices_none = None holds what is typed
 
 # What the window keeps, for agents and scripts.
-settings_chooser_folders_kept_state = The folders each program last chose in, through the window answering its Open or Save dialog, by the program's id ("" for one with none): its five last, newest first (folders), and when it last chose (used, seconds since 1970)
+settings_chooser_folders_kept_state = The folders each program last chose in, through the window answering its Open or Save dialog, by the program's id ("" for one with none): its ten last, newest first (folders), and when it last chose (used, seconds since 1970)
 
 # The button closing the settings.
 settings_close = Close

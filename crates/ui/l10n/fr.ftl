@@ -760,7 +760,19 @@ chooser_choose_folder = Choisissez d’abord un dossier
 chooser_filter = Fichiers affichés
 
 # draft
+chooser_folder_forgotten = { $folder } retiré des Dossiers récents
+
+# draft
+chooser_folder_put_back = { $folder } remis dans les Dossiers récents
+
+# draft
 chooser_folder_taken = Il y a un dossier nommé { $name } dans { $folder } : choisissez un autre dossier où enregistrer
+
+# draft
+chooser_folders_cleared = Dossiers récents effacés
+
+# draft
+chooser_folders_put_back = Dossiers récents remis
 
 # draft
 chooser_name = Nom
@@ -1018,7 +1030,7 @@ commands_chooser_filter_description = Dans une fenêtre qui répond à la boîte
 commands_chooser_forget_folders = Oublier où le programme a choisi
 
 # draft
-commands_chooser_forget_folders_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : retirer `folder` des dossiers où ce programme a choisi en dernier, ou tous sans lui ; sa prochaine boîte de dialogue s’ouvre comme celle d’un programme qui n’a choisi nulle part
+commands_chooser_forget_folders_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : retirer `folder` des dossiers où ce programme a choisi en dernier, ou tous sans lui, sa prochaine boîte de dialogue s’ouvrant alors comme celle d’un programme qui n’a choisi nulle part ; `restore` remet les dossiers donnés, du plus récent au plus ancien, avec le moment où il a choisi pour la dernière fois (`used`), comme le fait Annuler
 
 # draft
 commands_close_window = Fermer la fenêtre
@@ -7060,7 +7072,7 @@ settings_choices = Choix
 settings_choices_none = Aucun choix ne correspond à la saisie
 
 # draft
-settings_chooser_folders_kept_state = Les dossiers où chaque programme a choisi en dernier, par la fenêtre qui répond à sa boîte de dialogue Ouvrir ou Enregistrer, selon l’id du programme ("" pour un programme qui n’en a pas) : ses cinq derniers, du plus récent au plus ancien (folders), et quand il a choisi pour la dernière fois (used, en secondes depuis 1970)
+settings_chooser_folders_kept_state = Les dossiers où chaque programme a choisi en dernier, par la fenêtre qui répond à sa boîte de dialogue Ouvrir ou Enregistrer, selon l’id du programme ("" pour un programme qui n’en a pas) : ses dix derniers, du plus récent au plus ancien (folders), et quand il a choisi pour la dernière fois (used, en secondes depuis 1970)
 
 # draft
 settings_close = Fermer

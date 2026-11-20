@@ -2749,7 +2749,7 @@ pub fn declare(app: &App) {
     app.settings.declare(SettingSpec::state(
         crate::chooser::FOLDERS_KEY,
         words!(
-            settings_chooser_folders_kept_state = "The folders each program last chose in, through the window answering its Open or Save dialog, by the program's id (\"\" for one with none): its five last, newest first (folders), and when it last chose (used, seconds since 1970)",
+            settings_chooser_folders_kept_state = "The folders each program last chose in, through the window answering its Open or Save dialog, by the program's id (\"\" for one with none): its ten last, newest first (folders), and when it last chose (used, seconds since 1970)",
             note = "What the window keeps, for agents and scripts."
         ),
         toml::Value::Table(toml::Table::new()),

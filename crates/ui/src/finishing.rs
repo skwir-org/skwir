@@ -44,7 +44,7 @@ use parking_lot::Mutex;
 use skwir_core::Location;
 use skwir_core::op::PlanId;
 use skwir_core::workspace::{PaneId, WindowId, WindowTabs};
-use skwir_platform::chooser::{Answer, Choosing};
+use skwir_platform::chooser::Answer;
 use skwir_platform::desktop::{Asked, Presence, Standing};
 use skwir_platform::handover::{NotTaken, Opening, TakingOver};
 
@@ -110,8 +110,10 @@ pub(crate) struct Finishing {
     windowless: Option<Arc<AtomicBool>>,
     /// The launches handed over, for the next wake.
     openings: Openings,
-    /// Other programs' dialogs handed in (ADR-141), for the next wake.
-    choosings: Arc<Mutex<Vec<Choosing>>>,
+    /// Other programs' dialogs handed in (ADR-141), for the wake after what
+    /// is gone of their programs' folders is read (`Asking::read`): held
+    /// here meanwhile, so that the program does not end without them.
+    choosings: Arc<Mutex<Vec<crate::chooser::Asking>>>,
     /// The windows of the core asleep: those that were as a dialog's
     /// window opened with none of the user's own up, and one kept as it
     /// left (`left`, the last of the user's own): they stay asleep until
@@ -566,12 +568,21 @@ fn woken(cx: &mut App) -> bool {
     let app = Arc::clone(&state.app);
     let woken = app.take_woken();
     let openings = std::mem::take(&mut *state.openings.lock());
-    let choosings = std::mem::take(&mut *state.choosings.lock());
+    // The dialogs whose programs' folders are read; the others wait for
+    // their own wake.
+    let choosings: Vec<crate::chooser::Asking> = {
+        let mut queued = state.choosings.lock();
+        let (read, waiting) = std::mem::take(&mut *queued)
+            .into_iter()
+            .partition(crate::chooser::Asking::read);
+        *queued = waiting;
+        read
+    };
     for opening in openings {
         reopen(cx, Some(opening), false);
     }
-    for choosing in choosings {
-        open_chooser(cx, choosing);
+    for asking in choosings {
+        open_chooser(cx, asking);
     }
     let state = cx.global::<Finishing>();
     if state.windows.is_empty() {
@@ -1349,6 +1360,7 @@ fn take_over(state: &Finishing, launch: Option<Opening>, windowless: Option<Wind
     let round = state.round.fetch_add(1, Ordering::AcqRel) + 1;
     let (openings, wake) = (Arc::clone(&state.openings), state.app.waker_handle());
     let (choosings, wake_chose) = (Arc::clone(&state.choosings), wake.clone());
+    let reads = Arc::clone(&state.app);
     let (taking, rounds) = (Arc::clone(&state.taking), Arc::clone(&state.round));
     let (handed_away, wake_handed) = (Arc::clone(&state.handed_away), wake.clone());
     let following = Arc::clone(&state.following);
@@ -1362,8 +1374,12 @@ fn take_over(state: &Finishing, launch: Option<Opening>, windowless: Option<Wind
                     wake();
                 },
                 move |choosing| {
-                    choosings.lock().push(choosing);
-                    wake_chose();
+                    // Held at once, so that nothing ends without it; opened
+                    // once what is gone of its program's folders is read.
+                    let asking = crate::chooser::Asking::new(choosing);
+                    choosings.lock().push(asking.clone());
+                    let wake = wake_chose.clone();
+                    asking.read_then(Arc::clone(&reads), move || wake());
                 },
             );
             if matches!(taken, Err(NotTaken::Elsewhere)) {
@@ -1430,8 +1446,10 @@ fn end_unless_handed(cx: &mut App) {
     if let Some(opening) = handed {
         reopen(cx, Some(opening), false);
     }
-    for choosing in chose {
-        open_chooser(cx, choosing);
+    // Ending, a dialog not read yet opens as it is: its folders shown,
+    // the program goes on.
+    for asking in chose {
+        open_chooser(cx, asking);
     }
     if !goes_on {
         // Stopped before this one was seen (no gate to ask yet, or a
@@ -1786,7 +1804,8 @@ fn open_new(
 /// starts (`chooser::start_location`). The windows asleep, with none of the
 /// user's own up, stay asleep. One already answered (closed meanwhile)
 /// opens nothing.
-fn open_chooser(cx: &mut App, choosing: Choosing) {
+fn open_chooser(cx: &mut App, asking: crate::chooser::Asking) {
+    let choosing = asking.choosing.clone();
     if choosing.is_settled() {
         return;
     }
@@ -1807,11 +1826,11 @@ fn open_chooser(cx: &mut App, choosing: Choosing) {
             );
         }
     }
-    let start = crate::chooser::start_location(&app, choosing.asked());
+    let start = crate::chooser::start_location(&app, choosing.asked(), &asking.gone());
     match app.open_window(start) {
         Ok((id, _, _)) => {
             app.workspace.write().set_chooses(id, true);
-            if !open_window(cx, id, false, None, false, Some(choosing.clone())) {
+            if !open_window(cx, id, false, None, false, Some(asking)) {
                 choosing.answer(Answer::Failed);
             }
         }
@@ -1970,8 +1989,9 @@ fn open_window(
     split: bool,
     token: Option<String>,
     activity: bool,
-    choosing: Option<Choosing>,
+    asking: Option<crate::chooser::Asking>,
 ) -> bool {
+    let choosing = asking.as_ref().map(|asking| asking.choosing.clone());
     let state = cx.global::<Finishing>();
     let (app, keymap) = (Arc::clone(&state.app), state.keymap.clone());
     // The first window is timed from the process's start, one opened again
@@ -2097,8 +2117,8 @@ fn open_window(
                 // first sync, whose answer would wait on the first.
                 shell.prefs.title_bar = title_bar;
                 shell.title_bar.answered = title_bar;
-                if let Some(choosing) = choosing.clone() {
-                    shell.answer_dialog(choosing, window, cx);
+                if let Some(asking) = asking.clone() {
+                    shell.answer_dialog(asking, window, cx);
                 }
                 shell
             })
