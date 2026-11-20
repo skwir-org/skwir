@@ -5321,6 +5321,12 @@ placeholder_name_empty = 此处没有包含{ $filter }的名称。在地址栏�
 placeholder_nothing = 此处没有内容
 
 # draft
+placeholder_program_filtered = 此处没有{ $filter }的文件
+
+# draft
+placeholder_program_filtered_detail = 该程序要求{ $filter }。在栏中选择“所有文件”可查看全部文件。
+
+# draft
 placeholder_reading = 正在读取文件的详细信息…
 
 # draft
@@ -5331,6 +5337,9 @@ placeholder_reading_files = 正在读取 { $count } 个文件的详细信息…
 
 # draft
 placeholder_retry = 重试
+
+# draft
+placeholder_show_all_files = 显示所有文件
 
 # draft
 placeholder_show_companions = 显示隐藏文件和伴随文件

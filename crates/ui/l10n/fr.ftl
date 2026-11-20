@@ -5519,6 +5519,12 @@ placeholder_name_empty = Aucun nom ici ne contient { $filter }. Appuyez sur Entr
 placeholder_nothing = Rien ici
 
 # draft
+placeholder_program_filtered = Aucun fichier pour { $filter } ici
+
+# draft
+placeholder_program_filtered_detail = Le programme demande { $filter }. Choisissez Tous les fichiers dans la barre pour voir tous les fichiers.
+
+# draft
 placeholder_reading = Lecture des détails des fichiers…
 
 # draft
@@ -5532,6 +5538,9 @@ placeholder_reading_files = Lecture des détails de { $count ->
 
 # draft
 placeholder_retry = Réessayer
+
+# draft
+placeholder_show_all_files = Afficher tous les fichiers
 
 # draft
 placeholder_show_companions = Afficher les fichiers cachés et annexes

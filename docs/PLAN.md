@@ -1374,9 +1374,7 @@ Dolphin); the startup id on Wayland.
 Left: a drag from a window of skwir's own onto a dialog (only another
 program's drop was tried); writing `recently-used.xbel` under GNOME with
 its privacy switch off (read through `gsettings`, not run); a folder
-that remembers its view (ADR-132) in a dialog; a dialog whose filter
-hides every file of a folder still says "This folder is empty" (seen,
-not changed: older than ADR-144).
+that remembers its view (ADR-132) in a dialog.
 
 **Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
 on Linux; checked on a private dbus-daemon with Xvfb, headless sway and
