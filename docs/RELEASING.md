@@ -345,7 +345,11 @@ before the first release that carries the `updates` plugin (above): its
 download page then shows how to add them. What `skwir-repository` holds
 changing raises `tools/package/repository/version`, and its update
 brings the change to every system that has the repositories; another
-address only while the old one still answers. `just repository-check`
+address only while the old one still answers. Until then it is made again
+the same file, dated by that file's last commit: `just repositories`
+refuses a version the site holds made again with other bytes (what it
+holds changed: raise the version), and the version file or a key not
+committed. `just repository-check`
 tries the repositories in fresh Debian, Ubuntu and Fedora roots with
 throwaway keys: an index a stranger's key signed refused, a change of key
 followed, `skwir-repository` removed with its source and its key.

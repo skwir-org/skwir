@@ -112,6 +112,21 @@ fi
 echo "ok: packages another key signed refused: $(head -1 "$work/refused" | cut -c1-120)"
 signed_by old
 make 1 old
+# skwir-repository 1 published, then made again holding another key under
+# the same version: refused, the site left as it was. Made again as it
+# was, it is the same file, and taken.
+signed_by new
+before="$(cat "$work"/site/apt/own/* "$work"/site/rpm/fedora/own/* | sha256sum)"
+if make 1 new 2>"$work/refused"; then
+    fail "repository.py published skwir-repository 1 again, holding another key"
+fi
+[ "$(cat "$work"/site/apt/own/* "$work"/site/rpm/fedora/own/* | sha256sum)" = "$before" ] ||
+    fail "repository.py wrote the site, refusing skwir-repository 1 made again"
+said="$(grep -m1 'published as skwir-repository 1, and what it holds changed since: raise tools/package/repository/version' \
+    "$work/refused")" || fail "repository.py refused skwir-repository 1 made again, but not for that: $(tail -1 "$work/refused")"
+echo "ok: skwir-repository 1 made again with another key refused: $(echo "$said" | cut -c1-160)"
+signed_by old
+make 1 old
 python3 "$tree/tools/package/repository/serve.py" "$work/site" "$released" "$port" 2>"$work/serve.log" &
 server=$!
 

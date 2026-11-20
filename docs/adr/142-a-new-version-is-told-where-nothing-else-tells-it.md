@@ -314,8 +314,11 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   and `noble` (Ubuntu 24.04), dnf's `fedora`; `skwir-repository` one
   package a family (`apt/own/skwir-repository-debian.deb`, `-ubuntu.deb`,
   `rpm/fedora/own/skwir-repository.rpm`), made by nfpm at the version
-  `tools/package/repository/version` says, dated by that folder's last
-  commit: the same file until its version is raised. Its apt source is a
+  `tools/package/repository/version` says, dated by that file's last
+  commit (amended 2026-11-20: not the folder's, which holds its README,
+  nor the shell's `SOURCE_DATE_EPOCH`, nixpkgs' 1980): the same file
+  until its version is raised, and `just repositories` refuses a version
+  the site holds made again with other bytes. Its apt source is a
   plain file: a conffile would stay once the package is removed (dpkg
   takes one only on purge), its key gone. ~~dnf reads with
   `repo_gpgcheck=1` and `gpgcheck=0`: the index is signed and names each
@@ -395,7 +398,7 @@ it trusts a package by its signed index. The user chose signing.
 - **The repositories**: `just repositories` refuses a release whose
   `.rpm` the key that signs the indexes did not sign, before signing
   anything. `skwir-repository.rpm` is signed too, its signature dated by
-  the folder's last commit (`--faked-system-time`, never before the
+  its version file's last commit (`--faked-system-time`, never before the
   key's making): EdDSA signs a message the same way each time, so the
   package is still made again identical. Its repository file reads
   `gpgcheck=1`, and `skwir-repository` 2 brings it. A system with 1

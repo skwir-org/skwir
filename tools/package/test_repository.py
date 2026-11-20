@@ -5,12 +5,14 @@ repository-check.sh."""
 
 import datetime
 import hashlib
+import io
 import json
 import os
 import pathlib
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import unittest.mock
@@ -105,6 +107,43 @@ class Keys(unittest.TestCase):
             self.assertEqual(len(said), 1)
             self.assertIn(" 5y), export it again, raise tools/package/repository/version", said[0])
         self.assertEqual(repository.unfit((OLD, later), (NEW, later), True, NOW), [])
+
+
+def deb(path, version, body=b""):
+    """A `.deb` as nfpm makes one: its version in its control, `body` its
+    data."""
+    def member(name, data):
+        return f"{name:<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(data):<10}`\n".encode() + data + b"\n" * (len(data) % 2)
+    control = io.BytesIO()
+    with tarfile.open(fileobj=control, mode="w:gz") as archive:
+        text = f"Package: skwir-repository\nVersion: {version}\n".encode()
+        info = tarfile.TarInfo("./control")
+        info.size = len(text)
+        archive.addfile(info, io.BytesIO(text))
+    path.write_bytes(b"!<arch>\n" + member("debian-binary", b"2.0\n") + member("control.tar.gz", control.getvalue())
+                     + member("data.tar.gz", body))
+
+
+class Dated(unittest.TestCase):
+    def test_skwir_repository_is_dated_by_its_version_file_whatever_the_shell_says(self):
+        said = subprocess.run(["git", "-C", str(HERE.parents[1]), "log", "-1", "--format=%ct", "--",
+                               "tools/package/repository/version"], capture_output=True, text=True, check=True)
+        with unittest.mock.patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "315532800"}):
+            self.assertEqual(repository.epoch(), said.stdout.strip())
+
+    def test_a_version_published_is_never_made_again_with_other_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            made, site = pathlib.Path(folder) / "made", pathlib.Path(folder) / "site"
+            made.mkdir()
+            site.mkdir()
+            deb(made / "skwir-repository-debian.deb", "2-1", b"what it holds")
+            deb(site / "skwir-repository-debian.deb", "2-1", b"what it holds")
+            self.assertEqual(list(repository.changed_since(made, site)), [])
+            deb(site / "skwir-repository-debian.deb", "1-1", b"what it held")
+            self.assertEqual(list(repository.changed_since(made, site)), [])
+            deb(site / "skwir-repository-debian.deb", "2-1", b"what it held")
+            self.assertEqual(list(repository.changed_since(made, site)), [site / "skwir-repository-debian.deb"])
+            self.assertEqual(list(repository.changed_since(made, site / "none")), [])
 
 
 @unittest.skipUnless(shutil.which("gpg") and shutil.which("gpgv"), "needs gpg and gpgv")

@@ -60,15 +60,19 @@ on a system refuses every index, the update that would extend it included.
 The key that signs must sign here, and what it signs be read back with its
 file alone (`proven`), before anything is signed.
 
-`skwir-repository` is dated by the last commit of `tools/package/repository`
-(or `SOURCE_DATE_EPOCH`), its `.rpm`'s signature too, so it is made again
-identical until what it holds changes and its version with it. Both
-repositories are made before either is written into the site.
+`skwir-repository` is dated by the last commit of its version file
+(`tools/package/repository/version`), its `.rpm`'s signature too, whatever
+`SOURCE_DATE_EPOCH` the shell sets, so it is made again identical until its
+version is raised. What it holds changing raises the version: a version the
+site already holds, made again with other bytes, is refused, and so are its
+version file and keys uncommitted. Both repositories are made before either
+is written into the site.
 """
 
 import argparse
 import datetime
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -76,6 +80,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -233,17 +238,63 @@ def signer(public, coming):
 
 
 def epoch():
-    """When skwir-repository's files are dated: `SOURCE_DATE_EPOCH` as set,
-    else the last commit of tools/package/repository (its key, its
-    version). nfpm then makes the same package byte for byte until what it
-    holds changes, which raises its version."""
-    if os.environ.get("SOURCE_DATE_EPOCH"):
-        return os.environ["SOURCE_DATE_EPOCH"]
-    said = run("git", "-C", ROOT, "log", "-1", "--format=%ct", "--", "tools/package/repository",
+    """When skwir-repository's files are dated: the last commit of its
+    version file, which changes only when the version is raised, so nfpm
+    makes the same package byte for byte until then, in any shell. Never
+    `SOURCE_DATE_EPOCH` as the environment holds it: nixpkgs' shell sets
+    it to 1980, and outside the shell it would be another date."""
+    said = run("git", "-C", ROOT, "log", "-1", "--format=%ct", "--", "tools/package/repository/version",
                capture_output=True, text=True).stdout.strip()
     if not said:
-        sys.exit("tools/package/repository: never committed, so nothing dates skwir-repository: commit it first")
+        sys.exit("tools/package/repository/version: never committed, so nothing dates skwir-repository:"
+                 " commit it first")
     return said
+
+
+def committed(paths):
+    """Refuse to make skwir-repository from these files while one differs
+    from the last commit: it is dated by the version file's commit, and a
+    version is one file (`changed_since`)."""
+    if not paths:
+        return
+    changed = run("git", "-C", ROOT, "status", "--porcelain", "--", *paths, capture_output=True, text=True).stdout
+    if changed.strip():
+        sys.exit(f"{', '.join(str(path) for path in paths)}: changed since the last commit, and skwir-repository"
+                 " holds them, dated by the version file's commit: commit them first")
+
+
+def version_of(package):
+    """A package's version as its system reads it (`<version>-<release>`):
+    a `.rpm`'s header, a `.deb`'s control."""
+    if package.suffix == ".rpm":
+        with tempfile.TemporaryDirectory(prefix="skwir-rpmdb-") as db:
+            return run("rpm", "--dbpath", db, "-qp", "--nosignature", "--nodigest", "--qf", "%{VERSION}-%{RELEASE}",
+                       package, capture_output=True, text=True).stdout.strip()
+    data = package.read_bytes()
+    if not data.startswith(b"!<arch>\n"):
+        sys.exit(f"{package}: not a .deb")
+    at = 8
+    while at + 60 <= len(data):
+        name, size = data[at:at + 16].decode().strip(), int(data[at + 48:at + 58])
+        if name.startswith("control.tar"):
+            with tarfile.open(fileobj=io.BytesIO(data[at + 60:at + 60 + size]), mode="r:*") as control:
+                text = control.extractfile("./control").read().decode()
+            return re.search(r"^Version: (.*)$", text, re.M)[1].strip()
+        at += 60 + size + size % 2
+    sys.exit(f"{package}: a .deb without its control")
+
+
+def changed_since(made, site):
+    """skwir-repository's files in the folder `made` that the folder `site`
+    already holds at the same version, and with other bytes: a version
+    published holds what it held, or a system holding the index from before
+    finds another checksum, and a change under the old version never reaches
+    the systems that have it."""
+    for package in sorted(made.iterdir()):
+        published = site / package.name
+        if (published.is_file() and published.read_bytes() != package.read_bytes()
+                and version_of(published) == version_of(package)):
+            yield published
 
 
 def link(source, dest):
@@ -439,6 +490,9 @@ def main():
     tag = released(bundle)["tag"]
     version = args.version or (HERE / "version").read_text().strip()
     base = (args.base or homepage()).rstrip("/")
+    # What skwir-repository holds of this tree, as committed.
+    held = [path.resolve() for path in ([] if args.version else [HERE / "version"]) + [args.key, coming] if path]
+    committed([path for path in held if path.is_relative_to(ROOT)])
     key = signer(args.key, coming)
     # Before anything is signed: dnf checks each package (`gpgcheck`).
     rpms = sorted(p for p in bundle.iterdir() if RPMS.fullmatch(p.name))
@@ -452,6 +506,10 @@ def main():
         work = pathlib.Path(work)
         apt = apt_repository(work, bundle, tag, base, carried, key, version)
         rpm = rpm_repository(work, bundle, tag, base, carried, key, version)
+        if changed := [*changed_since(apt / "own", site / "apt/own"),
+                       *changed_since(rpm / "fedora/own", site / "rpm/fedora/own")]:
+            sys.exit(f"{', '.join(map(str, changed))}: published as skwir-repository {version}, and what it holds"
+                     " changed since: raise tools/package/repository/version and commit it (docs/RELEASING.md)")
         # Both made, both written: never the indexes of one release beside
         # those of another.
         publish(apt, site / "apt", ["dists", "own", "skwir.asc"])

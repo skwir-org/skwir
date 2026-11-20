@@ -2,9 +2,12 @@
 
 - `version`: the version of `skwir-repository`, the package that adds the
   repositories and their key. Raise it when what it holds changes (a key
-  extended, a new key, another address, the text of its source): the
-  repositories then offer it as an update. Until then it is made again
-  the same, byte for byte, dated by this folder's last commit.
+  extended, a new key, another address, the text of its source, which
+  `tools/package/repository.py` writes): the repositories then offer it as
+  an update. Until then it is made again the same, byte for byte, dated
+  by this file's last commit; `just repositories` refuses a version the
+  site already holds made again with other bytes, and this file or a key
+  uncommitted.
 - `skwir.asc`: the repositories' public key, once made (`docs/RELEASING.md`,
   Repositories), which signs the indexes and each `.rpm`: Fedora's
   packages, which `release-build` signs, and `skwir-repository`'s. Its
