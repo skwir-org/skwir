@@ -2235,7 +2235,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   where every window of the user's own is tagged `main window`
   (`finishing::window_tag`, gpui's `WindowOptions::tag`: Wayland's
   toplevel tag, X11's window role), for the rules people write; the tags
-  are never translated and are renamed only as a breaking change. While dialogs' windows alone
+  are never translated and are renamed only as a breaking change, while
+  the description beside (Wayland's) is said again in the language chosen
+  (`finishing::tag_again`, gpui's `Window::set_tag`). While dialogs' windows alone
   are up, the windows asleep stay asleep (`Finishing::asleep`) and a
   launch goes to a window of the user's own (`ordinary_handle`); nothing
   is recorded for the next start until one opened in the run

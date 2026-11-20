@@ -24,8 +24,8 @@ use crate::{
     SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
     TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, Tiling, TransformationMatrix,
     Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTag,
+    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1331,6 +1331,9 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
+    /// What the window was last said to be for (`WindowOptions::tag`,
+    /// `set_tag`).
+    tag: Option<WindowTag>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1697,7 +1700,7 @@ impl Window {
                 window_decorations,
                 app_id: app_id.clone(),
                 foreign_parent,
-                tag,
+                tag: tag.clone(),
                 icon,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
@@ -2311,6 +2314,7 @@ impl Window {
                 accessibility_force_disabled,
                 initial_window_title,
             ),
+            tag,
         })
     }
 
@@ -3266,6 +3270,26 @@ impl Window {
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
         self.platform_window.set_app_id(app_id);
+    }
+
+    /// What the window was last said to be for (`WindowOptions::tag`,
+    /// `set_tag`).
+    pub fn tag(&self) -> Option<&WindowTag> {
+        self.tag.as_ref()
+    }
+
+    /// Says again what the window is for: its purpose changed, or its
+    /// description is to be said in another language. The platform is told
+    /// only when it differs from what it was last told, so this may be
+    /// asked each frame: Wayland sends the tag and the description again,
+    /// as the protocol lets a client at any time; X11 writes the role
+    /// again. Ignored on other platforms.
+    pub fn set_tag(&mut self, tag: WindowTag) {
+        if self.tag.as_ref() == Some(&tag) {
+            return;
+        }
+        self.platform_window.set_tag(&tag);
+        self.tag = Some(tag);
     }
 
     /// Keeps the screen on and the session from going idle (no screen saver,

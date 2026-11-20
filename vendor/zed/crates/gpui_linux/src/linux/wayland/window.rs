@@ -41,7 +41,7 @@ use gpui::{
     PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
     PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowKind, WindowParams, WindowVisibility,
+    WindowKind, WindowParams, WindowTag, WindowVisibility,
     layer_shell::{Anchor, LayerShellNotSupportedError},
     popup::PopupOptions,
     px, size,
@@ -1981,6 +1981,16 @@ impl PlatformWindow for WaylandWindow {
                 .as_ref()
                 .map(|manager| manager.create_inhibitor(&state.surface, &state.globals.qh, ()));
             state.idle_inhibitor = inhibitor;
+        }
+    }
+
+    fn set_tag(&mut self, tag: &WindowTag) {
+        let state = self.borrow();
+        if let (Some(toplevel), Some(manager)) =
+            (state.surface_state.toplevel(), &state.globals.tag_manager)
+        {
+            manager.set_toplevel_tag(toplevel, tag.tag.to_string());
+            manager.set_toplevel_description(toplevel, tag.description.to_string());
         }
     }
 

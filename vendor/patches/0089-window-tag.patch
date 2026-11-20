@@ -1,21 +1,34 @@
-0089 window-tag: WindowOptions::tag, what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and description, set before the first commit where the compositor offers it, X11's WM_WINDOW_ROLE; the other systems leave it unread
+0089 window-tag: WindowOptions::tag, what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and description, set before the first commit where the compositor offers it, X11's WM_WINDOW_ROLE (an ASCII tag alone); said again by Window::set_tag, the platform told only what changed; the other systems leave it unread
 
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 4ba8cb8d..3b274755 100644
+index 4ba8cb8d..6ac9751c 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -2745,6 +2745,20 @@ pub enum ForeignParent {
+@@ -1449,6 +1449,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+         }
+     }
+     fn set_app_id(&mut self, _app_id: &str) {}
++    /// Say again what the window is for (`WindowParams::tag`): Wayland's
++    /// tag and description, X11's role. Ignored where unsupported.
++    fn set_tag(&mut self, _tag: &WindowTag) {}
+     /// Keep the screen on and the session from going idle (no screen saver,
+     /// no blanking, no lock) while `inhibited`. Ignored where unsupported.
+     fn set_idle_inhibited(&self, _inhibited: bool) {}
+@@ -2745,6 +2748,23 @@ pub enum ForeignParent {
      Wayland(String),
  }
  
 +/// What a window is for, named for the window rules people write: the
 +/// tag of Wayland's xdg-toplevel-tag-v1, the role of X11's
 +/// `WM_WINDOW_ROLE`. The same for every window that serves the same
-+/// purpose, so that a rule matching it follows them all.
++/// purpose, so that a rule matching it follows them all. Set as the window
++/// opens (`WindowOptions::tag`), and again when it changes
++/// (`Window::set_tag`): the description in another language, say.
 +#[derive(Debug, Clone, PartialEq, Eq)]
 +pub struct WindowTag {
-+    /// Untranslated, as configuration files name it, and readable: "main
-+    /// window", "file chooser".
++    /// Untranslated, as configuration files name it, readable, and ASCII:
++    /// "main window", "file chooser". X11's role is a STRING (Latin-1), so
++    /// a tag beyond ASCII is no role there.
 +    pub tag: SharedString,
 +    /// The tag in the user's language, which the compositor may show or a
 +    /// screen reader read (Wayland's toplevel description).
@@ -25,18 +38,19 @@ index 4ba8cb8d..3b274755 100644
  /// The variables that can be configured when creating a new window
  #[derive(Debug)]
  pub struct WindowOptions {
-@@ -2809,6 +2823,10 @@ pub struct WindowOptions {
+@@ -2809,6 +2829,11 @@ pub struct WindowOptions {
      /// server can (X11, Wayland), so that it floats over it.
      pub foreign_parent: Option<ForeignParent>,
  
 +    /// What the window is for, for the user's window rules (Wayland's
-+    /// toplevel tag, X11's window role), set before it is first shown.
++    /// toplevel tag, X11's window role), set before it is first shown;
++    /// said again by `Window::set_tag`.
 +    pub tag: Option<WindowTag>,
 +
      /// Window minimum size
      pub window_min_size: Option<Size<Pixels>>,
  
-@@ -2889,6 +2907,10 @@ pub struct WindowParams {
+@@ -2889,6 +2914,10 @@ pub struct WindowParams {
      #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
      pub foreign_parent: Option<ForeignParent>,
  
@@ -47,7 +61,7 @@ index 4ba8cb8d..3b274755 100644
      pub window_min_size: Option<Size<Pixels>>,
  
      /// The background the window opens with and the decorations it asks
-@@ -2963,6 +2985,7 @@ impl Default for WindowOptions {
+@@ -2963,6 +2992,7 @@ impl Default for WindowOptions {
              icon: None,
              app_id: None,
              foreign_parent: None,
@@ -56,10 +70,31 @@ index 4ba8cb8d..3b274755 100644
              window_decorations: None,
              tabbing_identifier: None,
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index dc220b00..9ce5008f 100644
+index dc220b00..a4399e86 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -1660,6 +1660,7 @@ impl Window {
+@@ -24,8 +24,8 @@ use crate::{
+     SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
+     TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, Tiling, TransformationMatrix,
+     Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+-    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
+-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
++    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTag,
++    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+ };
+ 
+ use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
+@@ -1331,6 +1331,9 @@ pub struct Window {
+     #[cfg(feature = "profiler")]
+     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
+     pub(crate) a11y: A11y,
++    /// What the window was last said to be for (`WindowOptions::tag`,
++    /// `set_tag`).
++    tag: Option<WindowTag>,
+ }
+ 
+ #[derive(Clone, Debug, Default)]
+@@ -1660,6 +1663,7 @@ impl Window {
              window_background,
              app_id,
              foreign_parent,
@@ -67,14 +102,49 @@ index dc220b00..9ce5008f 100644
              window_min_size,
              window_decorations,
              #[cfg_attr(
-@@ -1696,6 +1697,7 @@ impl Window {
+@@ -1696,6 +1700,7 @@ impl Window {
                  window_decorations,
                  app_id: app_id.clone(),
                  foreign_parent,
-+                tag,
++                tag: tag.clone(),
                  icon,
                  #[cfg(target_os = "macos")]
                  tabbing_identifier,
+@@ -2309,6 +2314,7 @@ impl Window {
+                 accessibility_force_disabled,
+                 initial_window_title,
+             ),
++            tag,
+         })
+     }
+ 
+@@ -3266,6 +3272,26 @@ impl Window {
+         self.platform_window.set_app_id(app_id);
+     }
+ 
++    /// What the window was last said to be for (`WindowOptions::tag`,
++    /// `set_tag`).
++    pub fn tag(&self) -> Option<&WindowTag> {
++        self.tag.as_ref()
++    }
++
++    /// Says again what the window is for: its purpose changed, or its
++    /// description is to be said in another language. The platform is told
++    /// only when it differs from what it was last told, so this may be
++    /// asked each frame: Wayland sends the tag and the description again,
++    /// as the protocol lets a client at any time; X11 writes the role
++    /// again. Ignored on other platforms.
++    pub fn set_tag(&mut self, tag: WindowTag) {
++        if self.tag.as_ref() == Some(&tag) {
++            return;
++        }
++        self.platform_window.set_tag(&tag);
++        self.tag = Some(tag);
++    }
++
+     /// Keeps the screen on and the session from going idle (no screen saver,
+     /// no blanking, no lock) while `inhibited` is true, as a film or a
+     /// slideshow needs: Wayland's idle inhibitor while the window is shown,
 diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
 index db2818f9..48c84629 100644
 --- a/crates/gpui_linux/src/linux/wayland/client.rs
@@ -113,9 +183,18 @@ index db2818f9..48c84629 100644
  // toplevel of its own.
  delegate_noop!(WaylandClientStatePtr: ignore zxdg_imported_v2::ZxdgImportedV2);
 diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
-index 589cb09b..885b0b01 100644
+index 589cb09b..7c6b23f3 100644
 --- a/crates/gpui_linux/src/linux/wayland/window.rs
 +++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -41,7 +41,7 @@ use gpui::{
+     PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+     PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+-    WindowKind, WindowParams, WindowVisibility,
++    WindowKind, WindowParams, WindowTag, WindowVisibility,
+     layer_shell::{Anchor, LayerShellNotSupportedError},
+     popup::PopupOptions,
+     px, size,
 @@ -299,6 +299,13 @@ impl WaylandSurfaceState {
              _ => None,
          };
@@ -130,10 +209,38 @@ index 589cb09b..885b0b01 100644
          if let Some(size) = params.window_min_size {
              toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
          }
+@@ -1977,6 +1984,16 @@ impl PlatformWindow for WaylandWindow {
+         }
+     }
+ 
++    fn set_tag(&mut self, tag: &WindowTag) {
++        let state = self.borrow();
++        if let (Some(toplevel), Some(manager)) =
++            (state.surface_state.toplevel(), &state.globals.tag_manager)
++        {
++            manager.set_toplevel_tag(toplevel, tag.tag.to_string());
++            manager.set_toplevel_description(toplevel, tag.description.to_string());
++        }
++    }
++
+     fn set_app_id(&mut self, app_id: &str) {
+         let mut state = self.borrow_mut();
+         if let Some(toplevel) = state.surface_state.toplevel() {
 diff --git a/crates/gpui_linux/src/linux/x11/window.rs b/crates/gpui_linux/src/linux/x11/window.rs
-index e7367099..39ad41b3 100644
+index e7367099..e578f22f 100644
 --- a/crates/gpui_linux/src/linux/x11/window.rs
 +++ b/crates/gpui_linux/src/linux/x11/window.rs
+@@ -7,8 +7,8 @@ use gpui::{
+     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+     ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
+-    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, WindowVisibility,
+-    popup::PopupNotSupportedError, px,
++    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, WindowTag,
++    WindowVisibility, popup::PopupNotSupportedError, px,
+ };
+ use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
+ 
 @@ -60,6 +60,7 @@ x11rb::atom_manager! {
          WM_DELETE_WINDOW,
          WM_CHANGE_STATE,
@@ -142,26 +249,61 @@ index e7367099..39ad41b3 100644
          _NET_WM_PID,
          _NET_WM_NAME,
          _NET_WM_ICON,
-@@ -671,6 +672,22 @@ impl X11WindowState {
+@@ -415,6 +416,33 @@ where
+ /// Clearing when the flag isn't set is skipped: writing it back would create a
+ /// WM_HINTS property on windows that never requested attention, and would add an
+ /// X round trip to every window state change.
++/// What the window is for, for the user's rules: its role, as the session
++/// management spec has a window say it (STRING, untranslated). STRING is
++/// Latin-1, and window managers read it so: a tag beyond ASCII is no role,
++/// where its UTF-8 bytes would read as another name. X11 has no place for
++/// its description.
++fn write_role(
++    xcb: &XCBConnection,
++    x_window: xproto::Window,
++    role: xproto::Atom,
++    tag: &WindowTag,
++) -> anyhow::Result<()> {
++    if !tag.tag.is_ascii() {
++        log::warn!("no X11 window role for a tag beyond ASCII: {:?}", tag.tag);
++        return Ok(());
++    }
++    check_reply(
++        || "X11 ChangeProperty8 on WM_WINDOW_ROLE failed.",
++        xcb.change_property8(
++            xproto::PropMode::REPLACE,
++            x_window,
++            role,
++            xproto::AtomEnum::STRING,
++            tag.tag.as_bytes(),
++        ),
++    )
++}
++
+ fn set_wm_hints_urgency(xcb: &XCBConnection, x_window: xproto::Window, urgent: bool) {
+     let mut hints = WmHints::new();
+     match WmHints::get(xcb, x_window) {
+@@ -671,6 +699,10 @@ impl X11WindowState {
                  )?;
              }
  
-+            // What the window is for, for the user's rules: its role, as
-+            // the session management spec has a window say it (STRING,
-+            // untranslated). X11 has no place for its description.
 +            if let Some(tag) = &params.tag {
-+                check_reply(
-+                    || "X11 ChangeProperty8 on WM_WINDOW_ROLE failed.",
-+                    xcb.change_property8(
-+                        xproto::PropMode::REPLACE,
-+                        x_window,
-+                        atoms.WM_WINDOW_ROLE,
-+                        xproto::AtomEnum::STRING,
-+                        tag.tag.as_bytes(),
-+                    ),
-+                )?;
++                write_role(xcb, x_window, atoms.WM_WINDOW_ROLE, tag)?;
 +            }
 +
              let parent = if params.kind == WindowKind::Dialog
                  && let Some(parent) = parent_window
              {
+@@ -1691,6 +1723,12 @@ impl PlatformWindow for X11Window {
+         }
+     }
+ 
++    fn set_tag(&mut self, tag: &WindowTag) {
++        let role = self.0.state.borrow().atoms.WM_WINDOW_ROLE;
++        write_role(&self.0.xcb, self.0.x_window, role, tag).log_err();
++        xcb_flush(&self.0.xcb);
++    }
++
+     fn set_app_id(&mut self, app_id: &str) {
+         let mut data = Vec::with_capacity(app_id.len() * 2 + 2);
+         data.extend(app_id.bytes()); // instance https://unix.stackexchange.com/a/494170

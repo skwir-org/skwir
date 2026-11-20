@@ -121,7 +121,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0086-rows-reorder-within-paragraphs` | A wrapped row holding the end of one paragraph and the start of the next (a separator parts them on one line) lays each paragraph's stretch, and the separator, out on its own in the text's order, as the line is laid out unwrapped, never reordered across them | — |
 | `0087-right-to-left-answers-kept` | A line holding right-to-left text works out its carets, hit tests and selections at the first question and keeps them with it (`LineLayout::bidi_row`, a wrapped line's rows), each answer after that a search; its carets' edges sorted once, so a long right-to-left line costs a sort, never a move of every edge for each | — |
 | `0088-scroll-handle-direction` | `ScrollHandle::direction`: the direction the element a handle tracks was last laid out in, its own or inherited, which way its offset runs sideways (what `clamp_scroll_position` holds it to) | — |
-| `0089-window-tag` | `WindowOptions::tag` (`WindowTag`): what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and its translated description, part of the first commit where the compositor offers the protocol; X11's `WM_WINDOW_ROLE` | — |
+| `0089-window-tag` | `WindowOptions::tag` (`WindowTag`): what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and its translated description, part of the first commit where the compositor offers the protocol; X11's `WM_WINDOW_ROLE`, for an ASCII tag; said again by `Window::set_tag` (the description in another language), the platform told only what changed | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -2239,12 +2239,25 @@ user's language):
 - **X11**: `WM_WINDOW_ROLE` (STRING), the role the session management
   spec has a window say, which window managers' rules match (i3's
   `window_role`, Openbox's `role`, KWin's window role); X11 has no place
-  for the description.
+  for the description. STRING is Latin-1, and window managers read it so:
+  a tag beyond ASCII is no role (a warning is logged), where its UTF-8
+  bytes would read as another name. `WindowTag::tag` says a tag is ASCII,
+  as configuration files name it.
 
-Windows and macOS leave the field unread. The tag is set as the window
-opens: nothing changes it after. Skwir tags its own windows `main window`
-and those answering another program's Open or Save dialog `file chooser`
-(`finishing::window_tag`).
+**Said again.** `Window::set_tag` says what the window is for once more:
+its description in another language (an application whose language
+changes while it runs), or a purpose changed, which the protocol lets a
+client say at any time after the first commit. The window keeps what it
+was last told (`Window::tag`) and tells the platform only what differs,
+so it may be asked each frame: Wayland sends both requests again, X11
+writes the role again (`PlatformWindow::set_tag`, which other platforms
+leave as nothing).
+
+Windows and macOS leave the field unread. Skwir tags its own windows
+`main window` and those answering another program's Open or Save dialog
+`file chooser` (`finishing::window_tag`, from the core's window), and
+says the description again in the language chosen
+(`finishing::tag_again`, asked as the title is said).
 
 Checked in a window, as recorded in Skwir's STATUS-LOG; no test, as
 gpui's tests have no display server to answer.

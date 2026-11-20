@@ -8657,7 +8657,7 @@ views_writing = writing
 # What a window answering another program's Open or Save dialog is for, as the desktop may show it (a window rule's list, a screen reader).
 window_tag_chooser = File chooser
 
-# What an ordinary skwir window is for, as the desktop may show it (a window rule's list, a screen reader).
+# What an ordinary Skwir window is for, as the desktop may show it (a window rule's list, a screen reader).
 window_tag_main = Main window
 
 # The title of the desktop's notice of a question waiting while no window is up to ask it.

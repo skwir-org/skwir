@@ -1449,6 +1449,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         }
     }
     fn set_app_id(&mut self, _app_id: &str) {}
+    /// Say again what the window is for (`WindowParams::tag`): Wayland's
+    /// tag and description, X11's role. Ignored where unsupported.
+    fn set_tag(&mut self, _tag: &WindowTag) {}
     /// Keep the screen on and the session from going idle (no screen saver,
     /// no blanking, no lock) while `inhibited`. Ignored where unsupported.
     fn set_idle_inhibited(&self, _inhibited: bool) {}
@@ -2748,11 +2751,14 @@ pub enum ForeignParent {
 /// What a window is for, named for the window rules people write: the
 /// tag of Wayland's xdg-toplevel-tag-v1, the role of X11's
 /// `WM_WINDOW_ROLE`. The same for every window that serves the same
-/// purpose, so that a rule matching it follows them all.
+/// purpose, so that a rule matching it follows them all. Set as the window
+/// opens (`WindowOptions::tag`), and again when it changes
+/// (`Window::set_tag`): the description in another language, say.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowTag {
-    /// Untranslated, as configuration files name it, and readable: "main
-    /// window", "file chooser".
+    /// Untranslated, as configuration files name it, readable, and ASCII:
+    /// "main window", "file chooser". X11's role is a STRING (Latin-1), so
+    /// a tag beyond ASCII is no role there.
     pub tag: SharedString,
     /// The tag in the user's language, which the compositor may show or a
     /// screen reader read (Wayland's toplevel description).
@@ -2824,7 +2830,8 @@ pub struct WindowOptions {
     pub foreign_parent: Option<ForeignParent>,
 
     /// What the window is for, for the user's window rules (Wayland's
-    /// toplevel tag, X11's window role), set before it is first shown.
+    /// toplevel tag, X11's window role), set before it is first shown;
+    /// said again by `Window::set_tag`.
     pub tag: Option<WindowTag>,
 
     /// Window minimum size

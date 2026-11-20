@@ -7,8 +7,8 @@ use gpui::{
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, WindowVisibility,
-    popup::PopupNotSupportedError, px,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, WindowTag,
+    WindowVisibility, popup::PopupNotSupportedError, px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -416,6 +416,33 @@ where
 /// Clearing when the flag isn't set is skipped: writing it back would create a
 /// WM_HINTS property on windows that never requested attention, and would add an
 /// X round trip to every window state change.
+/// What the window is for, for the user's rules: its role, as the session
+/// management spec has a window say it (STRING, untranslated). STRING is
+/// Latin-1, and window managers read it so: a tag beyond ASCII is no role,
+/// where its UTF-8 bytes would read as another name. X11 has no place for
+/// its description.
+fn write_role(
+    xcb: &XCBConnection,
+    x_window: xproto::Window,
+    role: xproto::Atom,
+    tag: &WindowTag,
+) -> anyhow::Result<()> {
+    if !tag.tag.is_ascii() {
+        log::warn!("no X11 window role for a tag beyond ASCII: {:?}", tag.tag);
+        return Ok(());
+    }
+    check_reply(
+        || "X11 ChangeProperty8 on WM_WINDOW_ROLE failed.",
+        xcb.change_property8(
+            xproto::PropMode::REPLACE,
+            x_window,
+            role,
+            xproto::AtomEnum::STRING,
+            tag.tag.as_bytes(),
+        ),
+    )
+}
+
 fn set_wm_hints_urgency(xcb: &XCBConnection, x_window: xproto::Window, urgent: bool) {
     let mut hints = WmHints::new();
     match WmHints::get(xcb, x_window) {
@@ -672,20 +699,8 @@ impl X11WindowState {
                 )?;
             }
 
-            // What the window is for, for the user's rules: its role, as
-            // the session management spec has a window say it (STRING,
-            // untranslated). X11 has no place for its description.
             if let Some(tag) = &params.tag {
-                check_reply(
-                    || "X11 ChangeProperty8 on WM_WINDOW_ROLE failed.",
-                    xcb.change_property8(
-                        xproto::PropMode::REPLACE,
-                        x_window,
-                        atoms.WM_WINDOW_ROLE,
-                        xproto::AtomEnum::STRING,
-                        tag.tag.as_bytes(),
-                    ),
-                )?;
+                write_role(xcb, x_window, atoms.WM_WINDOW_ROLE, tag)?;
             }
 
             let parent = if params.kind == WindowKind::Dialog
@@ -1706,6 +1721,12 @@ impl PlatformWindow for X11Window {
             state.idle_inhibited = inhibited;
             suspend_screen_saver(&self.0.xcb, inhibited);
         }
+    }
+
+    fn set_tag(&mut self, tag: &WindowTag) {
+        let role = self.0.state.borrow().atoms.WM_WINDOW_ROLE;
+        write_role(&self.0.xcb, self.0.x_window, role, tag).log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn set_app_id(&mut self, app_id: &str) {

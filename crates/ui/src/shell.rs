@@ -4798,6 +4798,8 @@ impl Shell {
     /// pane's location. Set when that changed, after the panes read it.
     fn sync_title(&mut self, window: &mut Window) {
         crate::a11y_language::apply(window);
+        // What the window is for, said in the language chosen since too.
+        crate::finishing::tag_again(window);
         // Said now, so that a language chosen since shows too; another
         // program's dialog by its own title (ADR-141, 4).
         let title: gpui::SharedString = match &self.chooser {

@@ -1840,30 +1840,63 @@ const DIALOG_HEIGHT: f32 = 680.;
 const MAIN_WINDOW_TAG: &str = "main window";
 const CHOOSER_TAG: &str = "file chooser";
 
-/// The tag a window opens with (`MAIN_WINDOW_TAG`, `CHOOSER_TAG`), and
-/// what it means in the reader's language, which the compositor may show.
+/// The tag of a window (`MAIN_WINDOW_TAG`, `CHOOSER_TAG`; `chooses`, as
+/// the core's window says it, `WindowTabs::chooses`), and what it means in
+/// the reader's language, which the compositor may show or a screen reader
+/// read. Said once each time the languages move (`locale::revision`), as
+/// the window's language for assistive technology is
+/// (`a11y_language::of_window`): a frame asks it.
 fn window_tag(chooses: bool) -> gpui::WindowTag {
-    if chooses {
-        gpui::WindowTag {
-            tag: CHOOSER_TAG.into(),
-            description: skwir_core::words!(
+    thread_local! {
+        static SAID: RefCell<Option<(u64, [gpui::SharedString; 2])>> = const { RefCell::new(None) };
+    }
+    let now = skwir_core::locale::revision();
+    let [main, dialog] = SAID.with(|said| {
+        if let Some((at, descriptions)) = said.borrow().as_ref()
+            && *at == now
+        {
+            return descriptions.clone();
+        }
+        // Text that leaves the window: no mark isolating a name.
+        let descriptions = [
+            skwir_core::words!(
+                window_tag_main = "Main window",
+                note = "What an ordinary Skwir window is for, as the desktop may show it (a window rule's list, a screen reader)."
+            )
+            .say_plain()
+            .into(),
+            skwir_core::words!(
                 window_tag_chooser = "File chooser",
                 note = "What a window answering another program's Open or Save dialog is for, as the desktop may show it (a window rule's list, a screen reader)."
             )
-            .say()
+            .say_plain()
             .into(),
+        ];
+        *said.borrow_mut() = Some((now, descriptions.clone()));
+        descriptions
+    });
+    if chooses {
+        gpui::WindowTag {
+            tag: CHOOSER_TAG.into(),
+            description: dialog,
         }
     } else {
         gpui::WindowTag {
             tag: MAIN_WINDOW_TAG.into(),
-            description: skwir_core::words!(
-                window_tag_main = "Main window",
-                note = "What an ordinary skwir window is for, as the desktop may show it (a window rule's list, a screen reader)."
-            )
-            .say()
-            .into(),
+            description: main,
         }
     }
+}
+
+/// Says the window's tag again, its description in the language the
+/// window's words are said in now (ADR-141, 9): asked once a frame, as its
+/// title is (`Shell::sync_title`), gpui telling the compositor only when it
+/// changed. The tag stays the one it opened with.
+pub(crate) fn tag_again(window: &mut gpui::Window) {
+    let Some(chooses) = window.tag().map(|tag| tag.tag == CHOOSER_TAG) else {
+        return;
+    };
+    window.set_tag(window_tag(chooses));
 }
 
 /// Open a window drawing the core's window `id`, shaped and placed as it
@@ -1897,12 +1930,13 @@ fn open_window(
         }
     };
     let work = Rc::clone(&state.work);
-    let (own, from) = {
+    let (own, from, chooses) = {
         let ws = app.workspace.read();
         let window = ws.window(id);
         (
             window.and_then(|w| w.shape().cloned()),
-            window.and_then(skwir_core::workspace::WindowTabs::made_from),
+            window.and_then(WindowTabs::made_from),
+            window.is_some_and(WindowTabs::chooses),
         )
     };
     let source = from.and_then(|from| {
@@ -1995,7 +2029,7 @@ fn open_window(
                 .and_then(|c| crate::chooser::foreign_parent(&c.asked().parent_window)),
             // Whether or not it found a parent: where the compositor does
             // not keep a dialog over its asker, a rule naming the tag can.
-            tag: Some(window_tag(choosing.is_some())),
+            tag: Some(window_tag(chooses)),
             ..Default::default()
         },
         |window, cx| {
@@ -2190,6 +2224,30 @@ mod tests {
             "the active one is not up"
         );
         assert_eq!(front_of::<&str>(&[], WindowId(1)), None);
+    }
+
+    /// The tags are an interface people's window rules name (ADR-141, 9):
+    /// never translated, renamed only as a breaking change. The description
+    /// beside is the reader's language, said again when it moves.
+    #[test]
+    fn a_window_s_tag_stays_and_its_description_follows_the_language() {
+        use super::{CHOOSER_TAG, MAIN_WINDOW_TAG, window_tag};
+        assert_eq!(MAIN_WINDOW_TAG, "main window");
+        assert_eq!(CHOOSER_TAG, "file chooser");
+        skwir_core::locale::set_chosen(None);
+        skwir_core::locale::set_system(Vec::new());
+        let main = window_tag(false);
+        let chooser = window_tag(true);
+        assert_eq!(&*main.tag, "main window");
+        assert_eq!(&*main.description, "Main window");
+        assert_eq!(&*chooser.tag, "file chooser");
+        assert_eq!(&*chooser.description, "File chooser");
+        skwir_core::locale::set_chosen(Some(skwir_core::words::PSEUDO.into()));
+        let pseudo = window_tag(true);
+        assert_eq!(pseudo.tag, chooser.tag, "never translated");
+        assert_ne!(pseudo.description, chooser.description, "said again");
+        skwir_core::locale::set_chosen(None);
+        assert_eq!(window_tag(true), chooser);
     }
 
     /// What scripts ask of the window while none of the user's own is up:
