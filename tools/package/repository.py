@@ -345,11 +345,13 @@ def link(source, dest):
         shutil.copy2(source, dest)
 
 
-def package(work, name, packager, version, contents, description, out, scripts=None, folders=()):
+def package(work, name, packager, version, contents, description, out, scripts=None, rpm_scripts=None,
+            folders=()):
     """A package of its own made by nfpm, dated by `epoch`: `contents`
     (source, destination, whether it is a configuration file, and the
-    mode, 0o644 unless said), `scripts` nfpm's for its packager (each a
-    file), `folders` of its own, which go with it."""
+    mode, 0o644 unless said), `scripts` nfpm's maintainer scripts and
+    `rpm_scripts` an `.rpm`'s own (each a file), `folders` of its own,
+    which go with it."""
     config = work / f"{out.stem}.nfpm.json"
     config.write_text(json.dumps({
         "name": name,
@@ -367,7 +369,8 @@ def package(work, name, packager, version, contents, description, out, scripts=N
         # nfpm names the machine that made an `.rpm` (`os.Hostname()`) unless
         # told otherwise, and the published index repeats it: a name here
         # that is no one's.
-        "rpm": {"buildhost": "localhost", **({"scripts": scripts} if scripts and packager == "rpm" else {})},
+        "rpm": {"buildhost": "localhost", **({"scripts": rpm_scripts} if rpm_scripts else {})},
+        **({"scripts": scripts} if scripts else {}),
         "contents": [
             {"src": str(src), "dst": dst, "type": "config|noreplace" if config_file else "file",
              "file_info": {"mode": mode[0] if mode else 0o644}}
@@ -404,13 +407,17 @@ def apt_repository(work, bundle, tag, base, carried, key, version):
             "Architectures: amd64\nSigned-By: /usr/share/keyrings/skwir.gpg\n")
         own = root / "own" / f"skwir-repository-{family}.deb"
         own.parent.mkdir(parents=True)
-        # A plain file, not a conffile: dpkg keeps a conffile when the package
-        # is removed (only `purge` takes it), and the source would outlive
-        # its key, failing every `apt update`.
+        # A configuration file, so that a local edit is kept across updates
+        # (Debian's rule): its postrm takes it away on removal too, as its
+        # key goes then, and its preinst puts it back when the package is
+        # added again after (tools/package/repository/preinst.sh).
+        preinst = work / f"{family}.preinst"
+        preinst.write_text((HERE / "preinst.sh").read_text().replace("@source@", sources.read_text()))
         package(work, "skwir-repository", "deb", version,
-                [(sources, "/etc/apt/sources.list.d/skwir.sources", False),
+                [(sources, "/etc/apt/sources.list.d/skwir.sources", True),
                  (keyring, "/usr/share/keyrings/skwir.gpg", False)],
-                f"Skwir's repository for {suite['label']}, so the system updates Skwir", own)
+                f"Skwir's repository for {suite['label']}, so the system updates Skwir", own,
+                scripts={"preinstall": str(preinst), "postremove": str(HERE / "postrm.sh")})
         binary = root / "dists" / suite["suite"] / "main/binary-amd64"
         binary.mkdir(parents=True)
         # One folder at a time (what follows a folder is an overrides file),
@@ -480,7 +487,7 @@ def rpm_repository(work, bundle, tag, base, carried, key, version, retired):
              (HERE / "keys.sh", "/usr/libexec/skwir-repository/keys", False, 0o755),
              (listed, "/usr/share/skwir-repository/keys", False)],
             "Skwir's repository for Fedora, so the system updates Skwir", own,
-            scripts={"posttrans": str(HERE / "posttrans.sh")},
+            rpm_scripts={"posttrans": str(HERE / "posttrans.sh")},
             folders=["/usr/libexec/skwir-repository", "/usr/share/skwir-repository"])
     # Signed as the release's are, dated as its files are: made again the same.
     run(ROOT / "tools/package/rpm-sign.sh", carried[0], "--at", epoch(), own, stdout=subprocess.DEVNULL)
@@ -555,7 +562,8 @@ def main():
     # What skwir-repository holds of this tree, as committed (all but when a
     # version is named: repository-check tries the tree as it is).
     held = [path.resolve() for path in ([] if args.version else [HERE / "version", HERE / "keys.sh",
-                                                                  HERE / "posttrans.sh"])
+                                                                  HERE / "posttrans.sh", HERE / "preinst.sh",
+                                                                  HERE / "postrm.sh"])
             + [args.key, coming, args.retired or HERE / "retired"] if path and path.exists()]
     committed([path for path in held if path.is_relative_to(ROOT)])
     key = signer(args.key, coming)

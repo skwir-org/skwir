@@ -23,8 +23,10 @@
 # beside the old, which still signs, and 4 the new alone, which signs, the
 # old retired. Then none takes what the old key signs: rpm let go of it
 # (repository/keys.sh, after 4's transaction), and so did dnf's keys for
-# the index. Removing `skwir-repository` takes the repository and its key
-# away, the system's own sources read as before. Last, in a Fedora root of
+# the index. apt's source is a configuration file: a line its user added
+# is kept through the updates. Removing `skwir-repository` takes the
+# repository and its key away, the system's own sources read as before;
+# added again, apt's source comes back with it. Last, in a Fedora root of
 # its own, an extension: rpm holds a key as dnf first imported it, about
 # to expire, `skwir-repository` brings it extended, and once the first
 # expiry has passed what the key signs is still taken.
@@ -261,7 +263,10 @@ for distribution in debian ubuntu fedora; do
             /etc/apt/sources.list.d/skwir.sources > /tmp/skwir.sources &&
             apt-get update -q $apt_skwir && apt-get install -y -q --only-upgrade $apt_skwir skwir-repository" >/dev/null
         is_version "$distribution" 2
-        echo "ok: skwir-repository 1, as published, updated to 2"
+        # shellcheck disable=SC2016 # dpkg-query's own format
+        enter "$root" dpkg-query -W -f '${Conffiles}' skwir-repository | grep -q ' /etc/apt/sources.list.d/skwir.sources ' ||
+            fail "$distribution: 2's source is not a configuration file"
+        echo "ok: skwir-repository 1, as published, updated to 2, its source a configuration file"
         # shellcheck disable=SC2086 # the options are words
         enter "$root" sh -c "$at_here && apt-get update -q $apt_skwir" >/dev/null
         candidate="$(enter "$root" sh -c "$at_here && apt-cache policy $apt_skwir skwir | sed -n 's/^ *Candidate: //p'")"
@@ -340,6 +345,13 @@ update_signed_by() {
 }
 update_signed_by 8 stranger old
 
+# Debian's and Ubuntu's sources edited by their users, a line of their own
+# added, which the updates that follow keep (a configuration file).
+edited="# A line of this system's own, kept by skwir-repository's updates"
+for distribution in debian ubuntu; do
+    echo "$edited" >> "$work/root-$distribution/etc/apt/sources.list.d/skwir.sources"
+done
+
 # A change of key: skwir-repository 3 carries the new key beside the old,
 # which signs its indexes; 4 the new alone, which signs them, the old
 # retired. Each system upgrades from the repository to each.
@@ -364,6 +376,11 @@ for step in 3:old:new: 4:new::old; do
         is_version "$distribution" "$version"
         echo "ok: $distribution upgraded skwir-repository to $version ($keys)"
     done
+done
+for distribution in debian ubuntu; do
+    grep -qxF "$edited" "$work/root-$distribution/etc/apt/sources.list.d/skwir.sources" ||
+        fail "$distribution: its own line in skwir-repository's source lost to an update"
+    echo "ok: $distribution kept its own line in skwir-repository's source through the updates"
 done
 
 # The old key retired: rpm let go of it, and dnf of its key for the index
@@ -394,8 +411,16 @@ for distribution in debian ubuntu fedora; do
     echo "ok: $distribution refuses an index the old key signed, retired"
 done
 
-# Removing skwir-repository removes the repository and its key: what the
-# system reads after is its own sources alone, which still read.
+# What the site offers again: the new key's, the old retired.
+signed_by new
+make 7 new "" old || fail "repository.py: $(tail -1 "$work/made")"
+
+# Removing skwir-repository removes the repository and its key, the source
+# its user edited too: what the system reads after is its own sources
+# alone, which still read. Added again from the file the download page
+# names, Debian's and Ubuntu's source comes back with it (dpkg never puts
+# back a configuration file it takes for deleted by its user), read with
+# the key it brings.
 for distribution in debian ubuntu fedora; do
     root="$work/root-$distribution"
     case "$distribution" in
@@ -417,6 +442,12 @@ for distribution in debian ubuntu fedora; do
         enter "$root" apt-get update -q -o APT::Update::Error-Mode=any >/dev/null ||
             fail "$distribution: apt-get update fails after skwir-repository was removed"
         echo "ok: $distribution removed the repository and its key, and reads its own sources"
+        enter "$root" sh -c "apt-get install -y -q /site/apt/own/skwir-repository-$distribution.deb" >/dev/null
+        [ -e "$root/etc/apt/sources.list.d/skwir.sources" ] ||
+            fail "$distribution: skwir-repository added again after its removal, without its source"
+        enter "$root" sh -c "$at_here && apt-get update -q $apt_skwir" >/dev/null ||
+            fail "$distribution: skwir-repository added again, its index not read"
+        echo "ok: $distribution added skwir-repository again, its source back and its index read"
         ;;
     fedora)
         echo "ok: $distribution removed the repository and its key"

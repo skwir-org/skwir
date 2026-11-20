@@ -25,6 +25,11 @@
   imported it, so an extension and a key retired reach rpm (and dnf's keys
   for the index) only through it (`docs/RELEASING.md`, What rpm keeps of a
   key).
+- `preinst.sh` and `postrm.sh`: the `.deb`'s maintainer scripts. Its apt
+  source is a configuration file, so a local edit is kept across updates;
+  the postrm takes it away on removal (dpkg would keep it, its key gone),
+  and the preinst puts it back when the package is added again after (dpkg
+  remembers it as deleted by its user, and would not).
 - `published`: `skwir-repository` 1 as the site published it on
   2026-11-20 (unsigned, its dnf repository `gpgcheck=0`), from which
   every system that added the repositories then updates:

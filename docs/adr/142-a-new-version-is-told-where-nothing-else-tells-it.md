@@ -318,9 +318,15 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   commit (amended 2026-11-20: not the folder's, which holds its README,
   nor the shell's `SOURCE_DATE_EPOCH`, nixpkgs' 1980): the same file
   until its version is raised, and `just repositories` refuses a version
-  the site holds made again with other bytes. Its apt source is a
+  the site holds made again with other bytes. ~~Its apt source is a
   plain file: a conffile would stay once the package is removed (dpkg
-  takes one only on purge), its key gone. ~~dnf reads with
+  takes one only on purge), its key gone.~~ (Amended 2026-11-20: its apt
+  source is a configuration file, Debian's rule, so a local edit is kept
+  across updates; the package's postrm takes it away on removal, and its
+  preinst puts it back when the package is added again after, as dpkg
+  would not put back a configuration file it takes for deleted by its
+  user. `skwir-repository` 1's plain file becomes 2's configuration file
+  without a question, the text the same.) ~~dnf reads with
   `repo_gpgcheck=1` and `gpgcheck=0`: the index is signed and names each
   package's checksum, and a package signed after the release checked it
   would no longer be the release's.~~ (Amended 2026-11-20, below: each
