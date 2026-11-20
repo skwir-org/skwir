@@ -443,3 +443,14 @@ it trusts a package by its signed index. The user chose signing.
   file made read-only since, a full drive) is taken back and said ("Skwir
   could not keep your answer", and why), and is not counted as answered:
   the question may come back another day.
+- **Where and while it is asked.** The question is asked, and counted,
+  only at a look of a window of the user's own (`App::looked_at_own`),
+  never at a look of another program's dialog Skwir answers, where it
+  would wait unseen and go with a skwir started for that dialog.
+  Answered in Settings or in another skwir, or made moot (the copy no
+  longer downloaded), it is taken back (`App::take_back_question`), and
+  its buttons, pressed before the window took it down, take it down
+  and nothing more: nothing written, nothing asked of the site. A check
+  reads again how a `.deb` or an `.rpm` came before it asks the site.
+- **What it says is its own** (`App::notify_from`): turned off, what
+  the plugin said goes with it, queued or shown.

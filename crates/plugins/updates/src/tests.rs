@@ -117,6 +117,9 @@ impl Site {
 struct Fixture {
     _folder: Option<tempfile::TempDir>,
     app: Arc<App>,
+    /// The window looked at: one of the user's own unless the test says
+    /// it answers another program's dialog.
+    window: skwir_core::workspace::WindowId,
     plugin: Arc<UpdatesPlugin>,
     day: Arc<AtomicI64>,
     minutes: Arc<AtomicU64>,
@@ -175,9 +178,11 @@ impl Fixture {
         }));
         app.plugins
             .add(Arc::clone(&plugin) as Arc<dyn Plugin>, &app);
+        let window = app.workspace.read().active_window_id();
         let fixture = Fixture {
             _folder: folder,
             app,
+            window,
             plugin,
             day,
             minutes,
@@ -197,12 +202,14 @@ impl Fixture {
         }
     }
 
-    /// A window looked at on `day`, and the look's job ended.
+    /// The window looked at on `day`, as the window tells it (the plugins
+    /// told on a worker), until the look's job ended; then let go of.
     fn look_on(&self, day: i64) {
         self.day.store(day, Ordering::SeqCst);
         let looks = self.plugin.inner.run.lock().looks;
-        self.plugin.on_looked_at(&self.app);
+        self.app.set_window_focused(self.window, true);
         self.wait_until("the look ends", |f| f.plugin.inner.run.lock().looks > looks);
+        self.app.set_window_focused(self.window, false);
     }
 
     /// `minutes` later than the clock says, the day the same.
@@ -663,6 +670,11 @@ fn what_is_new_is_said_once_after_an_update() {
     let said = f.said();
     assert_eq!(said.len(), 1);
     assert_eq!(said[0].text.english(), "Skwir was updated to 0.5.1");
+    assert_eq!(
+        said[0].owner.as_deref(),
+        Some(crate::ID),
+        "the plugin's, gone with it when turned off"
+    );
     assert_eq!(opens(&said[0]), format!("{}/releases/v0.5.1", site.address));
     f.look_on(20_001);
     assert!(f.said().is_empty(), "once");
@@ -852,6 +864,112 @@ fn an_answer_the_settings_cannot_keep_is_said_and_not_counted() {
     assert_eq!(f.app.settings.stored::<bool>(TELL), None, "taken back");
     assert!(!f.kept().answered && !f.kept_on_disk().answered);
     assert!(site.heads().is_empty());
+}
+
+/// The question is asked, and counted, only at a look of a window of the
+/// user's own: one answering another program's dialog (ADR-141) asks
+/// nothing and spends none of its three days.
+#[test]
+fn a_question_waits_for_a_window_of_the_users_own() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
+    f.look_on(20_000);
+    f.app.workspace.write().set_chooses(f.window, true);
+    f.look_on(20_002);
+    assert!(f.said().iter().all(|n| !n.stays), "nothing asked");
+    assert_eq!(f.kept().asked, 0, "nothing counted");
+    f.app.workspace.write().set_chooses(f.window, false);
+    f.look_on(20_002);
+    assert!(f.said().iter().any(|n| n.stays), "asked");
+    assert_eq!(f.kept().asked, 1);
+}
+
+/// A copy of a `.deb` as the question's link leaves it: the repository
+/// added, the question it asked is made moot.
+fn deb_copy(site: &Site) -> (Fixture, Arc<AtomicBool>, Notification) {
+    let repository = Arc::new(AtomicBool::new(false));
+    let added = Arc::clone(&repository);
+    let f = Fixture::with_here(
+        &site.address,
+        Version(0, 5, 1),
+        Arc::new(move || Here {
+            channel: Some(Channel::Deb),
+            repository: added.load(Ordering::SeqCst),
+        }),
+    );
+    f.look_on(20_000);
+    f.look_on(20_002);
+    let question = f.said().pop().expect("asked");
+    assert!(question.stays);
+    (f, repository, question)
+}
+
+/// The question goes once it is answered elsewhere: the setting chosen in
+/// Settings, or the copy one its system now updates, seen at a look.
+#[test]
+fn a_question_answered_in_settings_or_made_moot_is_taken_back() {
+    let site = Site::new(&file("0.5.1"), "\"a\"");
+    let (f, _, question) = deb_copy(&site);
+    let id = question.question.expect("a question of its owner's");
+    assert!(f.app.question_stands(crate::ID, id));
+    f.app.settings.set(TELL, toml::Value::Boolean(true));
+    f.plugin.on_settings_changed(&f.app, &[TELL.to_owned()]);
+    f.settled();
+    assert!(!f.app.question_stands(crate::ID, id), "chosen in Settings");
+
+    let (f, repository, question) = deb_copy(&site);
+    let id = question.question.expect("a question of its owner's");
+    repository.store(true, Ordering::SeqCst);
+    f.look_on(20_002);
+    assert!(
+        !f.app.question_stands(crate::ID, id),
+        "the system updates it"
+    );
+}
+
+/// Yes or No on a question made moot before a look saw it (the repository
+/// added from Skwir's own terminal) only takes it down: nothing written,
+/// nothing asked of the site, nothing said.
+#[test]
+fn an_answer_to_a_moot_question_only_takes_it_down() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    for button in [0, 1] {
+        let (f, repository, question) = deb_copy(&site);
+        let id = question.question.expect("a question of its owner's");
+        repository.store(true, Ordering::SeqCst);
+        f.app.dispatch(&question.actions[button].command).unwrap();
+        f.settled();
+        assert!(!f.app.question_stands(crate::ID, id), "button {button}");
+        assert!(f.said().is_empty(), "button {button}");
+        assert_eq!(f.app.settings.stored::<bool>(TELL), None);
+        assert!(!f.kept().answered);
+    }
+    assert!(site.heads().is_empty());
+}
+
+/// A check started for a copy its system came to update since it was last
+/// read asks the site nothing: asked for now, it says why.
+#[test]
+fn a_check_for_a_copy_its_system_now_updates_asks_nothing() {
+    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let (f, repository, question) = deb_copy(&site);
+    f.app.dispatch(&question.actions[0].command).unwrap();
+    f.settled();
+    assert_eq!(f.texts(), ["Skwir 0.6.2 is out"]);
+    repository.store(true, Ordering::SeqCst);
+    f.app.dispatch(&Invocation::new("updates.check")).unwrap();
+    f.settled();
+    let said = f.said();
+    assert_eq!(said.len(), 1);
+    assert!(
+        said[0]
+            .text
+            .english()
+            .starts_with("This copy of Skwir is not checked"),
+        "{:?}",
+        said[0].text.english()
+    );
+    assert_eq!(site.heads().len(), 1, "only the yes's check");
 }
 
 /// Two releases on one state file (an older one still running, ADR-115)

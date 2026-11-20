@@ -109,6 +109,10 @@ impl Here {
 
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
+/// The run a worker was started for ended (the plugin turned off): what
+/// it read is let go.
+struct Ended;
+
 /// What the plugin is given: the site asked, the version that runs, and
 /// what tells where it runs. The program's own by default; a test's.
 pub struct Setup {
@@ -265,8 +269,10 @@ impl Plugin for UpdatesPlugin {
         if !keys.iter().any(|key| key == TELL) {
             return;
         }
-        // Chosen in Settings: the question is never asked. Saved on a job
-        // of its own, outside the plugin host's lock this is called under.
+        // Chosen in Settings (or in another skwir): the question is never
+        // asked, and one up goes. Saved on a job of its own, outside the
+        // plugin host's lock this is called under.
+        app.take_back_question(ID);
         if self.inner.answered(app) {
             self.inner.save_later(app);
         }
@@ -364,6 +370,50 @@ fn release_page(site: &str, version: Version) -> Invocation {
 
 fn open_url(url: &str) -> Invocation {
     Invocation::with_args("ui.open_url", &serde_json::json!({ "url": url }))
+}
+
+/// Say `text`, as the plugin's: refused while it is off, and gone with it
+/// when it is turned off, queued or shown (`App::notify_from`, ADR-142 4).
+fn say(app: &App, level: NotifyLevel, text: impl Into<Words>) {
+    app.notify_from(ID, level, text, Vec::new());
+}
+
+/// `say`, with a button: `label`, running `command`.
+fn say_with(
+    app: &App,
+    level: NotifyLevel,
+    text: impl Into<Words>,
+    label: Words,
+    command: Invocation,
+) {
+    app.notify_from(
+        ID,
+        level,
+        text,
+        vec![NotifyAction {
+            label,
+            command,
+            answers: true,
+        }],
+    );
+}
+
+/// Why a copy that came as `here`, told of new versions or not (`tells`),
+/// asks the site nothing: `None` where it does.
+fn not_checked(here: Here, tells: bool) -> Option<Words> {
+    if here.downloaded().is_none() {
+        return Some(words!(
+            updates_managed =
+                "This copy of Skwir is not checked: whatever installed it tells of new versions",
+            note = "Why a check for a new version was not made: a package manager (the AUR, Nix, a distribution, Skwir's repository) or a build from source."
+        ));
+    }
+    (!tells).then(|| {
+        words!(
+            updates_off = "This copy is not told of new versions: turn it on in Settings › General",
+            note = "Why a check for a new version was not made: the setting Tell me when a new version is out is off."
+        )
+    })
 }
 
 /// The confirmation of a yes, said where the check it starts tells no
@@ -467,9 +517,11 @@ impl Inner {
                 }
                 (true, false) => {
                     // `updates.check` stays until the next start, saying
-                    // that whatever installed the copy tells of versions.
+                    // that whatever installed the copy tells of versions;
+                    // the question, moot, goes.
                     tracing::debug!("updates: the system updates this copy now");
                     app.settings.undeclare(TELL);
+                    app.take_back_question(ID);
                 }
                 _ if before == Some(here) => return true,
                 _ => {}
@@ -573,27 +625,40 @@ impl Inner {
         }
     }
 
+    /// How the copy came, as it is now: a `.deb` or an `.rpm`, whose
+    /// system may have come to update it (or no longer does), read again
+    /// (a stat: on a worker) and taken (`take_here`); `None` while not
+    /// read yet. `Ended` once the run of `lifetime` ended.
+    fn here_now(
+        self: &Arc<Self>,
+        app: &App,
+        lifetime: &CancelToken,
+    ) -> Result<Option<Here>, Ended> {
+        match self.here() {
+            Some(known) if known.channel.is_some_and(Channel::has_repository) => {
+                let now = (self.setup.here)();
+                if self.take_here(app, now, lifetime) {
+                    Ok(Some(now))
+                } else {
+                    Err(Ended)
+                }
+            }
+            other => Ok(other),
+        }
+    }
+
     fn look(self: &Arc<Self>, app: &App) {
-        let (lifetime, here, look_for_whats_new) = {
+        let (lifetime, look_for_whats_new) = {
             let mut run = self.run.lock();
             let Some(lifetime) = run.lifetime.clone() else {
                 return;
             };
             let look = !run.looked_for_whats_new;
             run.looked_for_whats_new = true;
-            (lifetime, run.here, look)
+            (lifetime, look)
         };
-        // Whether the system came to update a `.deb` or an `.rpm` (or no
-        // longer does) is asked again: a stat, on this worker.
-        let here = match here {
-            Some(known) if known.channel.is_some_and(Channel::has_repository) => {
-                let now = (self.setup.here)();
-                if !self.take_here(app, now, &lifetime) {
-                    return;
-                }
-                Some(now)
-            }
-            other => other,
+        let Ok(here) = self.here_now(app, &lifetime) else {
+            return;
         };
         let today = (self.setup.today)();
         let downloaded = here.and_then(Here::downloaded);
@@ -601,13 +666,16 @@ impl Inner {
         // where this look may decide what that one may have decided first
         // (`Kept::merged`): What's new, once a run; the question, or the
         // day's check, where what this process holds says one may come
-        // today. Read before the plugin's lock is taken.
+        // today. Read before the plugin's lock is taken. The question is
+        // asked, and counted, only at a look of a window of the user's own
+        // (`App::looked_at_own`), never of another program's dialog that
+        // Skwir answers, where it would wait unseen.
         let (asks, checks) = match downloaded {
             Some(_) => {
                 let mut held = Kept::read(&app.settings);
                 held.as_of(today);
                 let checks = tells(app) && held.checked_on != Some(today) && self.checks_daily();
-                (held.asks(today), checks)
+                (held.asks(today) && app.looked_at_own(), checks)
             }
             None => (false, false),
         };
@@ -633,7 +701,8 @@ impl Inner {
                 && let Some(updated) = kept.whats_new(running)
                 && app.settings.get::<bool>(WHATS_NEW).unwrap_or(true)
             {
-                app.notify_with_action(
+                say_with(
+                    app,
                     NotifyLevel::Info,
                     words!(
                         updates_updated = "Skwir was updated to { $version }",
@@ -761,8 +830,22 @@ impl Inner {
     /// finds in place of the confirmation (`Asked::Answered`). An answer
     /// the settings cannot keep (their file made read-only, a full drive)
     /// is taken back and said, and the question may come back another
-    /// day. Writes the disk: on a worker.
+    /// day. A question made moot meanwhile (the setting chosen elsewhere,
+    /// the copy one its system now updates) is only taken down. Writes the
+    /// disk: on a worker.
     fn keep_answer(self: &Arc<Self>, app: &App, tell: bool) {
+        let Some(lifetime) = self.run.lock().lifetime.clone() else {
+            return;
+        };
+        let Ok(here) = self.here_now(app, &lifetime) else {
+            return;
+        };
+        let moot = here.and_then(Here::downloaded).is_none()
+            || app.settings.stored::<bool>(TELL).is_some();
+        if moot {
+            app.take_back_question(ID);
+            return;
+        }
         let before = app.settings.stored::<toml::Value>(TELL);
         app.settings.set(TELL, toml::Value::Boolean(tell));
         if let Err(error) = app.settings.save() {
@@ -774,7 +857,8 @@ impl Inner {
                     None => app.settings.unset(TELL),
                 }
             }
-            app.notify(
+            say(
+                app,
                 NotifyLevel::Error,
                 Words::of_error(error.context(words!(
                     updates_answer_not_kept = "Skwir could not keep your answer",
@@ -789,10 +873,11 @@ impl Inner {
         self.stand(app);
         if tell {
             if !self.start_check(app, Asked::Answered) {
-                app.notify(NotifyLevel::Done, told_yes());
+                say(app, NotifyLevel::Done, told_yes());
             }
         } else {
-            app.notify(
+            say(
+                app,
                 NotifyLevel::Done,
                 words!(
                     updates_told_no = "Skwir will not ask again; Settings can turn it on",
@@ -823,18 +908,8 @@ impl Inner {
                 note = "Why a check for a new version was not made: just started, Skwir has not read yet how it was installed."
             ));
         };
-        if here.downloaded().is_none() {
-            anyhow::bail!(words!(
-                updates_managed = "This copy of Skwir is not checked: whatever installed it tells of new versions",
-                note = "Why a check for a new version was not made: a package manager (the AUR, Nix, a distribution, Skwir's repository) or a build from source."
-            ));
-        }
-        if !tells(app) {
-            anyhow::bail!(words!(
-                updates_off =
-                    "This copy is not told of new versions: turn it on in Settings › General",
-                note = "Why a check for a new version was not made: the setting Tell me when a new version is out is off."
-            ));
+        if let Some(why) = not_checked(here, tells(app)) {
+            anyhow::bail!(why);
         }
         if !self.start_check(app, Asked::Now) {
             anyhow::bail!(words!(
@@ -914,8 +989,33 @@ impl Inner {
     /// and nobody asked for now, then keep what it answered and say what
     /// who asked is told. The check ends (`Run::checking`) where who asked
     /// is read for the last time, so one asked meanwhile is answered by it
-    /// or started anew.
-    fn check(&self, app: &Weak<App>, lifetime: &CancelToken) {
+    /// or started anew. What may have changed since it was asked is asked
+    /// again before the site is: a `.deb` or an `.rpm` its system came to
+    /// update, the setting turned off. The site is asked nothing then, and
+    /// only a check asked for now says why.
+    fn check(self: &Arc<Self>, app: &Weak<App>, lifetime: &CancelToken) {
+        if let Some(app) = app.upgrade() {
+            let Ok(here) = self.here_now(&app, lifetime) else {
+                return;
+            };
+            let unknown = Here {
+                channel: None,
+                repository: false,
+            };
+            if let Some(why) = not_checked(here.unwrap_or(unknown), tells(&app)) {
+                let asked = {
+                    let mut run = self.run.lock();
+                    if lifetime.is_cancelled() {
+                        return;
+                    }
+                    run.checking.take()
+                };
+                if asked == Some(Asked::Now) {
+                    say(&app, NotifyLevel::Error, why);
+                }
+                return;
+            }
+        }
         let fetched = loop {
             let now = self.run.lock().checking == Some(Asked::Now);
             if now || (self.setup.metered)() != Some(true) {
@@ -937,7 +1037,7 @@ impl Inner {
             if asked == Some(Asked::Answered)
                 && let Some(app) = app.upgrade()
             {
-                app.notify(NotifyLevel::Done, told_yes());
+                say(&app, NotifyLevel::Done, told_yes());
             }
             return;
         };
@@ -968,14 +1068,15 @@ impl Inner {
                 Err(error) => {
                     tracing::debug!("updates: no answer: {error:#}");
                     match asked {
-                        Asked::Now => app.notify(
+                        Asked::Now => say(
+                            &app,
                             NotifyLevel::Error,
                             Words::of_error(error.context(words!(
                                 updates_check_failed = "Skwir could not check for a new version",
                                 note = "Said when a check for a new version asked for now got no answer it reads; why follows (the website's answer, no connection)."
                             ))),
                         ),
-                        Asked::Answered => app.notify(NotifyLevel::Done, told_yes()),
+                        Asked::Answered => say(&app, NotifyLevel::Done, told_yes()),
                         Asked::Daily => {}
                     }
                     return;
@@ -1007,7 +1108,8 @@ impl Inner {
                         kept.told = Some(telling.version.to_string());
                         kept.told_on = Some(today);
                     }
-                    app.notify_with_action(
+                    say_with(
+                        &app,
                         NotifyLevel::Info,
                         said_out(telling),
                         whats_new_label(),
@@ -1015,14 +1117,15 @@ impl Inner {
                     );
                 }
                 None => match asked {
-                    Asked::Now => app.notify(
+                    Asked::Now => say(
+                        &app,
                         NotifyLevel::Done,
                         words!(
                             updates_up_to_date = "Skwir is up to date",
                             note = "The answer to a check for a new version asked for now: no newer version is out."
                         ),
                     ),
-                    Asked::Answered => app.notify(NotifyLevel::Done, told_yes()),
+                    Asked::Answered => say(&app, NotifyLevel::Done, told_yes()),
                     Asked::Daily => {}
                 },
             }
