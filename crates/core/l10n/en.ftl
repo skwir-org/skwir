@@ -2140,6 +2140,9 @@ registry_group_recent_folders = Recent Folders
 # A heading of the sidebar: saved searches and places kept with their filters.
 registry_group_saved = Saved
 
+# A heading of the sidebar in a window answering another program's Open or Save dialog: what the tabs of Skwir's own windows show.
+registry_group_skwir_tabs = Skwir Tabs
+
 # A heading of the sidebar: the window's open tabs.
 registry_group_tabs = Tabs
 

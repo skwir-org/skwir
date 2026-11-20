@@ -2257,6 +2257,9 @@ registry_group_recent_folders = 最近的文件夹
 registry_group_saved = 已保存
 
 # draft
+registry_group_skwir_tabs = Skwir 标签页
+
+# draft
 registry_group_tabs = 标签页
 
 # draft

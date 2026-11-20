@@ -63,6 +63,10 @@ pub struct Tab {
     pub panes: Vec<PaneId>,
     /// The pane commands act on while this tab is shown.
     pub active: PaneId,
+    /// When another tab of its window was last shown in its place, as a
+    /// count that only grows (`Workspace::set_active_tab`); 0 for one never
+    /// left: what `Workspace::tabs_by_use` orders the tabs not shown by.
+    left: u64,
 }
 
 /// Multi-selection with an anchor (for range selection) and a cursor (keyboard focus).
@@ -5732,6 +5736,8 @@ pub struct Workspace {
     /// Bumped whenever panes, tabs or windows come, go, move or change
     /// which is active, so the UI compares one number to follow them.
     revision: u64,
+    /// Counts the times a tab was left for another (`Tab::left`).
+    tabs_left: u64,
     /// Whether folders come before files (`location::FOLDERS_FIRST`),
     /// in every pane's sort: given each pane as it is made (`push_pane`)
     /// and to all of them when it changes (`set_folders_first`).
@@ -5847,6 +5853,7 @@ impl Default for Workspace {
             next_window: 0,
             holding: false,
             revision: 0,
+            tabs_left: 0,
             folders_first: SortSpec::default().folders_first,
             orders: Orders::default(),
         };
@@ -5866,7 +5873,12 @@ impl Workspace {
         let id = TabId(self.next_tab);
         self.next_tab += 1;
         let active = panes[0];
-        Tab { id, panes, active }
+        Tab {
+            id,
+            panes,
+            active,
+            left: 0,
+        }
     }
 
     /// Panes for a new tab: dormant ones, one per `(location, sort)`, or a
@@ -6210,7 +6222,11 @@ impl Workspace {
         // Shown where it goes: none of its panes is left any more.
         source.leaving.retain(|p| !tab.panes.contains(p));
         {
+            self.tabs_left += 1;
+            let left = self.tabs_left;
             let dest = &mut self.windows[dest];
+            // The tab shown there is left for this one.
+            dest.tabs[dest.shown].left = left;
             let at = to.unwrap_or(dest.tabs.len()).min(dest.tabs.len());
             dest.tabs.insert(at, tab);
             dest.shown = at;
@@ -6344,7 +6360,14 @@ impl Workspace {
     pub(crate) fn set_active_tab(&mut self, id: TabId) -> bool {
         match self.tab_place(id) {
             Some((w, t)) => {
+                if self.windows[w].shown != t {
+                    self.tabs_left += 1;
+                }
+                let left = self.tabs_left;
                 let window = &mut self.windows[w];
+                if window.shown != t {
+                    window.tabs[window.shown].left = left;
+                }
                 window.shown = t;
                 // Tabs opened beside another line up after it only until
                 // another tab is shown.
@@ -6354,6 +6377,26 @@ impl Workspace {
             }
             None => false,
         }
+    }
+
+    /// The tabs of the windows `which` takes, as they were used: each
+    /// window's shown tab, the window used last first, then the others,
+    /// the one left last first, those never shown last in their windows'
+    /// order (a tab opened behind another).
+    pub fn tabs_by_use(&self, which: impl Fn(&WindowTabs) -> bool) -> Vec<&Tab> {
+        let mut windows: Vec<&WindowTabs> = self.windows.iter().filter(|w| which(w)).collect();
+        let used_at = |w: &WindowTabs| self.used.iter().position(|id| *id == w.id);
+        // The one used last ends `used`.
+        windows.sort_by_key(|w| std::cmp::Reverse(used_at(w)));
+        let mut tabs: Vec<&Tab> = windows.iter().map(|w| w.shown()).collect();
+        let mut others: Vec<&Tab> = windows
+            .iter()
+            .flat_map(|w| w.tabs.iter().filter(|t| t.id != w.shown().id))
+            .collect();
+        // Stable: those never left keep their windows' order.
+        others.sort_by_key(|t| std::cmp::Reverse(t.left));
+        tabs.extend(others);
+        tabs
     }
 
     /// The windows, in the order they were made.

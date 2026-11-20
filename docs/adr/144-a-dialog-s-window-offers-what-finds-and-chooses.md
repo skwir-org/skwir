@@ -179,7 +179,14 @@ folders are a group of the sidebar, not a dropdown of the bar.
    The dialog starts in the first of them there. Each is taken out alone
    (Remove From Sidebar) and the heading's menu empties the group (Clear
    Recent Folders), each with its Undo, which forgets where the program
-   chose: its next dialog starts as one that chose nowhere would. Two folders of one name are told apart after it by the first
+   chose: its next dialog starts as one that chose nowhere would. Above
+   them, Skwir Tabs lists what the tabs of the user's own windows show
+   (the user's name: in another program's dialog, it says whose tabs),
+   each window's shown tab first, the window used last first, then the
+   others, the one left last first, five at most, none another place
+   shows, Recent Folders leaving out what it lists; nothing of it is
+   arranged or taken out (`Place::listed`), and it follows the tabs as
+   the window is drawn again. Two folders of one name are told apart after it by the first
    folder above that differs (`skwir/…`), as any two places of a group
    shown under one name are, and a folder's place says its whole path
    in its tooltip (amended 2026-11-20: they were a dropdown of the bar,

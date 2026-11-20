@@ -326,6 +326,10 @@ pub struct Place {
     /// Offered by its owner rather than kept by the user (a tag used
     /// often, while none is pinned): drawn fainter than the places kept.
     pub suggested: bool,
+    /// Listed from what is in use now (what the tabs of the user's own
+    /// windows show, in a dialog's window): nothing of it is arranged,
+    /// hidden or taken out; it comes and goes with what lists it.
+    pub listed: bool,
     /// What names the place among its group's for the user's arrangement
     /// of the sidebar (hidden, moved, renamed): a volume's filesystem, so
     /// that it is the same place mounted or not. Its location when `None`
@@ -394,6 +398,7 @@ impl Place {
             color: None,
             tag: None,
             suggested: false,
+            listed: false,
             key: None,
             hidden: false,
             rename: None,
@@ -651,7 +656,10 @@ pub mod groups {
     pub const RECENT_FOLDERS: Group = Group {
         id: "recent_folders",
     };
-    pub const ALL: [Group; 8] = [
+    /// What the tabs of the user's own windows show, in a window answering
+    /// another program's dialog (ADR-144, 8), the shell's own.
+    pub const SKWIR_TABS: Group = Group { id: "skwir_tabs" };
+    pub const ALL: [Group; 9] = [
         PLACES,
         BOOKMARKS,
         SEARCHES,
@@ -660,6 +668,7 @@ pub mod groups {
         NETWORK,
         TABS,
         RECENT_FOLDERS,
+        SKWIR_TABS,
     ];
 
     /// The words the heading of the section `id` says: `None` for a
@@ -695,6 +704,10 @@ pub mod groups {
             "tabs" => words!(
                 registry_group_tabs = "Tabs",
                 note = "A heading of the sidebar: the window's open tabs."
+            ),
+            "skwir_tabs" => words!(
+                registry_group_skwir_tabs = "Skwir Tabs",
+                note = "A heading of the sidebar in a window answering another program's Open or Save dialog: what the tabs of Skwir's own windows show."
             ),
             "recent_folders" => words!(
                 registry_group_recent_folders = "Recent Folders",

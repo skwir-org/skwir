@@ -769,6 +769,51 @@ fn every_window_comes_back_with_its_tabs_and_its_shape() {
     assert_eq!(dormant, 2, "each window opens the one location it shows");
 }
 
+/// The tabs as they were used: each window's shown tab, the window used
+/// last first, then the others, the one left last first, a tab never
+/// shown last; windows left out by the caller (a dialog's) give none.
+#[test]
+fn tabs_come_as_they_were_used() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let first = active_window(&app);
+    let a0 = tabs_of(&app, first)[0];
+    let new_tab = |folder: &str| -> TabId {
+        let made = value(
+            &app,
+            "tab.new",
+            serde_json::json!({ "location": dir.path().join(folder), "show": false }),
+        );
+        id(&made, "tab")
+    };
+    let (a1, a2, never) = (
+        new_tab("it's a folder"),
+        new_tab("second folder"),
+        new_tab("tröisième"),
+    );
+    app.select_tab(a1).unwrap();
+    app.select_tab(a2).unwrap();
+    let made = value(
+        &app,
+        "window.new",
+        serde_json::json!({ "location": dir.path().join("tröisième") }),
+    );
+    let second: WindowId = id(&made, "window");
+    let b0 = tabs_of(&app, second)[0];
+    let order = |which: &dyn Fn(&skwir_core::workspace::WindowTabs) -> bool| -> Vec<TabId> {
+        app.workspace
+            .read()
+            .tabs_by_use(which)
+            .iter()
+            .map(|t| t.id)
+            .collect()
+    };
+    assert_eq!(order(&|_| true), [b0, a2, a1, a0, never]);
+    assert_eq!(order(&|w| w.id != second), [a2, a1, a0, never]);
+}
+
 /// A skwir started for another program's dialog makes no startup choice
 /// until a launch comes, its dialog's window up and active then: the
 /// windows left come back in place of the user's own untouched window,

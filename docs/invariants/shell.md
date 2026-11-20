@@ -1584,6 +1584,13 @@ asks the direction.
   gone: the request waits for that, half a second at most, before its
   window opens (`chooser::Asking`, read on a thread of its own, a
   server's folder never asked), and the dialog starts in the first there.
+  Above it, **Skwir Tabs** (`groups::SKWIR_TABS`, `Shell::tab_places`):
+  what the tabs of the user's own windows show, as they were used
+  (`Workspace::tabs_by_use`, each tab knowing when it was last left,
+  `Tab::left`), five at most, none another place shows; its places are
+  listed (`Place::listed`, `Role::Listed`): opened, never arranged,
+  hidden or taken out. Read at each frame, so they follow the tabs as
+  the window is drawn again.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
   command, which keeps what the pane shows as it shows it (ADR-109): the
   location and the pane's filter go to the `Keeper` that keeps them, the

@@ -43,8 +43,10 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 
 /// The groups in the order the sidebar ships with: a dialog's window lists
-/// first the folders its program chose in (ADR-144, 8).
-const GROUP_ORDER: [&str; 6] = [
+/// first what the user's tabs show, then the folders its program chose in
+/// (ADR-144, 8).
+const GROUP_ORDER: [&str; 7] = [
+    skwir_core::registry::groups::SKWIR_TABS.id,
     skwir_core::registry::groups::RECENT_FOLDERS.id,
     "places",
     "bookmarks",
@@ -140,11 +142,16 @@ pub enum Role {
     /// Its owner offers it (Home, the Trash, a volume): the user moves,
     /// renames and hides it, in the sidebar (`ui.sidebar_place`).
     Offered,
+    /// Listed from what is in use now (`Place::listed`: what the user's
+    /// tabs show, in a dialog's window): opened, nothing more.
+    Listed,
 }
 
 impl Role {
     pub fn of(place: &Place) -> Self {
-        if place.forget.is_some() || place.reorder.is_some() {
+        if place.listed {
+            Role::Listed
+        } else if place.forget.is_some() || place.reorder.is_some() {
             Role::Kept
         } else if place.suggested {
             Role::Suggested
@@ -153,9 +160,10 @@ impl Role {
         }
     }
 
-    /// Whether the user can hide it: a place kept is taken out instead.
+    /// Whether the user can hide it: a place kept is taken out instead,
+    /// and one listed comes and goes with what lists it.
     pub fn hides(self) -> bool {
-        self != Role::Kept
+        !matches!(self, Role::Kept | Role::Listed)
     }
 }
 
@@ -466,6 +474,61 @@ fn above(path: &Path, home: Option<&Path>) -> Vec<String> {
     words
 }
 
+/// The places of Skwir Tabs a dialog's window shows at most.
+const TABS_SHOWN: usize = 5;
+
+impl Shell {
+    /// What the tabs of the user's own windows show, as they were used
+    /// (`Workspace::tabs_by_use`: each window's shown tab first, the
+    /// window used last first, then the others, the one left last first),
+    /// those this window offers alone (not the Trash, ADR-144, 3).
+    fn tab_locations(&self) -> Vec<Location> {
+        let shown: Vec<Location> = {
+            let ws = self.app.workspace.read();
+            ws.tabs_by_use(|window| !window.chooses())
+                .iter()
+                .filter_map(|tab| ws.pane(tab.active).and_then(|pane| pane.shown()).cloned())
+                .collect()
+        };
+        shown
+            .into_iter()
+            .filter(|location| self.offers_location(location))
+            .collect()
+    }
+
+    /// The places of Skwir Tabs (ADR-144, 8): what the user's tabs show
+    /// (`tab_locations`), each named as its tab names it
+    /// (`App::location_title`), listed (`Place::listed`): opened, nothing
+    /// arranged. A folder with a folder's icon, anything else with the
+    /// icon of a place of its kind, if one has it.
+    fn tab_places(&self) -> Vec<Place> {
+        let places = self.app.registry.places.all();
+        self.tab_locations()
+            .into_iter()
+            .map(|location| {
+                let icon = if location.is_path() {
+                    "folder".to_owned()
+                } else {
+                    places
+                        .iter()
+                        .find(|place| place.location.scheme == location.scheme)
+                        .and_then(|place| place.icon.clone())
+                        .unwrap_or_else(|| "folder".to_owned())
+                };
+                Place {
+                    listed: true,
+                    ..Place::new(
+                        skwir_core::registry::groups::SKWIR_TABS.id,
+                        self.app.location_title(&location),
+                        &icon,
+                        location,
+                    )
+                }
+            })
+            .collect()
+    }
+}
+
 /// Whether the sidebar shows `place` as the user arranged it: its group
 /// not put away (folded, it still holds it), and the place not hidden by
 /// the user (`Arrangement::shown`) nor offered hidden (`Place::hidden`),
@@ -513,7 +576,7 @@ pub(crate) fn shown_nowhere(
 /// folders a dialog's program chose in, of what words say, and an
 /// arrangement of them.
 pub(crate) type ArrangedAt = (
-    (u64, u64, u64),
+    (u64, u64, u64, Vec<Location>),
     Sections,
     Arranging,
     std::sync::Arc<[Arranged]>,
@@ -539,6 +602,13 @@ impl Shell {
     pub(crate) fn places_here(&self) -> Vec<Place> {
         let mut places = self.app.places_offered(self.chooser.is_some());
         if let Some(chooser) = &self.chooser {
+            let tabs = shown_nowhere(
+                &places,
+                self.tab_places(),
+                &self.sidebar_sections,
+                TABS_SHOWN,
+            );
+            places.extend(tabs);
             let recent = shown_nowhere(
                 &places,
                 chooser.folder_places(),
@@ -568,6 +638,13 @@ impl Shell {
                 .as_ref()
                 .map_or(0, crate::chooser::Chooser::folders_revision),
             skwir_core::words::revision(),
+            // What the user's tabs show, which a dialog lists: asked at
+            // each frame, few, and changed by no revision of the places.
+            if self.chooser.is_some() {
+                self.tab_locations()
+            } else {
+                Vec::new()
+            },
         );
         let arranging = match &self.chooser {
             None => Arranging::Own,
@@ -2023,6 +2100,7 @@ impl Shell {
         match arranged.role {
             // A suggested tag is renamed on every file, as a pinned one.
             Role::Kept | Role::Suggested => arranged.place.rename.clone(),
+            Role::Listed => None,
             Role::Offered => {
                 let place = &arranged.place;
                 // Its names as the sidebar says them: the field shows one.
@@ -3012,6 +3090,26 @@ mod tests {
         sections.hidden.insert("devices".to_owned());
         let left = super::shown_nowhere(&offered, recent(&["/media/stick"]), &sections, 5);
         assert_eq!(titles_of(&left), ["media/stick"], "its section put away");
+    }
+
+    /// A place listed from what is in use (a tab's folder in a dialog) is
+    /// shown, never hidden, moved, renamed or taken out.
+    #[test]
+    fn a_listed_place_is_shown_and_never_arranged() {
+        let mut tab = place("skwir_tabs", "/home/a/wip");
+        tab.listed = true;
+        let mut sections = Sections::default();
+        sections
+            .places
+            .entry("skwir_tabs".to_owned())
+            .or_default()
+            .shown
+            .insert(tab.key(), false);
+        let arranged = arrange(vec![tab], &sections);
+        assert_eq!(arranged[0].role, Role::Listed);
+        assert!(arranged[0].shown, "no hiding it");
+        assert!(arranged[0].moves.is_none());
+        assert!(!Role::Listed.hides());
     }
 
     fn titles_of(places: &[skwir_core::registry::Place]) -> Vec<String> {

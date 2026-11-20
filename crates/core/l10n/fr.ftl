@@ -2303,6 +2303,9 @@ registry_group_recent_folders = Dossiers récents
 registry_group_saved = Enregistrés
 
 # draft
+registry_group_skwir_tabs = Onglets de Skwir
+
+# draft
 registry_group_tabs = Onglets
 
 # draft
