@@ -1202,7 +1202,11 @@ pub(crate) fn sheet(
 /// JPEG at `stem` (a PNG where it is see-through).
 fn sheet_picture(path: &Path, stem: &Path, name: &str) -> anyhow::Result<paper::Picture> {
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
-    let image = skwir_platform::picture::decode_fitted(reader, SHEET_SIDE)?;
+    let image = skwir_platform::picture::decode_fitted(
+        reader,
+        SHEET_SIDE,
+        skwir_platform::picture::Threads::Caller,
+    )?;
     let (width, height) = (image.width(), image.height());
     let written = if image.color().has_alpha() {
         let png = stem.with_extension("png");

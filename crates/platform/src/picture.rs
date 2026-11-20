@@ -47,6 +47,21 @@ pub fn decode<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<DynamicI
     Ok(image)
 }
 
+/// Whether a decode may take threads of its own: said by whoever asks for
+/// it, which knows who waits for it, never read from the picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Threads {
+    /// On the asking thread alone: one of many pictures decoded at once,
+    /// each on a worker of its own (thumbnails, a comic's pages, a contact
+    /// sheet), where a thread a component for each would make three or four
+    /// times as many.
+    Caller,
+    /// A thread a component (a JPEG's, decoded at a reduced scale): the
+    /// picture the user waits for, decoded alone (the preview's own, which
+    /// take turns).
+    Components,
+}
+
 /// The picture decoded, shrunk to at most `side` on its longer side, then
 /// turned: what a thumbnail needs. Turned before shrinking, a portrait
 /// photo of 24 megapixels held a second full copy of itself, 72 MB more
@@ -54,10 +69,11 @@ pub fn decode<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<DynamicI
 pub fn decode_fitted<R: BufRead + Seek>(
     reader: ImageReader<R>,
     side: u32,
+    threads: Threads,
 ) -> ImageResult<DynamicImage> {
     let (mut image, orientation) = if reader.format() == Some(ImageFormat::Jpeg) {
         let mut inner = reader.into_inner();
-        match jpeg_reduced(&mut inner, side)? {
+        match jpeg_reduced(&mut inner, side, threads)? {
             Some(reduced) => reduced,
             None => whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?,
         }
@@ -90,6 +106,7 @@ const REDUCED_BYTES: usize = 512 << 20;
 fn jpeg_reduced<R: BufRead + Seek>(
     reader: &mut R,
     side: u32,
+    threads: Threads,
 ) -> ImageResult<Option<(DynamicImage, Orientation)>> {
     let start = reader
         .stream_position()
@@ -97,6 +114,7 @@ fn jpeg_reduced<R: BufRead + Seek>(
     let reduced = (|| {
         let mut jpeg = jpeg_decoder::Decoder::new(&mut *reader);
         jpeg.set_max_decoding_buffer_size(REDUCED_BYTES);
+        jpeg.set_worker_threads(threads == Threads::Components);
         jpeg.read_info().ok()?;
         let full = jpeg.info()?;
         // Told before a pixel is decoded: one `image` reads otherwise is
@@ -278,10 +296,14 @@ mod tests {
         // An eighth of 1200 × 800 is 150 × 100: what a side of 100 needs.
         let bytes = jpeg_of(1200, 800, 6);
         let mut cursor = Cursor::new(bytes.as_slice());
-        let (reduced, orientation) = jpeg_reduced(&mut cursor, 100).unwrap().unwrap();
+        let (reduced, orientation) = jpeg_reduced(&mut cursor, 100, Threads::Caller)
+            .unwrap()
+            .unwrap();
         assert_eq!((reduced.width(), reduced.height()), (150, 100));
         assert_eq!(orientation, Orientation::Rotate90);
-        let fitted = decode_fitted(reader(&bytes), 100).unwrap().to_rgb8();
+        let fitted = decode_fitted(reader(&bytes), 100, Threads::Caller)
+            .unwrap()
+            .to_rgb8();
         assert_eq!(fitted.dimensions(), (67, 100));
         // The red left third is now the top.
         let [r, _, b] = fitted.get_pixel(33, 5).0;
@@ -304,9 +326,13 @@ mod tests {
         // A small one has no smaller scale: decoded whole, from where it was.
         let small = jpeg(6);
         let mut cursor = Cursor::new(small.as_slice());
-        assert!(jpeg_reduced(&mut cursor, 128).unwrap().is_none());
+        assert!(
+            jpeg_reduced(&mut cursor, 128, Threads::Caller)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(cursor.position(), 0);
-        let fitted = decode_fitted(reader(&small), 128).unwrap();
+        let fitted = decode_fitted(reader(&small), 128, Threads::Caller).unwrap();
         assert_eq!((fitted.width(), fitted.height()), (2, 3));
     }
 
@@ -333,13 +359,15 @@ mod tests {
             "the cut file is no picture at its full size"
         );
         let reduced = |bytes: &[u8]| {
-            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100).unwrap().unwrap();
+            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100, Threads::Caller)
+                .unwrap()
+                .unwrap();
             image.to_rgb8()
         };
         let read = reduced(PROGRESSIVE);
         assert_eq!(read.dimensions(), (150, 100));
         assert_eq!(reduced(cut), read, "nothing after the first scan is read");
-        let fitted = decode_fitted(reader(cut), 100).unwrap();
+        let fitted = decode_fitted(reader(cut), 100, Threads::Caller).unwrap();
         assert_eq!((fitted.width(), fitted.height()), (100, 67));
         // As the whole decode shrunk has it, give or take the bit the first
         // scan leaves out and the filters' edges.
@@ -384,7 +412,9 @@ mod tests {
     #[test]
     fn a_progressive_jpeg_at_an_eighth_is_drawn_as_a_sequential_one() {
         let reduced = |bytes: &[u8]| {
-            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100).unwrap().unwrap();
+            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100, Threads::Caller)
+                .unwrap()
+                .unwrap();
             image.to_rgb8()
         };
         let sequential = reduced(PLASMA);
@@ -412,6 +442,22 @@ mod tests {
         }
     }
 
+    /// Whether a decode takes threads of its own changes nothing of what it
+    /// draws: at an eighth, and at a half, where the threads start.
+    #[test]
+    fn threads_draw_the_same_picture() {
+        for bytes in [PLASMA, PLASMA_PROGRESSIVE] {
+            for side in [100, 300] {
+                let fitted = |threads| {
+                    decode_fitted(reader(bytes), side, threads)
+                        .unwrap()
+                        .to_rgb8()
+                };
+                assert_eq!(fitted(Threads::Caller), fitted(Threads::Components));
+            }
+        }
+    }
+
     /// 64 × 48, the plasma in eight bits, lossless (`cjpeg -lossless 1`), in
     /// RGB (`-rgb`) and in grey.
     const LOSSLESS_RGB: &[u8] = include_bytes!("../testdata/synthetic-lossless-rgb.jpg");
@@ -426,11 +472,15 @@ mod tests {
             let mut jpeg = jpeg_decoder::Decoder::new(Cursor::new(bytes));
             assert_eq!(jpeg.scale(16, 16).unwrap(), (64, 48), "its full size");
             let mut cursor = Cursor::new(bytes);
-            assert!(jpeg_reduced(&mut cursor, 16).unwrap().is_none());
+            assert!(
+                jpeg_reduced(&mut cursor, 16, Threads::Caller)
+                    .unwrap()
+                    .is_none()
+            );
             assert_eq!(cursor.position(), 0, "decoded whole from where it was");
             // What the whole decode makes of it, if anything (zune-jpeg
             // reads no lossless JPEG): the picture, shrunk.
-            if let Ok(fitted) = decode_fitted(reader(bytes), 16) {
+            if let Ok(fitted) = decode_fitted(reader(bytes), 16, Threads::Caller) {
                 let whole = jpeg_decoder::Decoder::new(Cursor::new(bytes))
                     .decode()
                     .unwrap();

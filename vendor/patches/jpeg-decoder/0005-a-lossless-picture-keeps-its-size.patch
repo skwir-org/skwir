@@ -1,6 +1,6 @@
 --- a/src/decoder.rs
 +++ b/src/decoder.rs
-@@ -291,9 +291,15 @@ impl<R: Read> Decoder<R> {
+@@ -306,9 +306,15 @@ impl<R: Read> Decoder<R> {
      ///
      /// To generate a thumbnail of an exact size, pass the desired size and
      /// then scale to the final size using a traditional resampling algorithm.

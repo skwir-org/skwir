@@ -1861,7 +1861,12 @@ fn decode_image(
     }
     // A JPEG at least twice the side is decoded at a reduced scale: a
     // 24-megapixel photo has a quarter of its pixels computed and held.
-    let img = skwir_platform::picture::decode_fitted(reader()?, side)?;
+    // With a thread a component: the picture waited for, in its turn.
+    let img = skwir_platform::picture::decode_fitted(
+        reader()?,
+        side,
+        skwir_platform::picture::Threads::Components,
+    )?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }

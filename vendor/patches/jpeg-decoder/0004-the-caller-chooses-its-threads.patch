@@ -1,0 +1,72 @@
+--- a/src/decoder.rs
++++ b/src/decoder.rs
+@@ -134,6 +134,9 @@ pub struct Decoder<R> {
+ 
+     // Maximum allowed size of decoded image buffer
+     decoding_buffer_size_limit: usize,
++
++    // Whether a decode may run its components on threads of their own.
++    worker_threads: bool,
+ }
+ 
+ impl<R: Read> Decoder<R> {
+@@ -159,6 +162,7 @@ impl<R: Read> Decoder<R> {
+             dc_only: false,
+             dc_bits_left: [0; MAX_COMPONENTS],
+             decoding_buffer_size_limit: usize::MAX,
++            worker_threads: true,
+         }
+     }
+ 
+@@ -173,6 +177,24 @@ impl<R: Read> Decoder<R> {
+         self.decoding_buffer_size_limit = max;
+     }
+ 
++    /// Whether a decode may run its components on threads of their own (the
++    /// default, for an image larger than 128×128 once decoded), or runs on
++    /// the calling thread alone. Whoever decodes many images at once, one a
++    /// thread, would otherwise start three or four threads for each; whoever
++    /// waits for one decode alone has it sooner with them.
++    pub fn set_worker_threads(&mut self, threads: bool) {
++        self.worker_threads = threads;
++    }
++
++    /// The worker the caller allows: threads, or its own thread alone.
++    fn worker_preference(&self) -> PreferWorkerKind {
++        if self.worker_threads {
++            PreferWorkerKind::Multithreaded
++        } else {
++            PreferWorkerKind::Immediate
++        }
++    }
++
+     /// Returns metadata about the image.
+     ///
+     /// The returned value will be `None` until a call to either `read_info` or `decode` has
+@@ -258,7 +280,7 @@ impl<R: Read> Decoder<R> {
+             PreferWorkerKind::Immediate => PreferWorkerKind::Immediate,
+             PreferWorkerKind::Multithreaded => {
+                 let width: u64 = frame.output_size.width.into();
+-                let height: u64 = frame.output_size.width.into();
++                let height: u64 = frame.output_size.height.into();
+                 if width * height > PARALLELISM_THRESHOLD {
+                     PreferWorkerKind::Multithreaded
+                 } else {
+@@ -475,7 +497,7 @@ impl<R: Read> Decoder<R> {
+                         }
+ 
+                         let preference =
+-                            Self::select_worker(&frame, PreferWorkerKind::Multithreaded);
++                            Self::select_worker(&frame, self.worker_preference());
+ 
+                         let (marker, data) = worker_scope
+                             .get_or_init_worker(preference, |worker| {
+@@ -653,7 +675,7 @@ impl<R: Read> Decoder<R> {
+         }
+ 
+         let frame = self.frame.as_ref().unwrap();
+-        let preference = Self::select_worker(frame, PreferWorkerKind::Multithreaded);
++        let preference = Self::select_worker(frame, self.worker_preference());
+ 
+         worker_scope.get_or_init_worker(preference, |worker| {
+             self.decode_planes(worker, planes, planes_u16)

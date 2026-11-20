@@ -134,6 +134,9 @@ pub struct Decoder<R> {
 
     // Maximum allowed size of decoded image buffer
     decoding_buffer_size_limit: usize,
+
+    // Whether a decode may run its components on threads of their own.
+    worker_threads: bool,
 }
 
 impl<R: Read> Decoder<R> {
@@ -159,6 +162,7 @@ impl<R: Read> Decoder<R> {
             dc_only: false,
             dc_bits_left: [0; MAX_COMPONENTS],
             decoding_buffer_size_limit: usize::MAX,
+            worker_threads: true,
         }
     }
 
@@ -171,6 +175,24 @@ impl<R: Read> Decoder<R> {
     /// Set maximum buffer size allowed for decoded images
     pub fn set_max_decoding_buffer_size(&mut self, max: usize) {
         self.decoding_buffer_size_limit = max;
+    }
+
+    /// Whether a decode may run its components on threads of their own (the
+    /// default, for an image larger than 128×128 once decoded), or runs on
+    /// the calling thread alone. Whoever decodes many images at once, one a
+    /// thread, would otherwise start three or four threads for each; whoever
+    /// waits for one decode alone has it sooner with them.
+    pub fn set_worker_threads(&mut self, threads: bool) {
+        self.worker_threads = threads;
+    }
+
+    /// The worker the caller allows: threads, or its own thread alone.
+    fn worker_preference(&self) -> PreferWorkerKind {
+        if self.worker_threads {
+            PreferWorkerKind::Multithreaded
+        } else {
+            PreferWorkerKind::Immediate
+        }
     }
 
     /// Returns metadata about the image.
@@ -251,12 +273,6 @@ impl<R: Read> Decoder<R> {
 
     /// Heuristic to avoid starting thread, synchronization if we expect a small amount of
     /// parallelism to be utilized.
-    ///
-    /// At an eighth and a quarter, a decode starts no thread of its own:
-    /// whoever decodes many small pictures at once (thumbnails) runs one
-    /// decode a thread, and a thread a component for each would make three
-    /// or four times as many. At a half and whole, a decode is waited for
-    /// alone (a preview), and its components' threads shorten it.
     fn select_worker(frame: &FrameInfo, worker_preference: PreferWorkerKind) -> PreferWorkerKind {
         const PARALLELISM_THRESHOLD: u64 = 128 * 128;
 
@@ -265,8 +281,7 @@ impl<R: Read> Decoder<R> {
             PreferWorkerKind::Multithreaded => {
                 let width: u64 = frame.output_size.width.into();
                 let height: u64 = frame.output_size.height.into();
-                let small = frame.components.iter().all(|c| c.dct_scale <= 2);
-                if !small && width * height > PARALLELISM_THRESHOLD {
+                if width * height > PARALLELISM_THRESHOLD {
                     PreferWorkerKind::Multithreaded
                 } else {
                     PreferWorkerKind::Immediate
@@ -488,7 +503,7 @@ impl<R: Read> Decoder<R> {
                         }
 
                         let preference =
-                            Self::select_worker(&frame, PreferWorkerKind::Multithreaded);
+                            Self::select_worker(&frame, self.worker_preference());
 
                         let (marker, data) = worker_scope
                             .get_or_init_worker(preference, |worker| {
@@ -666,7 +681,7 @@ impl<R: Read> Decoder<R> {
         }
 
         let frame = self.frame.as_ref().unwrap();
-        let preference = Self::select_worker(frame, PreferWorkerKind::Multithreaded);
+        let preference = Self::select_worker(frame, self.worker_preference());
 
         worker_scope.get_or_init_worker(preference, |worker| {
             self.decode_planes(worker, planes, planes_u16)

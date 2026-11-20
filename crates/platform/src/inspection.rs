@@ -1012,7 +1012,7 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     // sample, four samples a pixel at most) at every scale but an eighth.
     let reduced = jpeg && u64::from(own.0) * u64::from(own.1) * 8 <= limits::IMAGE_ALLOC;
     let img = if reduced {
-        crate::picture::decode_fitted(first, side)?
+        crate::picture::decode_fitted(first, side, crate::picture::Threads::Caller)?
     } else {
         let mut img = crate::picture::decode(first)?;
         // Only shrink: `thumbnail` would otherwise scale a tiny icon up to

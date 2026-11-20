@@ -286,7 +286,11 @@ impl ThumbnailProvider for ImageDecoder {
             u64::from(w) * u64::from(h) <= MAX_PIXELS,
             "{w}x{h} is too large to thumbnail"
         );
-        let img = crate::picture::decode_fitted(open()?, req.size.pixels())?;
+        let img = crate::picture::decode_fitted(
+            open()?,
+            req.size.pixels(),
+            crate::picture::Threads::Caller,
+        )?;
         if cancel.is_cancelled() {
             return Ok(None);
         }
