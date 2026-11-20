@@ -559,18 +559,31 @@ ADR-077 (which revises ADR-021).
   A remote folder bookmarked stays a bookmark until Keep as Server
   (its place's menu, a `place` menu source) makes it a server and takes
   its bookmark out.
-- **A server is one place, mounted or not**, as a device is: its name,
-  its key (`remote:<address>`: what the user renamed, moved or hid it
-  as) and its own items stay as it is mounted, and it opens its own
-  folder (`sftp://nas/srv/photos`), in the mount once mounted
-  (`as_mounted`), never the mount's root. Two servers of one mount are
-  two places, each with the mount's Eject, which lets go of both. A
-  mount no server names (an address typed, another program's) is a
-  place of its own, at its root. Where no place opens a mount's root,
-  the trail and the tab name it by its remote (`Known::label`:
-  `sidebar::roots`, `App::location_title`), never by the folder Skwir
-  mounted it in. Below a mount kio-fuse holds, which mounts a server's
-  folders as each is asked for, the place opens by its address.
+- **A server kept with a folder is one place, mounted or not**, as a
+  device is: a server whose address names a folder below a mount's top
+  (`sftp://nas/srv/photos` in the mount of `sftp://me@nas/`) keeps its
+  name, its key (`remote:<address>`: what the user renamed, moved or
+  hid it as), its group and its own items as it is mounted, and opens
+  its own folder, in the mount once mounted (`as_mounted`), never the
+  mount's top. Two such servers of one mount are two places, each with
+  the mount's Eject, which lets go of both. A mount gives way to them
+  only where they are all that names it (`holds`); a server at a
+  mount's top (an fstab entry, a Dolphin place of the host, one of
+  rclone's remotes) is drawn as the mount's own place, under the
+  mount's key and name, as before, its Edit and Remove on that place
+  alone; a mount no server names (an address typed, another program's)
+  is a place of its own, at its top. A device's mount (a phone, a
+  camera) stays the device's place, in Devices under its own name: a
+  server kept with a folder of it is drawn beside it, among the
+  servers. Where no place opens a mount's top, the trail and the tab
+  name it by its remote (`Known::label`: `sidebar::roots`,
+  `App::location_title`), never by the folder Skwir mounted it in; its
+  mount point is a root of the trail whatever its place (hidden, put
+  away, lost). Below a mount kio-fuse holds, which mounts a server's
+  folders as each is asked for, the place opens by its address until
+  kio-fuse answered where the folder is (`State::answered`, kept while
+  that mount is there), then that folder, which the trail and the tab
+  name by the place.
 - **What the Network section shows is followed, whoever changes it**
   (ADR-086, amended 2026-11-15), as Dolphin's sidebar follows its own:
   its mounts by the table (`reach::follow`), its servers by the files

@@ -148,9 +148,14 @@ struct State {
     servers: Vec<Server>,
     /// Whether each host is on the local network, as found out.
     local: HashMap<String, Option<bool>>,
-    /// Mounts being connected or let go of, by point (or address), and
-    /// what their places say meanwhile.
+    /// Mounts being let go of or sending what waits, by point, and what
+    /// their places say meanwhile.
     busy: HashMap<String, Words>,
+    /// The folders of servers a tool that mounts each path (kio-fuse)
+    /// answered, by the server's address: where each is, which its place
+    /// opens from then on (`as_mounted`). One below a mount that went (a
+    /// kio-fuse started again mounts elsewhere) is asked again.
+    answered: HashMap<String, PathBuf>,
     /// Points whose program is gone (`ENOTCONN`): drawn unavailable.
     lost: std::collections::HashSet<PathBuf>,
     /// What reads proved of the mounts when last published
@@ -965,7 +970,19 @@ impl Remotes {
                     Some(connector) if connector.mounts_each_path() => {
                         let connected = self.connect_keyed(app, connector, address, ask, cancel)?;
                         let below = connected.address.below(address).unwrap_or_default();
-                        return Ok(join(&connected.point, below));
+                        let path = join(&connected.point, below);
+                        // A server's folder answered: its place opens it
+                        // there from now on, named by it in the trail and
+                        // the tab.
+                        let mut state = self.state.lock();
+                        if state.servers.iter().any(|s| s.address == *address)
+                            && state.answered.get(&address.to_string()) != Some(&path)
+                        {
+                            state.answered.insert(address.to_string(), path.clone());
+                            drop(state);
+                            self.publish(app);
+                        }
+                        return Ok(path);
                     }
                     _ => return Ok(join(&mounted.remote.point, below)),
                 }
@@ -1525,12 +1542,17 @@ impl Remotes {
             .unwrap_or_else(|| "automatic".to_owned());
         let mut places = Vec::new();
         let mut known = Vec::new();
-        // A mount a server names is drawn as that server's place.
+        // A server kept with a folder below a mount's top is a place of
+        // its own, opening that folder (`as_mounted`); a mount only such
+        // servers hold gives way to them. A device's mount stays the
+        // device's place, a server beside it, and a server at a mount's
+        // top is drawn as the mount's own place, as is a mount no server
+        // names.
         let held = held(&state.servers, &mounted);
-        let mut named = vec![false; mounted.len()];
-        for (at, _) in held.iter().flatten() {
-            named[*at] = true;
-        }
+        let Holds { in_folder, at_top } = holds(&held, &mounted);
+        let gives_way = |at: usize| {
+            in_folder[at] && at_top[at].is_none() && mounted[at].recognised.device.is_none()
+        };
         let mut of_servers: Vec<Option<Place>> = vec![None; mounted.len()];
         for (at, m) in mounted.iter().enumerate() {
             let point = &m.remote.point;
@@ -1626,8 +1648,10 @@ impl Remotes {
                     .menu
                     .extend(configure::server_items(address, &state.at_login));
             }
-            if named[at] {
-                of_servers[at] = Some(place);
+            if in_folder[at] {
+                of_servers[at] = Some(place.clone());
+            }
+            if gives_way(at) {
                 continue;
             }
             if let Some(name) = address.and_then(configure::remote_name) {
@@ -1645,13 +1669,12 @@ impl Remotes {
                         unfinished.iter().any(|u| u == name),
                     ));
                 }
-            } else if let Some(kept) = address.and_then(|a| {
-                state
-                    .servers
-                    .iter()
-                    .find(|s| s.kept.by_address() && a.below(&s.address).is_some())
-            }) {
-                // A server kept, mounted: its own Edit and Remove.
+            } else if let Some(kept) = at_top[at]
+                .map(|server| &state.servers[server])
+                .filter(|server| server.kept.by_address())
+            {
+                // A server kept at the mount's top: its own Edit and
+                // Remove, on its mount's place alone.
                 place.menu.extend(configure::kept_items(&kept.address));
             }
             places.push(place);
@@ -1687,24 +1710,28 @@ impl Remotes {
             places.push(place);
         }
         for (server, held) in state.servers.iter().zip(&held) {
-            if let Some((at, below)) = held
-                && let Some(place) = of_servers[*at].clone()
-            {
-                let busy = state.busy.get(&server.address.to_string()).cloned();
-                places.push(as_mounted(
-                    place,
-                    server,
-                    &mounted[*at],
-                    below,
-                    busy,
-                    &unfinished,
-                ));
-                continue;
+            match held {
+                // Drawn as the mount's own place.
+                Some((_, [])) => continue,
+                Some((at, below)) => {
+                    if let Some(place) = of_servers[*at].clone() {
+                        let answered = state.answered.get(&server.address.to_string());
+                        places.push(as_mounted(
+                            place,
+                            server,
+                            &mounted[*at],
+                            below,
+                            answered.map(PathBuf::as_path),
+                            &unfinished,
+                        ));
+                    }
+                    continue;
+                }
+                None => {}
             }
             let location = server.address.location();
             let mut place = Place::new(GROUP, server.label.clone(), "network-server", location);
             place.key = Some(format!("remote:{}", server.address));
-            place.busy = state.busy.get(&server.address.to_string()).cloned();
             place.menu.extend(forget_item(&server.address, &remembered));
             place.menu.extend(options_item(&server.address));
             place
@@ -1765,36 +1792,65 @@ fn held<'a>(servers: &'a [Server], mounted: &[Mounted]) -> Vec<Option<(usize, &'
         .collect()
 }
 
-/// `server`'s place while `m` holds it, at `below`: the mount's `place`
-/// (its eject, its space, its thumbnails, the connection's items) under
-/// the server's name and key, opening the server's own folder. A server
-/// is one place mounted or not (`docs/invariants/remote.md`): what the
-/// user named, moved or hid it as holds, and it never opens the mount's
-/// root where the server names a folder. `busy`: what is being done to
-/// the server, where nothing is to its mount.
+/// What the servers `held` (`held`) make of each mount: whether one is
+/// kept with a folder below its top, and the first held at its top, by its
+/// index among the servers. A mount gives way to its servers' places only
+/// where they are all of the first kind and it is no device's.
+struct Holds {
+    in_folder: Vec<bool>,
+    at_top: Vec<Option<usize>>,
+}
+
+fn holds(held: &[Option<(usize, &[u8])>], mounted: &[Mounted]) -> Holds {
+    let mut in_folder = vec![false; mounted.len()];
+    let mut at_top: Vec<Option<usize>> = vec![None; mounted.len()];
+    for (server, held) in held.iter().enumerate() {
+        match held {
+            Some((at, [])) => {
+                at_top[*at] = at_top[*at].or(Some(server));
+            }
+            Some((at, _)) => in_folder[*at] = true,
+            None => {}
+        }
+    }
+    Holds { in_folder, at_top }
+}
+
+/// `server`'s place while `m` holds it, at `below`, a folder below the
+/// mount's top: the mount's `place` (its eject, its space, its
+/// thumbnails, the connection's items) under the server's name and key,
+/// opening the server's own folder. A server is one place mounted or not
+/// (`docs/invariants/remote.md`): what the user named, moved or hid it as
+/// holds, in its group, and it never opens the mount's top. A device's
+/// mount (a phone's) stays the device's place: the server's is drawn
+/// beside it, among the servers. A tool that mounts each folder once
+/// asked (kio-fuse) holds this one where it `answered`, below the mount;
+/// until then it is opened by its address, which asks for it.
 fn as_mounted(
     mut place: Place,
     server: &Server,
     m: &Mounted,
     below: &[u8],
-    busy: Option<Words>,
+    answered: Option<&Path>,
     unfinished: &[String],
 ) -> Place {
     place.title = server.label.clone();
     place.key = Some(format!("remote:{}", server.address));
-    // kio-fuse holds a server's folders once asked for each: one below
-    // its mount is opened by its address, which asks for it.
-    let asked = m.connector.as_ref().is_some_and(|c| c.mounts_each_path());
-    place.location = if asked && !below.is_empty() {
-        server.address.location()
-    } else {
-        Location::from_path(join(&m.remote.point, below))
+    if m.recognised.device.is_some() {
+        GROUP.clone_into(&mut place.group);
+        place.icon = Some("folder-remote".to_owned());
+    }
+    let each_path = m.connector.as_ref().is_some_and(|c| c.mounts_each_path());
+    let folder = join(&m.remote.point, below);
+    place.location = match answered {
+        _ if !each_path || below.is_empty() => Location::from_path(folder),
+        Some(path) if path.starts_with(&m.remote.point) => Location::from_path(path),
+        _ => server.address.location(),
     };
     // Connected again where it was lost: in its own folder.
     if place.activate.is_some() {
         place.activate = Some(Invocation::navigate(&server.address.location()));
     }
-    place.busy = place.busy.or(busy);
     place.menu.extend(own_items(server, unfinished));
     place
 }
@@ -3710,5 +3766,74 @@ mod tests {
         let top = kept("NAS", "sftp://nas/");
         let place = super::as_mounted(mount_place(&kio), &top, &kio, b"", None, &[]);
         assert_eq!(place.location, Location::from_path("/run/m/kio"));
+        // Once kio-fuse answered where the folder is, the place stands for
+        // it there: the trail and the tab name it by the place. An answer
+        // below a mount that went is asked again.
+        let there = Path::new("/run/m/kio/srv/photos");
+        let place = super::as_mounted(
+            mount_place(&kio),
+            &server,
+            &kio,
+            b"srv/photos",
+            Some(there),
+            &[],
+        );
+        assert_eq!(place.location, Location::from_path(there));
+        let gone = Path::new("/run/m/old/srv/photos");
+        let place = super::as_mounted(
+            mount_place(&kio),
+            &server,
+            &kio,
+            b"srv/photos",
+            Some(gone),
+            &[],
+        );
+        assert_eq!(place.location, server.address.location());
+    }
+
+    /// Only a server kept with a folder below a mount's top takes a place
+    /// of its own; a mount gives way to such servers alone, and never a
+    /// device's, whose own place stays (the server beside it, among the
+    /// servers). A server at a mount's top is drawn as the mount's place,
+    /// as before (what the user arranged the mount's place as holds).
+    #[test]
+    fn a_mount_gives_way_only_to_servers_kept_with_a_folder() {
+        let listed = [
+            kept("Photos", "sftp://nas/srv/photos"),
+            kept("DCIM", "mtp://Example_Phone/Internal storage/DCIM"),
+            kept("Export", "nfs://nas2/export"),
+            kept("Music", "sftp://nas3/srv/music"),
+            kept("NAS3", "sftp://nas3/"),
+        ];
+        let mut phone = mount("mtp://Example_Phone/", "/run/m/phone", None);
+        phone.recognised.device = Some(crate::connector::Device::Phone);
+        let mounted = [
+            mount("sftp://me@nas/", "/run/m/nas", None),
+            phone,
+            mount("nfs://nas2/export", "/run/m/export", None),
+            mount("sftp://nas3/", "/run/m/nas3", None),
+        ];
+        let held = super::held(&listed, &mounted);
+        let super::Holds { in_folder, at_top } = super::holds(&held, &mounted);
+        assert_eq!(in_folder, [true, true, false, true]);
+        assert_eq!(at_top, [None, None, Some(2), Some(4)]);
+        // The phone's place stays the phone's; its server is drawn beside
+        // it, among the servers, under its own name and key.
+        let below = mounted[1]
+            .recognised
+            .address
+            .as_ref()
+            .unwrap()
+            .below(&listed[1].address)
+            .unwrap();
+        let mut device_place = mount_place(&mounted[1]);
+        device_place.group = super::DEVICES.to_owned();
+        let place = super::as_mounted(device_place, &listed[1], &mounted[1], below, None, &[]);
+        assert_eq!(place.group, super::GROUP);
+        assert_eq!(place.key, Some(format!("remote:{}", listed[1].address)));
+        assert_eq!(
+            place.location,
+            Location::from_path("/run/m/phone/Internal storage/DCIM")
+        );
     }
 }

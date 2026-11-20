@@ -377,7 +377,10 @@ pub struct Root {
 /// folder of it, and what Skwir named the folder it mounts in is no name
 /// of the user's), then the home folder, which stands for what is above
 /// it even when the sidebar does not show it: where trails start. A
-/// place hidden, in a group put away, or not mounted is none.
+/// place hidden, in a group put away, or not mounted is none; a remote's
+/// mount point is one all the same, under its remote's name, whatever its
+/// place (hidden, put away, its connection lost): a folder below it is
+/// still on that remote.
 pub fn roots(
     places: Vec<Place>,
     remotes: Vec<skwir_core::fs::reach::Known>,
@@ -2461,6 +2464,52 @@ mod tests {
         assert!(sections.arranged_by_user());
         let toml = toml::Value::try_from(&sections).unwrap();
         assert_eq!(toml.try_into::<Sections>().unwrap(), sections);
+    }
+
+    /// A server's place opening a folder below its mount names that
+    /// folder; the mount's point, which no place opens, is named by its
+    /// remote, not by the folder Skwir mounted it in, even with its place
+    /// put away.
+    #[test]
+    fn a_remote_s_mount_point_is_a_root_under_its_name() {
+        use skwir_core::fs::reach::Known;
+        let known = |point: &str, label: &str| Known {
+            point: PathBuf::from(point),
+            address: None,
+            label: Words::as_written(label.to_owned()),
+            thumbnails: skwir_core::fs::reach::Thumbnails::default(),
+            forget: None,
+            trash: None,
+            looked_at: None,
+        };
+        let mut photos = place("network", "/run/m/nas/srv/photos");
+        photos.title = Words::as_written("Photos");
+        // Its place in a group put away.
+        let mut hidden = place("devices", "/run/m/other");
+        hidden.title = Words::as_written("Other");
+        let mut sections = Sections::default();
+        sections.hidden.insert("devices".to_owned());
+        let roots = super::roots(
+            vec![photos, hidden],
+            vec![
+                known("/run/m/nas", "me@nas"),
+                known("/run/m/other", "other host"),
+            ],
+            &sections,
+            None,
+        );
+        let named: Vec<(String, String)> = roots
+            .iter()
+            .map(|root| (root.path.display().to_string(), root.name.to_string()))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("/run/m/nas/srv/photos".to_owned(), "Photos".to_owned()),
+                ("/run/m/nas".to_owned(), "me@nas".to_owned()),
+                ("/run/m/other".to_owned(), "other host".to_owned()),
+            ]
+        );
     }
 
     fn place(group: &str, location: &str) -> skwir_core::registry::Place {
