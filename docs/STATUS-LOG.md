@@ -21333,3 +21333,108 @@ round.
   dialog; a screen reader on the bar's new dropdown; Wine.
 - **Where the next review starts**: 1a81b360, after the release
   review; skwir-39 reviews it on the user's ask.
+
+## 2026-11-20: the review of the dialogs' set (ADR-144), fixed
+
+Asked by the user once skwir-43's set was in: "go ahead with the review
+when skwir-43 is done", of c9eee4cd..d2a6f937 (15 commits: window tags,
+gpui 0089; Quit in a dialog; ADR-144 and its steps; the Nix package's
+zstd from another session).
+
+- **How**: four readers by area (window tags, Quit and the Nix package;
+  what a dialog's window offers; the chooser's features and the recent
+  list; the documents and the release page): 48 findings, none high,
+  seven medium. Then four fixers, each owning its files, every step
+  committed apart (034f82ee..99a3978a and the catalogs b7c2bdce, 30
+  commits). Beside them, on the user's go, skwir-43 added one case
+  (786b97aa), read here before the checks: sound. And three
+  `remote_login` tests that failed since the system moved to systemd 262
+  (its user sockets under a runtime folder that deep passed a socket's
+  108 bytes) were fixed first (aa392b16).
+- **The mediums**: the recent list a dialog's answer added to could be
+  written as GLib refuses it whole, losing every GTK program's history
+  (a path given twice): now each file once, a bookmark edited once, what
+  would be written read again by GLib's rules first, and a test has
+  GLib's own reader read every list written (7de74fcd). What a dialog's
+  window offers is one answer, `App::in_dialogs`, asked by every surface
+  through `Shell::in_window` (keys falling through as unbound, F1, the
+  palette, menus, buttons, pickers, Properties' links, toasts, the
+  activity strip), what changes files or opens another program offered
+  only where it says so, a picker or a preview's item only where what it
+  runs is (61224be9); a place asked in a tab opens in place in a window
+  that holds one tab, and Ctrl+W cancels again (621a6996, its key
+  eb201e81); `open` answers with what it names and never opens a file
+  elsewhere (38c0c805); a question goes to the window whose action asked
+  it, a dialog's included, the asking pane carried by the scheduler, the
+  executor and a remote's connection (1334395e); the commands of
+  plugins from outside are not offered there (053f78d3).
+- **The rest, by area**: the recent list read bounded and trimmed as GTK
+  does, typed by what a file is, each desktop's switch for recent files
+  heeded (GTK's settings.ini, GNOME's privacy schema, Cinnamon's, KDE's),
+  Recent the start of an Open dialog only while it has a file to give
+  (f01830e8, 574bffea); the extension swapped as the program's filters
+  take a name, compound extensions whole, bytes kept (1a0a99c3); the
+  answer counted as given (46a21811); Enter by the entry under the
+  cursor (17fb70aa); recent folders as bytes, where the answer saved
+  (87180d4e); a tile's size never kept for the next dialog (263c92fc); a
+  key missing from the dialogs' layout keeps the rest (fe3cf6cf); drops
+  on a dialog's sidebar gone to (39c111f3); a file a folder dialog
+  cannot take heard as such (a7041510); no Trash wherever a dialog's
+  window offers places (ad31cf61); a dialog's Undo, Redo and Retry take
+  back what it did alone (84d6a4a3). Ctrl+Q a dialog's Cancel, a
+  script's Quit done at once with only dialogs up (1b34fa28); a window's
+  description said again in a new language, its tag a fixed ASCII id,
+  gpui 0089 remade (51dd029a); sway's and KDE Plasma's rules in the
+  guide (eeb58d9a); the Nix package's zstd linked on Linux alone
+  (8d70ed1a). The documents as built (b2f99913, bf2ceb17, 99a3978a), the
+  French spaces before punctuation as the glossary has them in twenty
+  messages, and `just words --check` refusing another (034f82ee); ADR-139
+  says the glossary's spaces too. A dialog whose program's filter left
+  every file out said "This folder is empty"; it now says "No files for
+  “Pictures” here" with Show all files, which chooses All files
+  (786b97aa; checked in a window: image/* in a folder of a Markdown and
+  a text file, then the button showed both).
+- **Decided along the way** (the conservative reading, the user may
+  revisit): not offered in a dialog's window: a server's editing,
+  removal, mount options, key login, rclone's encryption, connecting at
+  login and public links; Usage's and the Map's commands; geotagging;
+  a tag renamed, moved or deleted everywhere; the commands of plugins
+  from outside (until one can say it is fit). Kept: adding a server,
+  bookmarks, mounting, forgetting a password. A script's Quit with work
+  under way and no window of the user's own does what Quit's first
+  answer does (the dialogs cancelled, the work finished, then the end).
+  `file::rewrite_words` reads at most 4 MiB, a regular file, for every
+  caller. The recent list kept to GTK's thousand, trimmed by age only
+  where a setting says one. In an Open dialog Enter on a folder goes into
+  it with files selected. A non-ASCII tag gets no X11 role.
+- **Checks**: each step by its fixer (rustfmt, clippy `-D warnings` on
+  the crates touched, their tests, the Windows half of check-cross for
+  the chooser's crates; windows on Xvfb with a private bus and the
+  portal back end for what a dialog's window offers at each step, Quit
+  and Ctrl+Q, the window roles, the dialogs' start, swap, counted
+  answer and Enter; a headless sway 1.12 for the descriptions said again
+  in French and sway's tag rule; the Nix package's default variant
+  against the system's nixpkgs 0bb8272, its closure 1.1 GiB, removed
+  from the store after; GLib's own reader of the recent list built and
+  run). Then on the tree, in a capped scope: `just lint`; every test of
+  the default members at once (4065 run: 4064 passed, 32 skipped, one
+  failed: the keys page's test still expected Quit alone on Ctrl+Q,
+  fixed in 5681dddb, its tests passing after); `just check-cross`;
+  `just words`, then `extract.py --check` clean (6,963 messages, all
+  drafted in French and Simplified Chinese); `just a11y-check` on a
+  debug build (passed); `just release-tools-check` (106 tests). Not run:
+  `just deny` (no dependency changed), the native workers' tests, Wine,
+  `bench-check`, the Nix package's minimal variant and aarch64-darwin,
+  macOS's UI build (check-macos leaves skwir-ui out). Not seen in a
+  window: a drag onto a dialog's sidebar, a screen reader on a dimmed
+  file, a tiling compositor keeping a dialog's size, a server's password
+  or a volume's passphrase asked in a dialog, a script's Quit with work
+  under way, KWin's and Hyprland's rules.
+- **Privacy, in the checks**: a test window's Trash listed the real
+  volumes' trashes (skwir lists every mounted volume's): nothing was
+  done to them, the screenshots showing their names were deleted, and
+  nothing trashed on them or in the home Trash during the round.
+- **Where the next review starts**: every commit from v0.5.1 to
+  d2a6f937 was read by a reviewer other than its author, and 786b97aa
+  here; this round's fixes (aa392b16, 034f82ee..5681dddb) had no second
+  review. What they left is in PLAN's "What is left".

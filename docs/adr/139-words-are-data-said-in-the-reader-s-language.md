@@ -377,10 +377,12 @@ says it is a draft (13).
     - **French first, drafted by a model and reviewed by the user** (the
       user's choice). The draft follows a glossary settled with them
       first: Skwir's own terms (entry, place, pane, trail, shelf, lens,
-      plan, Activity) and French typography (« » and U+202F before
-      `; : ! ?`). The review is done in the window running in French,
-      surface by surface, with a list of the messages that have plurals
-      and kinds.
+      plan, Activity) and French typography (« », U+202F before
+      `; ! ?` and U+00A0 before `:`, as `docs/glossary-fr.md` settled
+      with them on 2026-11-17; amended 2026-11-20, where this said
+      U+202F before `:` too). The review is done in the window running
+      in French, surface by surface, with a list of the messages that
+      have plurals and kinds.
     - **Simplified Chinese next, drafted by a model** (2026-11-18, the
       user's choice, for issue #13), from a glossary of the terms
       Chinese file managers use (`docs/glossary-zh-Hans.md`), for a
