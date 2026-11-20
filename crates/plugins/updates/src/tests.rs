@@ -19,31 +19,21 @@ use crate::kept::Kept;
 use crate::version::Version;
 use crate::{Family, Here, Setup, TELL, UpdatesPlugin, WHATS_NEW};
 
-/// What the site answers: its file and the file's tag.
-#[derive(Clone)]
-struct File {
-    body: String,
-    etag: String,
-}
-
-/// A site answering `/updates/1.json` with its file and a tag (304 to a
-/// request naming the tag, which a copy never sends), keeping the head of
-/// each request; held, it answers once let go (`hold`).
+/// A site answering `/updates/1.json` with its file, and a tag the copy
+/// never sends back, keeping the head of each request; held, it answers
+/// once let go (`hold`).
 struct Site {
     address: String,
-    file: Arc<Mutex<File>>,
+    file: Arc<Mutex<String>>,
     heads: Arc<Mutex<Vec<String>>>,
     gate: Arc<Mutex<()>>,
 }
 
 impl Site {
-    fn new(body: &str, etag: &str) -> Site {
+    fn new(body: &str) -> Site {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-        let file = Arc::new(Mutex::new(File {
-            body: body.into(),
-            etag: etag.into(),
-        }));
+        let file = Arc::new(Mutex::new(body.to_owned()));
         let heads = Arc::new(Mutex::new(Vec::new()));
         let gate = Arc::new(Mutex::new(()));
         let (served, kept, gated) = (Arc::clone(&file), Arc::clone(&heads), Arc::clone(&gate));
@@ -61,27 +51,15 @@ impl Site {
                 }
                 kept.lock().push(head.clone());
                 drop(gated.lock());
-                let file = served.lock().clone();
-                let wanted = format!("if-none-match: {}", file.etag);
-                let same = head
-                    .to_ascii_lowercase()
-                    .contains(&wanted.to_ascii_lowercase());
-                let found = head.starts_with("GET /updates/1.json ");
-                let answer = if !found {
-                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                        .to_owned()
-                } else if same {
+                let body = served.lock().clone();
+                let answer = if head.starts_with("GET /updates/1.json ") {
                     format!(
-                        "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nConnection: close\r\n\r\n",
-                        file.etag
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: \"site-tag\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
                     )
                 } else {
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        file.etag,
-                        file.body.len(),
-                        file.body
-                    )
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned()
                 };
                 let _ = stream.write_all(answer.as_bytes());
             }
@@ -99,11 +77,8 @@ impl Site {
         self.gate.lock()
     }
 
-    fn serve(&self, body: &str, etag: &str) {
-        *self.file.lock() = File {
-            body: body.into(),
-            etag: etag.into(),
-        };
+    fn serve(&self, body: &str) {
+        *self.file.lock() = body.to_owned();
     }
 
     fn heads(&self) -> Vec<String> {
@@ -300,7 +275,7 @@ fn opens(said: &Notification) -> String {
 /// nothing about the copy, nor sends back the tag the site gave.
 #[test]
 fn a_downloaded_copy_asks_once_then_checks_once_a_day() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.look_on(20_000);
     f.look_on(20_001);
@@ -378,7 +353,7 @@ fn a_downloaded_copy_asks_once_then_checks_once_a_day() {
 /// after the important one 14 days after it again.
 #[test]
 fn the_next_version_waits_two_weeks_unless_it_is_important() {
-    let site = Site::new(&file("0.6.0"), "\"1\"");
+    let site = Site::new(&file("0.6.0"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.app
         .dispatch(&Invocation::with_args(
@@ -394,16 +369,13 @@ fn the_next_version_waits_two_weeks_unless_it_is_important() {
         format!("{}/releases/v0.6.0", site.address)
     );
 
-    site.serve(&file("0.6.1"), "\"2\"");
+    site.serve(&file("0.6.1"));
     f.look_on(20_001);
     f.settled();
     assert!(f.said().is_empty(), "two weeks between notices");
     assert_eq!(f.news(), ["Skwir 0.6.1 is out"], "About says the newest");
 
-    site.serve(
-        r#"{"latest": "0.6.2", "important_since": "0.6.2"}"#,
-        "\"3\"",
-    );
+    site.serve(r#"{"latest": "0.6.2", "important_since": "0.6.2"}"#);
     f.look_on(20_002);
     f.settled();
     let said = f.said();
@@ -415,10 +387,7 @@ fn the_next_version_waits_two_weeks_unless_it_is_important() {
     assert_eq!(opens(&said[0]), format!("{}/releases/v0.6.2", site.address));
     assert_eq!(f.news(), ["Skwir 0.6.2 is out, with an important fix"]);
 
-    site.serve(
-        r#"{"latest": "0.6.3", "important_since": "0.6.2"}"#,
-        "\"4\"",
-    );
+    site.serve(r#"{"latest": "0.6.3", "important_since": "0.6.2"}"#);
     f.look_on(20_003);
     f.settled();
     assert!(f.said().is_empty(), "the important one was told");
@@ -432,7 +401,7 @@ fn the_next_version_waits_two_weeks_unless_it_is_important() {
 /// tell.
 #[test]
 fn a_check_asked_for_now_always_answers() {
-    let site = Site::new(&file("0.5.1"), "\"a\"");
+    let site = Site::new(&file("0.5.1"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.answer(true);
     f.settled();
@@ -442,16 +411,16 @@ fn a_check_asked_for_now_always_answers() {
         "a yes finding nothing newer is confirmed"
     );
     assert_eq!(f.check_now(), ["Skwir is up to date"]);
-    site.serve(&file("0.6.2"), "\"b\"");
+    site.serve(&file("0.6.2"));
     assert_eq!(f.check_now(), ["Skwir 0.6.2 is out"]);
     assert_eq!(
         f.check_now(),
         ["Skwir 0.6.2 is out"],
         "told, and said again"
     );
-    site.serve(&file("0.6.3"), "\"c\"");
+    site.serve(&file("0.6.3"));
     assert_eq!(f.check_now(), ["Skwir 0.6.3 is out"], "the 14 days aside");
-    site.serve("not json", "\"d\"");
+    site.serve("not json");
     let failed = f.check_now();
     assert_eq!(failed.len(), 1);
     assert!(
@@ -465,7 +434,7 @@ fn a_check_asked_for_now_always_answers() {
     );
     assert_eq!(site.heads().len(), 6);
     // The daily check still waits the two weeks after what was told.
-    site.serve(&file("0.6.4"), "\"e\"");
+    site.serve(&file("0.6.4"));
     f.later_by(61);
     f.look_on(20_001);
     f.settled();
@@ -477,7 +446,7 @@ fn a_check_asked_for_now_always_answers() {
 /// after a yes; a check asked for now is made there all the same.
 #[test]
 fn a_metered_connection_is_asked_nothing_unless_asked_for_now() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.metered.store(true, Ordering::SeqCst);
     f.look_on(20_000);
@@ -505,7 +474,7 @@ fn a_metered_connection_is_asked_nothing_unless_asked_for_now() {
 /// request; turned off while the site is waited for, it tells nothing.
 #[test]
 fn a_check_under_way_answers_who_asks_meanwhile_unless_turned_off() {
-    let site = Site::new(&file("0.5.1"), "\"a\"");
+    let site = Site::new(&file("0.5.1"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.answer(true);
     f.settled();
@@ -519,7 +488,7 @@ fn a_check_under_way_answers_who_asks_meanwhile_unless_turned_off() {
     assert_eq!(f.texts(), ["Skwir is up to date"]);
     assert_eq!(site.heads().len(), 2, "one request");
 
-    site.serve(&file("0.6.2"), "\"b\"");
+    site.serve(&file("0.6.2"));
     let held = site.hold();
     f.look_on(20_002);
     f.wait_until("the site is asked", |_| site.heads().len() == 3);
@@ -534,7 +503,7 @@ fn a_check_under_way_answers_who_asks_meanwhile_unless_turned_off() {
 /// question never comes back; turning the setting on later checks.
 #[test]
 fn a_no_asks_nothing_until_the_setting_is_turned_on() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.look_on(20_000);
     f.look_on(20_002);
@@ -562,7 +531,7 @@ fn a_no_asks_nothing_until_the_setting_is_turned_on() {
 /// asked; told already, it checks.
 #[test]
 fn a_setting_written_is_never_asked_whatever_the_state_lost() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     for tell in [false, true] {
         let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
         f.app.settings.set(TELL, toml::Value::Boolean(tell));
@@ -585,7 +554,7 @@ fn a_setting_written_is_never_asked_whatever_the_state_lost() {
 /// at most.
 #[test]
 fn a_question_closed_unanswered_comes_back_three_days_at_most() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.look_on(20_000);
     let mut asked = 0;
@@ -602,7 +571,7 @@ fn a_question_closed_unanswered_comes_back_three_days_at_most() {
 /// has no setting for it; a `.deb` without the repository is offered it.
 #[test]
 fn a_copy_something_else_updates_is_never_checked() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     for here in [
         Here {
             channel: None,
@@ -712,7 +681,7 @@ fn the_repository_page_names_the_system_the_copy_runs_on() {
 /// not when its setting is off; with no request, on any copy.
 #[test]
 fn what_is_new_is_said_once_after_an_update() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let managed = Here {
         channel: None,
         repository: false,
@@ -766,7 +735,7 @@ fn what_is_new_is_said_once_after_an_update() {
 /// again that day.
 #[test]
 fn a_check_that_fails_says_nothing_and_is_made_again_an_hour_later() {
-    let site = Site::new("not json", "\"a\"");
+    let site = Site::new("not json");
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.answer(true);
     f.settled();
@@ -782,7 +751,7 @@ fn a_check_that_fails_says_nothing_and_is_made_again_an_hour_later() {
     assert_eq!(site.heads().len(), 2, "again an hour after");
     assert!(f.said().is_empty() && f.news().is_empty(), "said nothing");
 
-    site.serve(&file("0.6.2"), "\"b\"");
+    site.serve(&file("0.6.2"));
     f.later_by(61);
     f.look_on(20_000);
     f.settled();
@@ -798,7 +767,7 @@ fn a_check_that_fails_says_nothing_and_is_made_again_an_hour_later() {
 /// and About says nothing of a version, until the repository goes again.
 #[test]
 fn a_copy_the_system_comes_to_update_is_checked_no_more() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let repository = Arc::new(AtomicBool::new(false));
     let added = Arc::clone(&repository);
     let f = Fixture::with_here(
@@ -839,48 +808,63 @@ fn a_copy_the_system_comes_to_update_is_checked_no_more() {
 }
 
 /// Turned off while a check waits for the site, the plugin takes away
-/// what it said and offered; the earlier run's check, ending after, says
-/// nothing, and its failure holds back no check of the next run.
+/// what it said and offered. The earlier run's check, ending after, says
+/// and keeps nothing, even where it finds a version it would tell; and
+/// its failure holds back no check of the next run.
 #[test]
 fn turned_off_during_a_check_nothing_of_it_stays() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.answer(true);
     f.settled();
     f.said();
     assert_eq!(f.news(), ["Skwir 0.6.2 is out"]);
+    assert_eq!(f.kept().told.as_deref(), Some("0.6.2"));
 
-    site.serve("not json", "\"b\"");
-    let held = site.hold();
-    f.look_on(20_001);
-    f.wait_until("the site is asked", |_| site.heads().len() == 2);
-    let earlier = f.plugin.inner.run.lock().thread.take();
-    assert!(f.app.plugins.set_enabled(crate::ID, false, &f.app));
-    assert!(f.news().is_empty(), "About says nothing of a plugin off");
-    assert!(!f.app.commands.contains("updates.check"));
-    assert!(f.app.settings.spec(TELL).is_none());
+    // A check of a day the next version would be told, held while the
+    // plugin is turned off and on again, then answered.
+    let day = 20_000 + crate::kept::SPACING;
+    let turned_off_during_a_check = |body: &str| {
+        site.serve(body);
+        let held = site.hold();
+        let asked = site.heads().len();
+        f.look_on(day);
+        f.wait_until("the site is asked", |_| site.heads().len() == asked + 1);
+        let earlier = f.plugin.inner.run.lock().thread.take();
+        assert!(f.app.plugins.set_enabled(crate::ID, false, &f.app));
+        assert!(f.news().is_empty(), "About says nothing of a plugin off");
+        assert!(!f.app.commands.contains("updates.check"));
+        assert!(f.app.settings.spec(TELL).is_none());
+        assert!(f.app.plugins.set_enabled(crate::ID, true, &f.app));
+        f.wait_until("the copy's channel is read", |f| {
+            f.plugin.inner.here().is_some()
+        });
+        drop(held);
+        earlier.expect("a check under way").join().unwrap();
+    };
 
-    assert!(f.app.plugins.set_enabled(crate::ID, true, &f.app));
-    f.wait_until("the copy's channel is read", |f| {
-        f.plugin.inner.here().is_some()
-    });
-    drop(held);
-    earlier.expect("a check under way").join().unwrap();
-    assert!(f.said().is_empty(), "the earlier run says nothing");
+    turned_off_during_a_check(&file("0.6.3"));
+    assert!(f.said().is_empty(), "the earlier run tells nothing");
+    assert_eq!(f.kept().told.as_deref(), Some("0.6.2"), "nor keeps it told");
+    assert_eq!(f.kept().latest.as_deref(), Some("0.6.2"));
     assert_eq!(
         f.news(),
         ["Skwir 0.6.2 is out"],
-        "said again by the next run"
+        "said again by the next run, from what it kept"
     );
 
-    site.serve(&file("0.6.2"), "\"c\"");
-    f.look_on(20_001);
+    turned_off_during_a_check("not json");
+    assert!(f.said().is_empty());
+    site.serve(&file("0.6.3"));
+    let asked = site.heads().len();
+    f.look_on(day);
     f.settled();
     assert_eq!(
         site.heads().len(),
-        3,
+        asked + 1,
         "not held back an hour by the earlier run's failure"
     );
+    assert_eq!(f.texts(), ["Skwir 0.6.3 is out"], "the next run tells it");
 }
 
 /// Pressed in the window, the answer waits there for nothing: it is kept
@@ -888,7 +872,7 @@ fn turned_off_during_a_check_nothing_of_it_stays() {
 /// says its confirmation once kept.
 #[test]
 fn an_answer_pressed_in_the_window_waits_there_for_nothing() {
-    let site = Site::new(&file("0.5.1"), "\"a\"");
+    let site = Site::new(&file("0.5.1"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     skwir_core::scheduler::mark_window_thread(&f.app.scheduler);
     let held = f.plugin.inner.kept.lock();
@@ -909,7 +893,7 @@ fn an_answer_pressed_in_the_window_waits_there_for_nothing() {
 #[test]
 fn an_answer_the_settings_cannot_keep_is_said_and_not_counted() {
     use std::os::unix::fs::PermissionsExt as _;
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let folder = tempfile::tempdir().unwrap();
     let settings = folder.path().join("settings.toml");
     std::fs::write(&settings, "").unwrap();
@@ -937,7 +921,7 @@ fn an_answer_the_settings_cannot_keep_is_said_and_not_counted() {
 /// nothing and spends none of its three days.
 #[test]
 fn a_question_waits_for_a_window_of_the_users_own() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.look_on(20_000);
     f.app.workspace.write().set_chooses(f.window, true);
@@ -955,7 +939,7 @@ fn a_question_waits_for_a_window_of_the_users_own() {
 /// it would tell) wait for a look at a window of the user's own.
 #[test]
 fn a_dialogs_window_is_told_nothing() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     let mut kept = f.kept();
     kept.highest_run = Some("0.5.0".into());
@@ -1004,7 +988,7 @@ fn deb_copy(site: &Site) -> (Fixture, Arc<AtomicBool>, Notification) {
 /// Settings, or the copy one its system now updates, seen at a look.
 #[test]
 fn a_question_answered_in_settings_or_made_moot_is_taken_back() {
-    let site = Site::new(&file("0.5.1"), "\"a\"");
+    let site = Site::new(&file("0.5.1"));
     let (f, _, question) = deb_copy(&site);
     let id = question.question.expect("a question of its owner's");
     assert!(f.app.question_stands(crate::ID, id));
@@ -1028,7 +1012,7 @@ fn a_question_answered_in_settings_or_made_moot_is_taken_back() {
 /// nothing asked of the site, nothing said.
 #[test]
 fn an_answer_to_a_moot_question_only_takes_it_down() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     for button in [0, 1] {
         let (f, repository, question) = deb_copy(&site);
         let id = question.question.expect("a question of its owner's");
@@ -1047,7 +1031,7 @@ fn an_answer_to_a_moot_question_only_takes_it_down() {
 /// read asks the site nothing: asked for now, it says why.
 #[test]
 fn a_check_for_a_copy_its_system_now_updates_asks_nothing() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let (f, repository, question) = deb_copy(&site);
     f.app.dispatch(&question.actions[0].command).unwrap();
     f.settled();
@@ -1073,7 +1057,7 @@ fn a_check_for_a_copy_its_system_now_updates_asks_nothing() {
 /// question once a day for both.
 #[test]
 fn two_copies_on_one_state_file_take_back_nothing_of_each_other() {
-    let site = Site::new(&file("0.6.2"), "\"a\"");
+    let site = Site::new(&file("0.6.2"));
     let folder = tempfile::tempdir().unwrap();
     let older = Fixture::sharing(folder.path(), &site.address, Version(0, 6, 0));
     older.look_on(20_000);

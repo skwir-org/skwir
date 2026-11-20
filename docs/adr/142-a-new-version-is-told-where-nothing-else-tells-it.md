@@ -88,7 +88,9 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
    copy on a system that has Skwir's repository never checks. The test
    is whether the file `skwir-repository` installs is there
    (`/etc/apt/sources.list.d/skwir.sources`,
-   `/etc/yum.repos.d/skwir.repo`), read on a worker when the plugin starts and at each day's check. A
+   `/etc/yum.repos.d/skwir.repo`), read on a worker when the plugin starts and at each day's check
+   (amended as built: and at each look of a `.deb` or an `.rpm`, before
+   its check asks the site, and before its answer is kept). A
    copy with a channel and no such repository is a *downloaded* copy.
 3. **What a tool can update is handed to it.**
    1. *AppImage* (ADR-052). The update information is
@@ -282,7 +284,8 @@ moves to `skwir-platform`) and ADR-040 (signed repositories for the
   downloaded copy alone declares `updates.tell`.
 - **The commands** (6): `updates.check` asks the site at once, an action
   an agent asks the user first for (`Effect::Acts`); the palette offers
-  it, and no Check now button was added to Settings or About.
+  it (amended: a downloaded copy's alone, which alone registers it), and
+  no Check now button was added to Settings or About.
   `updates.latest` answers from memory, how the copy came included.
 - **About and More** draw what a plugin keeps said about Skwir
   (`registry::News`): the window names no plugin.
@@ -530,3 +533,9 @@ it trusts a package by its signed index. The user chose signing.
   named the section alone): where the window says what leaves the
   machine, as `AGENTS.md`'s Network rule lists the check. What's new,
   which asks nothing of the network, stays on General under Updates.
+- **What the earlier review's fixes built** and did not say. Two skwirs on
+  one state file merge `updates.kept` field by field (`Kept::merged`,
+  above), the file read as it stands through core's
+  `Settings::kept_on_disk`. What stops the question is a stored
+  `updates.tell` (`Settings::stored`: a value held, the default aside),
+  whoever wrote it, whatever the state file lost.
