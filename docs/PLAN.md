@@ -1259,12 +1259,10 @@ closes an item removes its line; work that leaves one adds it here.
 2026-11-19). Left: the open and closed hands were read in the code, not
 seen (Xvfb's captures draw no cursor); a touchscreen's drag (gpui says
 its scrolling, not a drag) and a screen reader on the bar's button not
-tried; a press that moves the pages on another page than the selection's
-drops the selection (the reader reads a release and a link on the
-selection's page: a page of the press of its own would keep it); a
-picture's double click asks only its second click's press and release,
-so a drag followed at once by a click near where it began can still be
-one (rare). From the review of 2026-11-20: a toast's sentence starts at
+tried; `pan::Moves::by` is not tested against a `ScrollHandle` or a
+`ListState` laid out by gpui (that needs gpui's test support among
+skwir-ui's dev-dependencies, which changes Cargo.lock). From the review
+of 2026-11-20: a toast's sentence starts at
 the narrower of its share and its own line (`Beside::fit`), Settings'
 rows and About not (taffy measures a row kept to one line at its whole
 length, so their texts would start wider than the share): that needs
@@ -1290,10 +1288,26 @@ save is lost to that save; an update through GNOME Software or Discover
 tried on Fedora (each `.rpm` is signed since 2026-11-20, the user's
 choice, for PackageKit, which takes only what a key it trusts signed:
 read in its sources, not tried), and the first Fedora build `try.sh`
-signs (the next `release-build`); `skwir` installed
-from the release before and upgraded through the repositories (only
-downloaded there now); the indexes compared with GitHub's stored files
-rather than the bundle's manifest; apt's by-hash.
+signs (the next `release-build`, whose check of the key at its start
+has not run with the real key either: before the tag, once,
+`SKWIR_RPM_KEY=tools/package/repository/skwir.asc just package-try fedora`);
+`skwir` installed from the release before and upgraded through the
+repositories (only downloaded there now); the indexes compared with
+GitHub's stored files rather than the bundle's manifest; apt's by-hash.
+From the review before the release (2026-11-20): on Windows and macOS
+the system's check of a certificate's revocation may ask the network
+outside the request's deadline; nothing locks state.toml between two
+skwirs saving it; the Privacy page's introduction does not say where
+the maps' background is set (Pictures and media); a setting the window
+remembers (a menu's switch, a reader's button) whose save fails is put
+back without a word (only the Settings dialog says a save failed);
+Fedora's key helper (`skwir-repository`'s `keys`) runs again only with
+`skwir-repository`'s own updates, and PackageKit, dnf4 and rpm-ostree
+were not tried with it; a Fedora system that removed `skwir-repository`
+keeps its `gpg-pubkey` in rpm (RELEASING says what the notes of a
+change of key tell it, `rpmkeys --delete`); whether the site's French
+and Chinese pages go live as drafts with this release's
+`pnpm sync-l10n` is the user's to decide before it runs.
 
 **Thumbnails** (from the review of 2026-11-20). A progressive JPEG
 decoded at a quarter or a half (the preview of a large photo) still
@@ -1301,8 +1315,28 @@ holds 64 coefficients a block for the whole picture (384 MiB for 64
 megapixels in 4:4:4): its AC refinement scans need every coefficient of
 their band, so only an eighth drops them. The thumbnail budgets
 (`thumbs_cold_*`, `thumbs_warm_*`) not measured since the cache is
-written after showing; no test of a CMYK JPEG going straight to the
-whole decode (no such fixture).
+written after showing, nor since the PNG and decoder changes of the
+review before the release; no test of a CMYK JPEG going straight to the
+whole decode (no such fixture). A lossless JPEG has no thumbnail or
+preview of Skwir's (image's zune-jpeg refuses it; jpeg-decoder could
+decode it whole). The crates gpui takes from git without a patch (wgpu's,
+Zed's forks of font-kit, xim, scap, wasm_thread) are matched to no
+advisory by `just deny`.
+
+**A server kept with a folder** (5f25054d, 803f4d0b, 2026-11-20): one
+place mounted or not, the mount's place again where a server is at its
+top, a device's beside the device. Left: below kio-fuse, a server's
+folder opens by its address until its first click, only then a root of
+the trail; not tried in a window, with a phone or with kio-fuse.
+
+**Notices and questions** (from the review before the release,
+2026-11-20): plugins other than updates still notify without an owner
+(`App::notify_from`), so their timed notices may come after they are
+turned off; the window shows one question at a time (a second plugin's
+replaces the first's there, core keeping both; no other plugin asks
+yet); `finishing::hand_on` drops a question waiting in the inbox of one
+of the user's windows that closes before its sync while only dialogs'
+windows remain.
 
 **Show in folder for other programs** (ADR-140, 2026-11-18): built on
 Linux and checked against a private dbus-daemon on Xvfb. Left: a real

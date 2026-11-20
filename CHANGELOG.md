@@ -127,7 +127,7 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   Rename Several's preview, group headings): `Hello_` + U+202E + `gnp.js`
   reads `Hello_⟨RLO⟩gnp.js`, where 0.5.1 drew `Hello_sj.png`, a picture. The
   name's bytes stay as they are.
-- **Shortcuts on every keyboard layout** (gpui 0076): a shortcut on a
+- **Shortcuts on other keyboard layouts** (gpui 0076): a shortcut on a
   non-Latin layout (Russian, Greek, Arabic, Hebrew, Persian, Devanagari) acts
   as the keymap's Latin layout or the US keys' positions name it, AZERTY's
   and Persian's digit rows give their digits, and the shifted comma and
@@ -165,11 +165,15 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   about the copy is sent; on Linux, not on a metered connection, whose cost
   Windows and macOS do not tell it yet) and tells a new version once, About
   and More saying it until you update. **Check for a new version** in the
-  palette answers at once. A downloaded `.deb` or `.rpm` also offers to add
-  the repository; copies a package manager updates (the AUR's, Nix's, a
-  repository's) never ask. What's new is said once after each update from
-  this version on (Settings › General › Updates turns them off). The
-  AppImage carries its update information, for AppImageUpdate and Gear
+  palette answers at once; Settings › Privacy › Updates turns the daily
+  check on or off. A downloaded `.deb` or `.rpm` also offers **Update with
+  your system…**, which opens the download page at your system's commands
+  for the repository (Fedora's, Debian's, or Ubuntu's and its kin's);
+  copies a package manager updates (the AUR's, Nix's, a repository's), and
+  one whose settings file cannot be written (one Home Manager keeps: set
+  `updates.tell` there), never ask. What's new is said once after each
+  update from this version on (Settings › General › Updates turns it off).
+  The AppImage carries its update information, for AppImageUpdate and Gear
   Lever, through skwir.org.
 - **Skwir's repositories** (ADR-142): Debian 13, Ubuntu 24.04 and Fedora 44
   can install Skwir from skwir.org's apt and dnf repositories, which update
@@ -178,6 +182,10 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   Their indexes are signed by the key "Skwir repositories" (F6EB 0DC1 7B1A
   3E87 8C48 2DB3 0CF3 A0EA 4800 4329), and so is each `.rpm` from this
   release on: dnf asks once to import the key (0x48004329) for the packages.
+  `skwir-repository` 2, which they now bring, keeps rpm's copy of the key
+  current on Fedora (an extended key taken, a retired one let go), keeps a
+  local edit of its apt source across its updates on Debian and Ubuntu,
+  and, added again after it was removed, brings the repository back.
 - **Plugins from outside speak your language** (protocol 2, ADR-045, ADR-046
   and ADR-047 amended): a plugin on protocol 2 is told the window's languages
   and may say its words as messages of its own catalogs (`l10n/<language>.ftl`
@@ -191,13 +199,24 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   pictures, and the room around and between pages follow the pointer; the
   middle button's drag moves them anywhere; **Drag to move the page** in the
   reader's bar (`H`, or Settings › Reading › Pages) makes a drag across a
-  page's text move it too, rather than select, a click still following a
-  link.
+  page's text move it too, rather than select. The pointer shows what a
+  press will do as it moves; a press within a line's text (between its
+  words, in the space between a paragraph's lines, just before or after
+  the line) selects; a click where nothing selects clears the selection,
+  whichever page holds it, a drag that moves the pages keeps it, and a link
+  is followed only on a click. A flick of a picture then a quick click
+  leaves it where it is; a double click still sends it to the whole
+  screen.
 - **Thumbnails come sooner and keep less**: a picture's thumbnail shows before
   the desktop's cache keeps it; a progressive JPEG's is read from its first
   scans alone, keeping only their DC coefficients (7 MB for a 45-megapixel
   photo, where 0.5.1 held 130 MB); a document's or a drawing's thumbnail
-  takes up to half as much room in the cache.
+  takes up to half as much room in the cache. A comic's JPEG page or cover
+  over 16 megapixels, shown small, is decoded at a reduced scale (a few MB
+  rather than the whole picture), and one over 44 megapixels is shown
+  rather than refused. A lossless JPEG, whose thumbnail and preview were
+  stripes of its first rows, kept so in the desktop's thumbnail cache, has
+  none of Skwir's now: its decoder reads none yet.
 - **A copy onto an rclone mount says what the server has** (ADR-113
   amended): 0.5.1's strip said 100% and its bar stood full while the mount
   still sent the files, as it counted what went into the mount's cache. The
@@ -205,14 +224,16 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   percent, the strip, Activity's header and the desktop's progress follow
   what the server has. Activity's card no longer runs its line under its
   Pause and Cancel: every popup's text wraps.
-- **A server kept with a folder stays its own place once mounted**: a server
-  added with a Folder (`sftp://nas/srv/photos`) gave way, once mounted, to
-  the mount's own place at its root, under the mount's name, so what you
-  renamed, moved or hid it as was lost while it was mounted, two servers of
-  one host became one place, and a lost connection was made again at the
-  root. A server is now one place mounted or not, keeping its name, its
-  place and its items, and opens its folder in the mount; the mount's root
-  is named by its remote in the trail and the tab.
+- **A server kept with a folder stays its own place once connected**: a
+  server added with a folder (Add Server's Folder, or Keep as Server on a
+  remote folder's address, `sftp://nas/srv/photos`) gave way, once mounted,
+  to the mount's own place, at the top of the server, under the mount's
+  name. It now keeps its name, its position in the sidebar and whether it
+  is hidden, and opens its folder rather than the top of the server, also
+  when a lost connection is made again. Two servers of one host stay two
+  places; one kept from a phone's or a camera's folder shows beside the
+  device. A server at a mount's top is shown as the mount's place, as
+  before.
 - **What you are on keeps its place more surely as a view changes size**:
   a grid's tile kept at the foot of the view was left cut by its gutter,
   so the next arrow scrolled it again; a list's place given back (a tab
@@ -254,7 +275,14 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   views do, where only the sidebar's places did; a notice's buttons go under
   its words where both do not fit beside each other; a setting's dropdown
   leaves its description the room the buttons left, where the description
-  wrapped in a third of the row.
+  wrapped in a third of the row; Tab reaches a toast's buttons (Undo, Show,
+  Close), and a key meant for one toast's button never presses the button
+  of the toast said after it; a state file cut short (a crash, a full
+  drive) or edited into something that is no TOML lost, at the next save,
+  what the window had kept unchanged (its tabs, its hints): it is written
+  again whole; a tile server that gives no tile says why in words (no
+  connection, refused, a certificate refused), where the network
+  library's English was shown.
 - **For packagers**: the Linux packages install
   `share/xdg-desktop-portal/portals/skwir.portal` and
   `share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service`
