@@ -166,21 +166,27 @@ fn run_commands(unit: &str, key: &str) {
 /// `unit`, written as `name` in a folder of units of `base`'s own, as
 /// `systemd-analyze verify` judges it: with only that folder, a runtime
 /// folder and a home of its own, it asks no manager (traced: it connects
-/// nowhere, and its temporary folders are gone after). `None`, saying why,
-/// where it is missing. `base` holds no `:`.
+/// nowhere, and its temporary folders are gone after). The runtime folder
+/// is a short one in `/tmp`, not below `base`: verify reads the user units
+/// the system installs too, and systemd 262's sockets (`systemd-storage-fs`,
+/// `machined`, `journalctl`) under a runtime folder as deep as `base` pass a
+/// socket's 108 bytes and are refused. `None`, saying why, where it is
+/// missing. `base` holds no `:`.
 fn verified(base: &Path, name: &str, unit: &str) -> Option<Result<(), String>> {
     let Some(analyze) = find("systemd-analyze") else {
         eprintln!("not verified: systemd-analyze is not installed");
         return None;
     };
     let units = base.join("verify/config/systemd/user");
-    for folder in [
-        &units,
-        &base.join("verify/runtime"),
-        &base.join("verify/home"),
-    ] {
+    for folder in [&units, &base.join("verify/home")] {
         std::fs::create_dir_all(folder).unwrap();
     }
+    // Only names are made of it (nothing is written there): `/tmp` keeps
+    // them short whatever the home's length, and it goes with the test.
+    let runtime = tempfile::Builder::new()
+        .prefix("skwir-rl")
+        .tempdir_in("/tmp")
+        .unwrap();
     // Its argument's first `:` starts the name the file is read as: the
     // file's own name holds none, the unit's may (`rclone:--gdrive-`).
     let file = units.join("checked.service");
@@ -190,7 +196,7 @@ fn verified(base: &Path, name: &str, unit: &str) -> Option<Result<(), String>> {
     let out = Command::new(analyze)
         .env_clear()
         .env("HOME", base.join("verify/home"))
-        .env("XDG_RUNTIME_DIR", base.join("verify/runtime"))
+        .env("XDG_RUNTIME_DIR", runtime.path())
         .env("XDG_CONFIG_HOME", base.join("verify/config"))
         .args(["--user", "verify", "--man=no"])
         .arg(named)
