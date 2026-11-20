@@ -117,6 +117,17 @@ impl Filter {
 }
 
 impl Filter {
+    /// Whether it admits every file: one of its patterns a name's pattern
+    /// of stars alone (`*`, GTK's and Qt's All files) or the type of
+    /// every type (`*/*`). The program's own All files, which the window
+    /// shows in place of its own, and which tests no file.
+    pub fn admits_all(&self) -> bool {
+        self.patterns.iter().any(|pattern| match pattern {
+            Pattern::Glob(glob) => !glob.is_empty() && glob.chars().all(|c| c == '*'),
+            Pattern::Mime(mime) => mime == "*/*",
+        })
+    }
+
     /// Whether it asks for pictures or films alone (ADR-144, 5): each of
     /// its patterns a type of either kind (`image/*`, `video/mp4`, what
     /// descends from one), or a name's suffix (`*.png`, GTK's
@@ -309,6 +320,14 @@ impl Asked {
                 .or_else(|| name.clone().map(OsString::from)),
             _ => None,
         }
+    }
+
+    /// The program's own All files (`Filter::admits_all`), its first if it
+    /// sent several: what stands for every file in its list, where the
+    /// window adds none of its own, so that the answer names the filter
+    /// the program gave.
+    pub fn all_files(&self) -> Option<usize> {
+        self.filters.iter().position(Filter::admits_all)
     }
 
     /// The filter shown at first: the one in use, else the first.
@@ -1299,6 +1318,48 @@ mod tests {
             patterns: Vec::new(),
         };
         assert!(!none.admits()(&named(1, "a.png", File)));
+    }
+
+    /// A program's All files is the filter that admits every file, found
+    /// among its filters whatever it calls it: the window adds none of
+    /// its own beside it.
+    #[test]
+    fn a_program_s_all_files_is_found_by_what_it_admits() {
+        let filter = |name: &str, patterns: &[Pattern]| Filter {
+            name: name.into(),
+            patterns: patterns.to_vec(),
+        };
+        let glob = |g: &str| Pattern::Glob(g.into());
+        let mime = |m: &str| Pattern::Mime(m.into());
+        assert!(filter("Tous les fichiers", &[glob("*")]).admits_all());
+        assert!(filter("Everything", &[mime("*/*")]).admits_all());
+        assert!(filter("Any", &[glob("*.png"), glob("**")]).admits_all());
+        assert!(!filter("Dotted", &[glob("*.*")]).admits_all());
+        assert!(!filter("Pictures", &[mime("image/*")]).admits_all());
+        assert!(!filter("Empty glob", &[glob("")]).admits_all());
+        assert!(!filter("None", &[]).admits_all());
+
+        let mut asked = Asked {
+            app_id: String::new(),
+            parent_window: String::new(),
+            title: String::new(),
+            accept_label: None,
+            kind: Kind::Open {
+                multiple: false,
+                directory: false,
+            },
+            filters: vec![
+                filter("Fichiers image", &[mime("image/*")]),
+                filter("Tous les fichiers", &[glob("*")]),
+            ],
+            current_filter: None,
+            choices: Vec::new(),
+            folder: None,
+            recent: false,
+        };
+        assert_eq!(asked.all_files(), Some(1));
+        asked.filters.pop();
+        assert_eq!(asked.all_files(), None, "the window's own then");
     }
 
     /// A filter asks for pictures or films alone when each of its patterns

@@ -263,7 +263,9 @@ impl Chooser {
 }
 
 /// What the filter at `filter` admits, folders always (`Admits`): while
-/// choosing folders, no file, its files shown dimmed (ADR-144, 9).
+/// choosing folders, no file, its files shown dimmed (ADR-144, 9). One
+/// that admits every file (the program's All files) leaves the pane
+/// unfiltered, as the window's own does.
 fn admits_of(asked: &Asked, filter: Option<usize>) -> Option<Admits> {
     if matches!(
         asked.kind,
@@ -275,7 +277,7 @@ fn admits_of(asked: &Asked, filter: Option<usize>) -> Option<Admits> {
         return Some(Admits::folders());
     }
     let filter = asked.filters.get(filter?)?;
-    Some(Admits::taking(filter.admits()))
+    (!filter.admits_all()).then(|| Admits::taking(filter.admits()))
 }
 
 /// What of `paths` is taken: how many (a file, a link, anything there),
@@ -1218,12 +1220,15 @@ impl Shell {
         }
     }
 
-    /// The filter at `index` in use (`None`: all files), its list closed.
+    /// The filter at `index` in use (`None`: all files, the program's own
+    /// where it sent one, `Asked::all_files`), its list closed.
     pub(crate) fn chooser_filter(&mut self, index: Option<usize>, cx: &mut Context<Self>) {
         let Some(chooser) = &mut self.chooser else {
             return;
         };
-        let index = index.filter(|at| *at < chooser.asked().filters.len());
+        let index = index
+            .filter(|at| *at < chooser.asked().filters.len())
+            .or_else(|| chooser.asked().all_files());
         chooser.open = None;
         if chooser.filter != index {
             // Saving, the name takes the new filter's extension in place of
@@ -1480,7 +1485,8 @@ fn folders_dropdown(chooser: &Chooser, theme: &Theme, cx: &mut Context<Shell>) -
 }
 
 /// The program's filters: the one in use, and the list of them and of all
-/// files a press opens.
+/// files a press opens, the program's own All files standing for it where
+/// it sent one (`Asked::all_files`): never two rows for every file.
 fn filter_dropdown(chooser: &Chooser, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let asked = chooser.asked();
     let open = chooser.open == Some(Dropdown::Filter);
@@ -1514,7 +1520,12 @@ fn filter_dropdown(chooser: &Chooser, theme: &Theme, cx: &mut Context<Shell>) ->
         .iter()
         .enumerate()
         .map(|(at, filter)| (Some(at), filter.name.clone()))
-        .chain(std::iter::once((None, all_files().say())));
+        .chain(
+            asked
+                .all_files()
+                .is_none()
+                .then(|| (None, all_files().say())),
+        );
     for (at, label) in rows {
         list = list.child(
             controls::dropdown_row(
