@@ -270,6 +270,23 @@ impl Placement {
         }
     }
 
+    /// [`Placement::of`] for a dialog's window (ADR-144, 4): where the
+    /// compositor tiles it (gpui's `Window::tiling`, as Wayland's
+    /// compositors say it; X11's say nothing), its size is its tile's, not
+    /// one the user gave it, and the size it had `before` is kept, which
+    /// the dialogs remember.
+    pub fn of_dialog(window: &gpui::Window, before: &Placement, cx: &gpui::App) -> Placement {
+        let now = Placement::of(window, Some(before), cx);
+        if window.tiling().is_tiled() {
+            return Placement {
+                width: before.width,
+                height: before.height,
+                ..now
+            };
+        }
+        now
+    }
+
     /// The bounds a window opens with, taking this placement, and the
     /// display it opens on: its own place while its display is there as it
     /// was, else centered on the main display; `cascade` sets it a step

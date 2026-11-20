@@ -1240,9 +1240,14 @@ impl Shell {
     }
 
     /// The window moved or was resized: where it is now, remembered once it
-    /// stays half a second, not at each step of a drag.
+    /// stays half a second, not at each step of a drag; a dialog's tiled,
+    /// the size it had (`Placement::of_dialog`, ADR-144, 4).
     fn window_moved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.placement = crate::session::Placement::of(window, Some(&self.placement), cx);
+        self.placement = if self.chooser.is_some() {
+            crate::session::Placement::of_dialog(window, &self.placement, cx)
+        } else {
+            crate::session::Placement::of(window, Some(&self.placement), cx)
+        };
         self.placement_wait = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(500))
