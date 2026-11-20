@@ -1221,14 +1221,10 @@ rows and About not (taffy measures a row kept to one line at its whole
 length, so their texts would start wider than the share): that needs
 the texts measured whole.
 
-**A new version told** (ADR-142, built 2026-11-19). Left: the site
-deployed with the first repositories (0.5.1's, unsigned, written into
-`skwir-site` on 2026-11-20 with `REPOSITORY_PUBLISHED` set, the key the
-user made the day before), its redirects and `/updates/1.json` (whether
-Cloudflare Pages serves `_redirects`' placeholders as its documentation
-says was not tried), then skwir installed from skwir.org in fresh roots
-with the download page's commands; the first winget manifest submitted
-(when the user chooses: nothing waits for it); an AppImage built and updated by
+**A new version told** (ADR-142, built 2026-11-19; the site deployed
+with the first repositories 2026-11-20, skwir installed from it in fresh
+roots). Left: the first winget manifest submitted (when the user
+chooses: nothing waits for it); an AppImage built and updated by
 AppImageUpdate and Gear Lever through `skwir.org/latest/` (the update
 information and the zsync file were checked by the AppImage's check
 against an image of a stand-in, not by an updater); a check's notice

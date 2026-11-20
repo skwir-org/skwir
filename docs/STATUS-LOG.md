@@ -21092,3 +21092,26 @@ root, the next `release-build` its first. PackageKit itself: GNOME
 Software or Discover updating Skwir on Fedora. A key dnf imported stays
 in rpm's own keyring once `skwir-repository` is removed (`rpm -e
 gpg-pubkey-<id>`), as for any repository whose packages dnf checked.
+
+## 2026-11-20: skwir installed from skwir.org (ADR-142)
+
+The user deployed the site with the first repositories (skwir-site
+a0933d3). Every repository file skwir.org serves is the committed one
+(SHA-256 compared). Each redirect lands where `_redirects` says, its
+placeholders filled (`/apt/pool/`, `/rpm/fedora/pool/`, `/files/`,
+`/latest/`, `/releases/`, `/source`, `/issues`; 302 to GitHub, and the
+package fetched through it is there, 200). `/updates/1.json` is served as
+a file, `{"latest":"0.5.1"}`, `application/json`, cached an hour. The
+download page and `/download.md` show the repositories.
+
+In fresh Debian 13, Ubuntu 24.04 and Fedora 44 roots, the download
+page's commands (`-y` added) installed skwir 0.5.1 from skwir.org: apt
+read each suite's signed index and fetched skwir and skwir-media through
+the redirect; dnf took in the repositories' key
+(0x48004329, from `/etc/pki/rpm-gpg`), read the signed index and fetched
+skwir through it. `skwir --version` answered in each, and 0.5.1's own
+`linux/check.sh minimal` passed in each (today's looks for what came
+after 0.5.1: the channel word, the portal's files, the translations).
+The images have no wget (a desktop has it). Fedora's root installed
+skwir without weak dependencies, as try.sh does: udisks2 brings polkit,
+whose files go to a user a namespace of one user lacks.
