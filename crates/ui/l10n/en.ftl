@@ -729,6 +729,9 @@ chooser_name_placeholder = Name of the file
 # Said where a name typed in another program's Save dialog names a folder that does not exist.
 chooser_no_folder = There is no folder { $folder }
 
+# Said where another program's dialog was asked to answer with a file of a place whose files are not where they were (the Trash). place: its name (Trash).
+chooser_not_given = Files in { $place } cannot be chosen
+
 # Asked before another program saves over a file: name: the file's name; folder: where it is.
 chooser_replace = Replace { $name }? A file of that name is already in { $folder }.
 

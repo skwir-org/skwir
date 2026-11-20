@@ -825,14 +825,7 @@ impl Shell {
                     .take(if multiple { usize::MAX } else { 1 })
                     .collect();
                 if files.is_empty() {
-                    self.set_status(
-                        words!(
-                            chooser_choose_file = "Choose a file first",
-                            note = "Said where the bar answering another program's Open dialog was pressed with no file selected."
-                        ),
-                        true,
-                        cx,
-                    );
+                    self.chooser_nothing_given(&kind, cx);
                     return;
                 }
                 let answer = self.chooser_chosen(files);
@@ -1087,32 +1080,96 @@ impl Shell {
         }
     }
 
-    /// `open` while choosing (Enter, a double click), decided by the entry
-    /// under the cursor, else the first selected (`chooser_selected`): a
-    /// folder is gone into, alone, whatever else is selected; a file is
-    /// the answer (saving, its name is the one typed, and it is saved over
-    /// once asked), or, choosing folders or where to save several, taken
-    /// and never opened in another program from here: it only says where
-    /// one is (ADR-144, 9). Whether it was taken here.
-    pub(crate) fn chooser_open(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(chooser) = &self.chooser else {
+    /// `open` while choosing, the one answer `open` has in a window
+    /// answering another program's dialog (ADR-141, 5; ADR-144, 1): what it
+    /// names (`entries`: the address field's Shift+Enter, a file used
+    /// lately), read on a worker in their lane, else the entry under the
+    /// cursor and the rest selected (Enter, a double click,
+    /// `chooser_selected`). Never a file opened in another program: whether
+    /// the window answers a dialog, where it takes every `open`.
+    pub(crate) fn chooser_open(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.chooser.is_none() {
             return false;
+        }
+        let named = named(args);
+        if named.is_empty() {
+            let chosen = self.chooser_selected();
+            self.chooser_open_these(chosen, window, cx);
+            return true;
+        }
+        let asking = self.chooser_asks();
+        self.off_thread(
+            crate::shell::lane_of(&named),
+            "ui-chooser-open",
+            move || {
+                named
+                    .into_iter()
+                    .filter_map(|path| {
+                        // A link to a folder is the folder it opens.
+                        let dir = std::fs::metadata(&path).ok()?.is_dir();
+                        Some((path, dir))
+                    })
+                    .collect::<Vec<_>>()
+            },
+            move |this, chosen, window, cx| {
+                if this.chooser.as_ref().is_some_and(|c| c.asking == asking) {
+                    this.chooser_open_these(chosen, window, cx);
+                }
+            },
+            window,
+            cx,
+        );
+        true
+    }
+
+    /// `chooser_open` for what it found, the first deciding: a folder is
+    /// gone into, alone, whatever else is chosen; a file is the answer
+    /// (saving, its name is the one typed, and it is saved over once
+    /// asked), or, choosing folders or where to save several, taken and
+    /// never opened in another program from here: it only says where one
+    /// is (ADR-144, 9). Nothing to give is said (`chooser_nothing_given`).
+    fn chooser_open_these(
+        &mut self,
+        chosen: Vec<(PathBuf, bool)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(chooser) = &self.chooser else {
+            return;
         };
         let (kind, field) = (chooser.asked().kind.clone(), chooser.name.clone());
-        let Some((path, dir)) = self.chooser_selected().into_iter().next() else {
-            return false;
+        let Some((path, dir)) = chosen.first().cloned() else {
+            self.chooser_nothing_given(&kind, cx);
+            return;
         };
         if dir {
             let go = skwir_core::command::Invocation::navigate(&Location::from_path(path));
             self.run(&go.name, go.args, window, cx);
-            return true;
+            return;
         }
         match kind {
             Kind::Open {
                 directory: true, ..
             }
             | Kind::SaveFiles { .. } => {}
-            Kind::Open { .. } => self.chooser_accept(window, cx),
+            Kind::Open {
+                multiple,
+                directory: false,
+            } => {
+                let files: Vec<PathBuf> = chosen
+                    .into_iter()
+                    .filter(|(_, dir)| !dir)
+                    .map(|(path, _)| path)
+                    .take(if multiple { usize::MAX } else { 1 })
+                    .collect();
+                let answer = self.chooser_chosen(files);
+                self.chooser_end(answer, window, cx);
+            }
             // The file chosen is the answer at its own path, its name as its
             // bytes are, asked Replace? on it.
             Kind::Save { .. } => {
@@ -1128,7 +1185,37 @@ impl Shell {
                 self.chooser_save_at(path, window, cx);
             }
         }
-        true
+    }
+
+    /// What is said where `open` or the answer's button found nothing to
+    /// give: the pane shows a place whose files are not to give (the Trash,
+    /// typed in the address, ADR-144, 3), or, choosing files, none is
+    /// selected.
+    fn chooser_nothing_given(&mut self, kind: &Kind, cx: &mut Context<Self>) {
+        let place = self
+            .app
+            .pane_location(self.pane)
+            .filter(|location| !self.app.gives_files(location));
+        if let Some(place) = place {
+            let place = self.app.location_title(&place);
+            self.set_status(
+                words!(
+                    chooser_not_given = "Files in { $place } cannot be chosen",
+                    place = place,
+                    note = "Said where another program's dialog was asked to answer with a file of a place whose files are not where they were (the Trash). place: its name (Trash)."
+                ),
+                true,
+                cx,
+            );
+        } else if matches!(
+            kind,
+            Kind::Open {
+                directory: false,
+                ..
+            }
+        ) {
+            self.set_status(choose_a_file_first(), true, cx);
+        }
     }
 
     /// The filter at `index` in use (`None`: all files), its list closed.
@@ -1532,9 +1619,57 @@ fn choice_control(
     control.into_any_element()
 }
 
+/// The files `open` names (`entries`), in their order: absolute paths
+/// alone, as the window names what it shows.
+fn named(args: &serde_json::Value) -> Vec<PathBuf> {
+    args.get("entries")
+        .and_then(|entries| {
+            serde_json::from_value::<Vec<skwir_core::op::EntryArg>>(entries.clone()).ok()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| match entry {
+            skwir_core::op::EntryArg::Path(path) | skwir_core::op::EntryArg::Named { path, .. } => {
+                path.into_inner()
+            }
+        })
+        .filter(|path| path.is_absolute())
+        .collect()
+}
+
+/// "Choose a file first": said where another program's Open dialog was
+/// asked to answer with no file chosen.
+fn choose_a_file_first() -> Words {
+    words!(
+        chooser_choose_file = "Choose a file first",
+        note = "Said where the bar answering another program's Open dialog was pressed with no file selected."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `open` names in a dialog is what it answers with (ADR-144,
+    /// 1): a path, or a file named by its identity and path, in their
+    /// order; nothing for a relative path or for none named, when the
+    /// selection answers.
+    #[test]
+    fn open_names_what_it_answers_with() {
+        let args = serde_json::json!({ "entries": [
+            "/home/u/one's file.txt",
+            { "id": { "dev": 1, "ino": 2 }, "path": "/home/u/tröis.png" },
+            "relative.txt",
+        ], "pane": 3 });
+        assert_eq!(
+            named(&args),
+            [
+                PathBuf::from("/home/u/one's file.txt"),
+                PathBuf::from("/home/u/tröis.png")
+            ]
+        );
+        assert!(named(&serde_json::json!({ "pane": 3 })).is_empty());
+    }
 
     /// A name's stem is what is typed over: all of a name without a
     /// suffix, or a dot file's.

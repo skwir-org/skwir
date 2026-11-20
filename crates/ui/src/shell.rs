@@ -3018,6 +3018,11 @@ impl Shell {
         if self.chooser.is_none() {
             return InDialogs::Offered;
         }
+        // `open` answers the dialog there, carried out by the window itself
+        // (`chooser_open`, ADR-141, 5), whatever plugin registers it.
+        if name == "open" {
+            return InDialogs::Offered;
+        }
         self.app.in_dialogs(name, args)
     }
 
@@ -3163,9 +3168,10 @@ impl Shell {
             window.remove_window();
             return;
         }
-        // Answering another program's dialog, Enter on a file and a double
-        // click choose it (ADR-141, 5).
-        if name == "open" && self.chooser_open(window, cx) {
+        // Answering another program's dialog, `open` is its answer
+        // (ADR-141, 5): Enter on a file and a double click choose it, what
+        // it names is what is chosen, and nothing opens in another program.
+        if name == "open" && self.chooser_open(&args, window, cx) {
             return;
         }
         if name == "open" && self.app.commands.get("open").is_none() {

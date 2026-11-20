@@ -775,6 +775,9 @@ chooser_name_placeholder = Nom du fichier
 chooser_no_folder = Le dossier { $folder } n’existe pas
 
 # draft
+chooser_not_given = Impossible de choisir un fichier de cet endroit : { $place }
+
+# draft
 chooser_replace = Remplacer { $name } ? Un fichier de ce nom se trouve déjà dans { $folder }.
 
 # draft

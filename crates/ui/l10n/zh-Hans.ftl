@@ -747,6 +747,9 @@ chooser_name_placeholder = 文件名
 chooser_no_folder = 文件夹 { $folder } 不存在
 
 # draft
+chooser_not_given = 无法选择 { $place } 中的文件
+
+# draft
 chooser_replace = 替换 { $name }？{ $folder } 中已有同名文件。
 
 # draft

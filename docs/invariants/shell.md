@@ -2196,12 +2196,17 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `Pane::set_admits`, apart from the filter the user types; its choices;
   Cancel and the program's accept label, else Skwir's, counting
   the files or folders it gives, `chooser::accept_label`, ADR-144, 11), its title the request's. While
-  it chooses, `open` (Enter, a double click) answers with a file (a
-  folder still opens; choosing folders or where to save files, a file
+  it chooses, `open` is its answer, whatever registers it
+  (`Shell::chooser_open`), and opens nothing in another program: what it
+  names (the address field's Shift+Enter, a file used lately: read in
+  their lane), else the selection (Enter, a double click), and where
+  there is nothing to give it says so (nothing selected; the Trash's
+  files, `chooser_nothing_given`). A folder still opens; choosing
+  folders or where to save files, a file
   is never opened from there, and choosing folders its files show
   dimmed, `Admits::folders`, `Pane::untaken`, ADR-144, 9; what is
   dropped on it, wherever it lands, is gone to, never copied, moved or
-  answered, `Shell::dialog_takes_drop`, ADR-144, 10), Escape (`pane choosing`, the bar's `chooser`) and
+  answered, `Shell::dialog_takes_drop`, ADR-144, 10. Escape (`pane choosing`, the bar's `chooser`) and
   the close button cancel, Escape first letting go of a name typed to
   find a file (`pane choosing typing`, `ui.type_end`) and of a filter, a
   name taken is asked Replace? in skwir

@@ -1448,10 +1448,15 @@ const OPENS_ELSEWHERE: &[&str] = &["ui.open_url", "ui.preview_open_external", "u
 /// such a window has none of, while the preview's place and an archive's
 /// file's are its own; a view is offered by its role, a listing's shape
 /// or an alternate one, never a lens, which answers a question of its own
-/// (Usage, the map).
+/// (Usage, the map); a place opened in a new tab (the sidebar's
+/// Ctrl+Enter) is none in a window of one tab, where a place opens in place
+/// as Enter opens it (ADR-144, 2).
 fn dialogs_by(name: &str) -> Option<fn(&App, &serde_json::Value) -> bool> {
     Some(match name {
         "ui.layout" => |_, args| args.get("panes").is_none(),
+        "ui.sidebar_key" => {
+            |_, args| args.get("key").and_then(serde_json::Value::as_str) != Some("tab")
+        }
         "ui.view" => |app, args| {
             args.get("id")
                 .and_then(serde_json::Value::as_str)
@@ -3933,6 +3938,14 @@ mod tests {
         assert_eq!(here("ui.layout", json!({"panes": "row"})), InDialogs::Not);
         assert_eq!(here("ui.view", json!({"id": "list"})), InDialogs::Offered);
         assert_eq!(here("ui.view", json!({"id": "usage"})), InDialogs::Not);
+        assert_eq!(
+            here("ui.sidebar_key", json!({"key": "open"})),
+            InDialogs::Offered
+        );
+        assert_eq!(
+            here("ui.sidebar_key", json!({"key": "tab"})),
+            InDialogs::Not
+        );
         // A picker whose choices are given leads to each of them.
         let choose = |command: &str| {
             json!({ "choices": [
