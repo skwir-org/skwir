@@ -2190,7 +2190,8 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `recent::glib_reads`). The window chooses until it answers (`Shell::chooser`,
   `chooser.rs`): a bar at its foot (the name typed, its stem selected,
   its extension swapped for the filter chosen's where one of the
-  program's filters took it, `swapped_extension`, ADR-144, 6;
+  program's filters takes the name and that one does not, a compound one
+  whole, on the name's bytes, `chooser::swapped_name`, ADR-144, 6;
   the program's filters, shown as the pane admits them,
   `Pane::set_admits`, apart from the filter the user types; its choices;
   Cancel and the program's accept label, else Skwir's, counting

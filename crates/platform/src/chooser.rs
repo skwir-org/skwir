@@ -177,6 +177,60 @@ impl Filter {
     }
 }
 
+/// The name a file saved as `name` takes as the program's filter `to` is
+/// chosen (ADR-144, 6): its extension swapped for the one `to` gives
+/// (`Filter::extension`) where one of the program's `filters` takes a file
+/// of that name and `to` does not, as each admits a file; a compound
+/// extension the type database knows, or a filter names (`tar.gz`),
+/// swapped whole. `None` where it stays: `to` takes it already or gives no
+/// extension (`*`, `image/*`), none of the program's takes it (an
+/// extension of the user's own), it has none. Its bytes are kept, but the
+/// extension's. No I/O once the type database is loaded.
+pub fn swapped_name(name: &std::ffi::OsStr, filters: &[Filter], to: &Filter) -> Option<OsString> {
+    let new = to.extension()?;
+    let file = skwir_core::Entry::new(
+        skwir_core::EntryId::UNKNOWN,
+        name,
+        skwir_core::entry::EntryKind::File,
+    );
+    if to.admits()(&file) || !filters.iter().any(|filter| filter.admits()(&file)) {
+        return None;
+    }
+    let bytes = name.as_encoded_bytes();
+    let cut = extension_at(bytes, filters)?;
+    let mut swapped = bytes[..cut].to_vec();
+    swapped.push(b'.');
+    swapped.extend_from_slice(new.as_bytes());
+    Some(skwir_core::os_path::from_bytes(swapped))
+}
+
+/// Where `name`'s extension starts (its dot): the longest compound one
+/// the type database knows for its last (`tar.gz` for `gz`) or one of
+/// `filters` names, case ignored, else its last. None for a name of no
+/// extension, or nothing but one (`.bashrc`).
+fn extension_at(name: &[u8], filters: &[Filter]) -> Option<usize> {
+    let dot = name.iter().rposition(|b| *b == b'.')?;
+    if dot == 0 || dot + 1 == name.len() {
+        return None;
+    }
+    let mut compounds: Vec<String> = std::str::from_utf8(&name[dot + 1..])
+        .map(crate::mime::compound_suffixes)
+        .unwrap_or_default();
+    compounds.extend(
+        filters
+            .iter()
+            .flat_map(Filter::suffixes)
+            .filter(|suffix| suffix.contains('.')),
+    );
+    compounds.sort_by_key(|suffix| std::cmp::Reverse(suffix.len()));
+    let compound = compounds.iter().find_map(|suffix| {
+        let cut = name.len().checked_sub(suffix.len() + 1)?;
+        (cut > 0 && name[cut] == b'.' && name[cut + 1..].eq_ignore_ascii_case(suffix.as_bytes()))
+            .then_some(cut)
+    });
+    Some(compound.unwrap_or(dot))
+}
+
 /// The suffix a pattern names, lowercase, if it is one name's suffix and
 /// nothing else: `*.png`, `*.tar.gz`, GTK's `*.[pP][nN][gG]` (a letter's
 /// two cases in brackets, as GTK writes a suffix matched in either case).
@@ -1294,6 +1348,98 @@ mod tests {
             filter(&[glob("*.odt"), glob("*.[dD][oO][cC][xX]")]).suffixes(),
             ["odt", "docx"]
         );
+    }
+
+    /// Another filter gives the name its extension in place of one the
+    /// program's filters take (a type's, by the type database, a compound
+    /// one whole), case ignored, its other bytes kept; a name the new
+    /// filter takes already, an extension none takes, a name that is
+    /// nothing but one, or a filter that gives none, stays (ADR-144, 6).
+    #[test]
+    fn a_filter_swaps_the_extension_the_program_took() {
+        use std::ffi::OsStr;
+        let filter = |patterns: &[Pattern]| Filter {
+            name: "f".into(),
+            patterns: patterns.to_vec(),
+        };
+        let glob = |g: &str| Pattern::Glob(g.into());
+        let mime = |m: &str| Pattern::Mime(m.into());
+        let swapped = |name: &str, filters: &[Filter], to: &Filter| {
+            swapped_name(OsStr::new(name), filters, to).map(|n| n.to_string_lossy().into_owned())
+        };
+        let (jpeg, png) = (
+            filter(&[glob("*.jpg"), glob("*.jpeg")]),
+            filter(&[glob("*.png")]),
+        );
+        let both = [jpeg.clone(), png.clone()];
+        assert_eq!(
+            swapped("Été 2024.JPG", &both, &png).as_deref(),
+            Some("Été 2024.png")
+        );
+        assert_eq!(swapped("notes.txt", &both, &png), None, "the user's own");
+        assert_eq!(swapped("photo", &both, &png), None);
+        assert_eq!(swapped(".jpg", &both, &png), None, "only an extension");
+        let pictures = filter(&[glob("*.png"), glob("*.jpg")]);
+        assert_eq!(
+            swapped("x.jpg", &[jpeg.clone(), pictures.clone()], &pictures),
+            None,
+            "the new filter takes it"
+        );
+        assert_eq!(
+            swapped("x.jpg", &both, &filter(&[glob("*")])),
+            None,
+            "all files"
+        );
+        // A compound extension, whole, never doubled.
+        let (gzip, tarball) = (filter(&[glob("*.gz")]), filter(&[glob("*.tar.gz")]));
+        let zip = filter(&[glob("*.zip")]);
+        let archives = [gzip.clone(), tarball.clone(), zip.clone()];
+        assert_eq!(swapped("backup.tar.gz", &archives, &tarball), None);
+        assert_eq!(
+            swapped("backup.tar.gz", &archives, &zip).as_deref(),
+            Some("backup.zip")
+        );
+        assert_eq!(
+            swapped("backup.tar.xz", &archives, &zip),
+            None,
+            "none takes it"
+        );
+        assert_eq!(
+            swapped("dump.tar.xz", &[filter(&[glob("*.xz")]), zip.clone()], &zip).as_deref(),
+            Some("dump.zip"),
+            "a compound the type database knows"
+        );
+        // Types: every extension of the type, and of what descends from it.
+        let (jpeg_type, png_type) = (filter(&[mime("image/jpeg")]), filter(&[mime("image/png")]));
+        let types = [jpeg_type.clone(), png_type.clone()];
+        assert_eq!(
+            swapped("photo.jpeg", &types, &png_type).as_deref(),
+            Some("photo.png")
+        );
+        assert_eq!(
+            swapped("photo.jpg", &types, &png_type).as_deref(),
+            Some("photo.png")
+        );
+        let any_picture = filter(&[mime("image/*")]);
+        assert_eq!(
+            swapped("x.png", &[any_picture.clone(), jpeg.clone()], &jpeg).as_deref(),
+            Some("x.jpg")
+        );
+        assert_eq!(
+            swapped("x.png", &[jpeg.clone(), any_picture.clone()], &any_picture),
+            None
+        );
+        // A name's bytes are kept, but its extension's.
+        #[cfg(unix)]
+        {
+            use std::ffi::OsString;
+            use std::os::unix::ffi::OsStringExt;
+            let latin = OsString::from_vec(b"caf\xe9.jpg".to_vec());
+            assert_eq!(
+                swapped_name(&latin, &both, &png).map(OsString::into_vec),
+                Some(b"caf\xe9.png".to_vec())
+            );
+        }
     }
 
     /// The name a save starts with is the saved file's, else the one

@@ -92,7 +92,12 @@ amended as built (decisions 1, 4, 6, 7 and 10).
    (`*.png` for PNG in place of `*.jpg`, after All files too), with the
    new filter's first plain pattern's, else its first type's (the type
    database's first glob); an extension the user typed that none of them
-   takes is theirs, kept, and All files changes nothing.
+   takes is theirs, kept, and All files changes nothing. As built and
+   reviewed: a filter takes a name as it admits a file of it (a type every
+   extension of its own and of what descends from it), a name the new
+   filter takes already is left as it is, a compound extension the type
+   database knows (`.tar.gz`) is replaced whole, and the name's bytes are
+   kept but its extension's (`chooser::swapped_name`).
 7. **Recent files.** Opening, Recent comes first in its group of the
    places, the program's filter applied there as in any folder; a
    request naming no folder from a program that chose in none starts
