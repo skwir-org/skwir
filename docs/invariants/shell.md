@@ -2216,7 +2216,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `toolbar::menu_part_elements`, `Shell::open_menu`), the palette, F1
   and the address field's actions list what it offers, and a key bound
   to what it does not run does what it would with nothing bound
-  (`Shell::on_run_command`); it lists no tabs (`tabs_listed`), More has
+  (`Shell::on_run_command`); it holds one tab and lists none
+  (`WindowTabs::holds_tabs`, `tabs_listed`: a place asked in a tab there
+  opens in place, `App::new_tab`, and Ctrl+W still cancels), More has
   no terminal nor split (their commands are not offered), views are
   offered but a lens (`ui.view`'s rule), Activity does not open there,
   by itself or from the strip and the rows arriving, nothing is pinned to

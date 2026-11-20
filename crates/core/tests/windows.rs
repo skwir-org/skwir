@@ -425,6 +425,63 @@ fn a_dialog_s_window_goes_from_the_core_the_last_one_too() {
     assert_eq!(windows(&app).len(), 2, "nothing more: no dialog's window");
 }
 
+/// A dialog's window holds one tab (ADR-144, 2): a place asked in a tab
+/// there (a middle click, Ctrl+Enter, a volume mounted for a tab) opens in
+/// place, a step Back returns from, and no tab moves into it, so its
+/// Close tab stays its last, which cancels the dialog.
+#[test]
+fn a_dialog_s_window_opens_a_tab_asked_in_place() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let own = active_window(&app);
+    let (dialog, tab, pane) = app.open_window(Location::from_path(dir.path())).unwrap();
+    app.workspace.write().set_chooses(dialog, true);
+    let second = Location::from_path(dir.path().join("second folder"));
+    let opened = app
+        .new_tab(Some(pane), Some(second.clone()), false)
+        .unwrap();
+    assert_eq!(opened, (tab, pane), "in place");
+    assert_eq!(tabs_of(&app, dialog), [tab], "one tab");
+    assert_eq!(location_of(&app, pane), Some(second));
+    run(&app, "back", serde_json::json!({ "pane": pane }));
+    assert_eq!(
+        location_of(&app, pane),
+        Some(Location::from_path(dir.path()))
+    );
+    // As a saved place is kept, and as the command a place's menu runs.
+    let third = Location::from_path(dir.path().join("tröisième"));
+    let kept = app
+        .new_tab_as_kept(Some(pane), third.clone(), Some("x"), true)
+        .unwrap();
+    assert_eq!(kept, (tab, pane));
+    assert_eq!(location_of(&app, pane), Some(third));
+    let quote = Location::from_path(dir.path().join("it's a folder"));
+    let asked = serde_json::json!({ "pane": pane, "location": quote.arg(), "show": false });
+    run(&app, "tab.new", asked.clone());
+    assert_eq!(tabs_of(&app, dialog), [tab]);
+    assert_eq!(location_of(&app, pane), Some(quote));
+    // Offered there where it names a place; a new tab of what is shown, not.
+    assert!(app.in_dialogs("tab.new", &asked).offered());
+    assert!(!app.in_dialogs("tab.new", &serde_json::json!({})).runs());
+    // No tab of the user's moves into it.
+    let theirs = shown_in(&app, own);
+    assert!(app.move_tab_to_window(theirs, Some(dialog), None).is_err());
+    assert_eq!(tabs_of(&app, dialog), [tab]);
+    assert_eq!(tabs_of(&app, own), [theirs]);
+    // In a window of the user's own, a tab is a tab.
+    let (_, other) = app
+        .new_tab(
+            Some(pane_of(&app, theirs)),
+            Some(Location::from_path(dir.path())),
+            false,
+        )
+        .unwrap();
+    assert_ne!(other, pane_of(&app, theirs));
+    assert_eq!(tabs_of(&app, own).len(), 2);
+}
+
 #[test]
 fn the_active_pane_is_in_the_active_window() {
     let dir = home_tempdir();

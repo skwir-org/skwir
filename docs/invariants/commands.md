@@ -65,7 +65,8 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
     by a test to say the opposite of its topic and effect), or by its
     arguments (`Declared::in_dialogs_by`, the shell's in
     `commands::dialogs_by`: `ui.layout` of the split's panes, `ui.view` of
-    a lens).
+    a lens; the core's `tab.new` where it names a place, which a window of
+    one tab opens in place, `WindowTabs::holds_tabs`).
   - A command that runs another with its arguments says so
     (`Declared::leads_to`: `ui.choose`'s source and choices, `ui.ask`'s
     command, `ui.preview_invoke`'s), and is offered only where that one is.

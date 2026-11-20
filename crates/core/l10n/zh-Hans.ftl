@@ -3159,6 +3159,9 @@ tabs_sleep_description_more = 关闭此项可让每个标签页始终保持列�
 tabs_which_window = 哪个窗口：需要 `window`
 
 # draft
+tabs_window_one_tab = 该窗口只有一个标签页
+
+# draft
 topic_files = 文件
 
 # draft

@@ -20,7 +20,7 @@ use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
 use crate::settings::{STARTUP, SettingSpec};
 use crate::words::Words;
-use crate::workspace::{Pane, PaneId, Selection, StepLeft, TabId, WindowId};
+use crate::workspace::{Pane, PaneId, Selection, StepLeft, TabId, WindowId, WindowTabs};
 
 /// Application data: the windows shown and their tabs, as they were
 /// last (ADR-122).
@@ -466,19 +466,42 @@ impl App {
 
     /// A new tab showing `location`, or what `from` (the active pane when
     /// `None`) shows, with its sort and its lens (ADR-107). Shown at once
-    /// and put last, or opened behind the shown tab, beside it.
+    /// and put last, or opened behind the shown tab, beside it. In a window
+    /// of one tab (`WindowTabs::holds_tabs`), `location` is shown in place
+    /// in `from`, a step of its own, and `from` is answered: a caller tells
+    /// a tab opened by its pane.
     pub fn new_tab(
         &self,
         from: Option<PaneId>,
         location: Option<Location>,
         show: bool,
     ) -> anyhow::Result<(TabId, PaneId)> {
+        if let Some((tab, pane)) = self.one_tab_pane(from) {
+            if let Some(location) = location {
+                self.navigate(pane, &location)?;
+            }
+            return Ok((tab, pane));
+        }
         self.new_tab_as(from, location, Filtered::Lens, show)
+    }
+
+    /// The tab and the pane `from` (else the active one) where its window
+    /// holds one tab: what would open in a tab of it opens there in place
+    /// (`new_tab`, `new_tab_as_kept`). `None` where a tab opens.
+    fn one_tab_pane(&self, from: Option<PaneId>) -> Option<(TabId, PaneId)> {
+        let ws = self.workspace.read();
+        let from = from.unwrap_or_else(|| ws.active_id());
+        let window = ws.window(ws.window_of(from)?)?;
+        if window.holds_tabs() {
+            return None;
+        }
+        Some((ws.tab_of(from)?, from))
     }
 
     /// A new tab showing `location` as it was kept (ADR-109: a saved place,
     /// a saved search), filtered by `filter` alone, with `from`'s sort: as
-    /// `new_tab`, but the pane's lens is not brought in.
+    /// `new_tab` (in place in a window of one tab), but the pane's lens is
+    /// not brought in.
     pub fn new_tab_as_kept(
         &self,
         from: Option<PaneId>,
@@ -486,6 +509,10 @@ impl App {
         filter: Option<&str>,
         show: bool,
     ) -> anyhow::Result<(TabId, PaneId)> {
+        if let Some((tab, pane)) = self.one_tab_pane(from) {
+            self.navigate_as_kept(pane, &location, filter)?;
+            return Ok((tab, pane));
+        }
         // Read before the workspace's lock: the reader is a plugin's.
         let filter = self
             .kept_filter(filter)
@@ -838,6 +865,12 @@ impl App {
         let window = {
             let mut ws = self.workspace.write();
             match window {
+                Some(window) if !ws.window(window).is_none_or(WindowTabs::holds_tabs) => {
+                    anyhow::bail!(crate::words!(
+                        tabs_window_one_tab = "that window holds one tab",
+                        note = "Why a tab was not moved to the window asked for: it answers another program's dialog, which shows one folder."
+                    ));
+                }
                 Some(window) => {
                     let left = ws.window(window).map(|w| w.shown().panes.clone());
                     ws.move_tab_to_window(tab, window, to)
@@ -1448,6 +1481,17 @@ fn tab_position(len: usize, from: usize, index: Option<i64>, delta: Option<i64>)
     usize::try_from(wanted).unwrap_or(0)
 }
 
+impl WindowTabs {
+    /// Whether it holds tabs beside the one it shows: every window but one
+    /// answering another program's dialog, which shows one folder at a time
+    /// (ADR-144, 2). Opened in a tab there, a place opens in place
+    /// (`App::new_tab`), and no tab is moved into it, so its Close tab is
+    /// its last and cancels the dialog.
+    pub fn holds_tabs(&self) -> bool {
+        !self.chooses()
+    }
+}
+
 pub(crate) fn register(app: &App) {
     let c = &app.commands;
     app.settings.declare(SettingSpec::state(
@@ -1482,7 +1526,7 @@ pub(crate) fn register(app: &App) {
         .section(crate::settings::section::TABS),
     );
 
-    c.register::<NewTabArgs, _>(
+    let new_tab = c.register::<NewTabArgs, _>(
         "core", Topic::Tabs,
         "tab.new",
         crate::words!(tabs_new = "New tab"),
@@ -1500,8 +1544,13 @@ pub(crate) fn register(app: &App) {
             };
             Ok(Outcome::Value(serde_json::json!({ "tab": tab, "pane": pane })))
         },
-    )
-        .shows();
+    );
+    // A place asked in a tab of a window of one tab (a dialog's) opens in
+    // place (`App::new_tab`): offered there where it names one, as a middle
+    // click and Ctrl+Enter on a place ask it; a new tab of what the pane
+    // shows is none there (ADR-144, 2).
+    new_tab.in_dialogs_by(|_, args| args.get("location").is_some_and(|l| !l.is_null()));
+    new_tab.shows();
 
     c.register::<OpenTabsArgs, _>(
         "core", Topic::Tabs,

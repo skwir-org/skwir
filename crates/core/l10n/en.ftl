@@ -2972,6 +2972,9 @@ tabs_sleep_description_more = Turn this off to keep every tab listed and up to d
 # Said to an agent or a script: `window` is the argument's name.
 tabs_which_window = which window: `window` is needed
 
+# Why a tab was not moved to the window asked for: it answers another program's dialog, which shows one folder.
+tabs_window_one_tab = that window holds one tab
+
 # A heading of the list of keys: doing something to files (copying, renaming, trashing).
 topic_files = Files
 

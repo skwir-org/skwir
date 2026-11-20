@@ -172,6 +172,7 @@ impl Shell {
                 return;
             }
             self.tab_count = mine.tabs().len();
+            self.holds_tabs = mine.holds_tabs();
             let tab = mine.shown();
             (
                 ws.revision(),

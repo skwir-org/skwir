@@ -1018,13 +1018,16 @@ fn attach(
             Ok(Some(path)) => {
                 let name = Name::of(&path);
                 let location = Location::from_path(&path);
+                // Whether in a tab: a window of one tab (a dialog's,
+                // ADR-144, 2) shows it in place.
                 let opened = if tab {
-                    app.new_tab(Some(pane), Some(location), false).map(|_| ())
+                    app.new_tab(Some(pane), Some(location), false)
+                        .map(|(_, opened)| opened != pane)
                 } else {
-                    app.navigate(pane, &location)
+                    app.navigate(pane, &location).map(|()| false)
                 };
                 match opened {
-                    Ok(()) if tab => app.notify(
+                    Ok(true) => app.notify(
                         NotifyLevel::Info,
                         words!(
                             places_mounted_in_tab = "Mounted { $name }, opened in a new tab",
@@ -1032,7 +1035,7 @@ fn attach(
                             note = "The volume's name: where it is mounted."
                         ),
                     ),
-                    Ok(()) => app.notify(
+                    Ok(false) => app.notify(
                         NotifyLevel::Info,
                         words!(
                             places_mounted = "Mounted { $name }",

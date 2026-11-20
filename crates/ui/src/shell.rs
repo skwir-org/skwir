@@ -480,6 +480,9 @@ pub struct Shell {
     /// How many tabs the workspace has, as of `tabs_revision`: read while
     /// drawing, under a workspace guard the caller may already hold.
     pub(crate) tab_count: usize,
+    /// Whether this window holds tabs beside the one it shows
+    /// (`WindowTabs::holds_tabs`: not a dialog's), as of `tabs_revision`.
+    pub(crate) holds_tabs: bool,
     /// The splits of tabs not shown: their own arrangement and share.
     pub(crate) tab_splits: HashMap<skwir_core::workspace::TabId, crate::layout::TabSplit>,
     pub(crate) tab_labels: crate::tabs::Labels,
@@ -921,6 +924,7 @@ impl Shell {
             chosen_pane: None,
             shown_tab: None,
             tab_count: 1,
+            holds_tabs: true,
             tab_splits: HashMap::new(),
             tab_labels: crate::tabs::Labels::default(),
             tab_hovered: None,
@@ -1437,9 +1441,8 @@ impl Shell {
     /// second read behind a waiting writer would never be granted
     /// (`parking_lot` locks are fair).
     pub fn tabs_listed(&self) -> bool {
-        // A dialog's window has no tabs to list (ADR-144, 2).
-        (self.prefs.single_tab || self.tab_count > 1)
-            && self.runs_here("tab.new", &serde_json::Value::Null)
+        // A window of one tab (a dialog's) has none to list (ADR-144, 2).
+        self.holds_tabs && (self.prefs.single_tab || self.tab_count > 1)
     }
 
     /// Whether the sidebar lists the tabs, as its first group, when it is

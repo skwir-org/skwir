@@ -3205,6 +3205,9 @@ tabs_sleep_description_more = Désactivez ceci pour garder chaque onglet listé 
 tabs_which_window = quelle fenêtre : `window` est nécessaire
 
 # draft
+tabs_window_one_tab = cette fenêtre n’a qu’un onglet
+
+# draft
 topic_files = Fichiers
 
 # draft

@@ -1051,12 +1051,17 @@ impl Shell {
                 0,
                 "open",
             ));
-            items.push(item(
-                words!(menu_place_open_tab = "Open in New Tab"),
-                crate::sidebar::open_in_tab(place),
-                2,
-                "tab-new",
-            ));
+            // In a window of one tab (a dialog's), a place asked in a tab
+            // opens in place, as Open does: no row offers a tab there
+            // (ADR-144, 2).
+            if self.holds_tabs {
+                items.push(item(
+                    words!(menu_place_open_tab = "Open in New Tab"),
+                    crate::sidebar::open_in_tab(place),
+                    2,
+                    "tab-new",
+                ));
+            }
             if let Some(open) = crate::sidebar::open_in_window(place) {
                 items.push(item(
                     words!(menu_place_open_window = "Open in New Window"),

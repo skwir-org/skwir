@@ -8,7 +8,8 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
 7). Built on Linux, which alone has these dialogs (ADR-141, 11), the
 same day (2f32dfaa..dd85c5b5), each step checked in a window on Xvfb;
 amended as built (decisions 1, 4, 6, 7 and 10), and after review
-(decision 1: one answer every way to run a command asks).
+(decision 1: one answer every way to run a command asks; decision 2:
+one tab).
 
 ## Context
 
@@ -76,9 +77,9 @@ amended as built (decisions 1, 4, 6, 7 and 10), and after review
    does not offer is not drawn nor listed, and refused if asked; a key
    bound to it does what it would with nothing bound (a binding below
    it, a field's typing). Views are offered by their role: listings and
-   alternate shapes, never a lens (Usage, the Map). Quit is not offered
-   there, which would end the program the user's own windows are: Ctrl+Q
-   there cancels the dialog. Amended after review (2026-11-20): as first
+   alternate shapes, never a lens (Usage, the Map). Ctrl+Q there is the
+   dialog's Cancel, bound in its `choosing` context; Quit is not offered
+   there (amended 2026-11-20). Amended after review (2026-11-20): as first
    built, each surface asked a part of the rule (keys and menus one,
    the palette another, pickers a third), checks beside features (the
    terminal, the split) stood beside it, and a command about notes or
@@ -88,6 +89,11 @@ amended as built (decisions 1, 4, 6, 7 and 10), and after review
    no terminal panel, no pinned player (a film or a song still plays in
    the preview), no Activity panel (what the user does there is said
    as anywhere else), no Settings, and the palette offers no setting.
+   It holds one tab (`WindowTabs::holds_tabs`): a place asked in a tab
+   there (a middle click, Ctrl+Enter, a volume mounted for a tab) opens
+   in place (`App::new_tab`), a step Back returns from, its menu offers
+   no tab, and no tab moves into it, so Ctrl+W, its last tab's Close,
+   still cancels the dialog (amended after review, 2026-11-20).
 3. **A place whose files are not files to give** (the Trash: a trashed
    file is gone from where it was) says so
    (`LocationProvider::gives_files`), and a dialog's window offers it
