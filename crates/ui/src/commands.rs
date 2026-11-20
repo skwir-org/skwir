@@ -51,6 +51,14 @@ mod args {
         index: Option<u64>,
     }
 
+    /// A folder the program whose dialog a window answers chose in, or
+    /// every one (none).
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct ChooserFolders {
+        #[serde(default)]
+        folder: Option<PathArg>,
+    }
+
     /// One of the choices another program's dialog offers, set: `true` or
     /// `false` for a switch, an option's id for a list.
     #[derive(Deserialize, JsonSchema)]
@@ -672,12 +680,12 @@ mod args {
 }
 
 use args::{
-    Adjust, Amount, Ask, Bucket, ChooserChoice, ChooserFilter, Close, Continue, CopyText, Count,
-    Cursor, Delta, Dir, FieldComplete, FieldReference, Find, Fold, FolderItem, Folders, History,
-    Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player, Pointer,
-    Popup, PreviewScroll, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt,
-    TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode,
-    View, ViewButton,
+    Adjust, Amount, Ask, Bucket, ChooserChoice, ChooserFilter, ChooserFolders, Close, Continue,
+    CopyText, Count, Cursor, Delta, Dir, FieldComplete, FieldReference, Find, Fold, FolderItem,
+    Folders, History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan,
+    Pick, Player, Pointer, Popup, PreviewScroll, Scrub, SelectGroup, Settings, Split, Submenu,
+    Submit, TagsPrompt, TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle,
+    Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -2402,6 +2410,30 @@ pub fn declare_all(app: &App) {
         words!(commands_chooser_filter = "Show the files of a filter"),
         words!(
             commands_chooser_filter_description = "In a window answering another program's dialog: show the files of the program's filter `index` (from 0), or all files without it"
+        ),
+    );
+    declare::<ChooserFolders>(
+        app,
+        Topic::Window,
+        crate::chooser::FORGET_FOLDERS,
+        words!(commands_chooser_forget_folders = "Forget where the program chose"),
+        words!(
+            commands_chooser_forget_folders_description = "In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it; its next dialog starts as one that chose nowhere would"
+        ),
+    );
+    // The sidebar's Recent Folders, emptied from its heading's menu, beside
+    // what moves the section (ADR-099's 2xx).
+    app.registry.menus.add(
+        OWNER,
+        skwir_core::registry::MenuItem::new(
+            &format!("sidebar:{}", skwir_core::registry::groups::RECENT_FOLDERS.id),
+            words!(
+                commands_chooser_clear_folders = "Clear Recent Folders",
+                note = "An item of the menu of the sidebar's Recent Folders heading, in a window answering another program's dialog: forget every folder that program chose in."
+            ),
+            "minus",
+            285,
+            Invocation::new(crate::chooser::FORGET_FOLDERS),
         ),
     );
     declare::<ChooserChoice>(

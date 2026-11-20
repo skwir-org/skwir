@@ -2134,6 +2134,9 @@ registry_group_network = Network
 # A heading of the sidebar: the home folder, the desktop, the trash and other places.
 registry_group_places = Places
 
+# A heading of the sidebar in a window answering another program's Open or Save dialog: the folders that program last chose in.
+registry_group_recent_folders = Recent Folders
+
 # A heading of the sidebar: saved searches and places kept with their filters.
 registry_group_saved = Saved
 

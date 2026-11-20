@@ -3495,7 +3495,11 @@ impl Shell {
     ) {
         let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         match name {
-            "chooser_accept" | "chooser_cancel" | "chooser_filter" | "chooser_choice" => {
+            "chooser_accept"
+            | "chooser_cancel"
+            | "chooser_filter"
+            | "chooser_choice"
+            | "chooser_forget_folders" => {
                 self.run_chooser(name, args, window, cx);
             }
             "type_end" => self.end_typed(cx),

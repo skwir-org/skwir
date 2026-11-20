@@ -646,7 +646,21 @@ pub mod groups {
     pub const NETWORK: Group = Group { id: "network" };
     /// The window's open tabs, the shell's own.
     pub const TABS: Group = Group { id: "tabs" };
-    pub const ALL: [Group; 7] = [PLACES, BOOKMARKS, SEARCHES, TAGS, DEVICES, NETWORK, TABS];
+    /// The folders the program whose dialog a window answers last chose
+    /// in (ADR-144, 8), the shell's own.
+    pub const RECENT_FOLDERS: Group = Group {
+        id: "recent_folders",
+    };
+    pub const ALL: [Group; 8] = [
+        PLACES,
+        BOOKMARKS,
+        SEARCHES,
+        TAGS,
+        DEVICES,
+        NETWORK,
+        TABS,
+        RECENT_FOLDERS,
+    ];
 
     /// The words the heading of the section `id` says: `None` for a
     /// section core does not own.
@@ -681,6 +695,10 @@ pub mod groups {
             "tabs" => words!(
                 registry_group_tabs = "Tabs",
                 note = "A heading of the sidebar: the window's open tabs."
+            ),
+            "recent_folders" => words!(
+                registry_group_recent_folders = "Recent Folders",
+                note = "A heading of the sidebar in a window answering another program's Open or Save dialog: the folders that program last chose in."
             ),
             _ => return None,
         })

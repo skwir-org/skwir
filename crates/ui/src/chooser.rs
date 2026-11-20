@@ -39,6 +39,9 @@ pub(crate) const FOLDERS_KEY: &str = "ui.chooser_folders";
 /// The folders a program's dialogs offer (ADR-144, 8).
 const FOLDERS_KEPT: usize = 5;
 
+/// The command that forgets where a program chose: a folder, or all.
+pub(crate) const FORGET_FOLDERS: &str = "ui.chooser_forget_folders";
+
 /// The programs whose folders are kept, those that chose last.
 const PROGRAMS_KEPT: usize = 50;
 
@@ -96,6 +99,36 @@ fn with_folder(mut kept: toml::Table, app: &str, folder: &Path, now: i64) -> tom
             kept.remove(&app);
         }
     }
+    kept
+}
+
+/// `kept` without `folder` among program `app`'s, or without any of them
+/// (`None`): where it chose is forgotten, and its next dialog starts as
+/// one that chose nowhere would (`start_location`).
+fn without_folder(mut kept: toml::Table, app: &str, folder: Option<&Path>) -> toml::Table {
+    let Some(folder) = folder else {
+        kept.remove(app);
+        return kept;
+    };
+    let left: Vec<toml::Value> = folders_of(&kept, app)
+        .into_iter()
+        .filter(|kept| kept != folder)
+        .filter_map(|left| toml::Value::try_from(skwir_core::os_path::PathArg::from(left)).ok())
+        .collect();
+    if left.is_empty() {
+        kept.remove(app);
+        return kept;
+    }
+    let used = kept
+        .get(app)
+        .and_then(|program| program.get("used"))
+        .cloned();
+    let mut program = toml::Table::new();
+    program.insert("folders".into(), toml::Value::Array(left));
+    if let Some(used) = used {
+        program.insert("used".into(), used);
+    }
+    kept.insert(app.to_owned(), toml::Value::Table(program));
     kept
 }
 
@@ -198,10 +231,12 @@ pub(crate) struct Chooser {
     /// The dropdown whose list is open.
     open: Option<Dropdown>,
     /// The folders its program last chose in, newest first (ADR-144, 8),
-    /// read as the window opened.
+    /// read as the window opened, and those forgotten since taken out:
+    /// the sidebar's Recent Folders (`folder_places`).
     folders: Vec<PathBuf>,
-    folders_focus: FocusHandle,
-    folders_anchor: PopoverAnchor,
+    /// Counts the changes of `folders`, which the sidebar's places keep
+    /// up with.
+    folders_revision: u64,
     filter_focus: FocusHandle,
     filter_anchor: PopoverAnchor,
     choice_focus: Vec<FocusHandle>,
@@ -216,7 +251,6 @@ pub(crate) struct Chooser {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Dropdown {
-    Folders,
     Filter,
     Choice(usize),
 }
@@ -249,6 +283,44 @@ impl Chooser {
     /// (`Asked::recent`): Recent comes first among the places (ADR-144, 7).
     pub(crate) fn offers_recent(&self) -> bool {
         self.opens_files() && self.asked().recent
+    }
+
+    /// The folders its program last chose in, as the sidebar's places
+    /// (ADR-144, 8): its group of their own, first as the sidebar ships,
+    /// newest first, each under its name, told apart from another of the
+    /// same name by the sidebar (`sidebar::told_apart`). Each is the
+    /// user's to take out (`ui.chooser_forget_folders`, Remove From
+    /// Sidebar), as the group's menu takes out all. Nothing is read: a
+    /// folder gone says so in the pane, as any.
+    pub(crate) fn folder_places(&self) -> Vec<skwir_core::registry::Place> {
+        self.folders
+            .iter()
+            .map(|folder| {
+                let name = folder.file_name().map_or_else(
+                    || folder.to_string_lossy().into_owned(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                skwir_core::registry::Place {
+                    forget: Some(skwir_core::command::Invocation::with_args(
+                        FORGET_FOLDERS,
+                        &serde_json::json!({
+                            "folder": skwir_core::os_path::PathArg::from(folder.as_path()),
+                        }),
+                    )),
+                    ..skwir_core::registry::Place::new(
+                        skwir_core::registry::groups::RECENT_FOLDERS.id,
+                        Words::as_written(name),
+                        "folder",
+                        Location::from_path(folder.clone()),
+                    )
+                }
+            })
+            .collect()
+    }
+
+    /// Counts the changes of the folders its program chose in.
+    pub(crate) fn folders_revision(&self) -> u64 {
+        self.folders_revision
     }
 
     /// The choices as set, as the answer gives them (id, value).
@@ -496,8 +568,7 @@ impl Shell {
                 .get::<toml::Table>(FOLDERS_KEY)
                 .map(|kept| folders_of(&kept, &asked.app_id))
                 .unwrap_or_default(),
-            folders_focus: cx.focus_handle(),
-            folders_anchor: PopoverAnchor::default(),
+            folders_revision: 0,
             filter_focus: cx.focus_handle(),
             filter_anchor: PopoverAnchor::default(),
             choice_focus: (0..count).map(|_| cx.focus_handle()).collect(),
@@ -1285,6 +1356,31 @@ impl Shell {
         cx.notify();
     }
 
+    /// Forget that its program chose in `folder`, or anywhere (`None`):
+    /// taken out of the sidebar's Recent Folders, and of where its next
+    /// dialog may start (ADR-144, 8).
+    pub(crate) fn chooser_forget_folders(
+        &mut self,
+        folder: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(chooser) = &mut self.chooser else {
+            return;
+        };
+        let app_id = chooser.asked().app_id.clone();
+        let kept = self
+            .app
+            .settings
+            .get::<toml::Table>(FOLDERS_KEY)
+            .unwrap_or_default();
+        let kept = without_folder(kept, &app_id, folder.as_deref());
+        chooser.folders = folders_of(&kept, &app_id);
+        chooser.folders_revision += 1;
+        self.app.settings.set(FOLDERS_KEY, toml::Value::Table(kept));
+        self.save_settings_later();
+        cx.notify();
+    }
+
     /// A dropdown's list opened, or closed (`None`).
     fn chooser_list(&mut self, open: Option<Dropdown>, cx: &mut Context<Self>) {
         if let Some(chooser) = &mut self.chooser {
@@ -1309,6 +1405,16 @@ impl Shell {
                     .as_u64()
                     .and_then(|at| usize::try_from(at).ok());
                 self.chooser_filter(index, cx);
+            }
+            "chooser_forget_folders" => {
+                let folder = args
+                    .get("folder")
+                    .filter(|folder| !folder.is_null())
+                    .and_then(|folder| {
+                        serde_json::from_value::<skwir_core::os_path::PathArg>(folder.clone()).ok()
+                    })
+                    .map(skwir_core::os_path::PathArg::into_inner);
+                self.chooser_forget_folders(folder, cx);
             }
             "chooser_choice" => {
                 let id = args["id"].as_str().unwrap_or_default().to_owned();
@@ -1359,9 +1465,6 @@ pub(crate) fn render(
                 )
                 .child(controls::field(input, None, focused, false, None, &theme)),
         );
-    }
-    if !chooser.folders.is_empty() {
-        fields = fields.child(folders_dropdown(chooser, &theme, cx));
     }
     if !asked.filters.is_empty() {
         fields = fields.child(filter_dropdown(chooser, &theme, cx));
@@ -1426,62 +1529,6 @@ pub(crate) fn render(
             .child(buttons)
             .into_any_element(),
     )
-}
-
-/// The folders its program last chose in (ADR-144, 8): a press lists them,
-/// newest first, each from the home folder with `~`; choosing one shows
-/// it.
-fn folders_dropdown(chooser: &Chooser, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    let open = chooser.open == Some(Dropdown::Folders);
-    let named = words!(
-        chooser_folders = "Recent folders",
-        note = "A dropdown of the bar answering another program's dialog: the folders that program last chose in, each shown when chosen."
-    );
-    let control = controls::dropdown(
-        "chooser-folders",
-        named.say(),
-        &chooser.folders_focus,
-        theme,
-    )
-    .aria_label(named.say())
-    .aria_expanded(open)
-    .child(chooser.folders_anchor.marker())
-    .on_click(cx.listener(move |this, _, _, cx| {
-        this.chooser_list((!open).then_some(Dropdown::Folders), cx);
-    }));
-    if !open {
-        return control.into_any_element();
-    }
-    let mut list = controls::dropdown_list("chooser-folders-list", theme).on_mouse_down_out(
-        chooser
-            .folders_anchor
-            .outside(cx.listener(|this, _, _, cx| this.chooser_list(None, cx))),
-    );
-    for (at, folder) in chooser.folders.iter().enumerate() {
-        let location = Location::from_path(folder.clone());
-        list = list.child(
-            controls::dropdown_row(format!("chooser-folder-{at}"), false, theme)
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .child(skwir_core::exclusions::tilde(folder)),
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.chooser_list(None, cx);
-                    let go = skwir_core::command::Invocation::navigate(&location);
-                    this.run(&go.name, go.args, window, cx);
-                })),
-        );
-    }
-    let width = theme.sizes.scale(crate::sizes::Part::Interface).px(360.);
-    control
-        .child(
-            chooser
-                .folders_anchor
-                .popup_under(LIST_PRIORITY, width, list.into_any_element()),
-        )
-        .into_any_element()
 }
 
 /// The program's filters: the one in use, and the list of them and of all
@@ -1765,6 +1812,41 @@ mod tests {
                 folders_of(&kept, "org.example.P0")[0]
             );
         }
+    }
+
+    /// A folder a program chose in is forgotten alone, the others kept in
+    /// their order and when it last chose; all of them at once, or its
+    /// last, and the program is forgotten; another program's stay.
+    #[test]
+    fn a_program_forgets_where_it_chose() {
+        let mut kept = toml::Table::new();
+        for (at, folder) in ["/home/a/one", "/home/a/two", "/home/a/three"]
+            .iter()
+            .enumerate()
+        {
+            kept = with_folder(kept, "org.example.App", Path::new(folder), 10 + at as i64);
+        }
+        kept = with_folder(kept, "org.example.Other", Path::new("/srv"), 5);
+        let kept = without_folder(kept, "org.example.App", Some(Path::new("/home/a/two")));
+        assert_eq!(
+            folders_of(&kept, "org.example.App"),
+            [PathBuf::from("/home/a/three"), PathBuf::from("/home/a/one")]
+        );
+        assert_eq!(
+            kept["org.example.App"].get("used"),
+            Some(&toml::Value::Integer(12))
+        );
+        let unknown = without_folder(kept.clone(), "org.example.App", Some(Path::new("/x")));
+        assert_eq!(unknown, kept, "a folder it never chose in");
+        let all = without_folder(kept.clone(), "org.example.App", None);
+        assert!(!all.contains_key("org.example.App"));
+        assert_eq!(
+            folders_of(&all, "org.example.Other"),
+            [PathBuf::from("/srv")]
+        );
+        let one = without_folder(kept, "org.example.App", Some(Path::new("/home/a/one")));
+        let last = without_folder(one, "org.example.App", Some(Path::new("/home/a/three")));
+        assert!(!last.contains_key("org.example.App"), "its last forgotten");
     }
 
     /// The name saved under is the field's text as typed, its spaces kept,

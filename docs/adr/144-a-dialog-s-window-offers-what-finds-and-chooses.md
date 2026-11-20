@@ -10,7 +10,8 @@ same day (2f32dfaa..dd85c5b5), each step checked in a window on Xvfb;
 amended as built (decisions 1, 4, 6, 7 and 10), and after review
 (decision 1: one answer every way to run a command asks, questions
 asked where the dialog's action asked them, Undo of its own; decision 2:
-one tab).
+one tab). Decision 8 amended 2026-11-20, on the user's asking: the
+folders are a group of the sidebar, not a dropdown of the bar.
 
 ## Context
 
@@ -168,9 +169,18 @@ one tab).
    at most), Recent is neither first nor where the window starts, which
    is home (amended as reviewed, 2026-11-20).
 8. **A program's recent folders**: the folders each program last chose
-   in, five at most, newest first, are offered in the bar
-   (`ui.chooser_folders`, which keeps them for the 50 programs that
-   chose last, its one folder a program before read as its list).
+   in, five at most, newest first (`ui.chooser_folders`, which keeps
+   them for the 50 programs that chose last, its one folder a program
+   before read as its list), are the sidebar's Recent Folders, a group
+   first as the sidebar ships, folded, moved and put away as any other.
+   Each is taken out alone (Remove From Sidebar) and the heading's menu
+   empties the group (Clear Recent Folders), which forgets where the
+   program chose: its next dialog starts as one that chose nowhere
+   would. Two folders of one name are told apart after it by the first
+   folder above that differs (`skwir/…`), as any two places of a group
+   shown under one name are, and a folder's place says its whole path
+   in its tooltip (amended 2026-11-20: they were a dropdown of the bar,
+   a second way to go places beside the sidebar's, two clicks away).
 9. **Choosing folders, files are shown dimmed**: they say where one is,
    and none can be chosen.
 10. **A file dropped on a dialog's window is gone to**, from a window of

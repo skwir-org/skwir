@@ -24,6 +24,7 @@ use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::theme::Chosen;
 use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 use gpui::{AnyElement, Context, ExternalPaths, MouseButton, SharedString, div, prelude::*, px};
 
@@ -41,7 +42,16 @@ use crate::menu::MenuHost;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-const GROUP_ORDER: [&str; 5] = ["places", "bookmarks", "searches", "tags", "devices"];
+/// The groups in the order the sidebar ships with: a dialog's window lists
+/// first the folders its program chose in (ADR-144, 8).
+const GROUP_ORDER: [&str; 6] = [
+    skwir_core::registry::groups::RECENT_FOLDERS.id,
+    "places",
+    "bookmarks",
+    "searches",
+    "tags",
+    "devices",
+];
 const ICON_PX: f32 = 16.;
 /// The sidebar's width until its edge is dragged, and after a double click
 /// on it; the narrowest it gets.
@@ -80,8 +90,9 @@ fn group_rank(g: &str) -> usize {
 #[serde(default)]
 pub struct Sections {
     /// Every group known when the user last moved one, in the order left;
-    /// empty until then. A group it does not name goes after them, in
-    /// the order the sidebar ships with.
+    /// empty until then. A group it does not name comes where the sidebar
+    /// ships it, before the first named that ships after it (one new in
+    /// this version, `Sections::rank`); any other goes after them.
     pub order: Vec<String>,
     pub hidden: std::collections::BTreeSet<String>,
     pub folded: std::collections::BTreeSet<String>,
@@ -251,6 +262,13 @@ pub struct Arranged {
     /// Its owner's `reorder` for a place kept, the sidebar's own
     /// (`ui.sidebar_place`) for one offered.
     pub moves: Option<Reorder>,
+    /// What tells it apart from another of its group shown under the same
+    /// name, said after its name (`told_apart`): the first folder above it
+    /// that differs (`skwir/…`).
+    pub note: Option<String>,
+    /// Where a place that is a folder's path leads, as its tooltip says it
+    /// (`~/wip/skwir`).
+    pub path: Option<String>,
 }
 
 /// Every place, shown or not, as the user arranged them: the groups in
@@ -296,7 +314,7 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
             slotted[i] = Some(place);
         }
     }
-    slotted
+    let mut arranged = slotted
         .into_iter()
         .flatten()
         .map(|mut place| {
@@ -322,19 +340,145 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
                     before: serde_json::json!(key),
                 });
             }
+            let path = place
+                .location
+                .path()
+                .map(|path| skwir_core::exclusions::tilde(&path));
             Arranged {
                 place,
                 role,
                 shown,
                 moves,
+                note: None,
+                path,
             }
+        })
+        .collect::<Vec<_>>();
+    tell_apart(&mut arranged);
+    arranged
+}
+
+/// Each place shown under the name another of its group is shown under,
+/// both folders' paths, given what tells it apart (`told_apart`): two
+/// bookmarks named `src`, two folders a program chose in.
+fn tell_apart(arranged: &mut [Arranged]) {
+    let mut named: HashMap<(&str, String), Vec<usize>> = HashMap::new();
+    for (at, a) in arranged.iter().enumerate() {
+        if a.shown && a.place.location.is_path() {
+            named
+                .entry((a.place.group.as_str(), a.place.title.say()))
+                .or_default()
+                .push(at);
+        }
+    }
+    let home = skwir_core::os_path::home();
+    let notes: Vec<(usize, Option<String>)> = named
+        .into_values()
+        .filter(|at| at.len() > 1)
+        .flat_map(|at| {
+            let paths: Vec<PathBuf> = at
+                .iter()
+                .filter_map(|&i| arranged[i].place.location.path())
+                .collect();
+            let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+            let notes = told_apart(&paths, home.as_deref());
+            at.into_iter().zip(notes).collect::<Vec<_>>()
+        })
+        .collect();
+    for (at, note) in notes {
+        arranged[at].note = note;
+    }
+}
+
+/// What tells each of `paths` apart, folders shown under one name: the
+/// first folder above it, counted up from its parent, where it differs
+/// from each of the others at that height (`skwir/…`, the `…` standing
+/// for the folders between; a parent alone without it), counted no
+/// higher than home (`~`) or the root. Where two of these would read the
+/// same, the folders above it as far as that one (`skwir/crates`). None
+/// for a path another of them is too. Nothing is read.
+pub(crate) fn told_apart(paths: &[&Path], home: Option<&Path>) -> Vec<Option<String>> {
+    let sep = std::path::MAIN_SEPARATOR_STR;
+    // Nearest first, the farthest last.
+    let join = |words: &[String]| {
+        let mut out = String::new();
+        for word in words.iter().rev() {
+            if !out.is_empty() && !out.ends_with(sep) {
+                out.push_str(sep);
+            }
+            out.push_str(word);
+        }
+        out
+    };
+    let upward: Vec<Vec<String>> = paths.iter().map(|path| above(path, home)).collect();
+    let heights: Vec<Option<usize>> = upward
+        .iter()
+        .enumerate()
+        .map(|(i, mine)| {
+            (1..=mine.len()).find(|&k| {
+                upward
+                    .iter()
+                    .enumerate()
+                    .all(|(j, other)| j == i || other.get(..k) != mine.get(..k))
+            })
+        })
+        .collect();
+    let short: Vec<Option<String>> = upward
+        .iter()
+        .zip(&heights)
+        .map(|(mine, k)| match *k {
+            Some(1) => Some(mine[0].clone()),
+            Some(k) => Some(join(&["…".to_owned(), mine[k - 1].clone()])),
+            None => None,
+        })
+        .collect();
+    let mut counted: HashMap<&str, usize> = HashMap::new();
+    for note in short.iter().flatten() {
+        *counted.entry(note.as_str()).or_default() += 1;
+    }
+    short
+        .iter()
+        .zip(upward.iter().zip(&heights))
+        .map(|(note, (mine, k))| {
+            let note = note.as_deref()?;
+            Some(if counted.get(note).copied().unwrap_or(0) > 1 {
+                join(&mine[..(*k)?])
+            } else {
+                note.to_owned()
+            })
         })
         .collect()
 }
 
-/// The places arranged (`arrange`) for a revision of the places and an
+/// The names of the folders above `path`, its parent first: home as `~`,
+/// the last of them, or the root (`/`, `C:\`).
+fn above(path: &Path, home: Option<&Path>) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut at = path.parent();
+    while let Some(folder) = at {
+        if Some(folder) == home {
+            words.push("~".to_owned());
+            break;
+        }
+        let Some(name) = folder.file_name() else {
+            words.push(folder.to_string_lossy().into_owned());
+            break;
+        };
+        words.push(name.to_string_lossy().into_owned());
+        at = folder.parent();
+    }
+    words
+}
+
+/// The places arranged (`arrange`) for a revision of the places, of the
+/// folders a dialog's program chose in, of what words say, and an
 /// arrangement of them.
-pub(crate) type ArrangedAt = (u64, Sections, Arranging, std::sync::Arc<[Arranged]>);
+pub(crate) type ArrangedAt = (
+    (u64, u64, u64),
+    Sections,
+    Arranging,
+    std::sync::Arc<[Arranged]>,
+);
 
 /// For whom the places are arranged (ADR-144, 3 and 7): a window of the
 /// user's own, a dialog's, or a dialog's opening files where the files
@@ -349,10 +493,16 @@ pub(crate) enum Arranging {
 
 impl Shell {
     /// The places this window offers (`App::places_offered`): a dialog's
-    /// none whose files are not to give (the Trash, ADR-144, 3). What the
-    /// sidebar lists and its Places heading's menu arranges.
+    /// none whose files are not to give (the Trash, ADR-144, 3), and the
+    /// folders its program last chose in (ADR-144, 8,
+    /// `Chooser::folder_places`). What the sidebar lists and its headings'
+    /// menus arrange.
     pub(crate) fn places_here(&self) -> Vec<Place> {
-        self.app.places_offered(self.chooser.is_some())
+        let mut places = self.app.places_offered(self.chooser.is_some());
+        if let Some(chooser) = &self.chooser {
+            places.extend(chooser.folder_places());
+        }
+        places
     }
 
     /// Whether this window offers going to `location`
@@ -367,7 +517,13 @@ impl Shell {
     /// the sidebar draws them at every frame, and arranging copies and
     /// sorts every place.
     pub fn arranged_places(&self) -> std::sync::Arc<[Arranged]> {
-        let revision = self.app.registry.places.revision();
+        let revision = (
+            self.app.registry.places.revision(),
+            self.chooser
+                .as_ref()
+                .map_or(0, crate::chooser::Chooser::folders_revision),
+            skwir_core::words::revision(),
+        );
         let arranging = match &self.chooser {
             None => Arranging::Own,
             Some(chooser) if chooser.offers_recent() => Arranging::DialogOpening,
@@ -536,10 +692,19 @@ impl Shell {
 }
 
 impl Sections {
-    /// Where `group` goes among the others.
+    /// Where `group` goes among the others: where the user left it; one
+    /// they left nowhere, a group the sidebar ships with comes where it
+    /// ships, before the first group left that ships after it (a group
+    /// new in this version, whatever the user moved before); any other
+    /// goes last.
     pub fn rank(&self, group: &str) -> (usize, usize) {
-        let placed = self.order.iter().position(|g| g == group);
-        (placed.unwrap_or(self.order.len()), group_rank(group))
+        let ships = group_rank(group);
+        let placed = self.order.iter().position(|g| g == group).or_else(|| {
+            (ships < GROUP_ORDER.len())
+                .then(|| self.order.iter().position(|g| group_rank(g) > ships))
+                .flatten()
+        });
+        (placed.unwrap_or(self.order.len()), ships)
     }
 
     /// `present`, the groups that have places, in the user's order.
@@ -894,6 +1059,8 @@ pub fn render(
             place,
             moves,
             shown,
+            note,
+            path,
             ..
         } = arranged;
         let i = row_key(place);
@@ -1023,15 +1190,33 @@ pub fn render(
                 .into_any_element(),
         };
         // A title cut by the sidebar's width is said whole by the row's
-        // tooltip, before what the row has to say of its own.
+        // tooltip, before what the row has to say of its own. What tells
+        // it apart from a place of the same name follows it, cut first.
         let (title, clip) = crate::elements::clip::text(said.clone());
+        let named = div()
+            .min_w_0()
+            .flex()
+            .items_baseline()
+            .gap(sized(6.))
+            .whitespace_nowrap()
+            .child(div().flex_shrink_0().max_w_full().truncate().child(title))
+            .when_some(note.clone(), |d, note| {
+                d.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_small()
+                        .text_color(theme.text_muted)
+                        .child(note),
+                )
+            });
         let mut texts = div()
             .flex_1()
             .min_w_0()
             .flex()
             .flex_col()
             .gap(sized(3.))
-            .child(div().truncate().child(title));
+            .child(named);
         let mut tip: Option<SharedString> = None;
         if let Some(busy) = &busy {
             texts = texts.child(
@@ -1139,8 +1324,17 @@ pub fn render(
         if let Some(busy) = &busy {
             tip = Some(busy.say().into());
         }
-        // What the tooltip says of it (its space, why it waits, what its
-        // owner does) is what a screen reader says after its name.
+        // Where a folder's place leads, first: what tells two of a name
+        // apart said whole.
+        if let Some(path) = path {
+            tip = Some(match tip {
+                Some(tip) => format!("{path}\n{tip}").into(),
+                None => path.clone().into(),
+            });
+        }
+        // What the tooltip says of it (where it leads, its space, why it
+        // waits, what its owner does) is what a screen reader says after
+        // its name.
         row = row
             .role(gpui::Role::TreeItem)
             .when(a11y, |d| {
@@ -1758,14 +1952,7 @@ impl Shell {
 
     /// The groups that have places, put away or not.
     fn sidebar_groups(&self) -> Vec<String> {
-        let mut groups: Vec<String> = self
-            .app
-            .registry
-            .places
-            .all()
-            .into_iter()
-            .map(|p| p.group)
-            .collect();
+        let mut groups: Vec<String> = self.places_here().into_iter().map(|p| p.group).collect();
         groups.sort();
         groups.dedup();
         groups
@@ -2392,9 +2579,11 @@ impl Shell {
                 ));
             }
         }
-        // What the group's owners add to it (Add Server… in Network),
-        // registered for its menu (`MenuItem::menu`, `sidebar:<group>`):
-        // first, a group of their own.
+        // What the group's owners add to it (Add Server… in Network, Clear
+        // Recent Folders), registered for its menu (`MenuItem::menu`,
+        // `sidebar:<group>`): each before the first of the sidebar's own
+        // that comes after it by its order, so that what adds goes first
+        // and what empties beside what moves the section (ADR-099).
         if let Some(group) = group {
             let menu = format!("sidebar:{group}");
             let mut own: Vec<_> = self
@@ -2406,7 +2595,13 @@ impl Shell {
                 .filter(|item| item.menu == menu)
                 .collect();
             own.sort_by_key(|item| item.order);
-            items.splice(0..0, own);
+            for item in own {
+                let at = items
+                    .iter()
+                    .position(|mine| mine.order > item.order)
+                    .unwrap_or(items.len());
+                items.insert(at, item);
+            }
         }
         // Every group, checked while shown.
         for (i, g) in all.iter().enumerate() {
@@ -2608,6 +2803,126 @@ mod tests {
             Arg::Name("Holiday photos".into()),
             "said plainly, no isolation of its own"
         );
+    }
+
+    /// A group the sidebar ships with that the user's order does not
+    /// name (Recent Folders, new since they moved the others) comes where
+    /// it ships, first, not after the groups they left.
+    #[test]
+    fn a_new_group_comes_where_it_ships_among_those_the_user_moved() {
+        let owned = |v: &[&str]| v.iter().map(|g| (*g).to_owned()).collect::<Vec<_>>();
+        let present = owned(&["places", "tags", "devices"]);
+        let mut sections = Sections::default();
+        sections.move_before("tags", Some("places"), &present);
+        sections
+            .order
+            .retain(|g| g != skwir_core::registry::groups::RECENT_FOLDERS.id);
+        let dialog = owned(&["devices", "recent_folders", "places", "tags", "plugin"]);
+        assert_eq!(
+            sections.arranged(&dialog),
+            owned(&["recent_folders", "tags", "places", "devices", "plugin"])
+        );
+        sections.move_before("recent_folders", None, &dialog);
+        assert_eq!(
+            sections.arranged(&dialog),
+            owned(&["tags", "places", "devices", "plugin", "recent_folders"]),
+            "moved, it stays where the user put it"
+        );
+    }
+
+    /// Folders shown under one name are told apart by the first folder
+    /// above each that differs, a parent alone where it is enough, up to
+    /// home or the root; where two of those read the same, by the folders
+    /// above as far as that one. A path two places share tells nothing.
+    #[test]
+    fn folders_of_one_name_are_told_apart_by_the_folder_above_that_differs() {
+        use std::path::Path;
+        let home = Path::new("/home/someone");
+        let told = |paths: &[&str]| {
+            let paths: Vec<&Path> = paths.iter().map(Path::new).collect();
+            super::told_apart(&paths, Some(home))
+        };
+        let some = |note: &str| Some(note.to_owned());
+        let sep = std::path::MAIN_SEPARATOR_STR;
+        let at = |words: &[&str]| words.join(sep);
+        assert_eq!(
+            told(&[
+                "/home/someone/wip/skwir/skwir/crates/core/src",
+                "/home/someone/wip/skwir/skwir-site/src",
+            ]),
+            [some("core"), some("skwir-site")],
+            "their parents differ"
+        );
+        assert_eq!(
+            told(&[
+                "/home/someone/wip/skwir/src",
+                "/home/someone/old/skwir/src",
+                "/home/someone/src",
+            ]),
+            [
+                some(&at(&["wip", "…"])),
+                some(&at(&["old", "…"])),
+                some("~")
+            ],
+            "a parent alike, the folder above it"
+        );
+        // The root, above all (a Windows root says its own separator).
+        #[cfg(unix)]
+        assert_eq!(told(&["/a/src", "/b/a/src"]), [some("/…"), some("b/…")]);
+        assert_eq!(
+            told(&[
+                "/home/someone/m/a/src",
+                "/home/someone/m/b/src",
+                "/home/someone/n/a/src",
+                "/home/someone/n/b/src",
+            ]),
+            [
+                some(&at(&["m", "a"])),
+                some(&at(&["m", "b"])),
+                some(&at(&["n", "a"])),
+                some(&at(&["n", "b"])),
+            ],
+            "the folders above as far as the one that differs"
+        );
+        assert_eq!(
+            told(&["/home/someone/src", "/home/someone/src"]),
+            [None, None],
+            "one folder twice"
+        );
+    }
+
+    /// Two places of a group shown under one name, both folders, are told
+    /// apart; a place alone under its name, or one of another group, is
+    /// not. Every folder's place says where it leads, from home.
+    #[test]
+    fn places_of_one_name_in_a_group_are_told_apart() {
+        let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/home/someone"));
+        let at = |rest: &str| home.join(rest).to_string_lossy().into_owned();
+        let named = |group: &str, path: &str| {
+            skwir_core::registry::Place::new(
+                group,
+                Words::as_written("src".to_owned()),
+                "",
+                Location::from_path(PathBuf::from(path)),
+            )
+        };
+        let arranged = arrange(
+            vec![
+                named("bookmarks", &at("wip/one/src")),
+                named("bookmarks", &at("wip/two/src")),
+                named("places", &at("three/src")),
+                place("bookmarks", "/elsewhere"),
+            ],
+            &Sections::default(),
+        );
+        let notes: Vec<Option<&str>> = arranged.iter().map(|a| a.note.as_deref()).collect();
+        assert_eq!(notes, [None, Some("one"), Some("two"), None]);
+        let sep = std::path::MAIN_SEPARATOR_STR;
+        assert_eq!(
+            arranged[1].path.as_deref(),
+            Some(["~", "wip", "one", "src"].join(sep).as_str())
+        );
+        assert_eq!(arranged[3].path.as_deref(), Some("/elsewhere"));
     }
 
     fn titles(arranged: &[super::Arranged]) -> Vec<String> {

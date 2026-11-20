@@ -717,9 +717,6 @@ chooser_filter = Files shown
 # Said where another program saves several files in a folder holding a folder of the name of one of them, which no file can replace: name: that folder's name; folder: where it is.
 chooser_folder_taken = There is a folder named { $name } in { $folder }: choose another folder to save in
 
-# A dropdown of the bar answering another program's dialog: the folders that program last chose in, each shown when chosen.
-chooser_folders = Recent folders
-
 # Before the name field of the bar answering another program's Save dialog.
 chooser_name = Name
 
@@ -941,9 +938,16 @@ commands_chooser_choice = Set a choice of the dialog
 
 commands_chooser_choice_description = In a window answering another program's dialog: set its choice `id` to `value`, true or false for a switch, an option's id for a list
 
+# An item of the menu of the sidebar's Recent Folders heading, in a window answering another program's dialog: forget every folder that program chose in.
+commands_chooser_clear_folders = Clear Recent Folders
+
 commands_chooser_filter = Show the files of a filter
 
 commands_chooser_filter_description = In a window answering another program's dialog: show the files of the program's filter `index` (from 0), or all files without it
+
+commands_chooser_forget_folders = Forget where the program chose
+
+commands_chooser_forget_folders_description = In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it; its next dialog starts as one that chose nowhere would
 
 commands_close_window = Close window
 

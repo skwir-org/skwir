@@ -2251,6 +2251,9 @@ registry_group_network = 网络
 registry_group_places = 位置
 
 # draft
+registry_group_recent_folders = 最近的文件夹
+
+# draft
 registry_group_saved = 已保存
 
 # draft

@@ -763,9 +763,6 @@ chooser_filter = Fichiers affichés
 chooser_folder_taken = Il y a un dossier nommé { $name } dans { $folder } : choisissez un autre dossier où enregistrer
 
 # draft
-chooser_folders = Dossiers récents
-
-# draft
 chooser_name = Nom
 
 # draft
@@ -1009,10 +1006,19 @@ commands_chooser_choice = Régler un choix de la boîte de dialogue
 commands_chooser_choice_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : régler son choix `id` sur `value`, true ou false pour un interrupteur, l’id d’une option pour une liste
 
 # draft
+commands_chooser_clear_folders = Effacer les dossiers récents
+
+# draft
 commands_chooser_filter = Afficher les fichiers d’un filtre
 
 # draft
 commands_chooser_filter_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : afficher les fichiers du filtre `index` du programme (à partir de 0), ou tous les fichiers sans lui
+
+# draft
+commands_chooser_forget_folders = Oublier où le programme a choisi
+
+# draft
+commands_chooser_forget_folders_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : retirer `folder` des dossiers où ce programme a choisi en dernier, ou tous sans lui ; sa prochaine boîte de dialogue s’ouvre comme celle d’un programme qui n’a choisi nulle part
 
 # draft
 commands_close_window = Fermer la fenêtre

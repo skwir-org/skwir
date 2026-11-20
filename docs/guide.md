@@ -1109,8 +1109,12 @@ names no folder and chose in none starts there; otherwise such a dialog
 starts in your home. What you choose is added to the desktop's recently
 used files, as the desktop's own dialog does, unless your desktop is
 told to remember none (GTK's, GNOME's, Cinnamon's or KDE's setting).
-Recent folders, in the bar, lists the five folders that program last
-chose in. Saving, choosing another filter changes the name's extension
+Recent Folders, first in the sidebar, lists the five folders that
+program last chose in; Remove From Sidebar forgets one, and the
+heading's menu clears them all. Two places of a sidebar section that
+share a name (two folders named `src`) say after it the folder above
+that tells them apart, and a folder's place shows its whole path when
+pointed at. Saving, choosing another filter changes the name's extension
 to the filter's. Choosing a folder, its files show dimmed. A file
 dropped on the dialog, from your own window or another program, is gone
 to (saving, its name is taken): nothing is copied, and nothing answered

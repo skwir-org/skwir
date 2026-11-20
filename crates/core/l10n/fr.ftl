@@ -2297,6 +2297,9 @@ registry_group_network = Réseau
 registry_group_places = Emplacements
 
 # draft
+registry_group_recent_folders = Dossiers récents
+
+# draft
 registry_group_saved = Enregistrés
 
 # draft

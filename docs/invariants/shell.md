@@ -1561,6 +1561,23 @@ asks the direction.
   the location's text, never of a plugin: a new kind of place that says
   tags rings its files with no branch here.
 - The sidebar repeats nothing its location says.
+- **Two places of a group shown under one name** (two bookmarks named
+  `src`) are told apart after their names, in Small and muted, cut
+  before the name: by the first folder above each that differs from the
+  others at that height (`skwir/…`; a parent alone without the `…`), up
+  to home or the root, or the folders above as far as that one where
+  two would read the same (`sidebar::told_apart`, made by `arrange`). A
+  place that is a folder's path says it in its tooltip from home
+  (`Arranged::path`), before what its row says of its own.
+- **A dialog's Recent Folders** (ADR-144, 8): the folders the program
+  whose dialog the window answers last chose in are the sidebar's group
+  of the shell's own (`groups::RECENT_FOLDERS`, `Shell::places_here`,
+  `Chooser::folder_places`), first as the sidebar ships, folded, moved
+  and put away as any; a group the sidebar ships with that the user's
+  order does not name comes where it ships (`Sections::rank`). Each is
+  a place the user keeps: Remove From Sidebar forgets it, the heading's
+  Clear Recent Folders forgets them all (`ui.chooser_forget_folders`),
+  and the next dialog starts as one that chose nowhere would.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
   command, which keeps what the pane shows as it shows it (ADR-109): the
   location and the pane's filter go to the `Keeper` that keeps them, the
@@ -2181,7 +2198,8 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   window each (`finishing::open_chooser`), started where the request
   asks, else where its program last chose (`ui.chooser_folders`, by app
   id: its five last folders, newest first, the fifty programs that chose
-  last; the bar's Recent folders offers them, ADR-144, 8), else, opening
+  last; the sidebar's Recent Folders offers them, ADR-144, 8 amended),
+  else, opening
   files, in what lists the files used lately (`App::lists_recent`:
   Recent, first in its group of places there, `sidebar::recent_first`)
   where it has one to give and the desktop remembers them

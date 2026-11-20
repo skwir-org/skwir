@@ -735,9 +735,6 @@ chooser_filter = 显示的文件
 chooser_folder_taken = { $folder } 中已有名为 { $name } 的文件夹：请选择另一个文件夹来保存
 
 # draft
-chooser_folders = 最近的文件夹
-
-# draft
 chooser_name = 名称
 
 # draft
@@ -960,10 +957,19 @@ commands_chooser_choice = 设置对话框的选项
 commands_chooser_choice_description = 在应答其他程序对话框的窗口中：将其选项 `id` 设为 `value`，开关为 true 或 false，列表为某个选项的 id
 
 # draft
+commands_chooser_clear_folders = 清除最近的文件夹
+
+# draft
 commands_chooser_filter = 显示某个筛选器的文件
 
 # draft
 commands_chooser_filter_description = 在应答其他程序对话框的窗口中：显示程序第 `index` 个筛选器（从 0 开始）的文件，不带它则显示所有文件
+
+# draft
+commands_chooser_forget_folders = 忘记程序选择过的位置
+
+# draft
+commands_chooser_forget_folders_description = 在应答其他程序对话框的窗口中：从该程序最近选择过的文件夹中移除 `folder`，不带它则全部移除；其下一个对话框将像从未选择过任何位置的程序一样开始
 
 # draft
 commands_close_window = 关闭窗口
