@@ -1165,11 +1165,19 @@ mod tests {
         let say = |keys: &str, context: &str| {
             verdict(&app, &keyboard, &bound, keys, context, hidden, None)
         };
-        // Ctrl+Q quits anywhere: replaced.
-        assert!(matches!(
-            say("ctrl-q", &anywhere).notes.as_slice(),
-            [Note::Replaces { title, .. }] if title.english() == "Quit"
-        ));
+        // Ctrl+Q quits anywhere: replaced; in a dialog's window, where it
+        // is the dialog's Cancel (ADR-144), that deeper place keeps it.
+        let notes = say("ctrl-q", &anywhere).notes;
+        assert!(
+            matches!(
+                notes.as_slice(),
+                [
+                    Note::Replaces { title, .. },
+                    Note::Stays { why: super::Stay::Deeper, .. },
+                ] if title.english() == "Quit"
+            ),
+            "{notes:?}"
+        );
         // Ctrl+U in the file list is the plugin's, which comes first there.
         assert!(matches!(
             say("ctrl-u", &anywhere).notes.as_slice(),
