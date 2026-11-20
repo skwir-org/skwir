@@ -854,11 +854,13 @@ impl Shell {
         // focus cannot ask for the frame that shows it.
         subs.push(cx.on_focus_lost(window, |_, window, cx| {
             cx.defer_in(window, |this, window, cx| {
-                // The Settings dialog, while it is open, over the pane
-                // behind it: what it drew last went (a bar closed).
-                let focus = match &this.settings {
-                    Some(settings) => Some(gpui::Focusable::focus_handle(settings, cx)),
-                    None => this.drawn_focus(),
+                // The Settings dialog, or About, while it is open, over the
+                // pane behind it: what it drew last went (a bar closed, a
+                // line of news taken back), and the keys it walks stay its.
+                let focus = match (&this.settings, &this.about) {
+                    (Some(settings), _) => Some(gpui::Focusable::focus_handle(settings, cx)),
+                    (None, Some(about)) => Some(about.focus().clone()),
+                    (None, None) => this.drawn_focus(),
                 };
                 if let Some(focus) = focus {
                     window.focus(&focus, cx);

@@ -241,9 +241,14 @@ Views are in [views.md](views.md); what locations decide, in
   window cancels it.
 - **Focus never dangles:** when the focused element leaves the window,
   the shell's focus-lost listener gives the keyboard to the pane drawn as
-  active (`Shell::drawn_focus`), or to the Settings dialog while it is
-  open, never to the pane behind it. Never refocus by hand after closing
-  something.
+  active (`Shell::drawn_focus`), or to the Settings dialog or About while
+  it is open (a line of its news taken back), never to the pane behind
+  it. Never refocus by hand after closing something. A toast's buttons
+  are stops of the window's Tab, and its own (`toast::Keys`): one said
+  over another, or a question that stays and the toast said over it,
+  never share a focus handle, so the keyboard on a button that goes
+  falls to the pane, never to the button another toast draws in its
+  place.
 - **A field that says what it takes** (ADR-137, `reference.rs`) holds a
   `reference::FieldHelp`, whatever view holds it (the shell's dialogs,
   Settings): its frame is made by `with_help`, which adds `reference` to

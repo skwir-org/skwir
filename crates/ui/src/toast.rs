@@ -63,6 +63,24 @@ pub struct Toast {
     /// The plugin that said it (`App::notify_from`): turned off, what it
     /// said goes, its words no longer said nor its buttons run.
     owner: Option<String>,
+    /// Its own focus handles, made as it is first drawn (`render_answer`)
+    /// and kept with it, joined again included (`Shell::say_with`).
+    keys: Option<Keys>,
+}
+
+/// The focus handles of one toast's buttons and Close, stops of the
+/// window's Tab (`window.focus_next` walks only those), and its own: never
+/// lent to the buttons of another drawn where they were (a question that
+/// stays and the toast said over it, a toast and the one replacing it).
+/// The keyboard on one of them stays there while the toast is drawn, and
+/// once it is not, the pane takes it (the shell's focus-lost fallback),
+/// never another toast's button, which a key meant for this one would
+/// press (an Enter meant for a question's No undoing a copy).
+#[derive(Clone, Debug)]
+struct Keys {
+    close: gpui::FocusHandle,
+    /// One for each of its buttons, in their order.
+    actions: Vec<gpui::FocusHandle>,
 }
 
 /// What a toast says after what it said first.
@@ -85,6 +103,7 @@ impl Toast {
             actions,
             after: Vec::new(),
             owner: None,
+            keys: None,
         }
     }
 
@@ -256,9 +275,6 @@ pub struct ToastState {
     /// Whether the time of the current one runs: from when it is said, or,
     /// held back while the History is open, from when it is first drawn.
     timed: bool,
-    close: Option<gpui::FocusHandle>,
-    /// Kept across frames, so Tab can reach the toast's buttons.
-    action_focus: Vec<gpui::FocusHandle>,
 }
 
 /// A question that stays, beneath what is said over it.
@@ -338,6 +354,25 @@ impl ToastState {
         if self.current.is_none() {
             self.generation += 1;
         }
+    }
+
+    /// The focus handles of what is drawn (`shown`), its own, made by
+    /// `make` as it is first drawn (`Keys`).
+    fn shown_keys(&mut self, mut make: impl FnMut() -> gpui::FocusHandle) -> Option<Keys> {
+        let toast = match (&mut self.current, &mut self.standing) {
+            (Some(toast), _) => toast,
+            (None, Some(standing)) => &mut standing.toast,
+            (None, None) => return None,
+        };
+        let buttons = toast.actions.len();
+        let keys = toast.keys.get_or_insert_with(|| Keys {
+            close: make(),
+            actions: Vec::new(),
+        });
+        while keys.actions.len() < buttons {
+            keys.actions.push(make());
+        }
+        Some(keys.clone())
     }
 
     /// What is drawn: the one said last, else what stands.
@@ -1758,6 +1793,12 @@ pub fn render_answer(
     if shell.undo_history_open() || shell.answer_at() != at {
         return None;
     }
+    // Its own keys (`Keys`), before it is taken to be drawn: stops of the
+    // window's Tab, as a question that stays is answered by the keyboard
+    // too.
+    let keys = shell
+        .toasts
+        .shown_keys(|| cx.focus_handle().tab_stop(true))?;
     let (toast, drawn) = shell
         .toasts
         .shown()
@@ -1786,11 +1827,7 @@ pub fn render_answer(
         })
         .collect();
     let theme = cx.global::<Theme>().clone();
-    let close = shell
-        .toasts
-        .close
-        .get_or_insert_with(|| cx.focus_handle())
-        .clone();
+    let close = keys.close.clone();
     let generation = shell.toasts.generation;
     let a11y = shell.a11y;
     // Said as it appears: a failure at once, the rest after what is being
@@ -1849,10 +1886,7 @@ pub fn render_answer(
     let has_actions = !toast.actions.is_empty();
     let mut actions = div().flex().items_center().gap_2();
     for ((n, action), held) in toast.actions.into_iter().enumerate().zip(held) {
-        while shell.toasts.action_focus.len() <= n {
-            shell.toasts.action_focus.push(cx.focus_handle());
-        }
-        let focus = shell.toasts.action_focus[n].clone();
+        let focus = keys.actions[n].clone();
         let label = action.label.say();
         if let Some(why) = held {
             // Said, not offered: no frame but the keyboard's.

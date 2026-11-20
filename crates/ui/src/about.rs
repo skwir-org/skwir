@@ -99,6 +99,14 @@ pub struct About {
 }
 
 impl About {
+    /// Its panel's own focus: what has the keyboard as it opens, and again
+    /// where a button it drew went while it is open (a line of news taken
+    /// back, its plugin turned off: the shell's focus-lost fallback), so
+    /// Tab walks it still rather than close it.
+    pub(crate) fn focus(&self) -> &FocusHandle {
+        &self.focus
+    }
+
     fn buttons(&self) -> Vec<&FocusHandle> {
         let mut buttons: Vec<&FocusHandle> = self.news_focus.iter().take(self.news.len()).collect();
         buttons.push(&self.copy);
