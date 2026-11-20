@@ -8,7 +8,9 @@ step, before an autonomous night). Built on Linux; Linux's by nature
 (e85e415e), attached to the asking window (a4299e63, gpui patch 0085),
 the Settings row (eaac889f), the packages; amended as built (decisions
 4, 6 and 10, and the Context's reading of the configuration), and on
-2026-11-20 (decision 9: the windows' tags).
+2026-11-20 (decision 9: the windows' tags); decisions 4 and 7
+amended by ADR-144 (what a dialog's window offers, its own layout,
+Recent).
 
 ## Context
 
@@ -81,7 +83,8 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    behind, then once all that reached it is answered.
 4. **A request is a whole skwir window in a choosing mode** (the user's
    choice over a compact dialog): sidebar, address, search, tags,
-   views, preview, the shelf, as any window, and a bar at its bottom
+   views, preview, the shelf, as any window (what else it offers:
+   ADR-144), and a bar at its bottom
    holding what the request asks: the name field (saving), the
    program's filters, its choices (a dropdown each, a switch for a
    boolean), Cancel and the accept button (`accept_label`, else Open,
@@ -130,8 +133,9 @@ the Settings row (eaac889f), the packages; amended as built (decisions
    taken as typed.
 7. **Where it starts**: the request's folder (`current_folder`,
    `current_file`'s), else the folder that program (`app_id`) last chose
-   in (the window's state, by program, ADR-056), else home. A program
-   with no id (the host's) keeps one place for all.
+   in (the window's state, by program, ADR-056), else home (opening,
+   Recent: ADR-144, 7). A program with no id (the host's) keeps one
+   place for all.
 8. **Only the user answers.** The chooser's commands are the window's
    (`ui.chooser_*`), the user's alone (ADR-044): never an agent's, a
    script's or a plugin's from outside, which cannot see what is asked
