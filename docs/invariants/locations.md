@@ -17,6 +17,7 @@ the others with no UI branch.
 | whether words can search in it, as the address field's scope | `LocationProvider::searchable`, `App::searchable` |
 | how deep words look in it, a place that is no folder (ADR-108) | `LocationProvider::depths`, `App::depths` |
 | whether its files may be given to another program as chosen (not the trash's, ADR-144) | `LocationProvider::gives_files`, `App::gives_files` |
+| whether it lists the files used lately, a dialog opening files' first place and start (ADR-144) | `LocationProvider::lists_recent`, `App::lists_recent` |
 | its name, glyph, empty text | `title`, `icon`, `empty_state` |
 | its trail | `LocationProvider::trail` |
 | what gestures mean there | `LocationProvider::verbs` |

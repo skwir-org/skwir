@@ -91,6 +91,7 @@ pub mod print_job;
 pub mod process;
 #[cfg(target_os = "linux")]
 mod qt_palette;
+pub mod recent;
 pub mod sandbox;
 pub mod shell_environment;
 pub mod shrink_job;

@@ -1533,6 +1533,13 @@ impl App {
             .is_none_or(|provider| provider.gives_files(location))
     }
 
+    /// Whether `location` lists the files used lately
+    /// (`LocationProvider::lists_recent`, ADR-144, 7).
+    pub fn lists_recent(&self, location: &Location) -> bool {
+        self.provider(&location.scheme)
+            .is_some_and(|provider| provider.lists_recent(location))
+    }
+
     /// How deep words look in `location`, a place that is no folder
     /// (`LocationProvider::depths`, ADR-108): `None` for a folder.
     pub fn depths(&self, location: &Location) -> Option<crate::location::Depths> {

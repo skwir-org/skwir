@@ -334,7 +334,17 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
 
 /// The places arranged (`arrange`) for a revision of the places and an
 /// arrangement of them.
-pub(crate) type ArrangedAt = (u64, Sections, bool, std::sync::Arc<[Arranged]>);
+pub(crate) type ArrangedAt = (u64, Sections, Arranging, std::sync::Arc<[Arranged]>);
+
+/// For whom the places are arranged (ADR-144, 3 and 7): a window of the
+/// user's own, a dialog's, or a dialog's opening files, where what lists
+/// the files used lately comes first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Arranging {
+    Own,
+    Dialog,
+    DialogOpening,
+}
 
 impl Shell {
     /// Every place as the user arranged them (`arrange`), kept until the
@@ -344,29 +354,49 @@ impl Shell {
     /// `App::gives_files`, ADR-144, 3).
     pub fn arranged_places(&self) -> std::sync::Arc<[Arranged]> {
         let revision = self.app.registry.places.revision();
-        let dialog = self.chooser.is_some();
+        let arranging = match &self.chooser {
+            None => Arranging::Own,
+            Some(chooser) if chooser.opens_files() => Arranging::DialogOpening,
+            Some(_) => Arranging::Dialog,
+        };
         let mut kept = self.arranged_places.borrow_mut();
-        if let Some((at, sections, was_dialog, arranged)) = kept.as_ref()
+        if let Some((at, sections, was, arranged)) = kept.as_ref()
             && *at == revision
             && *sections == self.sidebar_sections
-            && *was_dialog == dialog
+            && *was == arranging
         {
             return std::sync::Arc::clone(arranged);
         }
         // Read after the revision: a change meanwhile arranges again.
         let mut places = self.app.registry.places.all();
-        if dialog {
+        if arranging != Arranging::Own {
             places.retain(|place| self.app.gives_files(&place.location));
         }
-        let arranged: std::sync::Arc<[Arranged]> = arrange(places, &self.sidebar_sections).into();
+        let mut arranged = arrange(places, &self.sidebar_sections);
+        if arranging == Arranging::DialogOpening {
+            recent_first(&mut arranged, |place| {
+                self.app.lists_recent(&place.location)
+            });
+        }
+        let arranged: std::sync::Arc<[Arranged]> = arranged.into();
         *kept = Some((
             revision,
             self.sidebar_sections.clone(),
-            dialog,
+            arranging,
             std::sync::Arc::clone(&arranged),
         ));
         arranged
     }
+}
+
+/// What lists the files used lately first in its group, the rest as they
+/// were arranged (ADR-144, 7: a dialog opening files).
+fn recent_first(arranged: &mut [Arranged], recent: impl Fn(&Place) -> bool) {
+    let mut first: HashMap<String, usize> = HashMap::new();
+    for (at, one) in arranged.iter().enumerate() {
+        first.entry(one.place.group.clone()).or_insert(at);
+    }
+    arranged.sort_by_key(|one| (first[&one.place.group], !recent(&one.place)));
 }
 
 /// A folder the sidebar shows, where a trail starts (`address::crumbs`):

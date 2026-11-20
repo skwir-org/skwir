@@ -34,13 +34,14 @@ use crate::theme::Theme;
 pub(crate) const FOLDERS_KEY: &str = "ui.chooser_folders";
 
 /// Where the window starts: the request's folder, else the one its
-/// program last chose in, else home (ADR-141, 7). Nothing is read: a
-/// folder gone says so in the pane, as any.
-pub(crate) fn start_folder(app: &skwir_core::App, asked: &Asked) -> PathBuf {
+/// program last chose in, else, opening files, what lists the files used
+/// lately (ADR-144, 7), else home (ADR-141, 7). Nothing is read: a folder
+/// gone says so in the pane, as any.
+pub(crate) fn start_location(app: &skwir_core::App, asked: &Asked) -> Location {
     // A folder the request names that is no folder's path (a relative
     // one) is passed over, as one it does not name.
     if let Some(folder) = asked.folder.as_ref().filter(|folder| folder.is_absolute()) {
-        return folder.clone();
+        return Location::from_path(folder.clone());
     }
     let kept = app
         .settings
@@ -52,7 +53,29 @@ pub(crate) fn start_folder(app: &skwir_core::App, asked: &Asked) -> PathBuf {
                 .map(PathBuf::from)
         })
         .filter(|folder| folder.is_absolute());
-    kept.unwrap_or_else(|| skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")))
+    if let Some(kept) = kept {
+        return Location::from_path(kept);
+    }
+    let opens_files = matches!(
+        asked.kind,
+        Kind::Open {
+            directory: false,
+            ..
+        }
+    );
+    let recent = opens_files
+        .then(|| {
+            app.registry
+                .places
+                .all()
+                .into_iter()
+                .map(|place| place.location)
+                .find(|location| app.lists_recent(location))
+        })
+        .flatten();
+    recent.unwrap_or_else(|| {
+        Location::from_path(skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")))
+    })
 }
 
 /// Whether the request asks for pictures or films alone, by the filter it
@@ -134,6 +157,17 @@ enum Dropdown {
 impl Chooser {
     fn asked(&self) -> &Asked {
         self.choosing.asked()
+    }
+
+    /// Whether it asks for files to open (not folders, not where to save).
+    pub(crate) fn opens_files(&self) -> bool {
+        matches!(
+            self.asked().kind,
+            Kind::Open {
+                directory: false,
+                ..
+            }
+        )
     }
 
     /// The choices as set, as the answer gives them (id, value).
@@ -284,7 +318,7 @@ fn all_files() -> Words {
 impl Shell {
     /// This window answers `choosing` (ADR-141): the bar shown, the name
     /// to save under typed in and its stem selected, the program's
-    /// filter in use. The pane shows where it starts (`start_folder`).
+    /// filter in use. The pane shows where it starts (`start_location`).
     pub(crate) fn answer_dialog(
         &mut self,
         choosing: Choosing,
@@ -422,6 +456,28 @@ impl Shell {
         };
         if let Answer::Chosen { paths, .. } = &answer {
             self.chooser_remember(chooser.asked(), paths);
+            // Files chosen are the desktop's recently used, as its own
+            // dialog adds them (ADR-144, 7); folders are not.
+            let choosing_folders = matches!(
+                chooser.asked().kind,
+                Kind::Open {
+                    directory: true,
+                    ..
+                }
+            );
+            if !choosing_folders {
+                let paths = paths.clone();
+                self.app.scheduler.spawn(
+                    skwir_core::scheduler::Priority::Normal,
+                    "ui-chooser-recent",
+                    self.app.lifetime().child(),
+                    move || {
+                        if let Err(error) = skwir_platform::recent::add(&paths) {
+                            tracing::warn!("the recently used files were not written: {error:#}");
+                        }
+                    },
+                );
+            }
         }
         chooser.choosing.answer(answer);
         {

@@ -98,7 +98,10 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
    is added to the desktop's recently used files
    (`recently-used.xbel`), as the desktop's own dialog adds it, unless
    the desktop is told to remember none (`gtk-recent-files-enabled` false
-   in GTK's settings, as GTK reads it).
+   or `gtk-recent-files-max-age` 0 in GTK's settings, GNOME's privacy
+   `remember-recent-files` off): a bookmark the list holds is visited and
+   Skwir's count of it goes up, another is added, the rest kept byte for
+   byte; a list that does not read is left for its programs to mend.
 8. **A program's recent folders**: the folders each program last chose
    in, five at most, newest first, are offered in the bar
    (`ui.chooser_folders`, which keeps them for the 50 programs that

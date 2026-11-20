@@ -1633,7 +1633,7 @@ fn open_new(
 }
 
 /// Another program's dialog (ADR-141): a window of its own, on where it
-/// starts (`chooser::start_folder`). The windows asleep, with none of the
+/// starts (`chooser::start_location`). The windows asleep, with none of the
 /// user's own up, stay asleep. One already answered (closed meanwhile)
 /// opens nothing.
 fn open_chooser(cx: &mut App, choosing: Choosing) {
@@ -1657,8 +1657,8 @@ fn open_chooser(cx: &mut App, choosing: Choosing) {
             );
         }
     }
-    let folder = crate::chooser::start_folder(&app, choosing.asked());
-    match app.open_window(Location::from_path(folder)) {
+    let start = crate::chooser::start_location(&app, choosing.asked());
+    match app.open_window(start) {
         Ok((id, _, _)) => {
             app.workspace.write().set_chooses(id, true);
             if !open_window(cx, id, false, None, false, Some(choosing.clone())) {

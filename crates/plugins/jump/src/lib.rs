@@ -650,6 +650,12 @@ impl LocationProvider for RecentProvider {
         Some(recent_title())
     }
 
+    /// The files used lately: what a dialog opening files offers first
+    /// (ADR-144, 7).
+    fn lists_recent(&self, _location: &Location) -> bool {
+        true
+    }
+
     fn icon(&self, _location: &Location) -> Option<&'static str> {
         Some("recent")
     }

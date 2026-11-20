@@ -727,6 +727,9 @@ process_too_much_input = { $program }: input too large
 # program: the name of a program Skwir ran, stopped as it wrote more than Skwir reads.
 process_too_much_output = { $program }: excessive output
 
+# Why a file chosen through another program's dialog was not added to the desktop's recently used files: the list is a link to a file that cannot be written (a dotfile manager's).
+recent_read_only = The list of recently used files is read-only; change it where it is managed
+
 # Why a book's fixed-layout page is not shown: it declares a width or height of zero.
 rich_preview_page_no_size = page has no size
 

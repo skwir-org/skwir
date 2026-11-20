@@ -585,6 +585,14 @@ pub trait LocationProvider: Send + Sync {
         true
     }
 
+    /// Whether `location` lists the files used lately (ADR-144, 7): a
+    /// window answering another program's dialog to open files offers it
+    /// first among its places, and starts there when nothing names a
+    /// folder. Answered from the text alone, as `title` is.
+    fn lists_recent(&self, _location: &Location) -> bool {
+        false
+    }
+
     /// Whether words typed in the address field can search what `location`
     /// lists, with it as their scope (ADR-098): a folder and its
     /// subfolders, a tag's place and every tag's (ADR-108), Recent's. The

@@ -2173,7 +2173,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   handed in through the same gate (`handover::take_over_choosing`), a
   window each (`finishing::open_chooser`), started where the request
   asks, else where its program last chose (`ui.chooser_folders`, by app
-  id), else home. The window chooses until it answers (`Shell::chooser`,
+  id), else, opening files, in what lists the files used lately
+  (`App::lists_recent`: Recent, first among its places there,
+  `sidebar::recent_first`), else home (`chooser::start_location`). The
+  files it answers with (not folders) are added to the desktop's
+  recently used files on a worker (`skwir_platform::recent::add`, ADR-144,
+  7: edited into `recently-used.xbel` as it stands, nothing written where
+  GTK's settings or GNOME's privacy say to remember none, nor into a list
+  that does not read). The window chooses until it answers (`Shell::chooser`,
   `chooser.rs`): a bar at its foot (the name typed, its stem selected,
   its extension swapped for the filter chosen's where one of the
   program's filters took it, `swapped_extension`, ADR-144, 6;
