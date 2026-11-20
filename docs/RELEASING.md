@@ -353,24 +353,43 @@ refuses a version the site holds made again with other bytes (what it
 holds changed: raise the version), and the version file or a key not
 committed. `just repository-check`
 tries the repositories in fresh Debian, Ubuntu and Fedora roots with
-throwaway keys: an index a stranger's key signed refused, a change of key
-followed, `skwir-repository` removed with its source and its key.
+throwaway keys: each starts from `skwir-repository` 1 as the site
+published it (`tools/package/repository/published`) and takes the update
+every system will; an index a stranger's key signed refused, a change of
+key followed and the old key let go of, an extension taken by Fedora's
+rpm, `skwir-repository` removed with its source and its key. It needs
+Debian's, Ubuntu's and Fedora's mirrors, and waits two minutes for a key
+to expire.
+
+**What rpm keeps of a key.** rpm keeps a key as dnf first imported it,
+its expiry included, and keeps a key `skwir-repository` no longer
+carries; dnf keeps the keys it read the index with (Fedora 44, tried). A
+package's scriptlet cannot change rpm's keys while the transaction holds
+its database, so `skwir-repository`'s `%posttrans` starts
+`/usr/libexec/skwir-repository/keys` (`tools/package/repository/keys.sh`)
+apart, which waits for the transaction to end: it imports again each key
+the package carries that rpm holds (rpm takes the newer copy) and lets go
+of each key `tools/package/repository/retired` names, in rpm and in dnf's
+keys for the index. Run as root, it does the same by hand.
 
 **Its expiry.** Once a key has expired, a system that trusts it refuses
 everything it signed, the update that would extend it included. `just
 repositories` says when each key expires and refuses one within 180 days
-of it. Extend it before then, and bring the extension to every system as
-an update:
+of it (a key with subkeys that sign, the last of them). Extend it before
+then, and bring the extension to every system as an update:
 
 ```sh
 gpg --quick-set-expire <its fingerprint> 5y
+gpg --quick-set-expire <its fingerprint> 5y '*'   # where subkeys sign
 gpg --armor --export <its fingerprint> > tools/package/repository/skwir.asc
 ```
 
 (`next.asc` for the key coming, below), then raise
 `tools/package/repository/version`, commit both and publish the
 repositories (with the next release, or alone from the last one's bundle:
-its packages are signed by the same key).
+its packages are signed by the same key). The update brings it to apt's
+keyring and to Fedora's key file, and its `%posttrans` to the copy rpm
+keeps (above).
 
 **A new key** reaches a system only through an index signed by a key it
 already has, and dnf refuses an index signed by two, so a change takes two
@@ -383,15 +402,21 @@ a new `skwir-repository` by hand):
    from the last one's bundle). The old key still signs the indexes, and
    the update brings the new one to every system that has the old.
 2. After a grace period of months, which lets the systems that update
-   rarely take the first step, put the new key in the old one's place
-   (`git mv -f tools/package/repository/next.asc
-   tools/package/repository/skwir.asc`: it replaces the old file), raise
-   the version again and commit, before the tag of the release that
+   rarely take the first step, name the old key's fingerprint in
+   `tools/package/repository/retired` (one a line, kept for good), put
+   the new key in the old one's place (`git mv -f
+   tools/package/repository/next.asc tools/package/repository/skwir.asc`:
+   it replaces the old file), raise the version again and commit, before
+   the tag of the release that
    publishes it. That release's `.rpm` files are signed by the new key,
    as the indexes are; a release made before is never published with it
    (`just repositories` refuses its packages, the old key's), so this
    step waits for a release. The new key signs the indexes, and the
-   update takes the old one away.
+   update takes the old one away: from apt's keyring and Fedora's key
+   files, and through its `%posttrans` from rpm and dnf (above), so that
+   a key that leaked is trusted no more. A Fedora system that removed
+   `skwir-repository` before still holds it in rpm: `sudo rpmkeys --delete
+   <its fingerprint>` (the release's notes say so).
 
 `just repositories` signs with the key of `skwir.asc`, whose secret part
 must be in the keyring, and carries the key of `next.asc` beside it while

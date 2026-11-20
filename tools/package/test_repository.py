@@ -85,6 +85,35 @@ class Keys(unittest.TestCase):
         self.assertEqual(repository.keys(listing((OLD, None), (NEW, 1826654515))),
                          [(OLD, None), (NEW, 1826654515)])
 
+    def test_a_key_signs_until_its_last_part_that_signs_expires(self):
+        def key(caps, *subkeys):
+            lines = [f"pub:-:255:22:{OLD[-16:]}:1795118515:::-:::{caps}:::::ed25519:::0:", f"fpr:::::::::{OLD}:"]
+            for i, (validity, expires, sub_caps) in enumerate(subkeys):
+                lines += [f"sub:{validity}:255:22:{i:016X}:1795118515:{expires or ''}:::::{sub_caps}:::::ed25519::",
+                          f"fpr:::::::::{i:040X}:"]
+            return "\n".join(lines) + "\n"
+        # A primary that only certifies: its subkeys that sign, the last of them.
+        self.assertEqual(repository.keys(key("cSC", ("-", 1900000000, "s"))), [(OLD, 1900000000)])
+        self.assertEqual(repository.keys(key("cSC", ("-", 1900000000, "s"), ("-", 1950000000, "s"))),
+                         [(OLD, 1950000000)])
+        # One expired or revoked never signs; one that encrypts is not asked.
+        self.assertEqual(repository.keys(key("cSC", ("-", 1900000000, "s"), ("r", None, "s"), ("-", None, "e"))),
+                         [(OLD, 1900000000)])
+        # A primary that signs goes on when its subkeys expire.
+        self.assertEqual(repository.keys(key("scSC", ("-", 1900000000, "s"))), [(OLD, None)])
+
+    def test_keys_retired_are_read_by_their_fingerprints_never_one_carried(self):
+        with tempfile.TemporaryDirectory() as folder:
+            listed = pathlib.Path(folder) / "retired"
+            self.assertEqual(repository.retired_keys(listed, [NEW]), [])
+            listed.write_text(f"# changed for {NEW}\n{OLD.lower()}  # the first\n\n")
+            self.assertEqual(repository.retired_keys(listed, [NEW]), [OLD])
+            for wrong, said in ((f"{OLD[:-1]}\n", "not a key's fingerprint"), (f"{NEW}\n", "skwir-repository carries it")):
+                listed.write_text(wrong)
+                with self.assertRaises(SystemExit) as refusal:
+                    repository.retired_keys(listed, [NEW])
+                self.assertIn(said, str(refusal.exception.code))
+
     def test_the_key_signs_with_the_key_coming_beside_it(self):
         later = int((NOW + datetime.timedelta(days=400)).timestamp())
         self.assertEqual(repository.unfit((OLD, None), None, True, NOW), [])
@@ -105,7 +134,8 @@ class Keys(unittest.TestCase):
         for signing, coming in (((OLD, soon), None), ((OLD, later), (NEW, soon))):
             said = repository.unfit(signing, coming, True, NOW)
             self.assertEqual(len(said), 1)
-            self.assertIn(" 5y), export it again, raise tools/package/repository/version", said[0])
+            self.assertIn(" 5y, and its subkeys that sign with '*'), export it again, raise"
+                          " tools/package/repository/version", said[0])
         self.assertEqual(repository.unfit((OLD, later), (NEW, later), True, NOW), [])
 
 

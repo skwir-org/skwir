@@ -60,6 +60,12 @@ on a system refuses every index, the update that would extend it included.
 The key that signs must sign here, and what it signs be read back with its
 file alone (`proven`), before anything is signed.
 
+rpm keeps a key as dnf first imported it, so `skwir-repository`'s `.rpm`
+carries tools/package/repository/keys.sh, which its `%posttrans` starts
+once the transaction is done: each key it carries that rpm holds imported
+again (an extension), each key `tools/package/repository/retired` names
+(`--retired`) let go of, by rpm and dnf's keys for the index.
+
 `skwir-repository` is dated by the last commit of its version file
 (`tools/package/repository/version`), its `.rpm`'s signature too, whatever
 `SOURCE_DATE_EPOCH` the shell sets, so it is made again identical until its
@@ -137,19 +143,25 @@ def released(bundle):
 
 def keys(listing):
     """Each key of a `gpg --with-colons --show-keys` listing: its primary
-    fingerprint and when it expires (seconds since the epoch, None for
-    never)."""
-    found, primary, expires = [], False, None
+    fingerprint and until when it signs (seconds since the epoch, None for
+    never): the primary's expiry, or sooner the last expiry of its parts
+    that sign (the primary where it signs, each subkey that does, gpg
+    signing with one while it is valid)."""
+    found = []
     for line in listing.splitlines():
         fields = line.split(":")
+        expires = int(fields[6]) if len(fields) > 6 and fields[6] else None
         if fields[0] == "pub":
-            primary, expires = True, int(fields[6]) if fields[6] else None
-        elif fields[0] == "fpr" and primary:
-            found.append((fields[9], expires))
-            primary = False
-        elif fields[0] == "sub":
-            primary = False
-    return found
+            found.append([None, expires, [expires] if "s" in fields[11] else []])
+        elif fields[0] == "fpr" and found and found[-1][0] is None:
+            found[-1][0] = fields[9]
+        elif fields[0] == "sub" and found and fields[1] not in ("e", "r") and "s" in fields[11]:
+            found[-1][2].append(expires)
+    said = []
+    for fingerprint, primary, parts in found:
+        last = None if not parts or None in parts else max(parts)
+        said.append((fingerprint, min((e for e in (primary, last) if e is not None), default=None)))
+    return said
 
 
 def unfit(signing, coming, secret, now):
@@ -168,9 +180,9 @@ def unfit(signing, coming, secret, now):
             when = datetime.datetime.fromtimestamp(expires, datetime.UTC)
             if when - now < LEAD:
                 said.append(f"{fingerprint} expires on {when:%Y-%m-%d}: extend it"
-                            f" (gpg --quick-set-expire {fingerprint} 5y), export it again, raise"
-                            " tools/package/repository/version and commit both, so that every system has"
-                            " it before it expires (docs/RELEASING.md)")
+                            f" (gpg --quick-set-expire {fingerprint} 5y, and its subkeys that sign with '*'),"
+                            " export it again, raise tools/package/repository/version and commit both, so"
+                            " that every system has it before it expires (docs/RELEASING.md)")
     return said
 
 
@@ -228,6 +240,21 @@ def proven(fingerprint, public):
             reason = (read.stderr.strip().splitlines() or ["no reason given"])[-1]
             sys.exit(f"{public}: does not read what {fingerprint} signs ({reason}), and systems hold that file:"
                      f" export the key again (gpg --armor --export {fingerprint}), docs/RELEASING.md")
+
+
+def retired_keys(listed, carried):
+    """The fingerprints `listed` names (a file, one a line, `#` beginning a
+    note; none where there is no file): keys skwir-repository carried
+    before, which rpm and dnf let go of. Never one it carries."""
+    if not listed.is_file():
+        return []
+    found = [line.split("#")[0].strip().upper() for line in listed.read_text().splitlines()]
+    found = [fingerprint for fingerprint in found if fingerprint]
+    if wrong := [f for f in found if not re.fullmatch(r"[0-9A-F]{40}", f)]:
+        sys.exit(f"{listed}: {', '.join(wrong)}: not a key's fingerprint (40 hexadecimal digits)")
+    if kept := sorted(set(found) & {f.upper() for f in carried}):
+        sys.exit(f"{listed}: {', '.join(kept)}: retired, and skwir-repository carries it")
+    return found
 
 
 def signer(public, coming):
@@ -318,9 +345,11 @@ def link(source, dest):
         shutil.copy2(source, dest)
 
 
-def package(work, name, packager, version, contents, description, out):
+def package(work, name, packager, version, contents, description, out, scripts=None, folders=()):
     """A package of its own made by nfpm, dated by `epoch`: `contents`
-    (source, destination, whether it is a configuration file)."""
+    (source, destination, whether it is a configuration file, and the
+    mode, 0o644 unless said), `scripts` nfpm's for its packager (each a
+    file), `folders` of its own, which go with it."""
     config = work / f"{out.stem}.nfpm.json"
     config.write_text(json.dumps({
         "name": name,
@@ -338,11 +367,13 @@ def package(work, name, packager, version, contents, description, out):
         # nfpm names the machine that made an `.rpm` (`os.Hostname()`) unless
         # told otherwise, and the published index repeats it: a name here
         # that is no one's.
-        "rpm": {"buildhost": "localhost"},
+        "rpm": {"buildhost": "localhost", **({"scripts": scripts} if scripts and packager == "rpm" else {})},
         "contents": [
             {"src": str(src), "dst": dst, "type": "config|noreplace" if config_file else "file",
-             "file_info": {"mode": 0o644}}
-            for src, dst, config_file in contents
+             "file_info": {"mode": mode[0] if mode else 0o644}}
+            for src, dst, config_file, *mode in contents
+        ] + [
+            {"dst": folder, "type": "dir", "file_info": {"mode": 0o755}} for folder in folders
         ],
     }))
     run("nfpm", "package", "--config", config, "--packager", packager, "--target", out,
@@ -408,10 +439,10 @@ def apt_repository(work, bundle, tag, base, carried, key, version):
     return folder
 
 
-def rpm_repository(work, bundle, tag, base, carried, key, version):
+def rpm_repository(work, bundle, tag, base, carried, key, version, retired):
     """dnf's repository, made in `work`, its repo file trusting the keys
-    `carried` (the key that signs, then the key coming): the folder to
-    publish."""
+    `carried` (the key that signs, then the key coming), the fingerprints
+    `retired` those of keys it carried before: the folder to publish."""
     folder = work / "rpm"
     root = folder / "fedora"
     rpms = sorted(p for p in bundle.iterdir() if RPMS.fullmatch(p.name))
@@ -431,10 +462,26 @@ def rpm_repository(work, bundle, tag, base, carried, key, version):
         "repo_gpgcheck=1\ngpgcheck=1\ngpgkey=" + " ".join(f"file://{dest}" for _, dest, _ in keys) + "\n")
     own = root / "own" / "skwir-repository.rpm"
     own.parent.mkdir(parents=True)
+    # What rpm and dnf keep of the keys, brought to what the package carries
+    # once its transaction is done (tools/package/repository/keys.sh): rpm
+    # keeps a key as first imported, so an extension and a key retired reach
+    # it only so.
+    listed = work / "keys"
+    listed.write_text(
+        "# What skwir-repository carries of the repositories' keys, for\n"
+        "# /usr/libexec/skwir-repository/keys: each key it carries, by its\n"
+        "# fingerprint and file, and each it carried before (retired).\n"
+        + "".join(f"carried {key_of(public)[0]} {dest}\n" for public, dest, _ in keys)
+        + "".join(f"retired {fingerprint}\n" for fingerprint in retired))
     # A configuration file, which rpm erases with the package all the same
     # (or keeps as `.rpmsave`, which dnf never reads).
-    package(work, "skwir-repository", "rpm", version, [(repo, "/etc/yum.repos.d/skwir.repo", True), *keys],
-            "Skwir's repository for Fedora, so the system updates Skwir", own)
+    package(work, "skwir-repository", "rpm", version,
+            [(repo, "/etc/yum.repos.d/skwir.repo", True), *keys,
+             (HERE / "keys.sh", "/usr/libexec/skwir-repository/keys", False, 0o755),
+             (listed, "/usr/share/skwir-repository/keys", False)],
+            "Skwir's repository for Fedora, so the system updates Skwir", own,
+            scripts={"posttrans": str(HERE / "posttrans.sh")},
+            folders=["/usr/libexec/skwir-repository", "/usr/share/skwir-repository"])
     # Signed as the release's are, dated as its files are: made again the same.
     run(ROOT / "tools/package/rpm-sign.sh", carried[0], "--at", epoch(), own, stdout=subprocess.DEVNULL)
     run("createrepo_c", "--quiet", "--general-compress-type=zstd", root)
@@ -478,6 +525,9 @@ def main():
                         help="the repositories' public key, which signs (its secret part in GnuPG's keyring)")
     parser.add_argument("--next", help="the key coming while the key changes, carried beside it (by default"
                         " tools/package/repository/next.asc, where there is one; '' for none)")
+    parser.add_argument("--retired", type=pathlib.Path, help="the fingerprints of the keys skwir-repository"
+                        " carried before and no longer does, one a line (by default"
+                        " tools/package/repository/retired, where there is one)")
     parser.add_argument("--base", help="the site's address (by default Cargo.toml's homepage)")
     parser.add_argument("--version", help="skwir-repository's version (by default tools/package/repository/version)")
     args = parser.parse_args()
@@ -502,10 +552,15 @@ def main():
     tag = released(bundle)["tag"]
     version = args.version or (HERE / "version").read_text().strip()
     base = (args.base or homepage()).rstrip("/")
-    # What skwir-repository holds of this tree, as committed.
-    held = [path.resolve() for path in ([] if args.version else [HERE / "version"]) + [args.key, coming] if path]
+    # What skwir-repository holds of this tree, as committed (all but when a
+    # version is named: repository-check tries the tree as it is).
+    held = [path.resolve() for path in ([] if args.version else [HERE / "version", HERE / "keys.sh",
+                                                                  HERE / "posttrans.sh"])
+            + [args.key, coming, args.retired or HERE / "retired"] if path and path.exists()]
     committed([path for path in held if path.is_relative_to(ROOT)])
     key = signer(args.key, coming)
+    retired = retired_keys(args.retired or HERE / "retired",
+                           [key_of(args.key)[0], *([key_of(coming)[0]] if coming else [])])
     # Before anything is signed: dnf checks each package (`gpgcheck`).
     rpms = sorted(p for p in bundle.iterdir() if RPMS.fullmatch(p.name))
     if refused := unsigned(rpms, args.key):
@@ -519,7 +574,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="skwir-repositories-") as work:
         work = pathlib.Path(work)
         apt = apt_repository(work, bundle, tag, base, carried, key, version)
-        rpm = rpm_repository(work, bundle, tag, base, carried, key, version)
+        rpm = rpm_repository(work, bundle, tag, base, carried, key, version, retired)
         if changed := [*changed_since(apt / "own", site / "apt/own"),
                        *changed_since(rpm / "fedora/own", site / "rpm/fedora/own")]:
             sys.exit(f"{', '.join(map(str, changed))}: published as skwir-repository {version}, and what it holds"

@@ -16,6 +16,19 @@
 - `next.asc`, only while the key changes (`docs/RELEASING.md`, A new key):
   the key coming, which `skwir-repository` carries beside the one that
   signs until it takes that one's place.
+- `retired`, once a key has been changed (`docs/RELEASING.md`, A new key):
+  the fingerprints of the keys `skwir-repository` carried before, one a
+  line, which rpm and dnf let go of on Fedora.
+- `keys.sh` and `posttrans.sh`: what `skwir-repository`'s `.rpm` carries
+  as `/usr/libexec/skwir-repository/keys` and starts from its
+  `%posttrans`, once the transaction is done: rpm keeps a key as dnf first
+  imported it, so an extension and a key retired reach rpm (and dnf's keys
+  for the index) only through it (`docs/RELEASING.md`, What rpm keeps of a
+  key).
+- `published`: `skwir-repository` 1 as the site published it on
+  2026-11-20 (unsigned, its dnf repository `gpgcheck=0`), from which
+  every system that added the repositories then updates:
+  `repository-check.sh` starts its roots from it. Never made again.
 - A key's expiry is its own (`gpg --show-keys skwir.asc`):
   `tools/package/repository.py` says it at each release and refuses either
   key within 180 days of it. Extend it before then, export it again and

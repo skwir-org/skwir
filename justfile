@@ -340,9 +340,10 @@ repositories tag site="../skwir-site/static":
     PATH="$(nixpkgs apt)/bin:$(nixpkgs createrepo_c)/bin:$(nixpkgs gnupg)/bin:$(nixpkgs nfpm)/bin:$(nixpkgs rpm)/bin:$PATH" \
         python3 tools/package/repository.py target/releases/{{quote(tag)}} --site {{quote(site)}}
 
-# With a throwaway key against a stand-in for the site, the newest bundle in
+# With throwaway keys against a stand-in for the site, the newest bundle in
 # target/releases or the one named: the repositories tried in fresh Debian,
-# Ubuntu and Fedora roots, an upgrade included (ADR-142).
+# Ubuntu and Fedora roots from skwir-repository 1 as published, a change of
+# key and an extension included (ADR-142); the distributions' mirrors needed.
 repository-check bundle="":
     #!/usr/bin/env bash
     set -euo pipefail
