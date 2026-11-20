@@ -4801,6 +4801,12 @@ placeholder_name_empty = No name here holds { $filter }. Press Enter in the addr
 
 placeholder_nothing = Nothing here
 
+# In a window answering another program's Open dialog, where the filter that program asked for (filter: its name, as the program gave it: Pictures, JPEG) leaves out every file of the folder.
+placeholder_program_filtered = No files for { $filter } here
+
+# Under "No files for … here"; All files is the filter dropdown's last choice in the bar at the window's foot.
+placeholder_program_filtered_detail = The program asks for { $filter }. Choose All files in the bar to see every file.
+
 placeholder_reading = Reading the details of the files…
 
 # filter: what was typed in the address to filter the folder.
@@ -4812,6 +4818,8 @@ placeholder_reading_files = Reading the details of { $count ->
     }…
 
 placeholder_retry = Try again
+
+placeholder_show_all_files = Show all files
 
 placeholder_show_companions = Show hidden and companion files
 

@@ -220,6 +220,14 @@ impl Chooser {
         self.choosing.asked()
     }
 
+    /// The name of the program's filter in use, as the program gave it;
+    /// none for All files.
+    pub(crate) fn filter_name(&self) -> Option<String> {
+        self.filter
+            .and_then(|at| self.asked().filters.get(at))
+            .map(|filter| filter.name.clone())
+    }
+
     /// Whether it asks for files to open (not folders, not where to save).
     pub(crate) fn opens_files(&self) -> bool {
         matches!(

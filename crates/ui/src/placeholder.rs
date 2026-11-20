@@ -79,6 +79,33 @@ pub fn empty_folder(new_folder_keys: Option<&str>) -> Placeholder {
     }
 }
 
+/// What is here the program's filter leaves out, in a window answering
+/// its dialog (ADR-141, 6): named by the filter (`filter`, as the program
+/// calls it), with the way to see every file, the bar's All files
+/// (`ui.chooser_filter` given none).
+pub fn program_filtered(filter: &str) -> Placeholder {
+    Placeholder {
+        icon: "search",
+        title: words!(
+            placeholder_program_filtered = "No files for { $filter } here",
+            filter = skwir_core::words::Name(filter.to_owned()),
+            note = "In a window answering another program's Open dialog, where the filter that program asked for (filter: its name, as the program gave it: Pictures, JPEG) leaves out every file of the folder."
+        )
+        .say(),
+        detail: words!(
+            placeholder_program_filtered_detail = "The program asks for { $filter }. Choose All files in the bar to see every file.",
+            filter = skwir_core::words::Name(filter.to_owned()),
+            note = "Under \"No files for … here\"; All files is the filter dropdown's last choice in the bar at the window's foot."
+        )
+        .say(),
+        action: Some((
+            words!(placeholder_show_all_files = "Show all files").say(),
+            "ui.chooser_filter",
+        )),
+        problem: false,
+    }
+}
+
 /// What is here is hidden, and hidden files are off.
 pub fn only_hidden(show_keys: Option<&str>) -> Placeholder {
     Placeholder {
@@ -238,6 +265,19 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
             problem: false,
         });
     }
+    // Left out by the filter of the program whose dialog the window
+    // answers, not by the user's (ADR-141, 6): said, with the way to every
+    // file, rather than "empty". Choosing folders, files show dimmed and
+    // nothing is left out.
+    if state.admits().is_some_and(|admits| !admits.dims)
+        && !state.unfiltered_order().is_empty()
+        && let Some(filter) = shell
+            .chooser
+            .as_ref()
+            .and_then(crate::chooser::Chooser::filter_name)
+    {
+        return Some(program_filtered(&filter));
+    }
     // Nothing shown, nothing filtered out, yet entries there: hidden ones,
     // or only files that keep others' notes (ADR-028), which hidden files
     // alone do not show. Said, with the way to see them, rather than what
@@ -336,7 +376,7 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use super::{EmptyState, empty_folder, empty_place, failure};
+    use super::{EmptyState, empty_folder, empty_place, failure, program_filtered};
     use skwir_core::words::Words;
 
     #[test]
@@ -403,5 +443,14 @@ mod tests {
         );
         assert!(!shelf.problem);
         assert_eq!(empty_place(None, None).title, "Nothing here");
+        // A program's filter that leaves out every file is named, with
+        // the way to every file (ADR-141, 6), never "empty".
+        let filtered = program_filtered("Pictures");
+        assert!(filtered.title.contains("Pictures"));
+        assert!(filtered.detail.contains("All files"));
+        assert_eq!(
+            filtered.action,
+            Some(("Show all files".to_owned(), "ui.chooser_filter"))
+        );
     }
 }
