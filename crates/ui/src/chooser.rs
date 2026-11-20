@@ -1074,38 +1074,35 @@ impl Shell {
         }
     }
 
-    /// `open` while choosing (Enter, a double click): a file is the answer
-    /// (saving, its name is the one typed, and it is saved over once asked),
-    /// a folder is gone into as ever. Whether it was taken here.
+    /// `open` while choosing (Enter, a double click), decided by the entry
+    /// under the cursor, else the first selected (`chooser_selected`): a
+    /// folder is gone into, alone, whatever else is selected; a file is
+    /// the answer (saving, its name is the one typed, and it is saved over
+    /// once asked), or, choosing folders or where to save several, taken
+    /// and never opened in another program from here: it only says where
+    /// one is (ADR-144, 9). Whether it was taken here.
     pub(crate) fn chooser_open(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(chooser) = &self.chooser else {
             return false;
         };
         let (kind, field) = (chooser.asked().kind.clone(), chooser.name.clone());
-        let selected = self.chooser_selected();
-        let files = selected.iter().any(|(_, dir)| !dir);
+        let Some((path, dir)) = self.chooser_selected().into_iter().next() else {
+            return false;
+        };
+        if dir {
+            let go = skwir_core::command::Invocation::navigate(&Location::from_path(path));
+            self.run(&go.name, go.args, window, cx);
+            return true;
+        }
         match kind {
-            // A folder opens; choosing folders, the button answers, and a
-            // file is never opened in another program from here: it only
-            // says where one is (ADR-144, 9).
             Kind::Open {
                 directory: true, ..
             }
-            | Kind::SaveFiles { .. } => files,
-            Kind::Open { .. } if files => {
-                self.chooser_accept(window, cx);
-                true
-            }
+            | Kind::SaveFiles { .. } => {}
+            Kind::Open { .. } => self.chooser_accept(window, cx),
             // The file chosen is the answer at its own path, its name as its
             // bytes are, asked Replace? on it.
-            Kind::Save { .. } if files => {
-                let Some(path) = selected
-                    .into_iter()
-                    .find(|(_, dir)| !dir)
-                    .map(|(path, _)| path)
-                else {
-                    return false;
-                };
+            Kind::Save { .. } => {
                 if let Some(name) = path.file_name() {
                     let shown = name.to_string_lossy().into_owned();
                     if let Some(chooser) = &mut self.chooser {
@@ -1116,10 +1113,9 @@ impl Shell {
                     }
                 }
                 self.chooser_save_at(path, window, cx);
-                true
             }
-            Kind::Open { .. } | Kind::Save { .. } => false,
         }
+        true
     }
 
     /// The filter at `index` in use (`None`: all files), its list closed.
