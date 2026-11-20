@@ -75,15 +75,30 @@ def metadata(tag):
     cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())
     require(cargo["workspace"]["package"]["version"] == version,
             "The tag and workspace version disagree")
+    crates = []
     for manifest in (ROOT / "crates").rglob("Cargo.toml"):
         package = tomllib.loads(manifest.read_text()).get("package", {})
         require(package.get("version") in (version, {"workspace": True}),
                 f"{manifest.relative_to(ROOT)} does not share the release version")
+        if package:
+            crates.append(package["name"])
+    # Cargo.lock names each crate of the workspace at the release's version:
+    # the packages build `--locked` and refuse it otherwise, an hour into
+    # release-build (docs/RELEASING.md, step 1).
+    locked = {p["name"]: p["version"] for p in tomllib.loads((ROOT / "Cargo.lock").read_text()).get("package", [])
+              if "source" not in p}
+    for name in crates:
+        require(locked.get(name) == version, f"Cargo.lock names {name} {locked.get(name)}, not {version}:"
+                " run any cargo command (`cargo update --workspace`) and commit it (docs/RELEASING.md, step 1)")
     # skwir-git's is the commit it builds (aur.py names it at publication).
     for path in ("tools/package/aur/PKGBUILD", "tools/package/aur/skwir-bin/PKGBUILD"):
         pkgbuild = (ROOT / path).read_text()
         require(re.search(rf"^pkgver={re.escape(version)}$", pkgbuild, re.M),
                 f"{path}'s version disagrees")
+        # The AUR takes .SRCINFO beside it, which `just package-aur` makes.
+        srcinfo = Path(path).with_name(".SRCINFO")
+        require(re.search(rf"^\tpkgver = {re.escape(version)}$", (ROOT / srcinfo).read_text(), re.M),
+                f"{srcinfo}'s version disagrees: run `just package-aur` and commit it (docs/RELEASING.md, step 1)")
     changelog = (ROOT / "CHANGELOG.md").read_text()
     section = re.search(rf"^## {re.escape(version)} \((\d{{4}}-\d{{2}}-\d{{2}})\)\n"
                         r"(.*?)(?=^## |\Z)", changelog, re.M | re.S)

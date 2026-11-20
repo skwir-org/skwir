@@ -180,6 +180,10 @@ class ReleaseTests(unittest.TestCase):
         files = {
             ".gitignore": "/target/\n",
             "Cargo.toml": '[workspace.package]\nversion = "1.2.3"\n',
+            "Cargo.lock": '[[package]]\nname = "serde"\nversion = "1.0.0"\nsource = "registry+https://example.invalid"\n'
+                '\n[[package]]\nname = "skwir"\nversion = "1.2.3"\n',
+            "tools/package/aur/.SRCINFO": "pkgbase = skwir\n\tpkgver = 1.2.3\n\tpkgrel = 1\n",
+            "tools/package/aur/skwir-bin/.SRCINFO": "pkgbase = skwir-bin\n\tpkgver = 1.2.3\n\tpkgrel = 1\n",
             "CHANGELOG.md": "# Changes\n\n## 1.2.3 (2026-10-11)\n\n" + NOTES + "\n## 1.2.2 (2026-10-10)\nOld notes.\n",
             "docs/HELP.md": "# Help\n",
             "docs/icon.svg": "<svg/>\n",
@@ -493,6 +497,18 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
             self.assertIn(f"not in the source: {target}", self.cli("metadata", ok=False))
         self.cli("metadata", ok=False, tag="v1.2.4")
         self.cli("metadata", ok=False, tag="v1.2.3;echo unsafe")
+        changelog.write_text(original)
+        # What the version's bump changes beside: Cargo.lock, which the
+        # packages build `--locked` with, and the AUR's .SRCINFO.
+        for path, said in (("Cargo.lock", "Cargo.lock names skwir 1.2.2, not 1.2.3"),
+                           ("tools/package/aur/skwir-bin/.SRCINFO",
+                            "tools/package/aur/skwir-bin/.SRCINFO's version disagrees")):
+            stale = self.root / path
+            kept = stale.read_text()
+            stale.write_text(kept.replace('version = "1.2.3"', 'version = "1.2.2"').replace("= 1.2.3", "= 1.2.2"))
+            self.assertIn(said, self.cli("metadata", ok=False))
+            stale.write_text(kept)
+        self.cli("metadata")
 
     def test_documents_name_the_release_or_no_version(self):
         readme, guide = self.root / "README.md", self.root / "docs/guide.md"
