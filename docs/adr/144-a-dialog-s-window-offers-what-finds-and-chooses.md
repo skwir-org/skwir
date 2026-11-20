@@ -63,7 +63,10 @@ one tab).
    so; nor are the pinned player (pinning, a menu's Play, Keep playing),
    Activity, a lens and its own commands (Usage's, the Map's), a
    slideshow, what changes the user's servers or publishes a file, a
-   picture's position rewritten, nor a command that leads to one the
+   picture's position rewritten, a plugin from outside's command (a
+   program or a module may change files or start programs, which the host
+   cannot tell, until its manifest can say a command is fit for a
+   dialog), nor a command that leads to one the
    window does not offer (`Declared::leads_to`: a picker's source and
    choices, a prompt's command, an item of the preview's menu: Open
    With's picker, Print…, the split's panes placed by `ui.layout`).

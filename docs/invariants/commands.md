@@ -75,6 +75,11 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
     command, `ui.preview_invoke`'s), and is offered only where that one is.
   - What a dialog offers that changes files or opens a program is listed
     in `crates/skwir/tests/dialogs_offer.rs`: a new one says why there.
+  - A plugin from outside's commands are never offered there, whatever
+    its manifest says they are about (`skwir-extend`'s `commands.rs`,
+    `not_in_dialogs`): a program or a module may change files or start
+    programs, which the host cannot tell, and the manifest cannot yet say
+    a command is fit for a dialog.
   - A key whose command the window does not run does there what it would
     with nothing bound (`Shell::on_run_command` lets it go on), and F1
     lists it nowhere.
@@ -335,7 +340,8 @@ control plugin's `run`:
 - What a plugin from outside can provide is the protocol's: fields,
   thumbnails, previews, commands. A new kind is a new method and a new
   protocol version, on both transports at once, documented in
-  `docs/plugins/protocol.md`.
+  `docs/plugins/protocol.md`. Its commands are not offered in a window
+  answering another program's dialog (ADR-144, 1; above).
 - The protocol is experimental (ADR-047): a version may change what an
   older one said until it is declared stable, `OLDEST` following it, and
   the release notes say so. Once stable, Skwir keeps speaking older
