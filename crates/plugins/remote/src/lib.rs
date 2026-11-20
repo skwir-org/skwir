@@ -1525,7 +1525,14 @@ impl Remotes {
             .unwrap_or_else(|| "automatic".to_owned());
         let mut places = Vec::new();
         let mut known = Vec::new();
-        for m in mounted.iter() {
+        // A mount a server names is drawn as that server's place.
+        let held = held(&state.servers, &mounted);
+        let mut named = vec![false; mounted.len()];
+        for (at, _) in held.iter().flatten() {
+            named[*at] = true;
+        }
+        let mut of_servers: Vec<Option<Place>> = vec![None; mounted.len()];
+        for (at, m) in mounted.iter().enumerate() {
             let point = &m.remote.point;
             let address = m.recognised.address.as_ref();
             let key = address.map_or_else(|| point.display().to_string(), ToString::to_string);
@@ -1619,6 +1626,10 @@ impl Remotes {
                     .menu
                     .extend(configure::server_items(address, &state.at_login));
             }
+            if named[at] {
+                of_servers[at] = Some(place);
+                continue;
+            }
             if let Some(name) = address.and_then(configure::remote_name) {
                 let kind = state
                     .servers
@@ -1675,14 +1686,19 @@ impl Remotes {
             ));
             places.push(place);
         }
-        for server in &state.servers {
-            let shown = mounted.iter().any(|m| {
-                m.recognised
-                    .address
-                    .as_ref()
-                    .is_some_and(|a| a.below(&server.address).is_some())
-            });
-            if shown {
+        for (server, held) in state.servers.iter().zip(&held) {
+            if let Some((at, below)) = held
+                && let Some(place) = of_servers[*at].clone()
+            {
+                let busy = state.busy.get(&server.address.to_string()).cloned();
+                places.push(as_mounted(
+                    place,
+                    server,
+                    &mounted[*at],
+                    below,
+                    busy,
+                    &unfinished,
+                ));
                 continue;
             }
             let location = server.address.location();
@@ -1694,25 +1710,18 @@ impl Remotes {
             place
                 .menu
                 .extend(configure::server_items(&server.address, &state.at_login));
-            if let Some(name) = configure::remote_name(&server.address) {
-                let half_made = unfinished.iter().any(|u| u == name);
-                place.menu.extend(configure::menu_items(
-                    name,
-                    configure::signs_in(&server.kind),
-                    half_made,
+            place.menu.extend(own_items(server, &unfinished));
+            // Drawn as not ready, saying why, opened all the same.
+            if let Some(name) = configure::remote_name(&server.address)
+                && unfinished.iter().any(|u| u == name)
+            {
+                place.unavailable = Some(words!(
+                    remote_half_made =
+                        "{ $name } is not finished setting up: Finish Setting Up… in its menu",
+                    name = name,
+                    note = "name: a remote of rclone's, as its configuration names it. \
+                            Finish Setting Up… is the item of its menu."
                 ));
-                // Drawn as not ready, saying why, opened all the same.
-                if half_made {
-                    place.unavailable = Some(words!(
-                        remote_half_made =
-                            "{ $name } is not finished setting up: Finish Setting Up… in its menu",
-                        name = name,
-                        note = "name: a remote of rclone's, as its configuration names it. \
-                                Finish Setting Up… is the item of its menu."
-                    ));
-                }
-            } else if server.kept.by_address() {
-                place.menu.extend(configure::kept_items(&server.address));
             }
             places.push(place);
         }
@@ -1737,6 +1746,73 @@ impl Remotes {
         app.registry.places.replace_owner(ID, places);
         app.registry.remotes.replace_owner(ID, known);
         app.wake();
+    }
+}
+
+/// The mount that holds each of `servers`, by its index in `mounted`, and
+/// where in it the server's folder is: the first mount whose address the
+/// server's is below (`sftp://nas/srv/photos` in the mount of
+/// `sftp://me@nas/`, at `srv/photos`). `None` where none holds it.
+fn held<'a>(servers: &'a [Server], mounted: &[Mounted]) -> Vec<Option<(usize, &'a [u8])>> {
+    servers
+        .iter()
+        .map(|server| {
+            mounted.iter().enumerate().find_map(|(at, m)| {
+                let below = m.recognised.address.as_ref()?.below(&server.address)?;
+                Some((at, below))
+            })
+        })
+        .collect()
+}
+
+/// `server`'s place while `m` holds it, at `below`: the mount's `place`
+/// (its eject, its space, its thumbnails, the connection's items) under
+/// the server's name and key, opening the server's own folder. A server
+/// is one place mounted or not (`docs/invariants/remote.md`): what the
+/// user named, moved or hid it as holds, and it never opens the mount's
+/// root where the server names a folder. `busy`: what is being done to
+/// the server, where nothing is to its mount.
+fn as_mounted(
+    mut place: Place,
+    server: &Server,
+    m: &Mounted,
+    below: &[u8],
+    busy: Option<Words>,
+    unfinished: &[String],
+) -> Place {
+    place.title = server.label.clone();
+    place.key = Some(format!("remote:{}", server.address));
+    // kio-fuse holds a server's folders once asked for each: one below
+    // its mount is opened by its address, which asks for it.
+    let asked = m.connector.as_ref().is_some_and(|c| c.mounts_each_path());
+    place.location = if asked && !below.is_empty() {
+        server.address.location()
+    } else {
+        Location::from_path(join(&m.remote.point, below))
+    };
+    // Connected again where it was lost: in its own folder.
+    if place.activate.is_some() {
+        place.activate = Some(Invocation::navigate(&server.address.location()));
+    }
+    place.busy = place.busy.or(busy);
+    place.menu.extend(own_items(server, unfinished));
+    place
+}
+
+/// A server's own items in its place's menu, mounted or not: an rclone
+/// remote's (Edit, Test, Finish Setting Up… while `unfinished` names it),
+/// one added by its address its Edit and Remove.
+fn own_items(server: &Server, unfinished: &[String]) -> Vec<skwir_core::registry::MenuItem> {
+    if let Some(name) = configure::remote_name(&server.address) {
+        configure::menu_items(
+            name,
+            configure::signs_in(&server.kind),
+            unfinished.iter().any(|u| u == name),
+        )
+    } else if server.kept.by_address() {
+        configure::kept_items(&server.address)
+    } else {
+        Vec::new()
     }
 }
 
@@ -3459,5 +3535,180 @@ mod tests {
         assert!(remotes.state.lock().waiting.is_empty());
         assert_eq!(remotes.refreshes(), before, "nothing read again");
         let _ = std::fs::remove_file(&socket);
+    }
+
+    /// A tool that mounts a server's folders one by one (as kio-fuse):
+    /// only what `as_mounted` asks of it.
+    struct EachPath;
+
+    impl Connector for EachPath {
+        fn id(&self) -> &'static str {
+            "each-path"
+        }
+        fn title(&self) -> Words {
+            Words::as_written("each path")
+        }
+        fn schemes(&self) -> &'static [Scheme] {
+            &[Scheme::Sftp]
+        }
+        fn unavailable(&self) -> Option<Words> {
+            None
+        }
+        fn connect(
+            &self,
+            _: &Address,
+            _: &Arc<dyn Ask>,
+            _: &CancelToken,
+        ) -> anyhow::Result<Connected> {
+            anyhow::bail!("not asked")
+        }
+        fn recognises(&self, _: &Remote) -> Option<Recognised> {
+            None
+        }
+        fn disconnect(&self, _: &Remote, _: &Recognised, _: &CancelToken) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn mounts_each_path(&self) -> bool {
+            true
+        }
+    }
+
+    fn kept(label: &str, address: &str) -> connector::Server {
+        connector::Server {
+            address: Address::parse(address).unwrap(),
+            label: Words::as_written(label.to_owned()),
+            kind: String::new(),
+            kept: servers::Kept::Skwir,
+        }
+    }
+
+    fn mount(address: &str, point: &str, connector: Option<Arc<dyn Connector>>) -> super::Mounted {
+        super::Mounted {
+            remote: Arc::new(Remote {
+                point: PathBuf::from(point),
+                fstype: "fuse.sshfs".into(),
+                source: "nas:/".into(),
+                device: None,
+            }),
+            connector,
+            recognised: Recognised {
+                address: Some(Address::parse(address).unwrap()),
+                label: Words::as_written("me@nas"),
+                ours: true,
+                device: None,
+            },
+        }
+    }
+
+    /// The mount's own place, as `publish` makes it before a server takes
+    /// it: at its root, under its own name and key, with its eject.
+    fn mount_place(m: &super::Mounted) -> Place {
+        let mut place = Place::new(
+            super::GROUP,
+            m.recognised.label.clone(),
+            "folder-remote",
+            Location::from_path(&m.remote.point),
+        );
+        place.key = Some("remote:sftp://me@nas/".into());
+        place.eject = Some(Invocation::new("remote.disconnect"));
+        place
+    }
+
+    /// Each server a mount holds, found in it by its own folder; one above
+    /// the mount, or on another server, in none. An SMB server's folder is
+    /// below its share's mount.
+    #[test]
+    fn a_server_is_found_in_the_mount_that_holds_its_folder() {
+        let listed = [
+            kept("Photos", "sftp://nas/srv/photos"),
+            kept("Music", "sftp://nas/srv/music"),
+            kept("Above", "sftp://nas2/srv"),
+            kept("Elsewhere", "sftp://other/"),
+            kept("Year", "smb://nas/photos/2024"),
+        ];
+        let mounted = [
+            mount("sftp://me@nas/", "/run/m/nas", None),
+            mount("sftp://nas2/srv/photos", "/run/m/nas2", None),
+            mount("smb://nas/photos/", "/run/m/share", None),
+        ];
+        let held: Vec<Option<(usize, &[u8])>> = super::held(&listed, &mounted);
+        assert_eq!(
+            held,
+            [
+                Some((0, b"srv/photos".as_slice())),
+                Some((0, b"srv/music".as_slice())),
+                None,
+                None,
+                Some((2, b"2024".as_slice())),
+            ]
+        );
+    }
+
+    /// A server kept with a folder, mounted, is still its own place: its
+    /// name, its key (what the user renamed, moved or hid it as), its Edit
+    /// and Remove, opening its folder in the mount, not the mount's root;
+    /// with the mount's eject. Two of one server are two places.
+    #[test]
+    fn a_server_mounted_opens_its_own_folder_as_its_own_place() {
+        let m = mount("sftp://me@nas/", "/run/m/nas", None);
+        for (server, folder) in [
+            (
+                kept("Photos", "sftp://nas/srv/photos"),
+                "/run/m/nas/srv/photos",
+            ),
+            (
+                kept("Music", "sftp://nas/srv/music"),
+                "/run/m/nas/srv/music",
+            ),
+        ] {
+            let below = m
+                .recognised
+                .address
+                .as_ref()
+                .unwrap()
+                .below(&server.address)
+                .unwrap();
+            let place = super::as_mounted(mount_place(&m), &server, &m, below, None, &[]);
+            assert_eq!(place.title, server.label);
+            assert_eq!(place.key, Some(format!("remote:{}", server.address)));
+            assert_eq!(place.location, Location::from_path(folder));
+            assert_eq!(place.eject, Some(Invocation::new("remote.disconnect")));
+            assert!(place.activate.is_none());
+            let edit = place
+                .menu
+                .iter()
+                .find(|item| &*item.command.name == "remote.edit_server")
+                .expect("its Edit");
+            assert_eq!(edit.command.args["id"], server.address.to_string());
+        }
+        // One at the server's top opens the mount's root.
+        let top = kept("NAS", "sftp://nas/");
+        let place = super::as_mounted(mount_place(&m), &top, &m, b"", None, &[]);
+        assert_eq!(place.location, Location::from_path("/run/m/nas"));
+    }
+
+    /// A server whose mount was lost connects again in its own folder; one
+    /// kio-fuse holds is opened below its mount by its address, which asks
+    /// kio-fuse for that folder.
+    #[test]
+    fn a_server_lost_or_held_by_kio_fuse_opens_by_its_address() {
+        let server = kept("Photos", "sftp://nas/srv/photos");
+        let m = mount("sftp://me@nas/", "/run/m/nas", None);
+        let mut lost = mount_place(&m);
+        lost.activate = Some(Invocation::navigate(
+            &Address::parse("sftp://me@nas/").unwrap().location(),
+        ));
+        let place = super::as_mounted(lost, &server, &m, b"srv/photos", None, &[]);
+        assert_eq!(
+            place.activate,
+            Some(Invocation::navigate(&server.address.location()))
+        );
+
+        let kio = mount("sftp://me@nas/", "/run/m/kio", Some(Arc::new(EachPath)));
+        let place = super::as_mounted(mount_place(&kio), &server, &kio, b"srv/photos", None, &[]);
+        assert_eq!(place.location, server.address.location());
+        let top = kept("NAS", "sftp://nas/");
+        let place = super::as_mounted(mount_place(&kio), &top, &kio, b"", None, &[]);
+        assert_eq!(place.location, Location::from_path("/run/m/kio"));
     }
 }

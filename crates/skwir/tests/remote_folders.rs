@@ -1073,6 +1073,129 @@ fn copies_and_moves_to_and_from_an_sftp_server_go_through_rsync_in_batches() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A server kept with a folder of its own (`sftp://me@nas/srv/photos`) is
+/// one place mounted or not: connected, its place keeps its name and its
+/// key and opens its folder, never the mount's root; another of the same
+/// server is a place of its own; the mount's root, which no place opens,
+/// is named by its server. Let go of, both are servers again.
+#[test]
+fn a_server_kept_with_a_folder_opens_it_mounted_or_not() {
+    let sshfs = Sshfs::default();
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("kept-folder");
+    let Some(sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(served.join("photos")).unwrap();
+    std::fs::create_dir_all(served.join("music")).unwrap();
+    std::fs::write(served.join("photos/a photo.txt"), "photo").unwrap();
+    std::fs::write(served.join("music/a song.txt"), "song").unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    app.settings.set(
+        skwir_plugin_remote::servers::KEPT_IN,
+        toml::Value::String("skwir".into()),
+    );
+    let user = std::env::var("USER").expect("the user's name");
+    let at = |folder: &str| {
+        Address::parse(&format!(
+            "sftp://{user}@127.0.0.1:{}{}",
+            sshd.port,
+            served.join(folder).display()
+        ))
+        .unwrap()
+    };
+    let (photos, music) = (at("photos"), at("music"));
+    skwir_plugin_remote::servers::add(&app, "Photos", &photos).unwrap();
+    skwir_plugin_remote::servers::add(&app, "Music", &music).unwrap();
+    let place = |address: &Address| {
+        let key = format!("remote:{address}");
+        app.registry
+            .places
+            .find(|p| p.group == "network" && p.key.as_deref() == Some(key.as_str()))
+    };
+
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &photos.location()).unwrap();
+    until(&app, 60, "the server led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let folder = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    assert_ne!(folder, point, "the server's folder, below its mount");
+    until(&app, 20, "both servers' places, mounted", || {
+        [&photos, &music]
+            .iter()
+            .all(|a| place(a).is_some_and(|p| p.eject.is_some()))
+    });
+    let shown = place(&photos).unwrap();
+    assert_eq!(shown.title.english(), "Photos");
+    assert_eq!(shown.location, Location::from_path(&folder), "its folder");
+    let other = place(&music).unwrap();
+    assert_eq!(other.title.english(), "Music");
+    assert_eq!(
+        other.location,
+        Location::from_path(folder.with_file_name("music"))
+    );
+    assert!(
+        app.registry
+            .places
+            .find(|p| p.group == "network" && p.location == Location::from_path(&point))
+            .is_none(),
+        "no place opens the mount's root"
+    );
+    // Its root, gone up to, is named by its server, not by the folder
+    // Skwir mounted it in.
+    let known = app.remote(&point).and_then(|(_, known)| known).unwrap();
+    assert_eq!(
+        app.location_title(&Location::from_path(&point)).english(),
+        known.label.english()
+    );
+
+    // The other opens its own folder.
+    app.navigate(pane, &other.location).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
+    let names: Vec<String> = {
+        let ws = app.workspace.read();
+        ws.pane(pane)
+            .unwrap()
+            .listing
+            .iter()
+            .map(|e| e.name_str().into_owned())
+            .collect()
+    };
+    assert_eq!(names, ["a song.txt"]);
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    until(&app, 20, "both servers again, not mounted", || {
+        [&photos, &music]
+            .iter()
+            .all(|a| place(a).is_some_and(|p| p.eject.is_none() && p.location == a.location()))
+    });
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Copies made on a server are taken back by Undo and deleted for good
 /// together, by rsync in one run, as the pane and sshfs show at once: a
 /// network folder a program mounts keeps no trash, so Undo removes a copy

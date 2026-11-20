@@ -372,11 +372,18 @@ pub struct Root {
 }
 
 /// The folders the sidebar shows, in its order and under the names it
-/// gives them (the user's, ADR-034), then the home folder, which stands
-/// for what is above it even when the sidebar does not show it: where
-/// trails start. A place hidden, in a group put away, or not mounted is
-/// none.
-pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::Path>) -> Vec<Root> {
+/// gives them (the user's, ADR-034), then the remotes mounted (`remotes`,
+/// their mount points under their names: a server's place may open a
+/// folder of it, and what Skwir named the folder it mounts in is no name
+/// of the user's), then the home folder, which stands for what is above
+/// it even when the sidebar does not show it: where trails start. A
+/// place hidden, in a group put away, or not mounted is none.
+pub fn roots(
+    places: Vec<Place>,
+    remotes: Vec<skwir_core::fs::reach::Known>,
+    sections: &Sections,
+    home: Option<&std::path::Path>,
+) -> Vec<Root> {
     let mut roots: Vec<Root> = arrange(places, sections)
         .into_iter()
         .filter(|a| {
@@ -393,6 +400,17 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
             })
         })
         .collect();
+    let rooted: std::collections::HashSet<std::path::PathBuf> =
+        roots.iter().map(|r| r.path.clone()).collect();
+    roots.extend(
+        remotes
+            .into_iter()
+            .filter(|known| !rooted.contains(&known.point))
+            .map(|known| Root {
+                path: known.point,
+                name: known.label,
+            }),
+    );
     if let Some(home) = home.filter(|home| !roots.iter().any(|r| r.path == *home)) {
         roots.push(Root {
             path: home.to_path_buf(),
@@ -406,22 +424,26 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
     roots
 }
 
-/// `roots`, read again only when the places, their arrangement, what
-/// their words say (`words::revision`) or `ui.full_path` change, and how
-/// many times they were. With the full path there are none: every
-/// folder's trail starts at the root, each folder under its own name.
+/// `roots`, read again only when the places, the remotes mounted, their
+/// arrangement, what their words say (`words::revision`) or
+/// `ui.full_path` change, and how many times they were. With the full
+/// path there are none: every folder's trail starts at the root, each
+/// folder under its own name.
 #[derive(Default)]
 pub struct Roots {
-    key: Option<(u64, u64, Sections, bool)>,
+    key: Option<((u64, u64), u64, Sections, bool)>,
     pub roots: Vec<Root>,
     pub generation: u64,
 }
 
 impl Shell {
-    /// Read the trails' roots again if the places or their arrangement
-    /// changed since.
+    /// Read the trails' roots again if the places, the remotes mounted or
+    /// their arrangement changed since.
     pub fn sync_roots(&mut self) {
-        let revision = self.app.registry.places.revision();
+        let revision = (
+            self.app.registry.places.revision(),
+            self.app.registry.remotes.revision(),
+        );
         let said = skwir_core::words::revision();
         let full = self.prefs.full_path;
         if self.roots.key.as_ref().is_some_and(|(r, w, s, f)| {
@@ -450,6 +472,7 @@ impl Shell {
             } else {
                 roots(
                     self.app.registry.places.all(),
+                    self.app.registry.remotes.all(),
                     &self.sidebar_sections,
                     home.as_deref(),
                 )

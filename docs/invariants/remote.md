@@ -559,6 +559,18 @@ ADR-077 (which revises ADR-021).
   A remote folder bookmarked stays a bookmark until Keep as Server
   (its place's menu, a `place` menu source) makes it a server and takes
   its bookmark out.
+- **A server is one place, mounted or not**, as a device is: its name,
+  its key (`remote:<address>`: what the user renamed, moved or hid it
+  as) and its own items stay as it is mounted, and it opens its own
+  folder (`sftp://nas/srv/photos`), in the mount once mounted
+  (`as_mounted`), never the mount's root. Two servers of one mount are
+  two places, each with the mount's Eject, which lets go of both. A
+  mount no server names (an address typed, another program's) is a
+  place of its own, at its root. Where no place opens a mount's root,
+  the trail and the tab name it by its remote (`Known::label`:
+  `sidebar::roots`, `App::location_title`), never by the folder Skwir
+  mounted it in. Below a mount kio-fuse holds, which mounts a server's
+  folders as each is asked for, the place opens by its address.
 - **What the Network section shows is followed, whoever changes it**
   (ADR-086, amended 2026-11-15), as Dolphin's sidebar follows its own:
   its mounts by the table (`reach::follow`), its servers by the files

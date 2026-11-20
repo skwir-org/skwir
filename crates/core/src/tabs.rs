@@ -254,6 +254,12 @@ impl App {
             return title;
         }
         if let Some(path) = location.path() {
+            // A remote's mount point by its name, where no place opens it
+            // (a server whose place opens a folder of it): what Skwir
+            // named its folder is no name of the user's.
+            if let Some(known) = self.registry.remotes.find(|known| known.point == path) {
+                return known.label;
+            }
             return Words::name_alone(path.file_name().map_or_else(
                 || path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),

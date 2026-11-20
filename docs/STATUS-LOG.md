@@ -21115,3 +21115,41 @@ after 0.5.1: the channel word, the portal's files, the translations).
 The images have no wget (a desktop has it). Fedora's root installed
 skwir without weak dependencies, as try.sh does: udisks2 brings polkit,
 whose files go to a user a namespace of one user lacks.
+
+## 2026-11-20: a server mounted opens its own folder
+
+A server kept with a folder (`sftp://nas/srv/photos`, the Folder of
+Add Server) opened that folder when its place connected it, and the
+mount's root once it was mounted: mounted, the server's place gave way
+to the mount's own, at its root, under the mount's name and key. So
+what the user renamed, moved or hid it as was lost while it was
+mounted, two servers of one host became one place, and a lost
+connection was made again at the root.
+
+A server is now one place mounted or not, as a device is
+(`docs/invariants/remote.md`): its name, key and own items stay, and
+mounted it opens its folder in the mount (`as_mounted`, the mount's
+Eject, space and thumbnails beside); servers are listed in their own
+order either way. A mount no server names is a place of its own, as
+before. The mount's root, which no place may open now, is named by its
+remote in the trail (`sidebar::roots` takes the remotes mounted after
+the places) and in the tab (`App::location_title`), not by the folder
+Skwir mounted it in. kio-fuse, which mounts a server's folders as each
+is asked for, has a folder below its mount opened by its address.
+
+Checked: rustfmt; clippy `-D warnings` on core, the remote plugin, ui
+and skwir's tests; nextest of core, remote and ui (1912 passed), of
+remote again after its last change (159) and of skwir's
+`remote_folders` and `plugins_toggle` with sshfs, ssh and rsync on the
+`PATH` (47). Unit
+tests: `held` (a server in the mount holding its folder, an SMB folder
+below its share's, none above or elsewhere), `as_mounted` (name, key,
+folder, Edit, Eject; a lost one connected again by its address; below
+kio-fuse by its address). `remote_folders`'
+`a_server_kept_with_a_folder_opens_it_mounted_or_not` against an sshd
+of the test's own through sshfs: two servers of one host, one opened,
+both places mounted, each opening its folder, none at the root, the
+root titled by its remote, the other's folder listed, both servers
+again once let go of. Against the old `publish` it fails ("both
+servers' places, mounted"). Not run: a window, check-cross, the rest
+of `remote-check`.
