@@ -741,16 +741,28 @@ impl Shell {
             return;
         }
         let items = self.context_items();
+        self.open_menu(position, items, window, cx);
+    }
+
+    /// Open the menu of `items` at `position`, as every menu of the window
+    /// opens: of what the window runs of them (`items_run_here`, ADR-144,
+    /// 1), and not at all where that leaves nothing, so no menu opens
+    /// empty. What its caller then sets on its rows (the one highlighted,
+    /// the keys they name) is set on the rows it shows.
+    pub(crate) fn open_menu(
+        &mut self,
+        position: Point<Pixels>,
+        items: Vec<MenuItem>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<&mut MenuState> {
+        let items = self.items_run_here(items);
         if items.is_empty() {
-            return;
+            return None;
         }
-        self.menu = Some(MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
+        self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
+        self.menu.as_mut()
     }
 
     /// The context menu's items for the selection: the registered items
@@ -995,13 +1007,7 @@ impl Shell {
                 "window-new",
             ));
         }
-        self.menu = Some(MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        cx.notify();
+        self.open_menu(position, items, window, cx);
     }
 
     /// A sidebar place's menu, for the place of `group` named `key`: Open
@@ -1131,17 +1137,8 @@ impl Shell {
                 "eject",
             ));
         }
-        if items.is_empty() {
-            return;
-        }
         items.sort_by_key(|m| m.order);
-        self.menu = Some(MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        cx.notify();
+        self.open_menu(position, items, window, cx);
     }
 
     /// A tag's menu where a file shows it (an entry's chip, Properties,
@@ -1158,17 +1155,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let mut items = self.sourced("tag", serde_json::json!({ "tags": [tag], "files": files }));
-        if items.is_empty() {
-            return;
-        }
         items.sort_by_key(|m| m.order);
-        self.menu = Some(MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        cx.notify();
+        self.open_menu(position, items, window, cx);
     }
 
     /// What every source of the menu `menu` answers, each asked with
@@ -1231,13 +1219,7 @@ impl Shell {
             200,
             skwir_core::command::Invocation::new("ui.columns_reset"),
         ));
-        self.menu = Some(MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        cx.notify();
+        self.open_menu(position, items, window, cx);
     }
 
     /// A group's heading's menu (ADR-130, 12): Select these, and Show only
@@ -1344,13 +1326,7 @@ impl Shell {
                 ),
             ));
         }
-        self.menu = Some(MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        cx.notify();
+        self.open_menu(position, items, window, cx);
     }
 
     /// The preview's own menu: what people right-click a text for. Copy has
@@ -1433,13 +1409,7 @@ impl Shell {
                 skwir_core::command::Invocation::with_args("ui.preview_invoke", &args),
             ));
         }
-        self.menu = Some(MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        cx.notify();
+        self.open_menu(position, items, window, cx);
     }
 
     /// The terminal's menu: copy, paste and select all; on a link, its
@@ -1580,17 +1550,12 @@ impl Shell {
         }
         items.sort_by_key(|item| item.order);
         let keyboard = at.is_none();
-        self.menu = Some(MenuState::open(
-            at.unwrap_or_default(),
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        if keyboard && let Some(menu) = &mut self.menu {
+        if let Some(menu) = self.open_menu(at.unwrap_or_default(), items, window, cx)
+            && keyboard
+        {
             menu.highlighted = Some(0);
             menu.keyboard = Some(KeyboardAnchor::new(MenuHost::Terminal));
         }
-        cx.notify();
     }
 
     /// A menu the Settings dialog asks for (a Exclusions page row's: its ⋯,
@@ -1610,14 +1575,13 @@ impl Shell {
             return;
         }
         self.menu = None;
-        let mut menu = MenuState::open(
-            asked.at.unwrap_or_default(),
-            self.items_run_here(asked.items.clone()),
-            window,
-            cx,
-        );
+        let at = asked.at;
+        let Some(menu) = self.open_menu(at.unwrap_or_default(), asked.items.clone(), window, cx)
+        else {
+            return;
+        };
         menu.held = Some(std::rc::Rc::clone(&asked.held));
-        if asked.at.is_none() {
+        if at.is_none() {
             menu.highlighted = Some(0);
             menu.keyboard = Some(KeyboardAnchor {
                 host: MenuHost::Settings,
@@ -1625,8 +1589,6 @@ impl Shell {
                 area: asked.area.clone(),
             });
         }
-        self.menu = Some(menu);
-        cx.notify();
     }
 
     /// The Settings dialog closed: a menu it opened goes with it.

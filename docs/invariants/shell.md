@@ -2209,14 +2209,18 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   request its program closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no
   call from elsewhere reaches its window (commands.md). It offers what
-  finds and chooses (ADR-144, commands.md's "In a dialog's window"): a
-  button, a menu's item or a key whose command it does not run is not
-  drawn or not run (`Button::render`, `Shell::items_run_here`,
-  `admit_here`), the palette and the address field's actions list what
-  it offers; it lists no tabs (`tabs_listed`), More has no terminal nor
-  split, views are offered but a lens (`available_views`, `set_view`),
-  Activity does not open there by itself, nothing is pinned to the
-  player, and the sidebar leaves out a place whose files are not to give
+  finds and chooses (ADR-144, commands.md's "In a dialog's window"), by
+  one answer every part of it asks (`Shell::in_window`): a button, a
+  popup's row, a menu's item, a link or a toast's button whose command it
+  does not run is not drawn (`Button::render`,
+  `toolbar::menu_part_elements`, `Shell::open_menu`), the palette, F1
+  and the address field's actions list what it offers, and a key bound
+  to what it does not run does what it would with nothing bound
+  (`Shell::on_run_command`); it lists no tabs (`tabs_listed`), More has
+  no terminal nor split (their commands are not offered), views are
+  offered but a lens (`ui.view`'s rule), Activity does not open there,
+  by itself or from the strip and the rows arriving, nothing is pinned to
+  the player, and the sidebar leaves out a place whose files are not to give
   (`App::gives_files`: the Trash), whose files it never answers with
   either. What asks the
   user an answer (proposals, questions, clashes, secrets, forms, a

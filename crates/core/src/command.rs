@@ -252,9 +252,11 @@ pub enum Topic {
 impl Topic {
     /// Whether a window answering another program's Open or Save dialog
     /// offers its commands (ADR-144, 1), unless a command says otherwise
-    /// (`Declared::in_dialogs`, `not_in_dialogs`): what finds and chooses
-    /// a file (going places, selecting, finding, notes, views, previews
-    /// and what plays in them, places, the window's own parts), never what
+    /// (`Declared::in_dialogs`, `not_in_dialogs`, `in_dialogs_by`) or
+    /// changes files or opens another program
+    /// (`CommandSpec::in_dialogs_by_default`): what finds and chooses a
+    /// file (going places, selecting, finding, notes, views, previews and
+    /// what plays in them, places, the window's own parts), never what
     /// does something else (files, tabs and the split, the terminal, Skwir
     /// itself).
     pub fn in_dialogs(self) -> bool {
@@ -610,6 +612,90 @@ pub fn with_args(title: impl Into<Words>, args: &serde_json::Value) -> Words {
 /// with (`CommandSpec::repeats`).
 pub type Repeats = fn(&serde_json::Value) -> bool;
 
+/// What a command says of a window answering another program's Open or
+/// Save dialog where it is registered (ADR-144, 1), over what its topic
+/// and effect say (`CommandSpec::in_dialogs_by_default`).
+#[derive(Clone, Copy, Debug)]
+pub enum DialogRule {
+    /// Offered there whatever its topic or effect (`Declared::in_dialogs`):
+    /// what a dialog has always offered among the files' commands (making
+    /// a folder, renaming, the Trash, the clipboard), the notes a file is
+    /// found by, and `open`, which answers the dialog there.
+    Offered,
+    /// Not offered there whatever its topic (`Declared::not_in_dialogs`):
+    /// what is about a window of the user's own (Activity, the pinned
+    /// player), a lens's own, what changes the user's servers.
+    Not,
+    /// Offered where its arguments make it one thing a dialog offers
+    /// (`Declared::in_dialogs_by`): `ui.layout` placing the preview, not
+    /// the split's panes; `ui.view` a listing's shape, never a lens.
+    By(fn(&App, &serde_json::Value) -> bool),
+}
+
+/// Where what a command opens is shown (`CommandSpec::opens`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Opens {
+    /// In Skwir's own window, or nothing to open.
+    #[default]
+    Here,
+    /// In another program (`Declared::opens_elsewhere`): the desktop's
+    /// application for a file, the browser, the desktop's maps. A window
+    /// answering another program's dialog offers none unless it says so
+    /// (`open`, which answers the dialog there).
+    Elsewhere,
+}
+
+/// The commands a command run with these arguments runs in turn
+/// (`Declared::leads_to`): a picker's source and choices, a prompt's
+/// command, what an item of the preview's menu runs with what it shows. A
+/// window answering another program's dialog offers it only where it
+/// offers each of them (`App::in_dialogs`): a picker of applications to
+/// open a file with is about files, whoever draws it.
+pub type LeadsTo = fn(&serde_json::Value) -> Vec<Invocation>;
+
+/// How a window answering another program's Open or Save dialog takes a
+/// command run with given arguments (`App::in_dialogs`, ADR-144, 1): the
+/// one answer every way to run a command there asks (keys and F1's list,
+/// the palette, menus, buttons and the address field's rows, pickers and
+/// prompts, Properties' links, a toast's buttons). Every command is
+/// offered in a window of the user's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InDialogs {
+    /// Offered: listed, drawn, run.
+    Offered,
+    /// Run where a part of the window asks it with what it needs, and
+    /// listed nowhere (`CommandSpec::data`, `asked_only`): the data a
+    /// row reads, the save of a setting a menu's switch changes.
+    Asked,
+    /// Not offered: drawn and listed nowhere, refused when asked, and a
+    /// key bound to it does what it would with nothing bound.
+    Not,
+}
+
+impl InDialogs {
+    /// Whether it is listed and drawn there.
+    pub fn offered(self) -> bool {
+        self == InDialogs::Offered
+    }
+
+    /// Whether it runs there when asked.
+    pub fn runs(self) -> bool {
+        self != InDialogs::Not
+    }
+}
+
+/// What `App::in_dialogs` reads of a command, copied out of the registry
+/// so that a rule reading the app's other registries runs without its
+/// lock.
+#[derive(Clone, Copy)]
+pub(crate) struct DialogTerms {
+    pub(crate) said: Option<DialogRule>,
+    pub(crate) by_default: bool,
+    /// Data or asked only: run where asked, listed nowhere.
+    pub(crate) asked: bool,
+    pub(crate) leads_to: Option<LeadsTo>,
+}
+
 /// Again with every repeat of its key: a command that only steps (the
 /// cursor, a page, the next tab).
 pub fn always(_: &serde_json::Value) -> bool {
@@ -665,11 +751,18 @@ pub struct CommandSpec {
     pub asked_only: bool,
     /// Whether a window answering another program's dialog offers it,
     /// said where it is registered (`Declared::in_dialogs`,
-    /// `not_in_dialogs`); `None`, as its topic says
-    /// (`CommandSpec::offered_in_dialogs`, ADR-144). Only the window reads
-    /// it, so it is not said to agents.
+    /// `not_in_dialogs`, `in_dialogs_by`); `None`, as its topic and
+    /// effect say (`CommandSpec::in_dialogs_by_default`, ADR-144). Only
+    /// the window reads it, so it is not said to agents.
     #[serde(skip)]
-    pub in_dialogs: Option<bool>,
+    pub in_dialogs: Option<DialogRule>,
+    /// What it runs in turn with the arguments it is given
+    /// (`Declared::leads_to`, see [`LeadsTo`]).
+    #[serde(skip)]
+    pub leads_to: Option<LeadsTo>,
+    /// Where what it opens is shown (see [`Opens`]).
+    #[serde(skip)]
+    pub opens: Opens,
     /// When a key held down runs it again (ADR-066): a step along
     /// something (the cursor, a page, the volume, the next tab), never an
     /// act or a switch, which the key's repeats would run over and over.
@@ -680,18 +773,14 @@ pub struct CommandSpec {
 }
 
 impl CommandSpec {
-    /// Whether a window answering another program's dialog offers it
-    /// (ADR-144, 1): as it was registered, else as its topic.
-    pub fn offered_in_dialogs(&self) -> bool {
-        self.in_dialogs.unwrap_or_else(|| self.topic.in_dialogs())
-    }
-
-    /// Whether a window answering another program's dialog runs it when
-    /// asked: what it offers, and what no list offers, run only by the
-    /// parts of the window that ask it (data its rows read, a setting a
-    /// menu's switch saves: `data`, `asked_only`).
-    pub fn runs_in_dialogs(&self) -> bool {
-        self.data || self.asked_only || self.offered_in_dialogs()
+    /// Whether a window answering another program's dialog offers it by
+    /// what its topic and effect say, where it says nothing of dialogs
+    /// (ADR-144, 1): by its topic (`Topic::in_dialogs`), but never what
+    /// changes files (`Effect::Plans`) nor what opens another program
+    /// (`Opens::Elsewhere`), whatever it is about, which a dialog offers
+    /// only where they say so (`Declared::in_dialogs`).
+    pub fn in_dialogs_by_default(&self) -> bool {
+        self.topic.in_dialogs() && self.effect != Effect::Plans && self.opens == Opens::Here
     }
 
     /// Whether a key held down runs it again with `args`.
@@ -810,25 +899,42 @@ impl Declared<'_> {
     }
 
     /// A window answering another program's dialog offers it, whatever
-    /// its topic says (see `CommandSpec::in_dialogs`): what a dialog has
-    /// always offered among the files' commands (making a folder,
-    /// renaming, the Trash).
+    /// its topic and effect say (see [`DialogRule::Offered`]).
     // Said as it is declared: what it returns only goes on to say more
     // (`.in_dialogs().plans()`), and may be dropped.
     #[allow(clippy::return_self_not_must_use)]
     pub fn in_dialogs(self) -> Self {
-        self.update(|spec| spec.in_dialogs = Some(true));
+        self.update(|spec| spec.in_dialogs = Some(DialogRule::Offered));
         self
     }
 
     /// A window answering another program's dialog does not offer it,
-    /// whatever its topic says (see `CommandSpec::in_dialogs`): what is
-    /// about a window of the user's own (Activity, the Settings).
+    /// whatever its topic says (see [`DialogRule::Not`]).
     // Said as it is declared: what it returns only goes on to say more
     // (`.in_dialogs().plans()`), and may be dropped.
     #[allow(clippy::return_self_not_must_use)]
     pub fn not_in_dialogs(self) -> Self {
-        self.update(|spec| spec.in_dialogs = Some(false));
+        self.update(|spec| spec.in_dialogs = Some(DialogRule::Not));
+        self
+    }
+
+    /// A window answering another program's dialog offers it where `rule`
+    /// says, by the arguments it runs with (see [`DialogRule::By`]).
+    pub fn in_dialogs_by(&self, rule: fn(&App, &serde_json::Value) -> bool) {
+        self.update(|spec| spec.in_dialogs = Some(DialogRule::By(rule)));
+    }
+
+    /// What it runs in turn with its arguments (see [`LeadsTo`]).
+    pub fn leads_to(&self, leads_to: LeadsTo) {
+        self.update(|spec| spec.leads_to = Some(leads_to));
+    }
+
+    /// It opens something in another program (see [`Opens::Elsewhere`]).
+    // Said as it is declared: what it returns only goes on to say more
+    // (`.opens_elsewhere().reads()`), and may be dropped.
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn opens_elsewhere(self) -> Self {
+        self.update(|spec| spec.opens = Opens::Elsewhere);
         self
     }
 
@@ -1163,6 +1269,8 @@ impl CommandRegistry {
             same_as: None,
             asked_only: false,
             in_dialogs: None,
+            leads_to: None,
+            opens: Opens::Here,
             repeats: None,
         };
         let mut commands = self.commands.write();
@@ -1200,25 +1308,19 @@ impl CommandRegistry {
             .map(|(s, _, _)| s.clone())
     }
 
-    /// Whether a window answering another program's dialog offers the
-    /// command `name` (`CommandSpec::offered_in_dialogs`), read in place:
-    /// not one that is not registered.
-    pub fn offered_in_dialogs(&self, name: &str) -> bool {
+    /// What `App::in_dialogs` reads of the command `name`, copied out in
+    /// place: `None` for one that is not registered.
+    pub(crate) fn dialog_terms(&self, name: &str) -> Option<DialogTerms> {
         self.commands
             .read()
             .get(name)
             .and_then(|stack| stack.last())
-            .is_some_and(|(spec, _, _)| spec.offered_in_dialogs())
-    }
-
-    /// Whether a window answering another program's dialog runs `name`
-    /// when asked (`CommandSpec::runs_in_dialogs`), read in place.
-    pub fn runs_in_dialogs(&self, name: &str) -> bool {
-        self.commands
-            .read()
-            .get(name)
-            .and_then(|stack| stack.last())
-            .is_some_and(|(spec, _, _)| spec.runs_in_dialogs())
+            .map(|(spec, _, _)| DialogTerms {
+                said: spec.in_dialogs,
+                by_default: spec.in_dialogs_by_default(),
+                asked: spec.data || spec.asked_only,
+                leads_to: spec.leads_to,
+            })
     }
 
     /// Whether a command of that name is registered now.

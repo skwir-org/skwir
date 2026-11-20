@@ -1520,7 +1520,12 @@ impl Plugin for OpenWithPlugin {
                 note = "Read by agents and in F1's list of actions."
             ),
             move |a, app| open(a, &cache, app),
-        );
+        )
+        // It opens a file in its application; in a window answering
+        // another program's dialog it answers with the file (ADR-141, 5;
+        // ADR-144, 1).
+        .in_dialogs()
+        .opens_elsewhere();
         app.commands.register::<PaneArg, _>(
             ID, Topic::Terminal,
             "open_terminal",
@@ -1600,7 +1605,8 @@ impl Plugin for OpenWithPlugin {
                 open_with_open_with_description = "Open the selected entries (or the pane's folder with `here`) with the application whose desktop file ID is `app`"
             ),
             move |a, app| open_with(a, &cache, app),
-        );
+        )
+        .opens_elsewhere();
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<SetDefaultArgs, _>(
             ID, Topic::Files,

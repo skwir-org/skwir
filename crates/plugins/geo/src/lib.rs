@@ -193,6 +193,9 @@ impl Plugin for GeoPlugin {
                 Ok(Outcome::Done)
             },
         )
+        // The Map's own, a lens a window answering another program's dialog
+        // does not offer (ADR-144, 1).
+        .not_in_dialogs()
         .shows();
         // The Map view reads the points where they are kept; scripts and
         // agents ask `geo.points` for the same batch.
@@ -232,6 +235,7 @@ impl Plugin for GeoPlugin {
                     Ok(Outcome::Done)
                 },
             )
+            .not_in_dialogs()
             .shows();
         app.commands.register::<LocateArgs, _>(
             ID, Topic::View,

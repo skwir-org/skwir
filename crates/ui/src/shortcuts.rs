@@ -325,11 +325,19 @@ impl Shell {
                 })
                 .max()
         };
+        // A key whose command the window does not offer (a dialog's,
+        // ADR-144, 1) is listed nowhere: it does there what it would with
+        // nothing bound, a binding below it the one that runs.
+        let offered: Vec<bool> = self
+            .key_hints
+            .iter()
+            .map(|hint| self.offers(&hint.command, &hint.args))
+            .collect();
         let applying: Vec<(usize, &KeyHint)> = self
             .key_hints
             .iter()
             .enumerate()
-            .filter(|(_, hint)| applies(&hint.context, &holds))
+            .filter(|(i, hint)| offered[*i] && applies(&hint.context, &holds))
             .collect();
         // Of the bindings of one key that apply here, the one GPUI runs:
         // the deepest place's, then the latest (a later layer).
@@ -358,6 +366,9 @@ impl Shell {
         // here: each as data, its heading the words they make.
         let mut elsewhere: Vec<((String, String), String, Vec<Item>)> = Vec::new();
         for (i, hint) in self.key_hints.iter().enumerate() {
+            if !offered[i] {
+                continue;
+            }
             if applying.iter().any(|(j, _)| *j == i) && wins(i, hint) {
                 here.push(item(hint, depth(hint)));
             } else if !self.key_hints[i + 1..]

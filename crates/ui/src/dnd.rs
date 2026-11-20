@@ -710,15 +710,26 @@ impl Shell {
             900,
             Invocation::new("ui.menu_close"),
         ));
-        let mut menu =
-            crate::menu::MenuState::open(position, self.items_run_here(items), window, cx);
-        menu.keys = DropOp::ALL
-            .iter()
-            .map(|how| Some(crate::keymap::display_keys(how.keys())))
-            .collect();
-        menu.highlighted = DropOp::ALL.iter().position(|how| *how == usual);
-        self.menu = Some(menu);
-        cx.notify();
+        // Each row the window keeps (`open_menu`) beside the keys of what
+        // it does, the usual one lit: told by its command, never by where
+        // it stood before the rows were kept.
+        let drop_of = |item: &MenuItem| {
+            DropOp::ALL
+                .iter()
+                .copied()
+                .find(|how| item.command == Invocation::with_args(how.command(), &args))
+        };
+        if let Some(menu) = self.open_menu(position, items, window, cx) {
+            menu.keys = menu
+                .items
+                .iter()
+                .map(|item| drop_of(item).map(|how| crate::keymap::display_keys(how.keys())))
+                .collect();
+            menu.highlighted = menu
+                .items
+                .iter()
+                .position(|item| drop_of(item) == Some(usual));
+        }
     }
 
     /// The selection offered to the folder the other pane shows, from the

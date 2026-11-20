@@ -386,6 +386,9 @@ impl Plugin for UsagePlugin {
                 Ok(Outcome::Done)
             },
         )
+        // Usage's own, a lens a window answering another program's dialog
+        // does not offer (ADR-144, 1).
+        .not_in_dialogs()
         .shows();
         let t = Arc::clone(&this);
         app.commands
@@ -451,6 +454,7 @@ impl Plugin for UsagePlugin {
                     }
                     Ok(Outcome::Done)
                 })
+                .not_in_dialogs()
                 .shows();
         }
         app.registry.keymap.add(

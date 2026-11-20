@@ -471,7 +471,7 @@ impl Button {
     pub fn render(self, shell: &Shell, cx: &mut Context<Shell>) -> Stateful<Div> {
         // A window that does not run its command (a dialog's, ADR-144)
         // draws no button for it, nor room for one.
-        if !shell.runs_here(&self.command) {
+        if !shell.runs_here(&self.command, &self.args) {
             return div().id(self.id).hidden();
         }
         let theme = cx.global::<Theme>().clone();
@@ -479,6 +479,10 @@ impl Button {
         let command = self.command.clone();
         let args = self.args.clone();
         let enabled = self.enabled;
+        // A long press only where what it holds runs too.
+        let hold = self
+            .hold
+            .filter(|hold| enabled && shell.runs_here(&hold.0, &hold.1));
         let keeps_open = self.keeps_open;
         let menu = self.shape == Shape::MenuRow;
         let (segment, tiled) = (self.shape == Shape::Segment, self.shape == Shape::Tile);
@@ -787,7 +791,7 @@ impl Button {
             .when(revealed, |d| d.child(reveal_marker()))
             // A long press: `HOLD` after the press, what it holds runs, and
             // the release that follows clicks nothing.
-            .when_some(self.hold.filter(|_| enabled), |d, hold| {
+            .when_some(hold, |d, hold| {
                 let pressed = clicked.clone();
                 d.on_mouse_down(
                     gpui::MouseButton::Left,
@@ -1559,6 +1563,9 @@ pub fn menu_part_elements(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Vec<gpui::AnyElement> {
+    let parts = run_here(parts, |button| {
+        shell.runs_here(&button.command, &button.args)
+    });
     let mut elements = Vec::with_capacity(parts.len());
     for part in parts {
         elements.push(match part {
@@ -1653,6 +1660,47 @@ pub fn menu_part_elements(
     elements
 }
 
+/// `parts` as the window runs them (`runs`: `Shell::runs_here`, ADR-144,
+/// 1): a row whose button runs nothing there goes, a setting whose values
+/// all go goes with them, and a line left at an end or beside another
+/// goes too. What a popup of the window offers is told by its buttons'
+/// commands, never by a check of its own beside a feature.
+fn run_here(parts: Vec<MenuPart>, runs: impl Fn(&Button) -> bool) -> Vec<MenuPart> {
+    let mut kept: Vec<MenuPart> = Vec::with_capacity(parts.len());
+    for part in parts {
+        let part = match part {
+            MenuPart::Row(button) if !runs(&button) => continue,
+            MenuPart::Choice(name, values) if !values.is_empty() => {
+                let values: Vec<Button> = values.into_iter().filter(|value| runs(value)).collect();
+                if values.is_empty() {
+                    continue;
+                }
+                MenuPart::Choice(name, values)
+            }
+            MenuPart::Tiles(values) => {
+                let values: Vec<Button> = values.into_iter().filter(|value| runs(value)).collect();
+                if values.is_empty() {
+                    continue;
+                }
+                MenuPart::Tiles(values)
+            }
+            MenuPart::Line
+                if kept
+                    .last()
+                    .is_none_or(|last| matches!(last, MenuPart::Line)) =>
+            {
+                continue;
+            }
+            part => part,
+        };
+        kept.push(part);
+    }
+    if matches!(kept.last(), Some(MenuPart::Line)) {
+        kept.pop();
+    }
+    kept
+}
+
 /// The flag a value's key context carries (`Button::segment`,
 /// `Button::tile`): Left and Right walk to the values beside it.
 pub(crate) const CHOICE: &str = "choice";
@@ -1724,6 +1772,65 @@ fn reveal_marker() -> gpui::AnyElement {
 
 #[cfg(test)]
 mod tests {
+    use super::{Button, MenuPart};
+    use skwir_core::words::Words;
+
+    /// A popup's parts as the window runs them: the More menu of a dialog's
+    /// window keeps no Terminal row nor Split, nor the line under the
+    /// row, and keeps the preview's place (ADR-144, 1).
+    #[test]
+    fn a_popup_keeps_what_the_window_runs() {
+        let button = |command: &str, args: serde_json::Value| {
+            Button::new(
+                command.to_owned(),
+                "",
+                Words::as_written(command.to_owned()),
+                command.to_owned(),
+            )
+            .args(args)
+        };
+        let layout = |what: &str| {
+            MenuPart::Choice(
+                what.to_owned().into(),
+                vec![
+                    button("ui.layout", serde_json::json!({ what: "auto" })),
+                    button("ui.layout", serde_json::json!({ what: "right" })),
+                ],
+            )
+        };
+        let parts = vec![
+            MenuPart::Row(button("ui.terminal", serde_json::json!({}))),
+            MenuPart::Line,
+            layout("panes"),
+            layout("preview"),
+            MenuPart::Line,
+            MenuPart::Line,
+            MenuPart::Row(button("ui.zoom", serde_json::json!({}))),
+            MenuPart::Line,
+            MenuPart::Choice("Group by".into(), Vec::new()),
+            MenuPart::Line,
+            MenuPart::Row(button("ui.split", serde_json::json!({}))),
+        ];
+        let runs = |button: &Button| {
+            button.command != "ui.terminal"
+                && button.command != "ui.split"
+                && button.args.get("panes").is_none()
+        };
+        let kept: Vec<String> = super::run_here(parts, runs)
+            .iter()
+            .map(|part| match part {
+                MenuPart::Row(button) => button.command.to_string(),
+                MenuPart::Choice(name, values) => format!("{name}: {}", values.len()),
+                MenuPart::Line => "line".to_owned(),
+                _ => "other".to_owned(),
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            ["preview: 2", "line", "ui.zoom", "line", "Group by: 0"]
+        );
+    }
+
     /// An icon added to the assets but not to `asset`'s list draws nothing,
     /// silently: every bundled file must resolve.
     #[test]

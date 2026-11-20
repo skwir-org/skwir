@@ -2425,16 +2425,7 @@ impl Shell {
                 Some("revert"),
             ));
         }
-        if items.is_empty() {
-            return;
-        }
-        self.menu = Some(crate::menu::MenuState::open(
-            position,
-            self.items_run_here(items),
-            window,
-            cx,
-        ));
-        cx.notify();
+        self.open_menu(position, items, window, cx);
     }
 
     /// What is dropped beside the rows: in a dialog's window, gone to

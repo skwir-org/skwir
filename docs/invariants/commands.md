@@ -44,18 +44,36 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   manifest (`topic`), else its category's. A new topic takes a place in
   `Topic::ALL`, F1's order.
 - **In a dialog's window (ADR-144).** A window answering another
-  program's Open or Save dialog offers what finds and chooses a file: a
-  command by its topic (`Topic::in_dialogs`) unless it says otherwise
-  where it is registered (`Declared::in_dialogs`, `not_in_dialogs`; the
-  shell's in `commands::IN_DIALOGS` and `NOT_IN_DIALOGS`), which a test
-  holds to saying the opposite of its topic. What no list offers (data,
-  `asked_only`) runs there where the window's parts ask it
-  (`CommandSpec::runs_in_dialogs`). The window asks one question for its
-  keys, menus and buttons (`Shell::runs_here`) and its lists
-  (`Shell::offers`), and a picker or a prompt of its own only where what
-  it leads to is offered (`Shell::leads_to_what_it_offers`: `ui.choose`'s
-  source, `ui.ask`'s command). A new command about files is not offered
-  there unless it says so; never test for the dialog beside a feature.
+  program's Open or Save dialog offers what finds and chooses a file.
+  One answer says how it takes a command run with its arguments
+  (`App::in_dialogs`, `command::InDialogs`: offered; run only where the
+  window's parts ask it, data and `asked_only`; or not), and every way
+  to run a command there asks it through `Shell::in_window` (its
+  `runs_here` and `offers`): keys and F1's list, the palette, menus
+  (`Shell::open_menu`, the one way a menu opens), toolbar buttons and
+  popups' rows (`toolbar::menu_part_elements`), the address field's
+  rows, pickers' choices, Properties' links, toasts' buttons, and what
+  the window asks of itself. Never test for the dialog beside a feature,
+  nor match a command's name for it in the shell: what a surface shows
+  is told by the commands it runs.
+  - A command is offered by its topic (`Topic::in_dialogs`), but what
+    changes files (`Effect::Plans`) and what opens another program
+    (`Declared::opens_elsewhere`) never by its topic alone
+    (`CommandSpec::in_dialogs_by_default`). It says otherwise where it is
+    registered (`Declared::in_dialogs`, `not_in_dialogs`; the shell's in
+    `commands::IN_DIALOGS`, `NOT_IN_DIALOGS`, `OPENS_ELSEWHERE`, each held
+    by a test to say the opposite of its topic and effect), or by its
+    arguments (`Declared::in_dialogs_by`, the shell's in
+    `commands::dialogs_by`: `ui.layout` of the split's panes, `ui.view` of
+    a lens).
+  - A command that runs another with its arguments says so
+    (`Declared::leads_to`: `ui.choose`'s source and choices, `ui.ask`'s
+    command, `ui.preview_invoke`'s), and is offered only where that one is.
+  - What a dialog offers that changes files or opens a program is listed
+    in `crates/skwir/tests/dialogs_offer.rs`: a new one says why there.
+  - A key whose command the window does not run does there what it would
+    with nothing bound (`Shell::on_run_command` lets it go on), and F1
+    lists it nowhere.
 - **Families (ADR-100).** Forms of one command that only go elsewhere
   share a family (`Form::in_family`: Extend the selection up, down, to
   the first item): F1 lists its keys on one row, in the forms' order.

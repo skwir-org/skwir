@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::Cache;
 use crate::cancel::CancelToken;
-use crate::command::{CommandRegistry, Form, Invocation, NoArgs, Outcome, Topic};
+use crate::command::{
+    CommandRegistry, DialogRule, Form, InDialogs, Invocation, NoArgs, Outcome, Topic,
+};
 use crate::entry::{Entry, EntryId};
 use crate::fs::PathProvider;
 use crate::location::{Location, LocationProvider, OpenContext, OpenLocation, Waker};
@@ -1523,6 +1525,50 @@ impl App {
     pub fn searchable(&self, location: &Location) -> bool {
         self.provider(&location.scheme)
             .is_some_and(|provider| provider.searchable(location))
+    }
+
+    /// How a window answering another program's Open or Save dialog takes
+    /// `name` run with `args` (ADR-144, 1; [`InDialogs`]): as the command
+    /// says where it is registered, else as its topic and effect say
+    /// (`CommandSpec::in_dialogs_by_default`), and only where what it leads
+    /// to is offered there too (`Declared::leads_to`: a picker is about
+    /// what its choices do). The one answer every way to run a command in
+    /// that window asks (`Shell::in_window`); `InDialogs::Not` for a command
+    /// not registered.
+    pub fn in_dialogs(&self, name: &str, args: &serde_json::Value) -> InDialogs {
+        // A picker of prompts of pickers is as deep as anything goes.
+        self.in_dialogs_within(name, args, 4)
+    }
+
+    fn in_dialogs_within(&self, name: &str, args: &serde_json::Value, depth: usize) -> InDialogs {
+        // Copied out: a rule may read the app's other registries (a view's
+        // role), never under the commands' lock.
+        let Some(terms) = self.commands.dialog_terms(name) else {
+            return InDialogs::Not;
+        };
+        let leads = terms.leads_to.is_none_or(|leads_to| {
+            depth > 0
+                && leads_to(args).iter().all(|then| {
+                    self.in_dialogs_within(&then.name, &then.args, depth - 1)
+                        .offered()
+                })
+        });
+        if !leads {
+            return InDialogs::Not;
+        }
+        let offered = match terms.said {
+            Some(DialogRule::Offered) => true,
+            Some(DialogRule::Not) => false,
+            Some(DialogRule::By(rule)) => rule(self, args),
+            None => terms.by_default,
+        };
+        if offered {
+            InDialogs::Offered
+        } else if terms.asked {
+            InDialogs::Asked
+        } else {
+            InDialogs::Not
+        }
     }
 
     /// Whether what `location` lists may be handed to another program as

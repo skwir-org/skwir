@@ -2811,7 +2811,20 @@ pub fn render(
         if folded {
             continue;
         }
-        for (r, row) in group.rows.into_iter().enumerate() {
+        for (r, mut row) in group.rows.into_iter().enumerate() {
+            // Its links are what the window runs (ADR-144, 1): in a dialog's,
+            // no Change… of who may use it nor of what opens it, and a row
+            // that said nothing but such links goes.
+            let linked = !row.actions.is_empty();
+            row.actions
+                .retain(|(_, action)| shell.runs_here(&action.name, &action.args));
+            if linked
+                && row.actions.is_empty()
+                && row.value.is_empty()
+                && matches!(row.show, Show::Text)
+            {
+                continue;
+            }
             list = list.child(row_element(shell, row, (g, r), labels, theme, cx));
         }
     }

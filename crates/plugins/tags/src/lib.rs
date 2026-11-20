@@ -1324,6 +1324,10 @@ impl Plugin for TagsPlugin {
                     })
                 },
             )
+            // A file's tags, which a window answering another program's dialog
+            // offers as it offers every note (ADR-144, 1): the ones the files
+            // are given, never a tag renamed or taken from every file.
+            .in_dialogs()
             .plans();
         let v = Arc::clone(&vocabulary);
         app.commands
@@ -1348,6 +1352,7 @@ impl Plugin for TagsPlugin {
                     )
                 },
             )
+            .in_dialogs()
             .plans();
         let v = Arc::clone(&vocabulary);
         app.commands
@@ -1373,6 +1378,7 @@ impl Plugin for TagsPlugin {
                     )
                 },
             )
+            .in_dialogs()
             .plans();
         let v = Arc::clone(&vocabulary);
         app.commands.register::<EditArgs, _>(
@@ -1384,6 +1390,7 @@ impl Plugin for TagsPlugin {
             ),
             move |a, app| edit_plan(app, &v, a),
         )
+        .in_dialogs()
         .plans();
         let (v, jobs) = (Arc::clone(&vocabulary), lifetime.clone());
         app.commands.register::<ToggleArgs, _>(
@@ -1479,6 +1486,7 @@ impl Plugin for TagsPlugin {
                 Ok(Outcome::Done)
             },
         )
+        .in_dialogs()
         .plans();
         // Its forms, one per pinned tag (`sidebar::toggle_forms`): set here
         // as the pins stand, since the sidebar's first publish, on a

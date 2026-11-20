@@ -84,6 +84,9 @@ pub(crate) fn register(app: &App) {
             per_entry(app, a.targets, title, |r| app.notes.edit(r).rating(rating))
         },
     )
+    // A note a file is found by, which a window answering another
+    // program's dialog offers (ADR-144, 1).
+    .in_dialogs()
     .plans();
     c.register::<CommentArgs, _>(
         "core", Topic::Notes,
@@ -112,6 +115,9 @@ pub(crate) fn register(app: &App) {
             })
         },
     )
+    // A note a file is found by, which a window answering another
+    // program's dialog offers (ADR-144, 1).
+    .in_dialogs()
     .plans();
     c.register::<Targets, _>(
         "core", Topic::Notes,

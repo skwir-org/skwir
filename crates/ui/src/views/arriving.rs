@@ -230,12 +230,21 @@ pub fn acting(
     let plan = arriving.arrival.plan;
     let pane = shell.pane;
     let (app, it) = (std::sync::Arc::clone(&shell.app), arriving.clone());
-    el.cursor_pointer()
+    // Where the window opens Activity: not a dialog's (ADR-144, 2), where
+    // the row only says what comes.
+    let opens = shell.runs_here(
+        "ui.activity",
+        &serde_json::json!({ "plan": plan.0, "pointer": true }),
+    );
+    el.when(opens, gpui::Styled::cursor_pointer)
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip(&app, &it).into(), cx))
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
                 cx.stop_propagation();
+                if !opens {
+                    return;
+                }
                 this.activate_pane(pane, cx);
                 this.run(
                     "ui.activity",

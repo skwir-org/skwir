@@ -1273,9 +1273,8 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
 /// the View menu's, as its view is.
 fn layout_parts(shell: &Shell) -> Vec<MenuPart> {
     let mut parts = Vec::new();
-    // The terminal is a plugin's: without it, nothing says it exists; nor
-    // where the window does not open it (a dialog's, ADR-144).
-    if shell.app.terminals.provider().is_some() && shell.runs_here("ui.terminal") {
+    // The terminal is a plugin's: without it, nothing says it exists.
+    if shell.app.terminals.provider().is_some() {
         parts.extend([
             MenuPart::Row({
                 let terminal = words!(
@@ -1291,9 +1290,8 @@ fn layout_parts(shell: &Shell) -> Vec<MenuPart> {
             MenuPart::Line,
         ]);
     }
-    // Where split panes go, where the window splits (not a dialog's).
-    if shell.runs_here("ui.split") {
-        parts.push(MenuPart::Choice(
+    parts.extend([
+        MenuPart::Choice(
             words!(
                 address_layout_split = "Split",
                 note = "A row of the More menu: where split panes go (Auto, side by side, one above the other)."
@@ -1301,9 +1299,7 @@ fn layout_parts(shell: &Shell) -> Vec<MenuPart> {
             .say()
             .into(),
             layout_values(shell, "panes"),
-        ));
-    }
-    parts.extend([
+        ),
         MenuPart::Choice(
             words!(
                 address_layout_preview = "Preview",

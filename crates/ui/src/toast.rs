@@ -982,6 +982,7 @@ impl Shell {
     /// over it, and it comes back once that one goes. Only its answers and
     /// its Close end it; not kept in Earlier, and not timed.
     pub(crate) fn stand(&mut self, toast: Toast, asked: Option<Asked>, cx: &mut Context<Self>) {
+        let toast = self.toast_here(toast);
         self.toasts.stand(toast, asked);
         cx.notify();
     }
@@ -1006,7 +1007,7 @@ impl Shell {
     /// out, `shell/planning.rs`): not kept in Earlier, and not timed. It
     /// goes when its caller dismisses it, or another toast replaces it.
     pub(crate) fn notice(&mut self, toast: Toast, cx: &mut Context<Self>) {
-        self.toasts.current = Some(toast);
+        self.toasts.current = Some(self.toast_here(toast));
         self.toasts.generation += 1;
         // Its time is its caller's: never started (`Toasts::drawn`).
         self.toasts.timed = true;
@@ -1019,11 +1020,22 @@ impl Shell {
     /// takes to read. Held back while the History is open, it keeps its
     /// time: that begins as it is first drawn (`render_answer`).
     fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        let toast = self.toast_here(toast);
         let held = self.undo_history_open();
         if let (generation, Some(seconds)) = self.toasts.say(toast, held) {
             self.time_toast(generation, seconds, cx);
         }
         cx.notify();
+    }
+
+    /// `toast` with the buttons this window runs (`Shell::runs_here`,
+    /// ADR-144, 1): in a dialog's window, none for what it does not offer,
+    /// whatever said it.
+    fn toast_here(&self, mut toast: Toast) -> Toast {
+        toast
+            .actions
+            .retain(|action| self.runs_here(&action.command, &action.args));
+        toast
     }
 
     /// The toast said at `generation` goes in `seconds`, unless another

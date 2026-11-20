@@ -197,6 +197,14 @@ impl Shell {
                     };
                     match answer {
                         Ok(answer) => {
+                            // What the window runs of them (ADR-144, 1).
+                            let choices: Vec<Choice> = answer
+                                .choices
+                                .into_iter()
+                                .filter(|choice| {
+                                    this.runs_here(&choice.command.name, &choice.command.args)
+                                })
+                                .collect();
                             if let Some(c) = &mut this.choose {
                                 if let Some(title) = answer.title {
                                     c.title = title;
@@ -207,7 +215,7 @@ impl Shell {
                                 if answer.option.is_some() {
                                     c.option = answer.option;
                                 }
-                                c.choices = answer.choices;
+                                c.choices = choices;
                                 c.loaded = true;
                                 c.query = None;
                             }

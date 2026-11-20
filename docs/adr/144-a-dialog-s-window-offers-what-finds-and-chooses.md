@@ -7,7 +7,8 @@ dialog; took the proposal whole: what a dialog offers, a layout of the
 dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
 7). Built on Linux, which alone has these dialogs (ADR-141, 11), the
 same day (2f32dfaa..dd85c5b5), each step checked in a window on Xvfb;
-amended as built (decisions 1, 4, 6, 7 and 10).
+amended as built (decisions 1, 4, 6, 7 and 10), and after review
+(decision 1: one answer every way to run a command asks).
 
 ## Context
 
@@ -41,29 +42,48 @@ amended as built (decisions 1, 4, 6, 7 and 10).
 ## Decision
 
 1. **A dialog's window offers what finds and chooses a file, and only
-   that.** Each command says whether it does
-   (`CommandSpec::offered_in_dialogs`), by its topic unless it says
-   otherwise where it is registered (`Declared::in_dialogs`,
-   `not_in_dialogs`): going places, selecting, finding, notes, views,
-   previews and what plays in them, places and the window's own parts
-   are offered; files, tabs and the split, the terminal and Skwir itself
-   are not, nor the pinned player (pinning, a menu's Play), Activity, a
-   lens's own commands, a slideshow, nor a picker or a prompt of the
-   window's that leads to what it does not offer (Open With's Other
-   Application…, its source about files).
-   Of the files' commands, a dialog offers what a dialog has always
+   that.** One answer says how that window takes a command run with its
+   arguments (`App::in_dialogs`: offered; run only where a part of the
+   window asks it, the rows' data or a setting a menu's switch saves; or
+   not), and every way to run a command there asks it
+   (`Shell::in_window`): keys and F1's list, the palette, menus, toolbar
+   buttons and popups' rows, the address field's rows, pickers and
+   prompts, Properties' links, a toast's buttons, and what the window
+   asks of itself (pinning what plays, Activity opening). A command says
+   it where it is registered (`Declared::in_dialogs`, `not_in_dialogs`,
+   or by its arguments, `in_dialogs_by`), else its topic says it:
+   going places, selecting, finding, notes, views, previews and what
+   plays in them, places and the window's own parts are offered; files,
+   tabs and the split, the terminal and Skwir itself are not. Whatever
+   its topic, what changes files (`Effect::Plans`) and what opens
+   another program (`Declared::opens_elsewhere`: an address, a file in
+   its application, the desktop's maps) are offered only where they say
+   so; nor are the pinned player (pinning, a menu's Play, Keep playing),
+   Activity, a lens and its own commands (Usage's, the Map's), a
+   slideshow, what changes the user's servers or publishes a file, a
+   picture's position rewritten, nor a command that leads to one the
+   window does not offer (`Declared::leads_to`: a picker's source and
+   choices, a prompt's command, an item of the preview's menu: Open
+   With's picker, Print…, the split's panes placed by `ui.layout`).
+   Of what changes files, a dialog offers what a dialog has always
    offered: making a folder, renaming, moving to the Trash, the
-   clipboard, Undo and Redo of these, the shelf (several files from
-   several folders), Properties; of the window's, its own buttons, the
-   palette, the list of keys, Close tab (its window's last) and Quit.
-   What no list offers, run by the window's parts where they ask it (the
-   rows' data, a setting a menu's switch saves), runs there too
-   (`CommandSpec::runs_in_dialogs`). One rule answers every way to run a
-   command in that window (keys, the palette, menus, toolbar buttons,
-   what the window asks of itself; `Shell::offers`): what it does not
-   offer is not shown, and refused if asked. Views are offered by their
-   role: listings and alternate shapes, never a lens (Usage). Quit,
-   asked there, cancels the dialog alone (built just before, e780d5ed).
+   clipboard and a paste, Undo and Redo of these, the shelf (several
+   files from several folders), Properties, and the notes a file is
+   found by (its tags, rating and comment; never a tag renamed or taken
+   from every file); of what opens another program, `open`, which
+   answers the dialog there; of the window's, its own buttons, the
+   palette, the list of keys and Close tab (its window's last). What it
+   does not offer is not drawn nor listed, and refused if asked; a key
+   bound to it does what it would with nothing bound (a binding below
+   it, a field's typing). Views are offered by their role: listings and
+   alternate shapes, never a lens (Usage, the Map). Quit is not offered
+   there, which would end the program the user's own windows are: Ctrl+Q
+   there cancels the dialog. Amended after review (2026-11-20): as first
+   built, each surface asked a part of the rule (keys and menus one,
+   the palette another, pickers a third), checks beside features (the
+   terminal, the split) stood beside it, and a command about notes or
+   places that rewrote pictures or opened a program was offered by its
+   topic.
 2. **What it does not offer is not drawn either**: no tab bar, no split,
    no terminal panel, no pinned player (a film or a song still plays in
    the preview), no Activity panel (what the user does there is said
@@ -78,8 +98,12 @@ amended as built (decisions 1, 4, 6, 7 and 10).
    dialog stays off in the next, and the user's own windows never see
    it. The first dialog takes how the user's window shows its files (its
    view, zoom, columns) and arranges its sidebar, and no panel: no
-   preview, no Properties, no timeline, no Quick filters. Its size is kept too, the dialog's size (1000 × 680 at
-   100 %) its start. Preferences stay the program's, one for all its
+   preview, no Properties, no timeline, no Quick filters. Its size is
+   kept too, the dialog's size (1000 × 680 at 100 %) its start: the size
+   it is given while it floats, never one the compositor tiles it at
+   (`Placement::of_dialog`, by the tiled states Wayland's compositors
+   say; X11's window managers say none, amended as reviewed,
+   2026-11-20). Preferences stay the program's, one for all its
    windows: hidden files, sorting, folders first, text sizes. A folder
    that remembers its view (ADR-132) shows it in a dialog too.
 5. **What is asked chooses the view.** A request whose filter in use
@@ -140,7 +164,9 @@ amended as built (decisions 1, 4, 6, 7 and 10).
 
 - A command registered without a word about dialogs is offered there by
   its topic: a plugin's new command about files is not, one about
-  finding is.
+  finding is, and one that changes files or opens another program is
+  not, whatever it is about (`crates/skwir/tests/dialogs_offer.rs` lists
+  those a dialog offers).
 - A dialog's window is a window with less: what it offers runs as in
   any window, and the window does not grow a mode beside each feature.
 - `ui.session` stays the user's windows' alone; `ui.chooser_session` is

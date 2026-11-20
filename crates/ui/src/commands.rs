@@ -10,7 +10,9 @@
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use skwir_core::app::App;
-use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome, Repeats, Topic, always};
+use skwir_core::command::{
+    Effect, Form, Invocation, LeadsTo, NoArgs, Outcome, Repeats, Topic, always,
+};
 use skwir_core::words;
 use skwir_core::words::Words;
 
@@ -1394,7 +1396,8 @@ const KEY_FORMS: &[(&str, &str, fn() -> Words)] = &[
 /// offers though their topic is not offered there (ADR-144, 1): making a
 /// folder and renaming, Properties and copying what it says, a plan's
 /// Cancel and a review's answers, the window's own buttons, the palette
-/// and the list of keys, and Quit, which cancels the dialog there.
+/// and the list of keys. Not Quit, which would end the program the user's
+/// own windows are: Ctrl+Q there is the dialog's Cancel (`keymap`).
 const IN_DIALOGS: &[&str] = &[
     "ui.mkdir_prompt",
     "ui.rename_prompt",
@@ -1410,25 +1413,102 @@ const IN_DIALOGS: &[&str] = &[
     "ui.minimize_window",
     "ui.palette",
     "ui.shortcuts",
-    "ui.quit",
 ];
 
 /// The shell's commands a window answering another program's dialog does
 /// not offer though their topic is offered there (ADR-144, 1): what a
-/// window of the user's own shows (Activity, the pinned player and what
-/// plays there from a menu), a lens's own (Usage's), a slideshow, opening a
-/// preview in another program.
+/// window of the user's own shows (Activity, the pinned player, what plays
+/// there from a menu and whether what plays goes on there), a lens's own
+/// (Usage's, the Map's), a slideshow.
 const NOT_IN_DIALOGS: &[&str] = &[
     "ui.activity",
     "ui.activity_earlier",
     "ui.usage_mode",
     "ui.usage_refresh",
+    "ui.map_view_fit",
+    "ui.map_view_spread",
+    "ui.map_view_search_area",
     "ui.slideshow",
     "ui.slideshow_pace",
-    "ui.preview_open_external",
     "ui.media_pin",
     "ui.media_play",
+    "ui.media_keep_playing",
 ];
+
+/// The shell's commands that open something in another program
+/// (`Declared::opens_elsewhere`): an address, the file shown, the place
+/// shown. A window answering another program's dialog offers none
+/// (ADR-144, 1).
+const OPENS_ELSEWHERE: &[&str] = &["ui.open_url", "ui.preview_open_external", "ui.map_open"];
+
+/// Where a window answering another program's dialog offers a shell's
+/// command by the arguments it runs with (ADR-144, 1;
+/// `Declared::in_dialogs_by`), the one answer for each of its forms,
+/// keys and buttons: where the split's panes go is the split's, which
+/// such a window has none of, while the preview's place and an archive's
+/// file's are its own; a view is offered by its role, a listing's shape
+/// or an alternate one, never a lens, which answers a question of its own
+/// (Usage, the map).
+fn dialogs_by(name: &str) -> Option<fn(&App, &serde_json::Value) -> bool> {
+    Some(match name {
+        "ui.layout" => |_, args| args.get("panes").is_none(),
+        "ui.view" => |app, args| {
+            args.get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|id| {
+                    app.registry
+                        .views
+                        .find(|view| &*view.id == id)
+                        .is_none_or(|view| view.role != skwir_core::registry::ViewRole::Lens)
+                })
+        },
+        _ => return None,
+    })
+}
+
+/// What a shell's command runs in turn with its arguments
+/// (`Declared::leads_to`): a picker its source and each choice's command,
+/// a prompt the command its answer goes to, an item of the preview's
+/// menu the command it runs with what is shown. A window answering
+/// another program's dialog offers them only where it offers what they
+/// lead to (ADR-144, 1): Open With's picker is about files, wherever it is
+/// drawn.
+fn leads_to_of(name: &str) -> Option<LeadsTo> {
+    /// `args[command]` with `args[args]`, as a prompt and the preview's
+    /// items name what they run.
+    fn named(args: &serde_json::Value) -> Vec<Invocation> {
+        args.get("command")
+            .and_then(serde_json::Value::as_str)
+            .map(|command| Invocation {
+                name: command.into(),
+                args: args
+                    .get("args")
+                    .filter(|args| args.is_object())
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            })
+            .into_iter()
+            .collect()
+    }
+    Some(match name {
+        "ui.choose" => |args| {
+            let source = args
+                .get("source")
+                .and_then(|source| serde_json::from_value::<Invocation>(source.clone()).ok());
+            let choices = args
+                .get("choices")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|choice| {
+                    serde_json::from_value::<Invocation>(choice.get("command")?.clone()).ok()
+                });
+            source.into_iter().chain(choices).collect()
+        },
+        "ui.ask" | "ui.preview_invoke" => named,
+        _ => return None,
+    })
+}
 
 /// The shell's commands whose keys may change but never all go (ADR-024):
 /// the palette, which reaches every command, and what gets the keyboard
@@ -1850,10 +1930,21 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     if let Some(rule) = repeats_of(name) {
         declared.repeats(rule);
     }
+    if let Some(rule) = dialogs_by(name) {
+        declared.in_dialogs_by(rule);
+    }
+    if let Some(leads_to) = leads_to_of(name) {
+        declared.leads_to(leads_to);
+    }
     let declared = if IN_DIALOGS.contains(&name) {
         declared.in_dialogs()
     } else if NOT_IN_DIALOGS.contains(&name) {
         declared.not_in_dialogs()
+    } else {
+        declared
+    };
+    let declared = if OPENS_ELSEWHERE.contains(&name) {
+        declared.opens_elsewhere()
     } else {
         declared
     };
@@ -3805,6 +3896,83 @@ mod tests {
         }
     }
 
+    /// A window answering another program's dialog offers the shell's
+    /// commands by the arguments they run with and by what they lead to
+    /// (ADR-144, 1): placing the preview, not the split's panes; a
+    /// listing's shape, not a lens; a picker, a prompt and an item of the
+    /// preview's menu only where what they run is offered.
+    #[test]
+    fn a_dialog_offers_by_arguments_and_by_what_they_lead_to() {
+        use serde_json::json;
+        use skwir_core::command::InDialogs;
+        use skwir_core::registry::ViewSpec;
+        use skwir_core::words::Words;
+        use std::sync::Arc;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        super::declare_all(&app);
+        let revision = Arc::default();
+        let list = ViewSpec::named(
+            "list",
+            Words::as_written("List"),
+            "list",
+            Arc::clone(&revision),
+        );
+        let usage = ViewSpec::named("usage", Words::as_written("Usage"), "usage", revision).lens();
+        app.registry.views.add("ui", list);
+        app.registry.views.add("ui", usage);
+        let here = |name: &str, args: serde_json::Value| app.in_dialogs(name, &args);
+        assert_eq!(
+            here("ui.layout", json!({"preview": "right"})),
+            InDialogs::Offered
+        );
+        assert_eq!(
+            here("ui.layout", json!({"member": "auto"})),
+            InDialogs::Offered
+        );
+        assert_eq!(here("ui.layout", json!({"panes": "row"})), InDialogs::Not);
+        assert_eq!(here("ui.view", json!({"id": "list"})), InDialogs::Offered);
+        assert_eq!(here("ui.view", json!({"id": "usage"})), InDialogs::Not);
+        // A picker whose choices are given leads to each of them.
+        let choose = |command: &str| {
+            json!({ "choices": [
+                { "title": "A", "command": { "name": "ui.zoom", "args": {} } },
+                { "title": "B", "command": { "name": command, "args": {} } },
+            ]})
+        };
+        assert_eq!(here("ui.choose", choose("ui.find")), InDialogs::Offered);
+        assert_eq!(here("ui.choose", choose("ui.terminal")), InDialogs::Not);
+        // A prompt leads to its command, an item of the preview's menu to
+        // what it runs with what is shown, through a picker too.
+        let ask = |command: &str| json!({ "command": command, "field": "name" });
+        assert_eq!(here("ui.ask", ask("ui.find")), InDialogs::Offered);
+        assert_eq!(here("ui.ask", ask("ui.split")), InDialogs::Not);
+        assert_eq!(
+            here(
+                "ui.preview_invoke",
+                json!({ "command": "ui.open_url", "args": {} })
+            ),
+            InDialogs::Not
+        );
+        assert_eq!(
+            here(
+                "ui.preview_invoke",
+                json!({ "command": "ui.choose", "args": choose("ui.terminal") })
+            ),
+            InDialogs::Not
+        );
+        assert_eq!(
+            here(
+                "ui.preview_invoke",
+                json!({ "command": "ui.preview_find", "args": {} })
+            ),
+            InDialogs::Offered
+        );
+        // What opens another program is not offered whatever its topic.
+        assert_eq!(here("ui.open_url", json!({})), InDialogs::Not);
+        assert_eq!(here("ui.map_open", json!({})), InDialogs::Not);
+    }
+
     /// What the shell's keys run and the palette offers is declared, with
     /// arguments the declaration takes; arguments it does not are refused.
     #[test]
@@ -3851,20 +4019,29 @@ mod tests {
                 "{name}"
             );
         }
-        // What a dialog's window offers apart from its topic says the
-        // opposite of the topic (ADR-144, 1): a line that says what the
-        // topic already says is not one.
+        // What a dialog's window offers apart from its topic and effect
+        // says the opposite of them (ADR-144, 1): a line that says what
+        // they already say is not one.
+        let none = serde_json::json!({});
         for name in super::IN_DIALOGS {
             let spec = app.commands.get(name).expect(name);
             assert!(
-                spec.offered_in_dialogs() && !spec.topic.in_dialogs(),
+                app.in_dialogs(name, &none).offered() && !spec.in_dialogs_by_default(),
                 "{name}"
             );
         }
         for name in super::NOT_IN_DIALOGS {
             let spec = app.commands.get(name).expect(name);
             assert!(
-                !spec.offered_in_dialogs() && spec.topic.in_dialogs(),
+                !app.in_dialogs(name, &none).runs() && spec.in_dialogs_by_default(),
+                "{name}"
+            );
+        }
+        for name in super::OPENS_ELSEWHERE {
+            let spec = app.commands.get(name).expect(name);
+            assert!(
+                spec.opens == skwir_core::command::Opens::Elsewhere
+                    && !app.in_dialogs(name, &none).runs(),
                 "{name}"
             );
         }

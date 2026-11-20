@@ -605,6 +605,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 Ok(Outcome::Done)
             },
         )
+        // What changes the user's servers, or publishes a file, is a
+        // window of the user's own's: never offered by one answering
+        // another program's dialog, which finds and chooses (ADR-144, 1).
+        .not_in_dialogs()
         .shows();
     let remotes_ = remotes.clone();
     app.commands
@@ -686,6 +690,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 Ok(Outcome::Done)
             },
         )
+        .not_in_dialogs()
         .shows();
     let remotes_ = remotes.clone();
     app.commands
@@ -723,6 +728,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 Ok(Outcome::Done)
             },
         )
+        .not_in_dialogs()
         .shows();
     // Copy Public Link, where the storage of a mount Skwir made makes one
     // (rclone's `PublicLink`): offered from what was asked of the mount,
@@ -833,7 +839,8 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             );
             Ok(Outcome::Done)
         },
-    );
+    )
+    .not_in_dialogs();
     let remotes_ = remotes.clone();
     app.commands
         .register::<AddressArgs, _>(
@@ -917,6 +924,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 Ok(Outcome::Done)
             },
         )
+        .not_in_dialogs()
         .shows();
     let remotes_ = remotes.clone();
     app.commands.register::<AtLoginArgs, _>(
@@ -975,7 +983,8 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 })?;
             Ok(Outcome::Done)
         },
-    );
+    )
+    .not_in_dialogs();
     let remotes_ = remotes.clone();
     app.commands
         .register::<AddressArgs, _>(
@@ -1016,6 +1025,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 Ok(Outcome::Done)
             },
         )
+        .not_in_dialogs()
         .shows();
     let remotes_ = remotes.clone();
     app.commands.register::<NamedArgs, _>(

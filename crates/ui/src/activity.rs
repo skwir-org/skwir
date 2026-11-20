@@ -733,7 +733,7 @@ impl Shell {
             && !self.activity.folded
             // Not in a dialog's window, which has no Activity (ADR-144, 2):
             // its strip says what runs.
-            && self.runs_here("ui.activity")
+            && self.runs_here("ui.activity", &serde_json::Value::Null)
             && self
                 .work
                 .borrow()
@@ -1632,6 +1632,9 @@ pub fn strip(
     let error = matches!(offers, Offers::Stopped { .. });
     let anchor = shell.activity.anchor.clone();
     let a11y = shell.a11y;
+    // The strip opens Activity where the window runs it, not in a dialog's
+    // (ADR-144, 2): there it says what runs, and its buttons act.
+    let opens = shell.runs_here("ui.activity", &serde_json::json!({ "pointer": true }));
     // Each version: the opener (its bar and words), then the buttons, which
     // keep their ids from one version to the next, and so the keyboard.
     let mut versions = Vec::with_capacity(said.len());
@@ -1648,9 +1651,10 @@ pub fn strip(
         let opener = div()
             .id("activity-strip")
             .relative()
-            .role(gpui::Role::Button)
+            .when(opens, |d| {
+                d.role(gpui::Role::Button).track_focus(&focus.open)
+            })
             .when(a11y, |d| d.aria_label(label))
-            .track_focus(&focus.open)
             .flex()
             .items_center()
             .gap_1()
@@ -1660,16 +1664,13 @@ pub fn strip(
             .rounded_md()
             .border_1()
             .border_color(gpui::transparent_black())
-            .cursor_pointer()
             .text_color(if error { theme.error } else { theme.text })
             .when(tinted, |d| d.chosen(theme))
-            .hover({
-                let hover = theme.hover;
-                move |s| s.bg(hover)
-            })
-            .focus({
-                let accent = theme.accent;
-                move |s| s.border_color(accent)
+            .when(opens, |d| {
+                let (hover, accent) = (theme.hover, theme.accent);
+                d.cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .focus(move |s| s.border_color(accent))
             })
             .child(anchor.marker())
             .when(error, |d| {
@@ -1693,24 +1694,30 @@ pub fn strip(
             })
             // A chevron points where Activity goes: up to open it, where
             // there is more to see than the strip says, down to fold it.
-            .when(several || open, |d| {
+            .when(opens && (several || open), |d| {
                 d.child(controls::glyph(
                     if open { "chevron" } else { "chevron-up" },
                     theme.text_muted,
                     11.,
                 ))
-            })
-            .press(
-                |this, window, cx| {
-                    this.run(
-                        "ui.activity",
-                        serde_json::json!({"pointer": true}),
-                        window,
-                        cx,
-                    );
-                },
-                cx,
-            );
+            });
+        let opener = if opens {
+            opener
+                .press(
+                    |this, window, cx| {
+                        this.run(
+                            "ui.activity",
+                            serde_json::json!({"pointer": true}),
+                            window,
+                            cx,
+                        );
+                    },
+                    cx,
+                )
+                .into_any_element()
+        } else {
+            opener.into_any_element()
+        };
         versions.push(
             div()
                 .flex()

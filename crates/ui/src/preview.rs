@@ -5968,7 +5968,10 @@ impl Shell {
                 (source, answer)
             })
             .collect();
-        crate::menu::merge(items, answers)
+        // What the window runs of them (ADR-144, 1): an application to open
+        // the file with, Print…, opening it elsewhere are no rows of a
+        // dialog's window.
+        self.items_run_here(crate::menu::merge(items, answers))
     }
 
     pub fn preview_copy_path(&mut self, cx: &mut Context<Self>) {

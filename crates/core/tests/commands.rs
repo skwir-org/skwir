@@ -423,15 +423,18 @@ fn typed_arguments_reach_their_command_without_json() {
 }
 
 /// A window answering another program's dialog offers a command by its
-/// topic unless it says otherwise where it is registered, and runs what no
-/// list offers (data, what one place asks) wherever it is asked (ADR-144,
-/// 1).
+/// topic unless it says otherwise where it is registered, never one that
+/// changes files or opens another program unless it says so, by its
+/// arguments where it says so, and only where what it leads to is offered;
+/// what no list offers (data, what one place asks) runs where it is asked
+/// (ADR-144, 1).
 #[test]
 fn a_dialog_offers_a_command_by_its_topic_unless_it_says_otherwise() {
+    use skwir_core::command::InDialogs;
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     let register = |topic, name: &'static str| {
-        app.commands.register::<NoArgs, _>(
+        app.commands.register::<serde_json::Value, _>(
             "dialogs",
             topic,
             name,
@@ -443,30 +446,68 @@ fn a_dialog_offers_a_command_by_its_topic_unless_it_says_otherwise() {
     register(Topic::Find, "dialogs.find");
     register(Topic::Files, "dialogs.compress");
     register(Topic::Tabs, "dialogs.new_tab");
-    register(Topic::Files, "dialogs.mkdir").in_dialogs();
+    register(Topic::Files, "dialogs.mkdir").in_dialogs().plans();
     register(Topic::Window, "dialogs.activity").not_in_dialogs();
     register(Topic::Files, "dialogs.rows").data();
     register(Topic::Skwir, "dialogs.save_settings").asked_only();
-    let offered = |name| app.commands.offered_in_dialogs(name);
-    let runs = |name| app.commands.runs_in_dialogs(name);
-    assert!(offered("dialogs.find") && runs("dialogs.find"));
-    assert!(!offered("dialogs.compress") && !runs("dialogs.compress"));
-    assert!(!offered("dialogs.new_tab") && !runs("dialogs.new_tab"));
-    assert!(offered("dialogs.mkdir") && runs("dialogs.mkdir"));
-    assert!(!offered("dialogs.activity") && !runs("dialogs.activity"));
+    // Whatever it is about, what changes files or opens another program.
+    register(Topic::Notes, "dialogs.geotag").plans();
+    register(Topic::Notes, "dialogs.tag").in_dialogs().plans();
+    register(Topic::Go, "dialogs.browse").opens_elsewhere();
+    // By its arguments.
+    register(Topic::View, "dialogs.layout").in_dialogs_by(|_, args| args.get("panes").is_none());
+    // A picker leads to its source.
+    register(Topic::Window, "dialogs.choose").leads_to(|args| {
+        args.get("source")
+            .and_then(|source| serde_json::from_value::<Invocation>(source.clone()).ok())
+            .into_iter()
+            .collect()
+    });
+    let here = |name: &str, args: serde_json::Value| app.in_dialogs(name, &args);
+    let none = || serde_json::json!({});
+    assert_eq!(here("dialogs.find", none()), InDialogs::Offered);
+    assert_eq!(here("dialogs.compress", none()), InDialogs::Not);
+    assert_eq!(here("dialogs.new_tab", none()), InDialogs::Not);
+    assert_eq!(here("dialogs.mkdir", none()), InDialogs::Offered);
+    assert_eq!(here("dialogs.activity", none()), InDialogs::Not);
     // Run where they are asked, listed nowhere.
-    assert!(!offered("dialogs.rows") && runs("dialogs.rows"));
-    assert!(!offered("dialogs.save_settings") && runs("dialogs.save_settings"));
+    assert_eq!(here("dialogs.rows", none()), InDialogs::Asked);
+    assert_eq!(here("dialogs.save_settings", none()), InDialogs::Asked);
+    assert_eq!(here("dialogs.geotag", none()), InDialogs::Not);
+    assert_eq!(here("dialogs.tag", none()), InDialogs::Offered);
+    assert_eq!(here("dialogs.browse", none()), InDialogs::Not);
+    assert_eq!(
+        here("dialogs.layout", serde_json::json!({"preview": "right"})),
+        InDialogs::Offered
+    );
+    assert_eq!(
+        here("dialogs.layout", serde_json::json!({"panes": "row"})),
+        InDialogs::Not
+    );
+    let source = |name: &str| serde_json::json!({"source": {"name": name, "args": {}}});
+    assert_eq!(
+        here("dialogs.choose", source("dialogs.find")),
+        InDialogs::Offered
+    );
+    // Its source only answers, about files: the picker is about files.
+    assert_eq!(
+        here("dialogs.choose", source("dialogs.rows")),
+        InDialogs::Not
+    );
+    assert_eq!(
+        here("dialogs.choose", source("dialogs.none")),
+        InDialogs::Not
+    );
     // Not one that is not registered.
-    assert!(!offered("dialogs.none") && !runs("dialogs.none"));
+    assert_eq!(here("dialogs.none", none()), InDialogs::Not);
     // The core's own: making a folder, renaming, the Trash, Undo, Redo and
     // Close tab (which closes a dialog's window, its last tab) are offered;
     // deleting at once, copying and moving given where to, a new tab or a
     // new window are not.
     for name in ["mkdir", "rename", "trash", "undo", "redo", "tab.close"] {
-        assert!(offered(name), "{name}");
+        assert!(here(name, none()).offered(), "{name}");
     }
     for name in ["delete", "copy", "move", "tab.new", "window.new"] {
-        assert!(!offered(name), "{name}");
+        assert!(!here(name, none()).runs(), "{name}");
     }
 }
