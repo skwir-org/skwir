@@ -26,6 +26,9 @@ pub fn path() -> Option<PathBuf> {
 /// `gtk-recent-files-max-age` of 0, in its `settings.ini`), nor where
 /// GNOME's privacy settings say so (`remember-recent-files`), as GTK's own
 /// dialog reads them. Runs `gsettings` on a GNOME desktop: on a worker.
+/// Elsewhere than Linux, never: no program there keeps this list, and no
+/// dialog of another program is Skwir's (ADR-141, 11).
+#[cfg(target_os = "linux")]
 pub fn remembered() -> bool {
     let off = |value: &str| matches!(value.to_ascii_lowercase().as_str(), "false" | "0");
     if crate::desktop_settings::gtk_settings("gtk-recent-files-enabled")
@@ -42,6 +45,12 @@ pub fn remembered() -> bool {
     !(gnome
         && crate::desktop_settings::gsettings("org.gnome.desktop.privacy", "remember-recent-files")
             .is_some_and(|value| value.trim() == "false"))
+}
+
+/// See the Linux one: elsewhere, never.
+#[cfg(not(target_os = "linux"))]
+pub fn remembered() -> bool {
+    false
 }
 
 /// Add `paths`, chosen now, to the desktop's recently used files: a file
@@ -259,7 +268,9 @@ fn escaped(text: &str) -> String {
     out
 }
 
-#[cfg(test)]
+// The list is written on Linux alone (`remembered`), of paths as Linux
+// writes them.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
