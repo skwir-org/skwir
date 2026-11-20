@@ -168,8 +168,10 @@ mod dev_thumbs {
             req: &ThumbRequest,
             cancel: &CancelToken,
         ) -> anyhow::Result<Option<Image>> {
-            let img =
-                skwir_platform::picture::decode(skwir_platform::picture::open(&req.entry.path)?)?;
+            let img = skwir_platform::picture::decode(
+                skwir_platform::picture::open(&req.entry.path)?,
+                image::Limits::default(),
+            )?;
             if cancel.is_cancelled() {
                 return Ok(None);
             }

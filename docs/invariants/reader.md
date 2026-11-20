@@ -277,7 +277,8 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   scale asked); a comic's or a fixed-layout book's page, a picture
   decoded, is not drawn twice, and a JPEG page larger than asked is
   decoded at a reduced scale (`inspection::picture`, through
-  `picture::decode_fitted`).
+  `picture::jpeg_fitted`), where that holds what an embedded picture
+  may.
 - A cached page remembers the side it was asked at, so an engine with no
   more pixels (a small picture) is not asked again.
 

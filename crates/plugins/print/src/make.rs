@@ -1115,7 +1115,7 @@ fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part>
         (path.to_owned(), (width, height), orientation)
     } else {
         let reader = image::ImageReader::open(path)?.with_guessed_format()?;
-        let decoded = skwir_platform::picture::decode(reader)?;
+        let decoded = skwir_platform::picture::decode(reader, image::Limits::default())?;
         let png = work.join("picture.png");
         decoded.save_with_format(&png, image::ImageFormat::Png)?;
         (png, (decoded.width(), decoded.height()), 0)

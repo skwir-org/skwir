@@ -37,14 +37,27 @@ pub fn stored<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<(u32, u3
 }
 
 /// The picture decoded and turned, a floating-point one encoded as sRGB in
-/// eight bits. The reader's limits bound the decode as they would
-/// `ImageReader::decode`.
-pub fn decode<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<DynamicImage> {
+/// eight bits, within `limits` as `ImageReader::decode` would be: its
+/// pixels counted too, which `ImageReader::into_decoder` leaves to each
+/// decoder (a JPEG's checks only its sides).
+pub fn decode<R: BufRead + Seek>(
+    mut reader: ImageReader<R>,
+    limits: image::Limits,
+) -> ImageResult<DynamicImage> {
+    reader.limits(limits.clone());
     let mut decoder = reader.into_decoder()?;
     let orientation = orientation(&mut decoder);
-    let mut image = encoded(DynamicImage::from_decoder(decoder)?);
+    let mut image = encoded(within(decoder, limits)?);
     image.apply_orientation(orientation);
     Ok(image)
+}
+
+/// The pixels `decoder` decodes, refused if they are more than `limits`
+/// allow; what it holds besides within the rest.
+fn within(mut decoder: impl ImageDecoder, mut limits: image::Limits) -> ImageResult<DynamicImage> {
+    limits.reserve(decoder.total_bytes())?;
+    decoder.set_limits(limits)?;
+    DynamicImage::from_decoder(decoder)
 }
 
 /// Whether a decode may take threads of its own: said by whoever asks for
@@ -65,69 +78,139 @@ pub enum Threads {
 /// The picture decoded, shrunk to at most `side` on its longer side, then
 /// turned: what a thumbnail needs. Turned before shrinking, a portrait
 /// photo of 24 megapixels held a second full copy of itself, 72 MB more
-/// for each worker, and the turn cost the full picture's time.
+/// for each worker, and the turn cost the full picture's time. Within
+/// `image`'s own limits, whatever `reader`'s: a caller with limits of its
+/// own decodes through [`jpeg_fitted`] and [`decode`].
 pub fn decode_fitted<R: BufRead + Seek>(
     reader: ImageReader<R>,
     side: u32,
     threads: Threads,
 ) -> ImageResult<DynamicImage> {
-    let (mut image, orientation) = if reader.format() == Some(ImageFormat::Jpeg) {
+    if reader.format() == Some(ImageFormat::Jpeg) {
         let mut inner = reader.into_inner();
-        match jpeg_reduced(&mut inner, side, threads)? {
-            Some(reduced) => reduced,
-            None => whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?,
+        if let Some(image) = jpeg_fitted(&mut inner, side, threads, REDUCED_BYTES)? {
+            return Ok(image);
         }
-    } else {
-        whole(reader)?
-    };
+        return Ok(fitted(
+            whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?,
+            side,
+        ));
+    }
+    Ok(fitted(whole(reader)?, side))
+}
+
+/// A JPEG decoded at a reduced scale, shrunk to at most `side` on its
+/// longer side and turned, as [`decode_fitted`] decodes it, where that
+/// holds at most `bytes` (a progressive JPEG's coefficients at a quarter or
+/// a half can be more than its pixels whole). `None`, `reader` back where
+/// it was, where it is decoded whole: the caller decodes it, within its
+/// own limits.
+pub fn jpeg_fitted<R: BufRead + Seek>(
+    reader: &mut R,
+    side: u32,
+    threads: Threads,
+    bytes: u64,
+) -> ImageResult<Option<DynamicImage>> {
+    Ok(jpeg_reduced(reader, side, threads, bytes)?.map(|reduced| fitted(reduced, side)))
+}
+
+/// `image` shrunk to at most `side` on its longer side, then turned.
+fn fitted((mut image, orientation): (DynamicImage, Orientation), side: u32) -> DynamicImage {
     if image.width().max(image.height()) > side {
         image = image.thumbnail(side, side);
     }
     image.apply_orientation(orientation);
-    Ok(image)
+    image
 }
 
-/// The picture decoded whole, and how to turn it.
+/// The picture decoded whole, within `image`'s own limits, and how to turn
+/// it.
 fn whole<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<(DynamicImage, Orientation)> {
     let mut decoder = reader.into_decoder()?;
     let orientation = orientation(&mut decoder);
-    Ok((encoded(DynamicImage::from_decoder(decoder)?), orientation))
+    let image = within(decoder, image::Limits::default())?;
+    Ok((encoded(image), orientation))
 }
 
 /// What a JPEG's reduced decode may hold, as `image`'s own limit.
-const REDUCED_BYTES: usize = 512 << 20;
+const REDUCED_BYTES: u64 = 512 << 20;
 
-/// A JPEG decoded at the least of its reduced scales (an eighth, a quarter,
-/// a half) still at least `side` on its longer side, and how to turn it:
-/// a photo eight times the side has an eighth of its pixels computed and
-/// held. `None`, `reader` back where it was, when no smaller scale fits (a
+/// A JPEG's decode at a reduced scale, as its header tells it.
+struct Reduced {
+    width: u16,
+    height: u16,
+    /// Of each pixel: 1 in grey, else 3.
+    channels: u64,
+    /// What the decode holds at most, in bytes.
+    holds: u64,
+}
+
+/// How the JPEG `jpeg` reads is decoded at the least of its reduced scales
+/// (an eighth, a quarter, a half) still at least `side` on its longer
+/// side, read from its header. `None` when no smaller scale fits (a
 /// lossless JPEG has none), or for a JPEG this decoder reads otherwise than
 /// `image` (CMYK, 16 bits, arithmetic coding): it is decoded whole.
+fn reduced<R: std::io::Read>(jpeg: &mut jpeg_decoder::Decoder<R>, side: u32) -> Option<Reduced> {
+    jpeg.read_info().ok()?;
+    let full = jpeg.info()?;
+    let channels = match full.pixel_format {
+        jpeg_decoder::PixelFormat::L8 => 1,
+        jpeg_decoder::PixelFormat::RGB24 => 3,
+        _ => return None,
+    };
+    let asked = u16::try_from(side).unwrap_or(u16::MAX);
+    let (width, height) = jpeg.scale(asked, asked).ok()?;
+    if (width, height) == (full.width, full.height) {
+        return None;
+    }
+    // Its pixels, as each component's plane and as the picture.
+    let pixels = u64::from(width) * u64::from(height) * channels * 2;
+    // A progressive JPEG keeps coefficients for the whole picture: two
+    // bytes a sample of each component (every one at its fullest, as in
+    // 4:4:4), or at an eighth one a block, its DC (`vendor/jpeg-decoder`).
+    let samples = u64::from(u32::from(full.width).next_multiple_of(16))
+        * u64::from(u32::from(full.height).next_multiple_of(16))
+        * channels;
+    let eighth = (width, height) == (full.width.div_ceil(8), full.height.div_ceil(8));
+    let coefficients = match full.coding_process {
+        jpeg_decoder::CodingProcess::DctProgressive if eighth => samples / 64 * 2,
+        jpeg_decoder::CodingProcess::DctProgressive => samples * 2,
+        _ => 0,
+    };
+    Some(Reduced {
+        width,
+        height,
+        channels,
+        holds: pixels + coefficients,
+    })
+}
+
+/// A JPEG decoded as [`reduced`] says, and how to turn it: a photo eight
+/// times the side has an eighth of its pixels computed and held. `None`,
+/// `reader` back where it was, where it is decoded whole: no smaller scale,
+/// or more held than `bytes`.
 fn jpeg_reduced<R: BufRead + Seek>(
     reader: &mut R,
     side: u32,
     threads: Threads,
+    bytes: u64,
 ) -> ImageResult<Option<(DynamicImage, Orientation)>> {
     let start = reader
         .stream_position()
         .map_err(image::ImageError::IoError)?;
-    let reduced = (|| {
+    let decoded = (|| {
         let mut jpeg = jpeg_decoder::Decoder::new(&mut *reader);
-        jpeg.set_max_decoding_buffer_size(REDUCED_BYTES);
+        jpeg.set_max_decoding_buffer_size(usize::try_from(REDUCED_BYTES).ok()?);
         jpeg.set_worker_threads(threads == Threads::Components);
-        jpeg.read_info().ok()?;
-        let full = jpeg.info()?;
-        // Told before a pixel is decoded: one `image` reads otherwise is
-        // decoded once, whole.
-        if !matches!(
-            full.pixel_format,
-            jpeg_decoder::PixelFormat::L8 | jpeg_decoder::PixelFormat::RGB24
-        ) {
-            return None;
-        }
-        let asked = u16::try_from(side).unwrap_or(u16::MAX);
-        let (width, height) = jpeg.scale(asked, asked).ok()?;
-        if (width, height) == (full.width, full.height) {
+        // Told before a pixel is decoded: one `image` reads otherwise, or
+        // too large, is decoded once, whole.
+        let Reduced {
+            width,
+            height,
+            channels,
+            holds,
+        } = reduced(&mut jpeg, side)?;
+        if holds > bytes {
             return None;
         }
         let orientation = jpeg
@@ -139,31 +222,22 @@ fn jpeg_reduced<R: BufRead + Seek>(
         // The pixels of the size it said, or no picture: `from_raw` takes a
         // buffer longer than it needs, and pixels of another size would be
         // drawn as stripes of the picture's first rows.
-        let channels = if full.pixel_format == jpeg_decoder::PixelFormat::L8 {
-            1
-        } else {
-            3
-        };
         if pixels.len() as u64 != u64::from(width) * u64::from(height) * channels {
             return None;
         }
-        let image = match full.pixel_format {
-            jpeg_decoder::PixelFormat::L8 => {
-                DynamicImage::ImageLuma8(image::GrayImage::from_raw(width, height, pixels)?)
-            }
-            jpeg_decoder::PixelFormat::RGB24 => {
-                DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels)?)
-            }
-            _ => return None,
+        let image = if channels == 1 {
+            DynamicImage::ImageLuma8(image::GrayImage::from_raw(width, height, pixels)?)
+        } else {
+            DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels)?)
         };
         Some((image, orientation))
     })();
-    if reduced.is_none() {
+    if decoded.is_none() {
         reader
             .seek(std::io::SeekFrom::Start(start))
             .map_err(image::ImageError::IoError)?;
     }
-    Ok(reduced)
+    Ok(decoded)
 }
 
 /// Linear light encoded as sRGB, what a screen expects: an `OpenEXR`
@@ -282,7 +356,9 @@ mod tests {
     fn a_quarter_turn_stands_the_picture_up() {
         let bytes = jpeg(6); // turn 90° clockwise to view
         assert_eq!(size(reader(&bytes)).unwrap(), (2, 3));
-        let image = decode(reader(&bytes)).unwrap().to_rgb8();
+        let image = decode(reader(&bytes), image::Limits::default())
+            .unwrap()
+            .to_rgb8();
         assert_eq!(image.dimensions(), (2, 3));
         // The red left column is now the top row.
         let [r, _, b] = image.get_pixel(1, 0).0;
@@ -296,7 +372,7 @@ mod tests {
         // An eighth of 1200 × 800 is 150 × 100: what a side of 100 needs.
         let bytes = jpeg_of(1200, 800, 6);
         let mut cursor = Cursor::new(bytes.as_slice());
-        let (reduced, orientation) = jpeg_reduced(&mut cursor, 100, Threads::Caller)
+        let (reduced, orientation) = jpeg_reduced(&mut cursor, 100, Threads::Caller, REDUCED_BYTES)
             .unwrap()
             .unwrap();
         assert_eq!((reduced.width(), reduced.height()), (150, 100));
@@ -311,7 +387,7 @@ mod tests {
         let [r, _, b] = fitted.get_pixel(33, 95).0;
         assert!(r < 60 && b > 200, "bottom should be blue");
         // As the whole decode shrunk would have it.
-        let whole = decode(reader(&bytes))
+        let whole = decode(reader(&bytes), image::Limits::default())
             .unwrap()
             .thumbnail(100, 100)
             .to_rgb8();
@@ -327,7 +403,7 @@ mod tests {
         let small = jpeg(6);
         let mut cursor = Cursor::new(small.as_slice());
         assert!(
-            jpeg_reduced(&mut cursor, 128, Threads::Caller)
+            jpeg_reduced(&mut cursor, 128, Threads::Caller, REDUCED_BYTES)
                 .unwrap()
                 .is_none()
         );
@@ -359,9 +435,10 @@ mod tests {
             "the cut file is no picture at its full size"
         );
         let reduced = |bytes: &[u8]| {
-            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100, Threads::Caller)
-                .unwrap()
-                .unwrap();
+            let (image, _) =
+                jpeg_reduced(&mut Cursor::new(bytes), 100, Threads::Caller, REDUCED_BYTES)
+                    .unwrap()
+                    .unwrap();
             image.to_rgb8()
         };
         let read = reduced(PROGRESSIVE);
@@ -371,7 +448,7 @@ mod tests {
         assert_eq!((fitted.width(), fitted.height()), (100, 67));
         // As the whole decode shrunk has it, give or take the bit the first
         // scan leaves out and the filters' edges.
-        let whole = decode(reader(PROGRESSIVE))
+        let whole = decode(reader(PROGRESSIVE), image::Limits::default())
             .unwrap()
             .thumbnail(150, 100)
             .to_rgb8();
@@ -412,9 +489,10 @@ mod tests {
     #[test]
     fn a_progressive_jpeg_at_an_eighth_is_drawn_as_a_sequential_one() {
         let reduced = |bytes: &[u8]| {
-            let (image, _) = jpeg_reduced(&mut Cursor::new(bytes), 100, Threads::Caller)
-                .unwrap()
-                .unwrap();
+            let (image, _) =
+                jpeg_reduced(&mut Cursor::new(bytes), 100, Threads::Caller, REDUCED_BYTES)
+                    .unwrap()
+                    .unwrap();
             image.to_rgb8()
         };
         let sequential = reduced(PLASMA);
@@ -458,6 +536,42 @@ mod tests {
         }
     }
 
+    /// A reduced decode holds what its caller allows, or the picture is
+    /// decoded whole: a progressive JPEG at a half keeps two bytes a sample
+    /// of each component for the whole picture (800 × 608 × 3 × 2, 2.9 MB,
+    /// with 0.7 MB of pixels), at an eighth one coefficient a block; a
+    /// sequential one only its pixels.
+    #[test]
+    fn a_reduced_decode_holds_at_most_what_its_caller_allows() {
+        const MOST: u64 = 1 << 20;
+        let fitted = |bytes: &[u8], side| {
+            let mut cursor = Cursor::new(bytes);
+            let image = jpeg_fitted(&mut cursor, side, Threads::Caller, MOST).unwrap();
+            if image.is_none() {
+                assert_eq!(cursor.position(), 0, "decoded whole from where it was");
+            }
+            image.map(|image| (image.width(), image.height()))
+        };
+        assert_eq!(
+            fitted(PLASMA, 300),
+            Some((300, 225)),
+            "sequential at a half"
+        );
+        assert_eq!(
+            fitted(PLASMA_PROGRESSIVE, 100),
+            Some((100, 75)),
+            "at an eighth"
+        );
+        assert_eq!(
+            fitted(PLASMA_PROGRESSIVE, 300),
+            None,
+            "progressive at a half"
+        );
+        let mut cursor = Cursor::new(PLASMA_PROGRESSIVE);
+        let image = jpeg_fitted(&mut cursor, 300, Threads::Caller, 4 << 20).unwrap();
+        assert_eq!(image.map(|i| (i.width(), i.height())), Some((300, 225)));
+    }
+
     /// 64 × 48, the plasma in eight bits, lossless (`cjpeg -lossless 1`), in
     /// RGB (`-rgb`) and in grey.
     const LOSSLESS_RGB: &[u8] = include_bytes!("../testdata/synthetic-lossless-rgb.jpg");
@@ -473,7 +587,7 @@ mod tests {
             assert_eq!(jpeg.scale(16, 16).unwrap(), (64, 48), "its full size");
             let mut cursor = Cursor::new(bytes);
             assert!(
-                jpeg_reduced(&mut cursor, 16, Threads::Caller)
+                jpeg_reduced(&mut cursor, 16, Threads::Caller, REDUCED_BYTES)
                     .unwrap()
                     .is_none()
             );
@@ -508,7 +622,7 @@ mod tests {
         DynamicImage::ImageRgb32F(linear)
             .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::OpenExr)
             .unwrap();
-        let image = decode(reader(&bytes)).unwrap();
+        let image = decode(reader(&bytes), image::Limits::default()).unwrap();
         let image = image.as_rgb8().expect("eight bits, not floats");
         // Half of white on screen, within the file's half-float precision.
         let [grey, ..] = image.get_pixel(0, 0).0;
@@ -520,7 +634,12 @@ mod tests {
     fn upright_and_half_turned_pictures_keep_their_size() {
         for bytes in [jpeg(1), jpeg(3)] {
             assert_eq!(size(reader(&bytes)).unwrap(), (3, 2));
-            assert_eq!(decode(reader(&bytes)).unwrap().width(), 3);
+            assert_eq!(
+                decode(reader(&bytes), image::Limits::default())
+                    .unwrap()
+                    .width(),
+                3
+            );
         }
     }
 }

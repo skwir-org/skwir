@@ -247,7 +247,11 @@ A name that says nothing is not a binary file.
   each component, except at an eighth: there it keeps and reads only
   every block's DC coefficient, all an eighth draws, to the first scans
   that bring them, a DC's bits still to come drawn halfway
-  (`vendor/jpeg-decoder`, its README.skwir.md). Whoever asks says
+  (`vendor/jpeg-decoder`, its README.skwir.md). A decode bounded by its
+  caller (an embedded picture's, `inspection::image_limits`) counts its
+  pixels in the bound (`picture::decode`: `image` leaves them to each
+  decoder, and a JPEG's counts none), and is reduced only where what that
+  holds is within it (`picture::jpeg_fitted`). Whoever asks says
   whether the decode may take threads of its own (`picture::Threads`),
   never its scale: thumbnails, a comic's pages and contact sheets, many
   at once, decode on their own thread; the preview's own, waited for

@@ -1424,15 +1424,14 @@ const DECODED_BYTES: usize = 64 << 20;
 
 /// A picture decoded within the bounds of every embedded picture.
 fn decode_picture(bytes: &[u8]) -> Option<image::DynamicImage> {
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .ok()?;
     let mut bounds = image::Limits::default();
     bounds.max_image_width = Some(limits::IMAGE_SIDE);
     bounds.max_image_height = Some(limits::IMAGE_SIDE);
     bounds.max_alloc = Some(limits::IMAGE_ALLOC);
-    reader.limits(bounds);
-    crate::picture::decode(reader).ok()
+    crate::picture::decode(reader, bounds).ok()
 }
 
 /// Draw a picture into `rect` under `transform`, first shrunk to about the

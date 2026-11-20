@@ -1004,17 +1004,26 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     // Its own size, from its header, checked against the limits.
     let own = crate::picture::size(reader()?)?;
     // A JPEG larger than asked is decoded at the least of its reduced
-    // scales that still covers `side` (`picture::decode_fitted`): a comic's
+    // scales that still covers `side` (`picture::jpeg_fitted`): a comic's
     // page asked small, or drawn small first while it is drawn sharp,
     // computes a fraction of its pixels, as a thumbnail does. Only where
-    // the whole decode fits the bound with room to spare: the reduced
-    // decoder holds a progressive JPEG's coefficients whole (two bytes a
-    // sample, four samples a pixel at most) at every scale but an eighth.
-    let reduced = jpeg && u64::from(own.0) * u64::from(own.1) * 8 <= limits::IMAGE_ALLOC;
-    let img = if reduced {
-        crate::picture::decode_fitted(first, side, crate::picture::Threads::Caller)?
+    // what that decode holds is within the bound: a progressive JPEG's
+    // coefficients at a quarter or a half can be more than its pixels
+    // whole. Any other picture is decoded whole, within the limits.
+    let fitted = if jpeg {
+        crate::picture::jpeg_fitted(
+            &mut std::io::Cursor::new(bytes),
+            side,
+            crate::picture::Threads::Caller,
+            limits::IMAGE_ALLOC,
+        )?
     } else {
-        let mut img = crate::picture::decode(first)?;
+        None
+    };
+    let img = if let Some(img) = fitted {
+        img
+    } else {
+        let mut img = crate::picture::decode(first, image_limits())?;
         // Only shrink: `thumbnail` would otherwise scale a tiny icon up to
         // the display side and hand the UI megabytes of pixels per
         // embedded image.
@@ -1701,6 +1710,64 @@ mod tests {
         assert!(r < 60 && b > 200, "right should be blue");
         let whole = picture(&bytes, 4096).unwrap();
         assert_eq!((whole.width, whole.height), (2400, 1200));
+    }
+
+    /// A baseline JPEG of `width` × `height` (multiples of 32), written by
+    /// hand: three components, every block flat, mid grey; each table of
+    /// one code, so that each block is two bits, both zero.
+    fn flat_jpeg(width: u16, height: u16) -> Vec<u8> {
+        fn segment(jpeg: &mut Vec<u8>, marker: u8, body: &[u8]) {
+            jpeg.extend_from_slice(&[0xFF, marker]);
+            jpeg.extend_from_slice(&u16::try_from(body.len() + 2).unwrap().to_be_bytes());
+            jpeg.extend_from_slice(body);
+        }
+        let mut jpeg = vec![0xFF, 0xD8];
+        // A table of quantization, every step 1.
+        segment(&mut jpeg, 0xDB, &[[0].as_slice(), &[1; 64]].concat());
+        let mut frame = vec![8];
+        frame.extend_from_slice(&height.to_be_bytes());
+        frame.extend_from_slice(&width.to_be_bytes());
+        frame.push(3);
+        for id in 1..=3 {
+            frame.extend_from_slice(&[id, 0x11, 0]);
+        }
+        segment(&mut jpeg, 0xC0, &frame);
+        // DC's and AC's code `0`: no difference, and the end of the block.
+        for class in [0x00, 0x10] {
+            let mut table = vec![class, 1];
+            table.extend_from_slice(&[0; 15]);
+            table.push(0);
+            segment(&mut jpeg, 0xC4, &table);
+        }
+        segment(&mut jpeg, 0xDA, &[3, 1, 0, 2, 0, 3, 0, 0, 63, 0]);
+        let blocks = usize::from(width / 8) * usize::from(height / 8) * 3;
+        jpeg.resize(jpeg.len() + blocks * 2 / 8, 0);
+        jpeg.extend_from_slice(&[0xFF, 0xD9]);
+        jpeg
+    }
+
+    /// A large JPEG asked small is decoded reduced, whatever its size, as
+    /// long as that decode holds little: 48 megapixels (a comic's cover),
+    /// whole beyond what an embedded picture may ask for, at an eighth
+    /// 4.5 MB. Only a progressive JPEG at a quarter or a half holds more
+    /// than its pixels (`picture`'s tests).
+    #[test]
+    fn a_large_jpeg_asked_small_is_decoded_at_an_eighth() {
+        let bytes = flat_jpeg(8000, 6000);
+        let mut whole = image::ImageReader::new(std::io::Cursor::new(&bytes))
+            .with_guessed_format()
+            .unwrap();
+        whole.limits(image_limits());
+        assert!(
+            crate::picture::decode(whole, image_limits()).is_err(),
+            "too large whole"
+        );
+        let small = picture(&bytes, 512).unwrap();
+        assert_eq!(small.own, (8000, 6000));
+        assert_eq!((small.width, small.height), (512, 384));
+        for pixel in small.rgba.chunks(4) {
+            assert!(pixel[..3].iter().all(|c| c.abs_diff(128) <= 1), "{pixel:?}");
+        }
     }
 
     const DRAWING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
