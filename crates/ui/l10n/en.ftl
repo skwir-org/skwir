@@ -6222,6 +6222,9 @@ sequence_nothing_follows = Nothing follows these keys here
 # At the foot of the window after the keys typed that begin a binding of several (g): what follows lists the keys that can come next and what each does.
 sequence_then = then
 
+# What a kept setting holds: the layout of the last dialog, so the next one looks the same.
+session_chooser_setting = The view, preview and size of the windows answering other programs' Open and Save dialogs, and the view of those asking for pictures or films
+
 # What a kept setting holds: the shape of the last window, so the next one looks the same.
 session_setting = The last window's view, split, preview and timeline
 

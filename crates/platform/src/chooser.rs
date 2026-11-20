@@ -116,6 +116,90 @@ impl Filter {
     }
 }
 
+impl Filter {
+    /// Whether it asks for pictures or films alone (ADR-144, 5): each of
+    /// its patterns a type of either kind (`image/*`, `video/mp4`, what
+    /// descends from one), or a name's suffix (`*.png`, GTK's
+    /// `*.[pP][nN][gG]`) the type database gives either. A pattern of any
+    /// other shape asks for what cannot be told. No I/O once the database
+    /// is loaded.
+    pub fn asks_pictures(&self) -> bool {
+        use crate::mime::{Kind, Mime};
+        let pictures = |mime: &Mime| {
+            crate::mime::is_kind(mime, Kind::Image) || crate::mime::is_kind(mime, Kind::Video)
+        };
+        !self.patterns.is_empty()
+            && self.patterns.iter().all(|pattern| match pattern {
+                Pattern::Mime(mime) => {
+                    let mime = mime.to_ascii_lowercase();
+                    matches!(mime.as_str(), "image/*" | "video/*") || pictures(&Mime(mime))
+                }
+                Pattern::Glob(glob) => suffix_of(glob).is_some_and(|suffix| {
+                    crate::mime::by_name(std::ffi::OsStr::new(&format!("a.{suffix}")))
+                        .is_some_and(|mime| pictures(&mime))
+                }),
+            })
+    }
+
+    /// The extension its patterns give a name saved through it (ADR-144,
+    /// 6): its first suffix pattern's (`*.png`, `*.[pP][nN][gG]`), else
+    /// its first type's first extension in the type database; none for a
+    /// filter of neither (`*`, `image/*`).
+    pub fn extension(&self) -> Option<String> {
+        self.patterns
+            .iter()
+            .find_map(|pattern| match pattern {
+                Pattern::Glob(glob) => suffix_of(glob),
+                Pattern::Mime(_) => None,
+            })
+            .or_else(|| {
+                self.patterns.iter().find_map(|pattern| match pattern {
+                    Pattern::Mime(mime) if !mime.ends_with("/*") => {
+                        crate::mime::extensions(&crate::mime::Mime(mime.to_ascii_lowercase()))
+                            .into_iter()
+                            .next()
+                    }
+                    _ => None,
+                })
+            })
+    }
+
+    /// The extensions its suffix patterns name, lowercase: what a name
+    /// saved through it ends with.
+    pub fn suffixes(&self) -> Vec<String> {
+        self.patterns
+            .iter()
+            .filter_map(|pattern| match pattern {
+                Pattern::Glob(glob) => suffix_of(glob),
+                Pattern::Mime(_) => None,
+            })
+            .collect()
+    }
+}
+
+/// The suffix a pattern names, lowercase, if it is one name's suffix and
+/// nothing else: `*.png`, `*.tar.gz`, GTK's `*.[pP][nN][gG]` (a letter's
+/// two cases in brackets, as GTK writes a suffix matched in either case).
+fn suffix_of(glob: &str) -> Option<String> {
+    let rest = glob.strip_prefix("*.")?;
+    let mut suffix = String::new();
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '[' => {
+                let (a, b, close) = (chars.next()?, chars.next()?, chars.next()?);
+                if close != ']' || !a.is_alphabetic() || a.to_lowercase().ne(b.to_lowercase()) {
+                    return None;
+                }
+                suffix.extend(a.to_lowercase());
+            }
+            '*' | '?' | ']' | '/' | '\\' | '{' | '}' => return None,
+            c => suffix.extend(c.to_lowercase()),
+        }
+    }
+    (!suffix.is_empty() && !suffix.starts_with('.') && !suffix.ends_with('.')).then_some(suffix)
+}
+
 /// One of the program's choices: a dropdown of `options` (id, label), or
 /// a switch where there are none (`true`, `false`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1100,6 +1184,55 @@ mod tests {
             patterns: Vec::new(),
         };
         assert!(!none.admits()(&named(1, "a.png", File)));
+    }
+
+    /// A filter asks for pictures or films alone when each of its patterns
+    /// is a type or a suffix of either (ADR-144, 5), GTK's bracketed
+    /// suffixes read as theirs; and it gives a saved name its first
+    /// suffix, else its first type's (ADR-144, 6).
+    #[test]
+    fn a_filter_says_whether_it_asks_for_pictures_and_what_it_names() {
+        let filter = |patterns: &[Pattern]| Filter {
+            name: "f".into(),
+            patterns: patterns.to_vec(),
+        };
+        let glob = |g: &str| Pattern::Glob(g.into());
+        let mime = |m: &str| Pattern::Mime(m.into());
+        assert!(filter(&[glob("*.png"), glob("*.[jJ][pP][gG]")]).asks_pictures());
+        assert!(filter(&[mime("image/*")]).asks_pictures());
+        assert!(filter(&[mime("video/mp4"), glob("*.webm")]).asks_pictures());
+        assert!(filter(&[mime("image/svg+xml")]).asks_pictures());
+        assert!(!filter(&[glob("*.png"), glob("*.txt")]).asks_pictures());
+        assert!(!filter(&[glob("*")]).asks_pictures(), "anything");
+        assert!(!filter(&[glob("photo*")]).asks_pictures(), "no suffix");
+        assert!(!filter(&[mime("audio/*")]).asks_pictures());
+        assert!(!filter(&[]).asks_pictures());
+
+        assert_eq!(suffix_of("*.[pP][nN][gG]").as_deref(), Some("png"));
+        assert_eq!(suffix_of("*.tar.gz").as_deref(), Some("tar.gz"));
+        assert_eq!(suffix_of("*.JPG").as_deref(), Some("jpg"));
+        assert_eq!(suffix_of("*.[ab]"), None, "a choice, not a case");
+        assert_eq!(suffix_of("*.*"), None);
+        assert_eq!(suffix_of("*."), None);
+        assert_eq!(suffix_of("photo.png"), None);
+
+        assert_eq!(
+            filter(&[mime("image/png"), glob("*.[wW][eE][bB][pP]")])
+                .extension()
+                .as_deref(),
+            Some("webp"),
+            "a suffix first"
+        );
+        assert_eq!(
+            filter(&[mime("image/png")]).extension().as_deref(),
+            Some("png"),
+            "else the type's"
+        );
+        assert_eq!(filter(&[mime("image/*"), glob("*")]).extension(), None);
+        assert_eq!(
+            filter(&[glob("*.odt"), glob("*.[dD][oO][cC][xX]")]).suffixes(),
+            ["odt", "docx"]
+        );
     }
 
     /// The name a save starts with is the saved file's, else the one

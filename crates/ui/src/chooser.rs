@@ -55,6 +55,15 @@ pub(crate) fn start_folder(app: &skwir_core::App, asked: &Asked) -> PathBuf {
     kept.unwrap_or_else(|| skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/")))
 }
 
+/// Whether the request asks for pictures or films alone, by the filter it
+/// starts with (ADR-144, 5): its window takes the dialogs' view for those.
+pub(crate) fn asks_pictures(asked: &Asked) -> bool {
+    asked
+        .first_filter()
+        .and_then(|at| asked.filters.get(at))
+        .is_some_and(skwir_platform::chooser::Filter::asks_pictures)
+}
+
 /// The longest handle of a Wayland window taken (ADR-141, 9): the one
 /// xdg-foreign exports is a short token (a UUID's length), and what the
 /// program gives goes whole into a Wayland request, which libwayland
@@ -84,6 +93,9 @@ pub(crate) fn foreign_parent(window: &str) -> Option<gpui::ForeignParent> {
 /// A request being answered in this window.
 pub(crate) struct Chooser {
     pub(crate) choosing: Choosing,
+    /// It asks for pictures or films alone (`asks_pictures`): the window
+    /// remembers its view and zoom as those requests' (ADR-144, 5).
+    pub(crate) pictures: bool,
     /// The name typed (saving one file).
     name: Option<Entity<TextInput>>,
     /// The name as bytes the field says (the file saved again's, a file
@@ -316,6 +328,7 @@ impl Shell {
         let wake = self.app.waker_handle();
         choosing.when_closed(move || wake());
         self.chooser = Some(Chooser {
+            pictures: asks_pictures(&asked),
             admits: admits_of(&asked, filter),
             admitted: HashSet::new(),
             choosing,

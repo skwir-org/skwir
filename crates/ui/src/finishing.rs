@@ -1733,8 +1733,9 @@ impl ToSelect {
 /// system lets a window say where it goes.
 const CASCADE: f32 = 32.;
 
-/// The most a window answering another program's dialog takes at first,
-/// at 100 %: a dialog's, beside the program it answers.
+/// The size of a window answering another program's dialog until a
+/// dialog was sized (ADR-144, 4), at 100 %: a dialog's, beside the program
+/// it answers.
 const DIALOG_WIDTH: f32 = 1000.;
 const DIALOG_HEIGHT: f32 = 680.;
 
@@ -1824,7 +1825,13 @@ fn open_window(
     // a step from it; else the window used last, a step from it while
     // windows are up, where it was when none is.
     let up = !state.windows.is_empty();
+    // A dialog's window takes the dialogs' layout (ADR-144, 4 and 5), the
+    // compositor placing it.
+    let dialog = choosing
+        .as_ref()
+        .map(|c| crate::session::dialog_shape(&app, crate::chooser::asks_pictures(c.asked())));
     let (shape, cascade) = match own.and_then(crate::session::from_value) {
+        _ if dialog.is_some() => (dialog, false),
         Some(own) => {
             let placed = own
                 .window
@@ -1846,10 +1853,13 @@ fn open_window(
             maximized: false,
             at: None,
         });
+    // A dialog's window is the size the dialogs were left at, else a
+    // dialog's (ADR-144, 4); never maximized, the compositor placing it.
     if choosing.is_some() {
+        let left = shape.as_ref().and_then(|shape| shape.window.as_ref());
         placement = crate::session::Placement {
-            width: placement.width.min(DIALOG_WIDTH),
-            height: placement.height.min(DIALOG_HEIGHT),
+            width: left.map_or(DIALOG_WIDTH, |left| left.width),
+            height: left.map_or(DIALOG_HEIGHT, |left| left.height),
             maximized: false,
             at: None,
         };

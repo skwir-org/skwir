@@ -16,6 +16,103 @@ use crate::shell::Shell;
 
 pub const SESSION_KEY: &str = "ui.session";
 
+/// The layout the windows answering other programs' dialogs keep, apart
+/// from the user's windows' (`SESSION_KEY`, ADR-144, 4).
+pub const CHOOSER_SESSION_KEY: &str = "ui.chooser_session";
+
+/// What dialogs' windows remember (ADR-144, 4 and 5): their layout, its
+/// view and zoom those of a request for anything but pictures or films
+/// alone, and the view and zoom of a request for those (`pictures`).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct DialogShape {
+    pub session: Session,
+    pub pictures: Option<Looks>,
+}
+
+/// How a window's files look: its view and the size of its icons and
+/// rows.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Looks {
+    pub view: String,
+    pub zoom: u32,
+    pub row_zoom: u32,
+}
+
+impl Looks {
+    fn of(session: &Session) -> Looks {
+        Looks {
+            view: session.view.clone(),
+            zoom: session.zoom,
+            row_zoom: session.row_zoom,
+        }
+    }
+
+    fn on(&self, session: &mut Session) {
+        session.view.clone_from(&self.view);
+        session.zoom = self.zoom;
+        session.row_zoom = self.row_zoom;
+    }
+}
+
+/// What the first dialog's window takes of the user's window (ADR-144,
+/// 4): how its files look, its sidebar and columns as they were arranged;
+/// no panel (no preview, Properties, timeline, Quick filters, terminal),
+/// no split, and a dialog's size.
+fn first_dialog(user: Option<Session>) -> Session {
+    let Some(user) = user else {
+        return Session::default();
+    };
+    Session {
+        view: user.view,
+        zoom: user.zoom,
+        row_zoom: user.row_zoom,
+        sidebar_hidden: user.sidebar_hidden,
+        sidebar_sections: user.sidebar_sections,
+        sidebar_width: user.sidebar_width,
+        column_widths: user.column_widths,
+        ..Session::default()
+    }
+}
+
+/// The shape a dialog's window opens with (ADR-144, 4 and 5): the one the
+/// dialogs keep, else what the first takes of the user's window; for a
+/// request asking for pictures or films alone, the view and zoom kept for
+/// those, else the grid. Never what a dialog does not offer: a split, a
+/// terminal, a place it was left at.
+pub fn dialog_shape(app: &skwir_core::App, pictures: bool) -> Session {
+    let kept = app
+        .settings
+        .get::<DialogShape>(CHOOSER_SESSION_KEY)
+        .unwrap_or_default();
+    let mut session = dialogs_own(app, &kept);
+    if pictures {
+        match &kept.pictures {
+            Some(looks) => looks.on(&mut session),
+            None => crate::view::GRID.clone_into(&mut session.view),
+        }
+    }
+    session
+}
+
+/// The layout every dialog keeps, as a window could have written it, else
+/// the first's; what a dialog does not offer taken out.
+fn dialogs_own(app: &skwir_core::App, kept: &DialogShape) -> Session {
+    let mut session = if kept.session == Session::default() {
+        first_dialog(restore(app))
+    } else {
+        kept.session.clone().written().upgraded()
+    };
+    session.split = false;
+    session.split_panes = None;
+    session.terminal = false;
+    if let Some(window) = &mut session.window {
+        window.maximized = false;
+        window.at = None;
+    }
+    session
+}
+
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 // Each is one independent toggle of the window.
@@ -365,16 +462,15 @@ impl Shell {
     /// handful of actions that change it and as the window comes forward,
     /// never per frame.
     pub(crate) fn remember_session(&mut self) {
+        // Another program's dialog's window keeps the dialogs' layout,
+        // never the shape the next window of the user's takes (ADR-144).
+        if let Some(pictures) = self.chooser.as_ref().map(|c| c.pictures) {
+            return self.remember_dialog_shape(pictures);
+        }
         // Nothing is written before the window's shape was read: the
         // tabs are put in place (and present themselves) before the shape
         // is restored, and writing then would replace it with defaults.
-        // Another program's dialog's window is shaped as a dialog: never
-        // the shape the next window takes (ADR-141).
-        let Some(stored) = self
-            .stored_session
-            .as_ref()
-            .filter(|_| self.chooser.is_none())
-        else {
+        let Some(stored) = self.stored_session.as_ref() else {
             return;
         };
         let session = self.session();
@@ -396,6 +492,53 @@ impl Shell {
         if used && self.app.settings.get::<Session>(SESSION_KEY).as_ref() != Some(&session) {
             self.app.settings.set(SESSION_KEY, value);
             self.save_settings_later();
+        }
+    }
+}
+
+impl Shell {
+    /// Remember the dialogs' layout, if this dialog's window changed it
+    /// (ADR-144, 4 and 5): everything but how its files look for the
+    /// dialogs, and how they look for its kind of request (`pictures`:
+    /// pictures or films alone). Its size, never where it is: the
+    /// compositor places a dialog.
+    fn remember_dialog_shape(&mut self, pictures: bool) {
+        let Some(stored) = self.stored_session.as_ref() else {
+            return;
+        };
+        let session = self.session();
+        if session == *stored {
+            return;
+        }
+        self.stored_session = Some(session.clone());
+        let mut kept = self
+            .app
+            .settings
+            .get::<DialogShape>(CHOOSER_SESSION_KEY)
+            .unwrap_or_default();
+        let mut shared = session.clone();
+        if pictures {
+            // The others' looks stay as they were.
+            Looks::of(&dialogs_own(&self.app, &kept)).on(&mut shared);
+            kept.pictures = Some(Looks::of(&session));
+        }
+        shared.split = false;
+        shared.split_panes = None;
+        shared.terminal = false;
+        if let Some(window) = &mut shared.window {
+            window.maximized = false;
+            window.at = None;
+        }
+        if kept.session == shared {
+            return;
+        }
+        kept.session = shared;
+        match toml::Value::try_from(&kept) {
+            Ok(value) => {
+                self.app.settings.set(CHOOSER_SESSION_KEY, value);
+                self.save_settings_later();
+            }
+            Err(error) => tracing::warn!("cannot record the dialogs' layout: {error:#}"),
         }
     }
 }
@@ -497,12 +640,103 @@ pub fn declare(app: &skwir_core::App) {
             ),
             toml::Value::Table(toml::map::Map::new()),
         ));
+    app.settings
+        .declare(skwir_core::settings::SettingSpec::state(
+            CHOOSER_SESSION_KEY,
+            skwir_core::words!(
+                session_chooser_setting = "The view, preview and size of the windows answering other programs' Open and Save dialogs, and the view of those asking for pictures or films",
+                note = "What a kept setting holds: the layout of the last dialog, so the next \
+                        one looks the same."
+            ),
+            toml::Value::Table(toml::map::Map::new()),
+        ));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::layout::{Panes, Preview};
+
+    /// The first dialog takes how the user's window shows its files and
+    /// arranges its sidebar, and no panel; a request for pictures alone
+    /// the grid; once the dialogs keep a layout, each kind of request its
+    /// own view, and never a split or a terminal (ADR-144, 4 and 5).
+    #[test]
+    fn a_dialog_takes_the_dialogs_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        let user = Session {
+            view: "list".into(),
+            zoom: 96,
+            row_zoom: 24,
+            sidebar_width: 210.,
+            preview: true,
+            properties_on: true,
+            timeline: true,
+            quick_filters: true,
+            terminal: true,
+            split: true,
+            ..Session::default()
+        };
+        app.settings
+            .set(SESSION_KEY, toml::Value::try_from(&user).unwrap());
+        let first = dialog_shape(&app, false);
+        assert_eq!(
+            (
+                first.view.as_str(),
+                first.zoom,
+                first.row_zoom,
+                first.sidebar_width
+            ),
+            ("list", 96, 24, 210.)
+        );
+        assert!(!first.preview && !first.properties_on && !first.timeline && !first.quick_filters);
+        assert!(!first.terminal && !first.split && first.window.is_none());
+        let pictures = dialog_shape(&app, true);
+        assert_eq!((pictures.view.as_str(), pictures.zoom), ("grid", 96));
+
+        // What the dialogs keep, a split and a terminal in it by hand.
+        let kept = DialogShape {
+            session: Session {
+                view: "columns".into(),
+                preview: true,
+                terminal: true,
+                split: true,
+                window: Some(Placement {
+                    width: 1100.,
+                    height: 700.,
+                    maximized: true,
+                    at: Some(At {
+                        x: 10.,
+                        y: 20.,
+                        display: "a display".into(),
+                        display_bounds: [0., 0., 1920., 1080.],
+                    }),
+                }),
+                ..Session::default()
+            },
+            pictures: Some(Looks {
+                view: "grid".into(),
+                zoom: 160,
+                row_zoom: 24,
+            }),
+        };
+        app.settings
+            .set(CHOOSER_SESSION_KEY, toml::Value::try_from(&kept).unwrap());
+        let other = dialog_shape(&app, false);
+        assert_eq!(other.view, "columns");
+        assert!(other.preview && !other.terminal && !other.split);
+        let window = other.window.expect("its size");
+        assert_eq!((window.width, window.height), (1100., 700.));
+        assert!(
+            !window.maximized && window.at.is_none(),
+            "the compositor places it"
+        );
+        let pictures = dialog_shape(&app, true);
+        assert_eq!((pictures.view.as_str(), pictures.zoom), ("grid", 160));
+        assert!(pictures.preview, "the rest is every dialog's");
+    }
 
     #[test]
     fn the_arrangement_survives_the_settings_file() {

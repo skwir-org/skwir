@@ -2206,7 +2206,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   as it closes (`hand_on`). A dialog's
   window is a core window marked so (`WindowTabs::chooses`): never
   recorded for the next start nor reopened, its shape never the next
-  window's, a dialog's size at most and never maximized, the asking
+  window's: the dialogs keep a layout of their own (ADR-144, 4 and 5;
+  `ui.chooser_session`, `session::dialog_shape`, `remember_dialog_shape`),
+  the first taking how the user's window shows its files and arranges its
+  sidebar and no panel, a request for pictures or films alone
+  (`chooser::asks_pictures`) the view and zoom kept for those (the grid
+  at first), never a split nor a terminal, the size it was left at (a
+  dialog's at first) and never maximized, the asking
   window's child where its identifier names one (`chooser::foreign_parent`,
   gpui's `WindowOptions::foreign_parent`), and tagged `file chooser`
   where every window of the user's own is tagged `main window`
@@ -2256,7 +2262,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   preference: `session.rs` keeps it with the window's tabs
   (`Workspace::set_shape`) and, for the window used last, under one key
   (`ui.session`) that a new window without another to take from starts
-  with, written only when it changes. A new pane opens in the current
+  with, written only when it changes. A window answering another
+  program's dialog keeps the dialogs' instead (`ui.chooser_session`,
+  above). A new pane opens in the current
   pane's view. The windows' tabs, each pane's location and filter, are
   remembered with `core.startup = last` (Tabs and Windows, above).
 - **Edges** dragged to size an area are one element (`elements/edge.rs`):

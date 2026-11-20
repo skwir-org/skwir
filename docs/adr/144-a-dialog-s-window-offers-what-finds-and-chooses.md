@@ -74,9 +74,9 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
    and written only by dialogs' windows, as a window of the user's own
    remembers its (ADR-122, `ui.session`): a panel turned off in a
    dialog stays off in the next, and the user's own windows never see
-   it. The first dialog takes the view and zoom of the user's window and
-   nothing else: no preview, no Properties, no timeline, no Quick
-   filters. Its size is kept too, the dialog's size (1000 × 680 at
+   it. The first dialog takes how the user's window shows its files (its
+   view, zoom, columns) and arranges its sidebar, and no panel: no
+   preview, no Properties, no timeline, no Quick filters. Its size is kept too, the dialog's size (1000 × 680 at
    100 %) its start. Preferences stay the program's, one for all its
    windows: hidden files, sorting, folders first, text sizes. A folder
    that remembers its view (ADR-132) shows it in a dialog too.
