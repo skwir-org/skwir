@@ -813,17 +813,14 @@ pub fn render(
         // row is that row's and never reaches here.
         .drag_over::<DragPayload>(move |s, _, _, _| s.bg(drop_tint))
         .on_drop(cx.listener(|this, payload: &DragPayload, window, cx| {
-            for path in this.drag_paths(payload.pane) {
-                this.bookmark(&path, window, cx);
-            }
+            let paths = this.drag_paths(payload.pane);
+            this.dropped_beside_places(&paths, window, cx);
         }))
         // The same from another application, or from our own drag once the
         // compositor carried it.
         .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(drop_tint))
         .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
-            for path in paths.paths() {
-                this.bookmark(path, window, cx);
-            }
+            this.dropped_beside_places(paths.paths(), window, cx);
         }))
         // A place dropped below the rows goes last in its group.
         .on_drop(cx.listener(|this, drag: &PlaceDrag, window, cx| {
@@ -1542,9 +1539,10 @@ fn rings_its_files(
 /// folder's drop target, any other's is its location's (`Verbs::drop`,
 /// `takes`: the Trash trashes, a tag gives its tag, the shelf shelves).
 /// One that takes nothing (Recent, a search) still swallows a drop, which
-/// would otherwise reach the column and be bookmarked. Either way the
-/// column is not marked under it (`dnd::marked_alone`): what a drop
-/// there does is the place's.
+/// would otherwise reach the column and be bookmarked; in a dialog's
+/// window, what is dropped there is gone to, as anywhere in it (ADR-144,
+/// 10). Either way the column is not marked under it
+/// (`dnd::marked_alone`): what a drop there does is the place's.
 fn takes_drops(
     place: gpui::Stateful<gpui::Div>,
     location: &Location,
@@ -1558,8 +1556,15 @@ fn takes_drops(
         return crate::dnd::droppable_place(place, location.clone(), cx);
     }
     crate::dnd::marked_alone(place, cx)
-        .on_drop(cx.listener(|_, _: &DragPayload, _, cx| cx.stop_propagation()))
-        .on_drop(cx.listener(|_, _: &ExternalPaths, _, cx| cx.stop_propagation()))
+        .on_drop(cx.listener(|this, payload: &DragPayload, window, cx| {
+            cx.stop_propagation();
+            let paths = this.drag_paths(payload.pane);
+            this.dialog_takes_drop(&paths, window, cx);
+        }))
+        .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+            cx.stop_propagation();
+            this.dialog_takes_drop(paths.paths(), window, cx);
+        }))
 }
 
 /// A pill dragged: onto files, which it gives what it gives (its tag),
@@ -2428,6 +2433,22 @@ impl Shell {
             cx,
         ));
         cx.notify();
+    }
+
+    /// What is dropped beside the rows: in a dialog's window, gone to
+    /// (ADR-144, 10), never bookmarked; elsewhere each folder bookmarked.
+    fn dropped_beside_places(
+        &mut self,
+        paths: &[std::path::PathBuf],
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog_takes_drop(paths, window, cx) {
+            return;
+        }
+        for path in paths {
+            self.bookmark(path, window, cx);
+        }
     }
 
     /// Bookmark a folder dropped beside the rows. The command checks that
