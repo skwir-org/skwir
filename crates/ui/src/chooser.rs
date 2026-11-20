@@ -196,6 +196,24 @@ fn save_name(text: &str, given: Option<&OsStr>) -> Option<OsString> {
     })
 }
 
+/// `name` given the extension `to` in place of one of `from` it ends with
+/// (ADR-144, 6: those the program's filters take), the longest first
+/// (`tar.gz` before `gz`), case ignored; `None` where it ends with none of
+/// them, or is nothing but one.
+fn swapped_extension(name: &str, from: &[String], to: &str) -> Option<String> {
+    let mut from: Vec<&String> = from.iter().collect();
+    from.sort_by_key(|suffix| std::cmp::Reverse(suffix.len()));
+    from.into_iter().find_map(|suffix| {
+        let cut = name.len().checked_sub(suffix.len() + 1)?;
+        let tail = name.get(cut..)?;
+        (cut > 0
+            && tail.starts_with('.')
+            && tail[1..].eq_ignore_ascii_case(suffix)
+            && !suffix.eq_ignore_ascii_case(to))
+        .then(|| format!("{}.{to}", &name[..cut]))
+    })
+}
+
 /// How much of `name` is its stem: what is selected to be typed over.
 fn stem_len(name: &str) -> usize {
     match name.rfind('.') {
@@ -844,12 +862,40 @@ impl Shell {
         let index = index.filter(|at| *at < chooser.asked().filters.len());
         chooser.open = None;
         if chooser.filter != index {
+            // Saving, the name takes the new filter's extension in place of
+            // one the program's filters take (ADR-144, 6): one typed that
+            // none takes stays.
+            let filters = &chooser.asked().filters;
+            let swap = chooser
+                .name
+                .clone()
+                .zip(index.and_then(|at| filters.get(at)?.extension()))
+                .map(|(input, to)| {
+                    let from: Vec<String> = filters
+                        .iter()
+                        .flat_map(|filter| {
+                            let mut taken = filter.suffixes();
+                            taken.extend(filter.extension());
+                            taken
+                        })
+                        .collect();
+                    (input, from, to)
+                });
             chooser.filter = index;
             chooser.admits = admits_of(chooser.asked(), index);
             let admits = chooser.admits.clone();
             chooser.admitted.insert(self.pane);
             if let Some(pane) = self.app.workspace.write().pane_mut(self.pane) {
                 pane.set_admits(admits);
+            }
+            if let Some((input, from, to)) = swap {
+                input.update(cx, |input, cx| {
+                    if let Some(name) = swapped_extension(input.text(), &from, &to) {
+                        let stem = stem_len(&name);
+                        input.set_text(name, cx);
+                        input.select_range(stem..stem, cx);
+                    }
+                });
             }
             self.app.wake();
         }
@@ -1170,6 +1216,40 @@ mod tests {
         assert_eq!(stem_len("archive.tar.gz"), "archive.tar".len());
         assert_eq!(stem_len(".bashrc"), ".bashrc".len());
         assert_eq!(stem_len("Untitled"), "Untitled".len());
+    }
+
+    /// Another filter gives the name its extension in place of one the
+    /// filter before took, the longest first, case ignored; an extension
+    /// it did not take, or a name that is nothing but one, stays
+    /// (ADR-144, 6).
+    #[test]
+    fn a_filter_swaps_the_extension_it_took() {
+        let jpeg = ["jpg".to_owned(), "jpeg".to_owned()];
+        assert_eq!(
+            swapped_extension("Été 2024.JPG", &jpeg, "png").as_deref(),
+            Some("Été 2024.png")
+        );
+        assert_eq!(
+            swapped_extension("photo.jpeg", &jpeg, "webp").as_deref(),
+            Some("photo.webp")
+        );
+        let archives = ["gz".to_owned(), "tar.gz".to_owned()];
+        assert_eq!(
+            swapped_extension("backup.tar.gz", &archives, "zip").as_deref(),
+            Some("backup.zip"),
+            "the longest first"
+        );
+        assert_eq!(swapped_extension("notes.txt", &jpeg, "png"), None, "theirs");
+        assert_eq!(swapped_extension("photo", &jpeg, "png"), None);
+        assert_eq!(
+            swapped_extension(".jpg", &jpeg, "png"),
+            None,
+            "only a suffix"
+        );
+        assert_eq!(
+            swapped_extension("photo.png", &["png".to_owned()], "png"),
+            None
+        );
     }
 
     /// The name saved under is the field's text as typed, its spaces kept,

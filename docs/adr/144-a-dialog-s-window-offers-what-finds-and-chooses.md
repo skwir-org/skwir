@@ -86,11 +86,11 @@ dialogs' own, and seven further ideas). Amends ADR-141 (decisions 4 and
    files are told by); any other, in the one the dialogs used last for
    any other. The rest of the layout is one for every dialog.
 6. **Saving, the filter gives the name its extension**: choosing another
-   filter replaces an extension the one before took (`*.png` for PNG
-   after `*.jpg`), the new filter's first plain pattern's, else its
-   first type's (the type database's first glob); an extension the user
-   typed that the filter before did not take is theirs, kept, and All
-   files changes nothing.
+   filter replaces an extension one of the program's filters takes
+   (`*.png` for PNG in place of `*.jpg`, after All files too), with the
+   new filter's first plain pattern's, else its first type's (the type
+   database's first glob); an extension the user typed that none of them
+   takes is theirs, kept, and All files changes nothing.
 7. **Recent files.** Opening, Recent is the first of the places, the
    program's filter applied there as in any folder; a request naming no
    folder from a program that chose in none starts there (amends
