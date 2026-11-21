@@ -698,6 +698,11 @@ struct Continues {
     /// It goes on by itself, its server answering again (ADR-080, 9):
     /// the action asked already, going on, not one asked now.
     by_itself: bool,
+    /// The pane whose window asked the plan it continues
+    /// (`Stopped::asking`): going on by itself, nothing asks it on the
+    /// thread that queues it, and it is still that window's (its
+    /// questions, its Retry, ADR-144, 1).
+    asking: Option<PaneId>,
 }
 
 /// A plan a step's error stopped, what Retry runs of it.
@@ -2366,6 +2371,7 @@ impl Executor {
             rest,
             partial,
             waits: was,
+            asking,
             ..
         } = stopped.remove(at)?;
         // Counted before the lock is let go of: whoever looks finds it
@@ -2381,6 +2387,7 @@ impl Executor {
                 partial,
                 waits: waits(was),
                 by_itself,
+                asking,
             })),
         };
         Some((work, handing))
@@ -3204,6 +3211,15 @@ impl Executor {
             Work::Execute { plan, .. } => plan.id,
             Work::Replay(..) => PlanId::fresh(),
         };
+        // Going on by itself, it is asked where the plan was; asked now,
+        // where it is asked from.
+        let asking = match &work {
+            Work::Execute {
+                continues: Some(continues),
+                ..
+            } if continues.by_itself => continues.asking,
+            _ => crate::app::asking_pane(),
+        };
         lane.queue.push_back(Job {
             seq,
             work,
@@ -3218,7 +3234,7 @@ impl Executor {
             refused: None,
             chain,
             run,
-            asking: crate::app::asking_pane(),
+            asking,
         });
         drop(lane);
         if let Some((plan, _)) = brings {
@@ -7693,6 +7709,67 @@ mod tests {
                 .all(|e| !matches!(e, ExecEvent::GoesOn { .. })),
             "it did not go on"
         );
+    }
+
+    /// A dialog's plan that goes on by itself is still the dialog's
+    /// (ADR-080, 9; ADR-144, 1): stopped again, the dialog's Retry finds
+    /// it, though nothing asked it on the thread that queued it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_dialog_s_plan_going_on_by_itself_stays_the_dialog_s() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("t-")
+            .tempdir_in(base)
+            .unwrap();
+        let served = tmp.path().join("served's");
+        std::fs::create_dir(&served).unwrap();
+        crate::fs::reach::pretend_remote(&served);
+        let executor = Executor::new(Scheduler::new(2));
+        executor.set_server_look(Duration::from_millis(100));
+        let mode = |mode: u32| {
+            std::fs::set_permissions(&served, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let dialog = PaneId(7);
+        // A step on the server that fails until told otherwise.
+        let down = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let step = Flaky {
+            path: served.join("a folder"),
+            undoing: false,
+            down: Arc::clone(&down),
+            blocked: Arc::default(),
+            log: Arc::default(),
+        };
+        let plan = Plan::with_steps(Words::as_written("paste"), vec![Box::new(step)]);
+        mode(0o000);
+        let r = {
+            let _asking = crate::app::asking_in(Some(dialog));
+            executor.execute_blocking(&plan, &CancelToken::new())
+        };
+        assert!(r.error.is_some() && r.applied == 0, "{r:?}");
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::WaitsForServer { plan: p } if *p == plan.id),
+        );
+        assert_eq!(executor.last_stopped_of(Some(dialog)), Some(plan.id));
+        // Back, it goes on by itself, and stops again.
+        mode(0o755);
+        let next = std::cell::Cell::new(None);
+        events_until(&executor, |e| match e {
+            ExecEvent::GoesOn {
+                plan: p, next: n, ..
+            } if *p == plan.id => {
+                next.set(Some(*n));
+                false
+            }
+            ExecEvent::Finished { plan: p, .. } => Some(*p) == next.get(),
+            _ => false,
+        });
+        let next = next.get().expect("it went on by itself");
+        assert_eq!(executor.last_stopped_of(Some(dialog)), Some(next));
+        assert_eq!(executor.last_stopped_of(Some(PaneId(8))), None);
     }
 
     #[test]

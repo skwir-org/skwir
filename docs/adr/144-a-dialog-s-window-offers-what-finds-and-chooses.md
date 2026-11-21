@@ -94,8 +94,10 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    user (a server's password or whether to trust it, a volume's
    passphrase, names a paste found taken) is asked in the dialog's
    window, a question going to the window whose action asked it
-   (`app::asking_in`); only what agents, scripts and plugins' work of its
-   own ask waits for a window of the user's own (ADR-141, 8, which keeps
+   (`app::asking_in`; an action going on by itself once its server
+   answers again, ADR-080, 9, is still that window's); only what agents,
+   scripts and plugins' work of its own ask waits for a window of the
+   user's own (ADR-141, 8, which keeps
    agents and scripts from answering a dialog, not the dialog from
    asking). Amended after review (2026-11-20): as first
    built, each surface asked a part of the rule (keys and menus one,

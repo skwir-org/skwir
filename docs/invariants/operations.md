@@ -339,13 +339,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   something else: Retry alone. Not answered, or slowly, it waits
   (`ExecEvent::WaitsForServer`, said in its toast); once answered, it is
   retried as Retry would (`ExecEvent::GoesOn`, its card says "going
-  on"), three times at most a server. Nothing is read to classify an
-  error: its words are the system's, translated. A stopped plan taken out
-  to be retried is counted as handed over until its work is queued
-  (`HandOver`), so whether anything runs, waits its turn or waits for
-  its server is one question (`Executor::busy_or_waiting`), never
-  answered by asking those apart: one going on by itself between them
-  would be in neither.
+  on"), three times at most a server, still the action of the window
+  that asked it (`Continues::asking`): what it asks is asked there, and
+  stopped again, that window's Retry finds it. Nothing is read to
+  classify an error: its words are the system's, translated. A stopped
+  plan taken out to be retried is counted as handed over until its work
+  is queued (`HandOver`), so whether anything runs, waits its turn or
+  waits for its server is one question (`Executor::busy_or_waiting`),
+  never answered by asking those apart: one going on by itself between
+  them would be in neither.
 - **Observers.** A plugin that keeps paths of its own follows what each
   finished run changed (`Executor::observe`: the steps applied and found
   done, in plan order, undos and redos included). One that returned a
