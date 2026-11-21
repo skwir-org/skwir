@@ -1,4 +1,4 @@
-0089 window-tag: WindowOptions::tag, what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and description, set before the first commit where the compositor offers it, X11's WM_WINDOW_ROLE (an ASCII tag alone); said again by Window::set_tag, the platform told only what changed; the other systems leave it unread
+0089 window-tag: WindowOptions::tag, what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and description, set before the first commit where the compositor offers it, X11's WM_WINDOW_ROLE (an ASCII tag alone, the role taken back for another); said again by Window::set_tag, the platform told only what changed; the other systems leave it unread
 
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
 index 4ba8cb8d..6ac9751c 100644
@@ -227,7 +227,7 @@ index 589cb09b..7c6b23f3 100644
          let mut state = self.borrow_mut();
          if let Some(toplevel) = state.surface_state.toplevel() {
 diff --git a/crates/gpui_linux/src/linux/x11/window.rs b/crates/gpui_linux/src/linux/x11/window.rs
-index e7367099..e578f22f 100644
+index e7367099..6caa5cc7 100644
 --- a/crates/gpui_linux/src/linux/x11/window.rs
 +++ b/crates/gpui_linux/src/linux/x11/window.rs
 @@ -7,8 +7,8 @@ use gpui::{
@@ -249,15 +249,16 @@ index e7367099..e578f22f 100644
          _NET_WM_PID,
          _NET_WM_NAME,
          _NET_WM_ICON,
-@@ -415,6 +416,33 @@ where
- /// Clearing when the flag isn't set is skipped: writing it back would create a
- /// WM_HINTS property on windows that never requested attention, and would add an
- /// X round trip to every window state change.
+@@ -410,6 +411,37 @@ where
+         .with_context(failure_context)
+ }
+ 
 +/// What the window is for, for the user's rules: its role, as the session
 +/// management spec has a window say it (STRING, untranslated). STRING is
 +/// Latin-1, and window managers read it so: a tag beyond ASCII is no role,
-+/// where its UTF-8 bytes would read as another name. X11 has no place for
-+/// its description.
++/// where its UTF-8 bytes would read as another name, and a role said before
++/// is taken back, so that rules naming the window's old purpose no longer
++/// match it. X11 has no place for its description.
 +fn write_role(
 +    xcb: &XCBConnection,
 +    x_window: xproto::Window,
@@ -266,7 +267,10 @@ index e7367099..e578f22f 100644
 +) -> anyhow::Result<()> {
 +    if !tag.tag.is_ascii() {
 +        log::warn!("no X11 window role for a tag beyond ASCII: {:?}", tag.tag);
-+        return Ok(());
++        return check_reply(
++            || "X11 DeleteProperty on WM_WINDOW_ROLE failed.",
++            xcb.delete_property(x_window, role),
++        );
 +    }
 +    check_reply(
 +        || "X11 ChangeProperty8 on WM_WINDOW_ROLE failed.",
@@ -280,10 +284,10 @@ index e7367099..e578f22f 100644
 +    )
 +}
 +
- fn set_wm_hints_urgency(xcb: &XCBConnection, x_window: xproto::Window, urgent: bool) {
-     let mut hints = WmHints::new();
-     match WmHints::get(xcb, x_window) {
-@@ -671,6 +699,10 @@ impl X11WindowState {
+ /// Sets or clears the ICCCM WM_HINTS urgency flag, preserving the other hints.
+ ///
+ /// Clearing when the flag isn't set is skipped: writing it back would create a
+@@ -671,6 +703,10 @@ impl X11WindowState {
                  )?;
              }
  
@@ -294,7 +298,7 @@ index e7367099..e578f22f 100644
              let parent = if params.kind == WindowKind::Dialog
                  && let Some(parent) = parent_window
              {
-@@ -1691,6 +1723,12 @@ impl PlatformWindow for X11Window {
+@@ -1691,6 +1727,12 @@ impl PlatformWindow for X11Window {
          }
      }
  

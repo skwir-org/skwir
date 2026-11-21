@@ -411,16 +411,12 @@ where
         .with_context(failure_context)
 }
 
-/// Sets or clears the ICCCM WM_HINTS urgency flag, preserving the other hints.
-///
-/// Clearing when the flag isn't set is skipped: writing it back would create a
-/// WM_HINTS property on windows that never requested attention, and would add an
-/// X round trip to every window state change.
 /// What the window is for, for the user's rules: its role, as the session
 /// management spec has a window say it (STRING, untranslated). STRING is
 /// Latin-1, and window managers read it so: a tag beyond ASCII is no role,
-/// where its UTF-8 bytes would read as another name. X11 has no place for
-/// its description.
+/// where its UTF-8 bytes would read as another name, and a role said before
+/// is taken back, so that rules naming the window's old purpose no longer
+/// match it. X11 has no place for its description.
 fn write_role(
     xcb: &XCBConnection,
     x_window: xproto::Window,
@@ -429,7 +425,10 @@ fn write_role(
 ) -> anyhow::Result<()> {
     if !tag.tag.is_ascii() {
         log::warn!("no X11 window role for a tag beyond ASCII: {:?}", tag.tag);
-        return Ok(());
+        return check_reply(
+            || "X11 DeleteProperty on WM_WINDOW_ROLE failed.",
+            xcb.delete_property(x_window, role),
+        );
     }
     check_reply(
         || "X11 ChangeProperty8 on WM_WINDOW_ROLE failed.",
@@ -443,6 +442,11 @@ fn write_role(
     )
 }
 
+/// Sets or clears the ICCCM WM_HINTS urgency flag, preserving the other hints.
+///
+/// Clearing when the flag isn't set is skipped: writing it back would create a
+/// WM_HINTS property on windows that never requested attention, and would add an
+/// X round trip to every window state change.
 fn set_wm_hints_urgency(xcb: &XCBConnection, x_window: xproto::Window, urgent: bool) {
     let mut hints = WmHints::new();
     match WmHints::get(xcb, x_window) {

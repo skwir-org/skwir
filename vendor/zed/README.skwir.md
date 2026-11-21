@@ -121,7 +121,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0086-rows-reorder-within-paragraphs` | A wrapped row holding the end of one paragraph and the start of the next (a separator parts them on one line) lays each paragraph's stretch, and the separator, out on its own in the text's order, as the line is laid out unwrapped, never reordered across them | — |
 | `0087-right-to-left-answers-kept` | A line holding right-to-left text works out its carets, hit tests and selections at the first question and keeps them with it (`LineLayout::bidi_row`, a wrapped line's rows), each answer after that a search; its carets' edges sorted once, so a long right-to-left line costs a sort, never a move of every edge for each | — |
 | `0088-scroll-handle-direction` | `ScrollHandle::direction`: the direction the element a handle tracks was last laid out in, its own or inherited, which way its offset runs sideways (what `clamp_scroll_position` holds it to) | — |
-| `0089-window-tag` | `WindowOptions::tag` (`WindowTag`): what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and its translated description, part of the first commit where the compositor offers the protocol; X11's `WM_WINDOW_ROLE`, for an ASCII tag; said again by `Window::set_tag` (the description in another language), the platform told only what changed | — |
+| `0089-window-tag` | `WindowOptions::tag` (`WindowTag`): what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and its translated description, part of the first commit where the compositor offers the protocol; X11's `WM_WINDOW_ROLE`, for an ASCII tag (another takes the role back); said again by `Window::set_tag` (the description in another language), the platform told only what changed | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -2241,8 +2241,10 @@ user's language):
   `window_role`, Openbox's `role`, KWin's window role); X11 has no place
   for the description. STRING is Latin-1, and window managers read it so:
   a tag beyond ASCII is no role (a warning is logged), where its UTF-8
-  bytes would read as another name. `WindowTag::tag` says a tag is ASCII,
-  as configuration files name it.
+  bytes would read as another name, and the role said before is taken
+  back (the property deleted), so that rules naming the old purpose no
+  longer match. `WindowTag::tag` says a tag is ASCII, as configuration
+  files name it.
 
 **Said again.** `Window::set_tag` says what the window is for once more:
 its description in another language (an application whose language
