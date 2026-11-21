@@ -5,6 +5,7 @@
 //! interface font (`desktop_style`) are read here alike. Each answer is a
 //! program asked or a file read: on a worker, never while drawing.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -319,12 +320,26 @@ pub(crate) fn keyfile_value(text: &str, group: &str, key: &str) -> Option<String
 /// its group's name, or alone on a line, locking the whole file),
 /// whereupon no file after it changes it: an administrator's word over
 /// the user's. A key deleted (`key[$d]`, with or without `=`) says
-/// nothing again. A value said empty leaves what was said before it, as
-/// `keyfile_value` takes none; a localized one (`key[fr]`) is not read.
+/// nothing again. Names, keys and values are read with the escapes
+/// `KConfig` writes (`kconfig_unescaped`), a value said `key[$e]` expanded
+/// as `KConfig` expands it (`kconfig_expanded`) from Skwir's environment
+/// (`kconfig_variable`). A value empty once read so leaves what was said
+/// before it, as `keyfile_value` takes none; a localized one (`key[fr]`)
+/// is not read.
 pub(crate) fn kconfig_value(cascade: &[impl AsRef<str>], group: &str, key: &str) -> Option<String> {
+    kconfig_value_with(cascade, group, key, &kconfig_variable)
+}
+
+/// `kconfig_value`, a `[$e]` value expanded with what `variable` gives.
+fn kconfig_value_with(
+    cascade: &[impl AsRef<str>],
+    group: &str,
+    key: &str,
+    variable: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
     let mut value = None;
     for text in cascade.iter().rev() {
-        if kconfig_read(text.as_ref(), group, key, &mut value) {
+        if kconfig_read(text.as_ref(), group, key, variable, &mut value) {
             break;
         }
     }
@@ -341,13 +356,20 @@ pub(crate) fn kconfig_value(cascade: &[impl AsRef<str>], group: &str, key: &str)
 /// header), whereupon no later line of the file changes it either.
 /// (`KConfig` lets a later file of defaults, though not the user's
 /// `kdeglobals`, change a key a locked group holds unlocked; here no
-/// later file does.)
-fn kconfig_read(text: &str, group: &str, key: &str, value: &mut Option<String>) -> bool {
+/// later file does. It also stops reading a file at its hundredth line
+/// in error; here every line is read.)
+fn kconfig_read(
+    text: &str,
+    group: &str,
+    key: &str,
+    variable: &dyn Fn(&str) -> Option<String>,
+    value: &mut Option<String>,
+) -> bool {
     let (mut file_locked, mut header_locked) = (false, false);
     let (mut group_locked, mut key_locked) = (false, false);
     let mut in_group = false;
     for line in text.lines() {
-        let line = line.trim();
+        let line = kconfig_trim(line);
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
@@ -372,12 +394,20 @@ fn kconfig_read(text: &str, group: &str, key: &str, value: &mut Option<String>) 
         let Some(entry) = kconfig_entry(line) else {
             continue;
         };
-        if entry.key != key {
+        if kconfig_unescaped(entry.key) != key {
             continue;
         }
-        match entry.said {
+        let said = entry.said.map(|said| {
+            let said = kconfig_unescaped(said);
+            if entry.expands {
+                kconfig_expanded(&said, variable)
+            } else {
+                said.into_owned()
+            }
+        });
+        match said {
             None => *value = None,
-            Some(said) if !said.is_empty() => *value = Some(said.to_owned()),
+            Some(said) if !said.is_empty() => *value = Some(said),
             Some(_) => {}
         }
         key_locked = entry.locks || header_locked;
@@ -385,12 +415,136 @@ fn kconfig_read(text: &str, group: &str, key: &str, value: &mut Option<String>) 
     file_locked || group_locked || key_locked
 }
 
+/// What `KConfig` trims from a line, a key and a value
+/// (`QByteArrayView::trimmed`): ASCII's spaces alone, never a no-break
+/// space.
+fn kconfig_trim(text: &str) -> &str {
+    text.trim_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r'])
+}
+
+/// A group's name, a key or a value as `KConfig` reads the escapes it
+/// writes (`KConfigIniBackend::printableToString`): `\s` a space, `\t`,
+/// `\n`, `\r` and `\\` what they stand for, `\xHH` the byte `HH` (an `x`
+/// where those two are not hex digits; where fewer follow, an `x` ending
+/// the text), `\;` and `\,` kept whole (a desktop file's), a `\` ending
+/// the text left out. Text holding a `\` is trimmed first. At any other
+/// escape `KConfig` stops, leaving a `\` and after it the text as written
+/// from the place it reached (`\s\q` reads ` \\q`): so does this.
+fn kconfig_unescaped(text: &str) -> Cow<'_, str> {
+    if !text.contains('\\') {
+        return Cow::Borrowed(text);
+    }
+    let hex = |byte: u8| match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    };
+    let written = kconfig_trim(text).as_bytes();
+    let mut read = Vec::with_capacity(written.len());
+    let mut at = 0;
+    while let Some(&byte) = written.get(at) {
+        at += 1;
+        if byte != b'\\' {
+            read.push(byte);
+            continue;
+        }
+        let Some(&escaped) = written.get(at) else {
+            break;
+        };
+        at += 1;
+        match escaped {
+            b's' => read.push(b' '),
+            b't' => read.push(b'\t'),
+            b'n' => read.push(b'\n'),
+            b'r' => read.push(b'\r'),
+            b'\\' => read.push(b'\\'),
+            b';' | b',' => read.extend([b'\\', escaped]),
+            b'x' => {
+                let Some(&[high, low]) = written.get(at..at + 2) else {
+                    read.push(b'x');
+                    break;
+                };
+                read.push(match (hex(high), hex(low)) {
+                    (Some(high), Some(low)) => (high << 4) | low,
+                    _ => b'x',
+                });
+                at += 2;
+            }
+            _ => {
+                read.push(b'\\');
+                let reached = read.len();
+                read.extend_from_slice(&written[reached..]);
+                break;
+            }
+        }
+    }
+    Cow::Owned(String::from_utf8_lossy(&read).into_owned())
+}
+
+/// A value said `key[$e]=…` as `KConfig` expands it when it is read
+/// (`KConfigPrivate::expandString`): `$NAME` (letters, digits and `_`)
+/// and `${NAME}` what `variable` gives for `NAME`, nothing where it gives
+/// none, `$$` a `$`, a `$` ending the value kept; any other `$` is left
+/// out, so `$(command)` runs nothing, as `KConfig` runs none. What a
+/// variable gives is not expanded again. (`KConfig` asks for a name in
+/// Latin-1; here as written, the same for every ASCII name.)
+fn kconfig_expanded(value: &str, variable: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut expanded = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(at) = rest.find('$') {
+        expanded.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        rest = if after.is_empty() {
+            expanded.push('$');
+            after
+        } else if let Some(after) = after.strip_prefix('$') {
+            expanded.push('$');
+            after
+        } else {
+            let (name, next) = match after.strip_prefix('{') {
+                Some(braced) => braced.split_once('}').unwrap_or((braced, "")),
+                None => after.split_at(
+                    after
+                        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .unwrap_or(after.len()),
+                ),
+            };
+            if !name.is_empty() {
+                expanded.push_str(&variable(name).unwrap_or_default());
+            }
+            next
+        };
+    }
+    expanded.push_str(rest);
+    expanded
+}
+
+/// A variable as `KConfig` expands it, from Skwir's environment: its
+/// value where it is set and not empty, else for `QT_DATA_HOME`,
+/// `QT_CONFIG_HOME` and `QT_CACHE_HOME` the user's folders (Qt's writable
+/// locations), else none.
+fn kconfig_variable(name: &str) -> Option<String> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| match name {
+            "QT_DATA_HOME" => crate::xdg::data_home(),
+            "QT_CONFIG_HOME" => crate::xdg::config_home(),
+            "QT_CACHE_HOME" => crate::xdg::cache_home(),
+            _ => None,
+        })
+        .map(|value| value.to_string_lossy().into_owned())
+}
+
 /// A group's header as `KConfig` reads it: the group's name (its parts
-/// joined, `[A][B]`) and whether `[$i]` ends it, alone (the file locked)
-/// or after a name (the group). `$i` locks only as the last part and
-/// alone: any other part is the name's (`[R][$ie]` names a group below
-/// `R`). What follows a `]` but another `[` is passed over. `None` for a
-/// `[` unclosed, a header `KConfig` passes over.
+/// read with their escapes, `kconfig_unescaped`, and joined as `KConfig`
+/// joins them, by U+001D: `[A][B]`) and whether `[$i]` ends it, alone
+/// (the file locked) or after a name (the group). `$i` locks only as the
+/// last part and alone, as written: any other part is the name's
+/// (`[R][$ie]` names a group below `R`). What follows a `]` but another
+/// `[` is passed over. `None` for a `[` unclosed, a header `KConfig`
+/// passes over.
 fn kconfig_group(line: &str) -> Option<(String, bool)> {
     let (mut name, mut locks) = (String::new(), false);
     let mut rest = line;
@@ -401,16 +555,17 @@ fn kconfig_group(line: &str) -> Option<(String, bool)> {
             locks = true;
         } else {
             if !name.is_empty() {
-                name.push_str("][");
+                name.push('\u{1d}');
             }
-            name.push_str(part);
+            name.push_str(&kconfig_unescaped(part));
         }
         rest = after;
     }
     Some((name, locks))
 }
 
-/// One line of a group as `KConfig` reads it.
+/// One line of a group as `KConfig` reads it, its key and value as
+/// written (`kconfig_unescaped` reads them).
 struct KconfigEntry<'a> {
     /// The key, without its options and locale.
     key: &'a str,
@@ -418,22 +573,24 @@ struct KconfigEntry<'a> {
     said: Option<&'a str>,
     /// Whether the line locks it (`[$i]`).
     locks: bool,
+    /// Whether its value is expanded (`[$e]`).
+    expands: bool,
 }
 
 /// The entry of `line` as `KConfig` reads it: the brackets after its key
 /// from the last to the first, one starting with `$` its options, each
-/// letter in turn (`i` locks; `d` deletes the key named before that
-/// bracket at once, `=` or not, locked only by what was read before it:
-/// `[$id]` locks, `[$di]` does not), any other its locale. `None` for a
-/// line it passes over (no `=` where nothing is deleted, a `[` unclosed,
-/// two locales) or a value of a locale's (`key[fr]`), which Skwir does
-/// not read.
+/// letter in turn (`i` locks; `e` expands the value; `d` deletes the key
+/// named before that bracket at once, `=` or not, locked only by what was
+/// read before it: `[$id]` locks, `[$di]` does not), any other its
+/// locale. `None` for a line it passes over (no `=` where nothing is
+/// deleted, a `[` unclosed, two locales) or a value of a locale's
+/// (`key[fr]`), which Skwir does not read.
 fn kconfig_entry(line: &str) -> Option<KconfigEntry<'_>> {
     let (mut key, value) = match line.split_once('=') {
-        Some((key, value)) => (key.trim(), Some(value.trim())),
+        Some((key, value)) => (kconfig_trim(key), Some(kconfig_trim(value))),
         None => (line, None),
     };
-    let (mut locks, mut localized) = (false, false);
+    let (mut locks, mut expands, mut localized) = (false, false, false);
     while let Some(start) = key.rfind('[') {
         let end = start + key[start..].find(']')?;
         let part = &key[start + 1..end];
@@ -441,11 +598,13 @@ fn kconfig_entry(line: &str) -> Option<KconfigEntry<'_>> {
             for option in options.chars() {
                 match option {
                     'i' => locks = true,
+                    'e' => expands = true,
                     'd' => {
                         return Some(KconfigEntry {
                             key: &key[..start],
                             said: None,
                             locks,
+                            expands,
                         });
                     }
                     _ => {}
@@ -461,6 +620,7 @@ fn kconfig_entry(line: &str) -> Option<KconfigEntry<'_>> {
         key,
         said: Some(value),
         locks,
+        expands,
     })
 }
 
@@ -681,6 +841,105 @@ mod tests {
             value(&["[Recent]\nUse[$i]=1\nUse=2\n"]).as_deref(),
             Some("1")
         );
+    }
+
+    /// Names, keys and values are read with the escapes `KConfig` writes,
+    /// as its `printableToString` reads them, and a `[$e]` value is
+    /// expanded as its `expandString` expands it, from the environment
+    /// alone: no command is run.
+    #[test]
+    fn kconfig_s_escapes_and_expansions_are_read_as_it_reads_them() {
+        let said = |line: &str| kconfig_value(&[format!("[Icons]\n{line}\n")], "Icons", "Theme");
+        for (line, read) in [
+            (r"Theme=Breeze\sDark", "Breeze Dark"),
+            (r"Theme=\sspaced\s", " spaced "),
+            (r"Theme=a\tb\nc\rd\\e", "a\tb\nc\rd\\e"),
+            (r"Theme=caf\xc3\xA9", "café"),
+            (r"Theme=a\;b\,c", r"a\;b\,c"),
+            // An `x` where no hex digits follow; ending the text where
+            // fewer than two do; a `\` ending it left out.
+            (r"Theme=a\xzzb", "axb"),
+            (r"Theme=ab\x4", "abx"),
+            (r"Theme=ab\", "ab"),
+            // An unknown escape: `KConfig` stops there, a `\` and the
+            // text as written from the place it reached following.
+            (r"Theme=\s\q", r" \\q"),
+            (r"Theme=ab\qcd", r"ab\qcd"),
+            // Only ASCII's spaces are trimmed, as `KConfig` trims them.
+            ("Theme=Breeze\u{a0}", "Breeze\u{a0}"),
+            // Escaped keys and group names.
+            (r"The\x6de=Escaped", "Escaped"),
+        ] {
+            assert_eq!(said(line).as_deref(), Some(read), "{line}");
+        }
+        assert_eq!(
+            kconfig_value(
+                &["[Colors\\x3aWindow]\nTheme=1\n"],
+                "Colors:Window",
+                "Theme"
+            )
+            .as_deref(),
+            Some("1")
+        );
+        // A group below another is named apart from an escaped `][`.
+        assert_eq!(kconfig_value(&["[A][B]\nTheme=1\n"], "A][B", "Theme"), None);
+        assert_eq!(
+            kconfig_value(&["[A\\x5d\\x5bB]\nTheme=1\n"], "A][B", "Theme").as_deref(),
+            Some("1")
+        );
+        // A value escaped to nothing says nothing, as an empty one.
+        assert_eq!(
+            kconfig_value(
+                &["[Icons]\nTheme=\\\n", "[Icons]\nTheme=breeze\n"],
+                "Icons",
+                "Theme"
+            )
+            .as_deref(),
+            Some("breeze")
+        );
+
+        let environment = |name: &str| match name {
+            "THEME" => Some("Papirus".to_owned()),
+            "DOLLAR" => Some("$THEME".to_owned()),
+            _ => None,
+        };
+        let expanded =
+            |cascade: &[&str]| kconfig_value_with(cascade, "Icons", "Theme", &environment);
+        for (line, read) in [
+            ("Theme[$e]=$THEME", "Papirus"),
+            ("Theme[$e]=${THEME}-Dark", "Papirus-Dark"),
+            ("Theme[$e]=$THEME_Dark", ""),
+            ("Theme[$e]=${THEME", "Papirus"),
+            ("Theme[$e]=$$THEME", "$THEME"),
+            ("Theme[$e]=a$", "a$"),
+            ("Theme[$e]=a$/b${}c", "a/bc"),
+            // What a variable gives is not expanded again.
+            ("Theme[$e]=$DOLLAR", "$THEME"),
+            // No command is run: `$(…)` loses its `$` alone.
+            ("Theme[$e]=$(echo Papirus)", "(echo Papirus)"),
+            // Locked and expanded; escapes read before the expansion.
+            ("Theme[$ie]=\\x24THEME", "Papirus"),
+            // Not expanded without `[$e]`.
+            ("Theme=$THEME", "$THEME"),
+        ] {
+            let read = (!read.is_empty()).then_some(read);
+            let file = format!("[Icons]\n{line}\n");
+            assert_eq!(expanded(&[file.as_str()]).as_deref(), read, "{line}");
+        }
+        // A value expanded to nothing leaves the earlier file's, as an
+        // empty one does.
+        assert_eq!(
+            expanded(&["[Icons]\nTheme[$e]=$UNSET\n", "[Icons]\nTheme=breeze\n"]).as_deref(),
+            Some("breeze")
+        );
+        // Qt's folders where their variables are not set: the user's.
+        if std::env::var_os("QT_CONFIG_HOME").is_none() {
+            assert_eq!(
+                kconfig_variable("QT_CONFIG_HOME").map(PathBuf::from),
+                crate::xdg::config_home()
+            );
+        }
+        assert_eq!(kconfig_variable("SKWIR_TEST_KCONFIG_UNSET"), None);
     }
 
     /// The files `KConfig` reads as `kdeglobals`, in its order: the
