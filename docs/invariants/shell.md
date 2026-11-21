@@ -1376,11 +1376,12 @@ asks the direction.
   focus or a waiting one goes on; a click brings the window forward and
   opens Activity: the front window of the user's own, never another
   program's dialog, the user's windows coming back for it while dialogs'
-  windows alone are up (`finishing::answer_desktop`). A cancelled one tells nothing, and nothing is undone
-  from a notification. While something runs, the taskbar's entry shows
-  how far, and the machine is kept awake unless all of it is paused
-  (`ui.notify_desktop`, `ui.keep_awake`). Every call to the desktop
-  returns at once; nothing is told from a headless run.
+  windows alone are up (`finishing::answer_desktop`). A cancelled one
+  tells nothing, and nothing is undone from a notification. While
+  something runs, the taskbar's entry shows how far, and the machine is
+  kept awake unless all of it is paused (`ui.notify_desktop`,
+  `ui.keep_awake`). Every call to the desktop returns at once; nothing is
+  told from a headless run.
 - **What runs outlives the window** (ADR-115, `finishing.rs`). What runs
   and what was said of it is `Work` (`work.rs`), the program's for its
   life (`Finishing`): the window's shell shares it and never moves it,
@@ -1586,8 +1587,8 @@ asks the direction.
   it again; with none left, the next dialog starts as one that chose
   nowhere would. Every dialog of the program follows what any of them
   forgets or chooses in (`chooser::Followed`: the record read again once
-  written, `chooser::keep_folders` its one writer). It shows
-  five at most of the ten a program keeps (`chooser::FOLDERS_SHOWN`),
+  written, `chooser::keep_folders` its one writer). It shows five at
+  most of the ten a program keeps (`chooser::FOLDERS_SHOWN`),
   none another shown place leads to (`sidebar::shown_nowhere`, a folded
   section showing its places), none gone: the request waits for that,
   half a second at most, before its window opens (`chooser::Asking`,
@@ -2069,17 +2070,21 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   active comes forward. Never open or close a gpui window for a core
   window by hand: change the core and let the program follow.
 - **The program takes, each window draws.** A wake is taken once
-  (`finishing::woken`): what the executor says of plans goes to the
-  window that ran each one (`finishing::ran`, recorded by `Shell::run`),
-  else to the active window; a window's command asked from elsewhere
-  (`request_front`) to the window of the pane it names, else the active;
-  notifications, questions, clashes, secrets and forms to the window
-  whose action said or asked them (`app::asking_in`), else, with reviews,
-  to the active window; then each window syncs (`Shell::sync`, which takes its
-  `inbox`). The desktop is told once for the program (looked at while one
-  window has the focus), and what it asks (a notice clicked, Pause all)
-  is answered there. A shell never takes a program-wide queue of the
-  core's.
+  (`finishing::woken`): what the executor says of plans goes to the window
+  that ran each one (`finishing::ran`, recorded by `Shell::run`), else to
+  the active window; a window's command asked from elsewhere
+  (`request_front`) to the window of the pane it names, else the front
+  window of the user's own (none runs that names a dialog's pane);
+  notifications, questions, clashes, secrets and forms to the window whose
+  action said or asked them (`app::asking_in`), else a notification to the
+  active window, a dialog's too, and the rest, with reviews, to the front
+  window of the user's own (`own_front`), waiting in the core while none
+  is up (a notification that stays goes there alone,
+  `finishing::said_in`); then each window syncs (`Shell::sync`, which
+  takes its `inbox`). The desktop is told once for the program (looked at
+  while one window has the focus), and what it asks (a notice clicked,
+  Pause all) is answered there. A shell never takes a program-wide queue
+  of the core's.
 - **What is one, what is each window's.** One for the program: the
   queue, the History and Undo, Activity's work (`Work`), the shelf, cut
   files, settings, the keymap, the player, the agents' channel, the
@@ -2311,9 +2316,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `Shell::actions_here`, and no History beside them), views are offered
   but a lens (`ui.view`'s rule), Activity does not open there, by itself,
   from the strip and the rows arriving or from a notice of the desktop's
-  (`Shell::open_activity` refuses where `ui.activity` is not run), nothing is pinned to the
-  player, and it offers no place whose files are not to give
-  (`App::gives_files`: the Trash) wherever places are offered (the
+  (`Shell::open_activity` refuses where `ui.activity` is not run), nothing
+  is pinned to the player, and it offers no place whose files are not to
+  give (`App::gives_files`: the Trash) wherever places are offered (the
   sidebar, its Places heading's menu, the address field's places:
   `App::places_offered`, `Shell::places_here`), whose files it never
   answers with either. A question goes to the window whose action asked
@@ -2327,11 +2332,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   in a skwir the bus started for a dialog alone. What it says is said
   there the same way (`App::take_notifications_to`): Recent Folders'
   Remove and Clear, a tag set there, with their Undo, which runs there
-  (ADR-144, 2); what no window said, or a window gone, goes to the
-  front window. What no window asked
-  (an agent's call, a script's, a plugin's work of its own), what a
-  window gone asked, proposals, a notice that stays
-  (`App::take_notifications_to`) and what is asked from elsewhere
+  (ADR-144, 2); what no window said, or a window gone, goes to the front
+  window. What no window asked (an agent's call, a script's, a plugin's
+  work of its own), what a window gone asked, proposals, a notice that
+  stays (`App::take_notifications_to`) and what is asked from elsewhere
   (`ui.*` requests) go to a window of the user's own (`own_windows`),
   never to a dialog's: while dialogs' windows alone are up, they wait in
   the core as with no window at all, and what the user's last own window

@@ -1131,10 +1131,13 @@ starts as if it had chosen nowhere. Two places of a sidebar section that
 share a name (two folders named `src`) say after it the folder above
 that tells them apart, and a folder's place shows its whole path when
 pointed at. Saving, choosing another filter changes the name's extension
-to the filter's. Choosing a folder, its files show dimmed. A file
-dropped on the dialog, from your own window or another program, is gone
-to (saving, its name is taken): nothing is copied, and nothing answered
-until you do. The answer says how many it gives ("Open 3 files").
+to the filter's where another of the program's filters gave it, and
+keeps one you typed that only All files takes (`notes.xyz` beside Text
+and All files); All files changes nothing. Choosing a folder, its files
+show dimmed. A file dropped on the dialog, from your own window or
+another program, is gone to (saving one file, its name is taken):
+nothing is copied, and nothing answered until you do. The answer says
+how many it gives ("Open 3 files").
 
 A dialog's window floats over the program that asked where your
 compositor keeps a child over its parent. Where it does not (the program

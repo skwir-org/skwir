@@ -97,14 +97,13 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    (`app::asking_in`; an action going on by itself once its server
    answers again, ADR-080, 9, is still that window's); only what agents,
    scripts and plugins' work of its own ask waits for a window of the
-   user's own (ADR-141, 8, which keeps
-   agents and scripts from answering a dialog, not the dialog from
-   asking). Amended after review (2026-11-20): as first
-   built, each surface asked a part of the rule (keys and menus one,
-   the palette another, pickers a third), checks beside features (the
-   terminal, the split) stood beside it, and a command about notes or
-   places that rewrote pictures or opened a program was offered by its
-   topic.
+   user's own (ADR-141, 8, which keeps agents and scripts from
+   answering a dialog, not the dialog from asking). Amended after
+   review (2026-11-20): as first built, each surface asked a part of
+   the rule (keys and menus one, the palette another, pickers a
+   third), checks beside features (the terminal, the split) stood
+   beside it, and a command about notes or places that rewrote
+   pictures or opened a program was offered by its topic.
 2. **What it does not offer is not drawn either**: no tab bar, no split,
    no terminal panel, no pinned player (a film or a song still plays in
    the preview), no Activity panel (what the user does there is said
@@ -170,18 +169,18 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    the system's), GNOME's privacy `remember-recent-files` off (which GTK
    4 reads through the settings portal on any desktop), Cinnamon's on
    Cinnamon, KDE's `[RecentDocuments]` `UseRecent` false (or `no`, `off`,
-   `0`) or `MaxEntries` 0 in `kdeglobals`, read as KConfig reads them (an
-   administrator's lock, `[$i]`, over the user's word); one of them is
-   enough. A bookmark the list holds is
-   visited and Skwir's count of it goes up, another is added, typed by
-   what the file is, each file once, the rest kept byte for byte, the
-   list kept as GTK keeps it (a file older than an age a setting says
-   dropped, then the thousand bookmarks it keeps); a list GLib's reader
-   would refuse is left for its programs to mend, and Skwir never writes
-   one it would refuse. Where the desktop remembers none, or its list
-   names no file that is there (read as the request comes, half a second
-   at most), Recent is neither first nor where the window starts, which
-   is home (amended as reviewed, 2026-11-20).
+   `0`) or `MaxEntries` 0 in `kdeglobals`, read as KConfig reads them
+   (an administrator's lock, `[$i]`, over the user's word); one of
+   them is enough. A bookmark the list holds is visited and Skwir's
+   count of it goes up, another is added, typed by what the file is,
+   each file once, the rest kept byte for byte, the list kept as GTK
+   keeps it (a file older than an age a setting says dropped, then the
+   thousand bookmarks it keeps); a list GLib's reader would refuse is
+   left for its programs to mend, and Skwir never writes one it would
+   refuse. Where the desktop remembers none, or its list names no file
+   that is there (read as the request comes, half a second at most),
+   Recent is neither first nor where the window starts, which is home
+   (amended as reviewed, 2026-11-20).
 8. **A program's recent folders**: the folders each program last chose
    in, newest first (`ui.chooser_folders`, ten a program, for the 50
    programs that chose last, its one folder a program before read as its
@@ -215,8 +214,9 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
     folder, a place): opening, the first's folder is shown and it is
     selected, with the others dropped from that folder where the request
     takes several; saving, a folder dropped is gone into, a file's
-    folder shown and its name taken. A drop never answers by itself, nor
-    copies or moves anything.
+    folder shown and, saving one file, its name taken (saving several,
+    the files keep the names the program gave them). A drop never
+    answers by itself, nor copies or moves anything.
 11. **The answer says how many**: "Open 3 files", "Select 2 folders",
     where the label is Skwir's; a program's own label (`accept_label`)
     is said as it gave it.
