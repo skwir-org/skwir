@@ -98,8 +98,22 @@ pub struct Sections {
     pub order: Vec<String>,
     pub hidden: std::collections::BTreeSet<String>,
     pub folded: std::collections::BTreeSet<String>,
-    /// How the user arranged each group's places, by group.
+    /// How the user arranged each group's places, by group: none read
+    /// that holds nothing (a group a shape names for its names alone,
+    /// `names_for_older`).
+    #[serde(deserialize_with = "arranged")]
     pub places: BTreeMap<String, Arrangement>,
+}
+
+/// The groups' arrangements as written, those that hold nothing left out,
+/// as the sidebar leaves none (`ui.sidebar_place`): a shape read equals
+/// the window's that wrote it, names aside.
+fn arranged<'de, D: serde::Deserializer<'de>>(
+    from: D,
+) -> Result<BTreeMap<String, Arrangement>, D::Error> {
+    let mut places = <BTreeMap<String, Arrangement> as serde::Deserialize>::deserialize(from)?;
+    places.retain(|_, arrangement| !arrangement.is_empty());
+    Ok(places)
 }
 
 /// How the user arranged one group's places in the sidebar itself: those
@@ -238,6 +252,76 @@ fn keep_names(app: &skwir_core::App, names: &Names) {
     match toml::Value::try_from(names) {
         Ok(value) => app.settings.set(NAMES_KEY, value),
         Err(error) => tracing::warn!("cannot keep the names given places: {error:#}"),
+    }
+    // A build of before still says them, from the shapes kept: each
+    // window's, and the one a new window takes.
+    {
+        let mut ws = app.workspace.write();
+        let shapes: Vec<_> = ws
+            .windows()
+            .iter()
+            .filter(|window| !window.chooses())
+            .filter_map(|window| Some((window.id, window.shape()?.clone())))
+            .collect();
+        for (window, mut shape) in shapes {
+            names_for_older(&mut shape, names);
+            ws.set_shape(window, Some(shape));
+        }
+    }
+    if let Some(mut shape) = app
+        .settings
+        .stored::<toml::Value>(crate::session::SESSION_KEY)
+    {
+        names_for_older(&mut shape, names);
+        app.settings.set(crate::session::SESSION_KEY, shape);
+    }
+}
+
+/// The names the user gave places, as kept (`NAMES_KEY`).
+pub(crate) fn given_names(app: &skwir_core::App) -> Names {
+    app.settings.stored(NAMES_KEY).unwrap_or_default()
+}
+
+/// Write `names` into a window's shape where builds before 2026-11-21 read
+/// them, each group's arrangement's `titles` (`former_names`), in place of
+/// what was there: going back to one of those, its windows say the names
+/// given since. Never read back while `NAMES_KEY` is kept: a name given in
+/// an older build after this one wrote is not seen here.
+pub(crate) fn names_for_older(shape: &mut toml::Value, names: &Names) {
+    let Some(shape) = shape.as_table_mut() else {
+        return;
+    };
+    let table = || toml::Value::Table(toml::map::Map::new());
+    let Some(places) = shape
+        .entry("sidebar_sections")
+        .or_insert_with(table)
+        .as_table_mut()
+        .and_then(|sections| {
+            sections
+                .entry("places")
+                .or_insert_with(table)
+                .as_table_mut()
+        })
+    else {
+        return;
+    };
+    for (_, arrangement) in places.iter_mut() {
+        if let Some(arrangement) = arrangement.as_table_mut() {
+            arrangement.remove("titles");
+        }
+    }
+    for (group, given) in names {
+        let titles = given
+            .iter()
+            .map(|(key, name)| (key.clone(), toml::Value::String(name.clone())))
+            .collect();
+        if let Some(arrangement) = places
+            .entry(group.clone())
+            .or_insert_with(table)
+            .as_table_mut()
+        {
+            arrangement.insert("titles".to_owned(), toml::Value::Table(titles));
+        }
     }
 }
 
@@ -3441,6 +3525,74 @@ mod tests {
         name_places(&app, "places", None, None);
         assert_eq!(app.registry.user_title(&downloads), None, "the group reset");
         assert!(!unarranged.resets("places", &app.registry));
+    }
+
+    /// A build of before reads the names from each window's arrangement:
+    /// every shape kept says them there (each window's, and the one a new
+    /// window takes), as they are now, and reads back as the window that
+    /// wrote it, names aside, so that nothing is written again (GB-3).
+    #[test]
+    fn an_older_build_still_says_the_names_given() {
+        use super::{name_places, names_for_older};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::session::declare(&app);
+        let window = app.workspace.read().active_window_id();
+        let shape = |app: &skwir_core::App| {
+            let ws = app.workspace.read();
+            ws.window(window).and_then(|w| w.shape().cloned()).unwrap()
+        };
+        let titles = |shape: &toml::Value, group: &str| {
+            shape.get("sidebar_sections").and_then(|s| {
+                s.get("places")?
+                    .get(group)?
+                    .get("titles")?
+                    .as_table()
+                    .cloned()
+            })
+        };
+        let mut sections = Sections::default();
+        let present = ["/home", "/docs"].map(str::to_owned);
+        sections.move_place("places", "/docs", Some("/home"), &present);
+        let session = crate::session::Session {
+            sidebar_sections: sections.clone(),
+            ..crate::session::Session::default()
+        };
+        let value = crate::session::shape_value(&app, &session).unwrap();
+        assert_eq!(titles(&value, "places"), None, "nothing named yet");
+        app.workspace.write().set_shape(window, Some(value.clone()));
+        app.settings.set(crate::session::SESSION_KEY, value);
+
+        name_places(&app, "places", Some("/docs"), Some("Papers"));
+        name_places(&app, "devices", Some("volume:1234"), Some("Backup"));
+        let kept = app
+            .settings
+            .stored::<toml::Value>(crate::session::SESSION_KEY)
+            .unwrap();
+        for shape in [shape(&app), kept] {
+            assert_eq!(
+                titles(&shape, "places").unwrap()["/docs"].as_str(),
+                Some("Papers")
+            );
+            assert_eq!(
+                titles(&shape, "devices").unwrap()["volume:1234"].as_str(),
+                Some("Backup"),
+                "a group named and not arranged"
+            );
+            let read = crate::session::from_value(shape.clone()).unwrap();
+            assert_eq!(read.sidebar_sections, sections, "as the window has it");
+            assert_eq!(
+                crate::session::shape_value(&app, &read).unwrap(),
+                shape,
+                "written as it is"
+            );
+        }
+        name_places(&app, "devices", Some("volume:1234"), None);
+        assert_eq!(titles(&shape(&app), "devices"), None, "taken back");
+        // What another build left under a name taken back goes too.
+        let mut left = shape(&app);
+        names_for_older(&mut left, &super::Names::new());
+        assert_eq!(titles(&left, "places"), None);
     }
 
     /// The places offered are the user's to put in order, rename and hide;

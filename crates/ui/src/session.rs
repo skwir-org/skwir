@@ -504,7 +504,7 @@ impl Shell {
             return;
         };
         let session = self.session();
-        let value = match toml::Value::try_from(&session) {
+        let value = match shape_value(&self.app, &session) {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!("cannot record the window's shape: {error:#}");
@@ -630,6 +630,18 @@ impl Session {
         }
         self
     }
+}
+
+/// `session` as a window's shape is kept (`Workspace::set_shape`,
+/// `SESSION_KEY`), with the names the user gave places where older builds
+/// read them (`sidebar::names_for_older`).
+pub(crate) fn shape_value(
+    app: &skwir_core::App,
+    session: &Session,
+) -> Result<toml::Value, toml::ser::Error> {
+    let mut value = toml::Value::try_from(session)?;
+    crate::sidebar::names_for_older(&mut value, &crate::sidebar::given_names(app));
+    Ok(value)
 }
 
 /// What was remembered, if anything was, as a window could have written it.

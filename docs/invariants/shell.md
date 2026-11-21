@@ -1662,7 +1662,10 @@ asks the direction.
   Reset, which gives its places their own names in every window and
   puts back their order and what shows in the window where it is asked
   (offered there while either differs, `Sections::resets`), never
-  written back from a window's arrangement. A place moves only among those the
+  written back from a window's arrangement. Each shape kept (a window's,
+  `ui.session`) also writes them where builds before 2026-11-21 read
+  them, each group's `titles` (`sidebar::names_for_older`), never read
+  back: going back to one, its windows say them. A place moves only among those the
   same command moves (`sidebar::mover`); `arrange` is the one reading of
   all this. Within a group, what is no folder comes after the folders (a
   server the tools know after the mounts) unless it moves: what moves
