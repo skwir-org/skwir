@@ -284,106 +284,156 @@ pub(crate) fn keyfile_value(text: &str, group: &str, key: &str) -> Option<String
 
 /// `key` of `group` in a cascade of `KConfig` files (each file's text,
 /// the user's first, then the system's in `XDG_CONFIG_DIRS`' order:
-/// `kdeglobals_cascade`), as `KConfig` reads them: from the least
-/// specific to the user's, each saying it replacing what one before said,
-/// but where a file locks it (Kiosk's `[$i]`: after the key, after its
-/// group's name, or alone before the file's first group, locking all of
-/// it), whereupon no file after it changes it: an administrator's word
-/// over the user's. Options after a name (`[$i]`, `[$e]`) are not part of
-/// it; one deleted (`[$d]`) says nothing again. A value said empty says
-/// nothing, as with `keyfile_value`.
+/// `kdeglobals_cascade`), as `KConfig` reads them (KDE Frameworks'
+/// `KConfigIniBackend::parseConfig`, `KEntryMap::setEntry`, and
+/// `KConfigPrivate`'s reading of the global files): from the least
+/// specific to the user's, each saying it replacing what one before
+/// said, but where a file locks it (Kiosk's `[$i]`: after the key, after
+/// its group's name, or alone on a line, locking the whole file),
+/// whereupon no file after it changes it: an administrator's word over
+/// the user's. A key deleted (`key[$d]`, with or without `=`) says
+/// nothing again. A value said empty leaves what was said before it, as
+/// `keyfile_value` takes none; a localized one (`key[fr]`) is not read.
 pub(crate) fn kconfig_value(cascade: &[impl AsRef<str>], group: &str, key: &str) -> Option<String> {
     let mut value = None;
     for text in cascade.iter().rev() {
-        let (said, locked) = kconfig_said(text.as_ref(), group, key);
-        match said {
-            Said::Nothing => {}
-            Said::Deleted => value = None,
-            Said::Value(said) => value = Some(said),
-        }
-        if locked {
+        if kconfig_read(text.as_ref(), group, key, &mut value) {
             break;
         }
     }
     value
 }
 
-/// What one `KConfig` file says of a key.
-enum Said {
-    Nothing,
-    Deleted,
-    Value(String),
-}
-
-/// What one `KConfig` file says of `key` in `group`, and whether it
-/// locks it.
-fn kconfig_said(text: &str, group: &str, key: &str) -> (Said, bool) {
-    let (mut said, mut locked) = (Said::Nothing, false);
-    let (mut grouped, mut in_group) = (false, false);
+/// Reads one `KConfig` file's word on `key` in `group` into `value`, as
+/// `KConfig` takes each line in turn, and says whether no file after it
+/// may change it: the file locked (`[$i]` alone on a line, wherever it
+/// is; every group after it in the file locked too), the group (`[$i]`
+/// last after its name; `KConfig` marks the group once the file is read,
+/// so what the file says of the key under another header of it still
+/// counts), or the key (`[$i]` among its options, or said under a locked
+/// header), whereupon no later line of the file changes it either.
+/// (`KConfig` lets a later file of defaults, though not the user's,
+/// change a key a locked group holds unlocked; here no later file does.)
+fn kconfig_read(text: &str, group: &str, key: &str, value: &mut Option<String>) -> bool {
+    let (mut file_locked, mut header_locked) = (false, false);
+    let (mut group_locked, mut key_locked) = (false, false);
+    let mut in_group = false;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            let (name, options) = kconfig_options(header.split("]["));
-            let name = name.join("][");
-            if !grouped && name.is_empty() {
-                // `[$i]` before any group: the whole file.
-                locked |= options.contains('i');
+        if line.starts_with('[') {
+            header_locked = file_locked;
+            // A header `KConfig` passes over leaves the group read as it was.
+            let Some((name, locks)) = kconfig_group(line) else {
                 continue;
+            };
+            if locks && name.is_empty() {
+                file_locked = true;
+            } else if locks {
+                header_locked = true;
             }
-            grouped = true;
             in_group = name == group;
-            locked |= in_group && options.contains('i');
+            group_locked |= in_group && header_locked;
             continue;
         }
-        if !in_group {
+        if !in_group || key_locked {
             continue;
         }
-        let Some((name, value)) = line.split_once('=') else {
+        let Some(entry) = kconfig_entry(line) else {
             continue;
         };
-        let name = name.trim_end();
-        let (parts, options) = kconfig_options(name.split('[').enumerate().map(|(at, part)| {
-            if at == 0 {
-                part
-            } else {
-                part.strip_suffix(']').unwrap_or(part)
-            }
-        }));
-        let mut parts = parts.into_iter();
-        let base = parts.next().unwrap_or_default();
-        let locale: Vec<&str> = parts.collect();
-        if base != key || !locale.is_empty() {
+        if entry.key != key {
             continue;
         }
-        if locked && !matches!(said, Said::Nothing) {
-            // Locked in this file already: what follows changes nothing.
-            continue;
+        match entry.said {
+            None => *value = None,
+            Some(said) if !said.is_empty() => *value = Some(said.to_owned()),
+            Some(_) => {}
         }
-        let value = value.trim();
-        if options.contains('d') {
-            said = Said::Deleted;
-        } else if !value.is_empty() {
-            said = Said::Value(value.to_owned());
-        }
-        locked |= options.contains('i');
+        key_locked = entry.locks || header_locked;
     }
-    (said, locked)
+    file_locked || group_locked || key_locked
 }
 
-/// A name's parts and its options: the letters of those of its parts
-/// that start with `$` (`[$i]`, `[$ie]`), together.
-fn kconfig_options<'a>(parts: impl Iterator<Item = &'a str>) -> (Vec<&'a str>, String) {
-    let (mut names, mut options) = (Vec::new(), String::new());
-    for part in parts {
-        match part.strip_prefix('$') {
-            Some(letters) => options.push_str(letters),
-            None => names.push(part),
+/// A group's header as `KConfig` reads it: the group's name (its parts
+/// joined, `[A][B]`) and whether `[$i]` ends it, alone (the file locked)
+/// or after a name (the group). `$i` locks only as the last part and
+/// alone: any other part is the name's (`[R][$ie]` names a group below
+/// `R`). What follows a `]` but another `[` is passed over. `None` for a
+/// `[` unclosed, a header `KConfig` passes over.
+fn kconfig_group(line: &str) -> Option<(String, bool)> {
+    let (mut name, mut locks) = (String::new(), false);
+    let mut rest = line;
+    while let Some(part) = rest.strip_prefix('[') {
+        let end = part.find(']')?;
+        let (part, after) = (&part[..end], &part[end + 1..]);
+        if part == "$i" && after.is_empty() {
+            locks = true;
+        } else {
+            if !name.is_empty() {
+                name.push_str("][");
+            }
+            name.push_str(part);
         }
+        rest = after;
     }
-    (names, options)
+    Some((name, locks))
+}
+
+/// One line of a group as `KConfig` reads it.
+struct KconfigEntry<'a> {
+    /// The key, without its options and locale.
+    key: &'a str,
+    /// Its value, `None` where the line deletes it (`[$d]`).
+    said: Option<&'a str>,
+    /// Whether the line locks it (`[$i]`).
+    locks: bool,
+}
+
+/// The entry of `line` as `KConfig` reads it: the brackets after its key
+/// from the last to the first, one starting with `$` its options, each
+/// letter in turn (`i` locks; `d` deletes the key named before that
+/// bracket at once, `=` or not, locked only by what was read before it:
+/// `[$id]` locks, `[$di]` does not), any other its locale. `None` for a
+/// line it passes over (no `=` where nothing is deleted, a `[` unclosed,
+/// two locales) or a value of a locale's (`key[fr]`), which Skwir does
+/// not read.
+fn kconfig_entry(line: &str) -> Option<KconfigEntry<'_>> {
+    let (mut key, value) = match line.split_once('=') {
+        Some((key, value)) => (key.trim(), Some(value.trim())),
+        None => (line, None),
+    };
+    let (mut locks, mut localized) = (false, false);
+    while let Some(start) = key.rfind('[') {
+        let end = start + key[start..].find(']')?;
+        let part = &key[start + 1..end];
+        if let Some(options) = part.strip_prefix('$') {
+            for option in options.chars() {
+                match option {
+                    'i' => locks = true,
+                    'd' => {
+                        return Some(KconfigEntry {
+                            key: &key[..start],
+                            said: None,
+                            locks,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        } else if std::mem::replace(&mut localized, true) {
+            return None;
+        }
+        key = &key[..start];
+    }
+    let value = value?;
+    (!localized).then_some(KconfigEntry {
+        key,
+        said: Some(value),
+        locks,
+    })
 }
 
 /// `key` of GTK's `settings.ini`s, GTK 4's first, then GTK 3's.
@@ -541,13 +591,27 @@ mod tests {
             "[Recent]\nUse[$i]=false\n",
             "[Recent]\nUse[$ie]=false\n",
             "[$i]\n[Recent]\nUse=false\n",
+            // `[$i]` alone locks the whole file wherever it is.
+            "[Recent]\nUse=false\n[$i]\n",
+            // A group's lock later in the file: KConfig takes its value.
+            "[Recent]\nUse=true\n[Recent][$i]\nUse=false\n",
         ] {
             assert_eq!(value(&[user, lock]).as_deref(), Some("false"), "{lock}");
         }
+        // A locked header before an unlocked one of the group: the first.
+        assert_eq!(
+            value(&[user, "[Recent][$i]\nUse=false\n[Recent]\nUse=true\n"]).as_deref(),
+            Some("false")
+        );
+        // `$i` locks a group only alone and last: `[Recent][$ie]` names
+        // a group below it, `[Recent][$i][x]` another.
+        for other in ["[Recent][$ie]\nUse=false\n", "[Recent][$i][x]\nUse=false\n"] {
+            assert_eq!(value(&[user, other]).as_deref(), Some("true"), "{other}");
+        }
         // The lock nearest the system's wins; what it locks it need not say.
-        let system = "[Recent][$i]\nUse=false\n";
+        let locked = "[Recent][$i]\nUse=false\n";
         let look = "[Recent][$i]\nUse=true\n";
-        assert_eq!(value(&[user, system, look]).as_deref(), Some("true"));
+        assert_eq!(value(&[user, locked, look]).as_deref(), Some("true"));
         assert_eq!(value(&[user, "[Recent][$i]\nOther=1\n"]), None);
         // Another group's lock, a locale's value and an empty value say
         // nothing of it; one deleted takes back what a file before said.
@@ -560,10 +624,29 @@ mod tests {
             value(&["[Recent]\nUse=\n", "[Recent]\nUse=false\n"]).as_deref(),
             Some("false")
         );
+        // Deleted as KConfig writes it (`Use[$d]`, no `=`) or with one.
+        for deleted in ["[Recent]\nUse[$d]\n", "[Recent]\nUse[$d]=\n"] {
+            assert_eq!(
+                value(&[deleted, "[Recent]\nUse=false\n"]),
+                None,
+                "{deleted}"
+            );
+        }
+        // Its letters in turn: `[$id]` deletes it locked, `[$di]` at its
+        // `d`, unlocked, as KConfig reads it.
+        let system = "[Recent]\nUse=false\n";
+        assert_eq!(value(&[user, "[Recent]\nUse[$id]\n", system]), None);
         assert_eq!(
-            value(&["[Recent]\nUse[$d]=\n", "[Recent]\nUse=false\n"]),
-            None
+            value(&[user, "[Recent]\nUse[$di]\n", system]).as_deref(),
+            Some("true")
         );
+        // A key with no `=` that deletes nothing, a header unclosed: passed
+        // over, the group read before it read on.
+        assert_eq!(
+            value(&["[Recent]\nUse\n", system]).as_deref(),
+            Some("false")
+        );
+        assert_eq!(value(&["[Recent]\n[Other\nUse=2\n"]).as_deref(), Some("2"));
         // Within a file, the last said, unless a lock came first.
         assert_eq!(value(&["[Recent]\nUse=1\nUse=2\n"]).as_deref(), Some("2"));
         assert_eq!(
