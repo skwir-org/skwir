@@ -6879,8 +6879,16 @@ mod tests {
             &serde_json::json!({ "text": "modified:today" }),
         ))
         .unwrap();
+        // The second reading is counted before what it read is in place:
+        // wait for what the pane holds, not for the count alone.
+        let read_again = || {
+            let ws = app.workspace.read();
+            ws.pane(pane)
+                .and_then(|p| p.read_filter())
+                .is_some_and(|r| r.next_change.is_none())
+        };
         let deadline = Instant::now() + Duration::from_secs(10);
-        while reads.load(Ordering::Relaxed) < 2 && Instant::now() < deadline {
+        while !(reads.load(Ordering::Relaxed) >= 2 && read_again()) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(reads.load(Ordering::Relaxed), 2, "read again, once");
