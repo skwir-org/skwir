@@ -53,7 +53,7 @@ use skwir_core::words::Words;
 use crate::activity::{Under, summary, words};
 use crate::keymap;
 use crate::shell::Shell;
-use crate::work::{Watched, Work};
+use crate::work::{Told, Watched, Work};
 
 /// How long the program waits, as it ends, for the desktop to be told the
 /// last of what it was asked (the last notice).
@@ -73,9 +73,6 @@ pub(crate) struct Finishing {
     /// The window each plan it ran was asked from: what the plan says
     /// goes there (its toast, what it made), else to the active window.
     plans: HashMap<PlanId, WindowId>,
-    /// Whose work the desktop's notices told of, newest last, `TOLD_KEPT`
-    /// at most: a notice clicked goes there (`answer_desktop`).
-    told: std::collections::VecDeque<Told>,
     /// The window that started playing last, while it is up: one plays at
     /// a time, what another played paused (`claim_player`).
     pub(crate) player: Option<WindowId>,
@@ -365,7 +362,6 @@ pub(crate) fn start(
         windows: Vec::new(),
         raised: None,
         plans: HashMap::new(),
-        told: std::collections::VecDeque::new(),
         player: None,
         carried: HashMap::new(),
         recording: Recording::default(),
@@ -977,6 +973,7 @@ fn deliver(cx: &mut App) {
         let events = app.executor.events().clone();
         while let Ok(event) = events.try_recv() {
             let taken = work.take(&app, event, watched);
+            let told = work.take_telling();
             let plan = match &taken {
                 crate::work::Taken::Nothing => continue,
                 crate::work::Taken::Step(progress) => progress.plan,
@@ -989,24 +986,18 @@ fn deliver(cx: &mut App) {
             } else {
                 state.plans.get(&plan).copied()
             };
-            // What the desktop may be told of it (`Work::tell_ended`,
-            // `tell_waits_for_server`), its notice keyed by the plan.
+            // What the desktop was told of it (`Work::tell_ended`,
+            // `tell_waits_for_server`), its notice keyed by the plan: a
+            // click on it goes where it was asked.
             if let Some(asker) = window
-                && matches!(
-                    taken,
-                    crate::work::Taken::Ended { .. } | crate::work::Taken::WaitsForServer(_)
-                )
+                && told == Some(plan)
             {
                 let dialog = app
                     .workspace
                     .read()
                     .window(asker)
                     .is_some_and(WindowTabs::chooses);
-                state.told.retain(|told| told.plan != plan);
-                if state.told.len() == TOLD_KEPT {
-                    state.told.pop_front();
-                }
-                state.told.push_back(Told {
+                work.keep_told(Told {
                     plan,
                     window: asker,
                     dialog,
@@ -1264,22 +1255,6 @@ fn watched(cx: &App) -> Watched {
     }
 }
 
-/// Whose work a desktop notice told of (`Work::tell_ended`,
-/// `tell_waits_for_server`: the notice keyed by its plan's id): the window
-/// its plan was asked from, and whether that window answers another
-/// program's dialog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Told {
-    plan: PlanId,
-    window: WindowId,
-    dialog: bool,
-}
-
-/// How many plans' askers are kept for the notices that told of them: a
-/// notice says what ended since someone last looked, so the desktop shows
-/// a few at most.
-const TOLD_KEPT: usize = 32;
-
 /// Where a notice clicked, or the presence, takes the user.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NoticeGoes {
@@ -1355,7 +1330,7 @@ fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
         return;
     }
     let state = cx.global::<Finishing>();
-    let told = about.and_then(|key| state.told.iter().rev().find(|t| t.plan.0 == key).copied());
+    let told = about.and_then(|key| state.work.borrow().told_of(key));
     let used = by_use(&state.app);
     let up: Vec<WindowId> = state.windows.iter().map(|(id, _)| *id).collect();
     let goes = notice_goes(

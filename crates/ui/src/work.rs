@@ -31,6 +31,22 @@ const LONG: Duration = Duration::from_secs(5);
 /// The key of the notice saying that something waits for an answer.
 const ASKS: u64 = u64::MAX;
 
+/// Whose work a desktop notice told of (`Work::tell_ended`,
+/// `tell_waits_for_server`: the notice keyed by its plan's id): the window
+/// its plan was asked from, and whether that window answers another
+/// program's dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Told {
+    pub(crate) plan: PlanId,
+    pub(crate) window: WindowId,
+    pub(crate) dialog: bool,
+}
+
+/// How many notices told since someone last looked keep whose work they
+/// told of: the desktop shows one at a time, so a click names the last
+/// told, or one told just before it.
+const TOLD_KEPT: usize = 32;
+
 /// What runs and what was said of it.
 #[derive(Default)]
 pub(crate) struct Work {
@@ -66,6 +82,14 @@ pub(crate) struct Work {
     held: Option<String>,
     /// Whether the desktop was told that something waits for an answer.
     asks_told: bool,
+    /// The plan the event taken last told the desktop of (`tell_ended`,
+    /// `tell_waits_for_server`; tests, which have no desktop, alike), until
+    /// its asker is said (`take_telling`).
+    telling: Option<PlanId>,
+    /// Whose work the notices told since someone last looked told of,
+    /// newest last (`keep_told`): a notice clicked goes there. Only those
+    /// told: a plan that ended untold pushes none out.
+    notices: VecDeque<Told>,
     /// What tells the desktop: `None` in tests.
     desktop: Option<Desktop>,
     /// What the desktop asked (a notice or the presence clicked, its
@@ -535,6 +559,7 @@ impl Work {
                 // The same action, counted by what it has left.
                 self.spell.plans.remove(&plan);
                 // What the desktop was told of its wait is taken back.
+                self.notices.retain(|told| told.plan != plan);
                 if let Some(desktop) = &self.desktop {
                     desktop.withdraw_key(plan.0);
                 }
@@ -713,9 +738,35 @@ impl Work {
     pub(crate) fn looked_at(&mut self) {
         self.away = Away::default();
         self.asks_told = false;
+        self.notices.clear();
         if let Some(desktop) = &self.desktop {
             desktop.withdraw();
         }
+    }
+
+    /// The plan the desktop was told of by the event taken last
+    /// (`tell_ended`, `tell_waits_for_server`), once.
+    pub(crate) fn take_telling(&mut self) -> Option<PlanId> {
+        self.telling.take()
+    }
+
+    /// The asker of a plan the desktop was just told of (`take_telling`):
+    /// a click on its notice goes there, until someone looks.
+    pub(crate) fn keep_told(&mut self, told: Told) {
+        self.notices.retain(|kept| kept.plan != told.plan);
+        if self.notices.len() == TOLD_KEPT {
+            self.notices.pop_front();
+        }
+        self.notices.push_back(told);
+    }
+
+    /// Whose work the notice known by `key` told of, while it is kept.
+    pub(crate) fn told_of(&self, key: u64) -> Option<Told> {
+        self.notices
+            .iter()
+            .rev()
+            .find(|told| told.plan.0 == key)
+            .copied()
     }
 
     /// An action ended as `answer` says, after `ran`: told to the desktop
@@ -738,6 +789,8 @@ impl Work {
         {
             return;
         }
+        // Its notice is the plan's: whose work it is is kept for a click.
+        self.telling = Some(plan);
         let Some(desktop) = &self.desktop else {
             return;
         };
@@ -802,6 +855,7 @@ impl Work {
         if watched.seen == Seen::LookedAt || !watched.notify {
             return;
         }
+        self.telling = Some(plan);
         let Some(desktop) = &self.desktop else {
             return;
         };
@@ -1524,6 +1578,46 @@ mod tests {
         work.take(&app, finished(plan, 0, Some("No such device")), unwatched);
         let stopped = work.stopped.as_ref().expect("kept without a window");
         assert_eq!(stopped.plan, plan);
+    }
+
+    /// A notice clicked goes where the work it told of was asked: kept for
+    /// the plans the desktop was told of alone, so that many ending untold
+    /// meanwhile (short, while a window is up but away) push none out, and
+    /// until someone looks, which takes the notice back (GB-6).
+    #[test]
+    fn a_notice_keeps_its_asker_until_someone_looks() {
+        use super::{TOLD_KEPT, Told};
+        use skwir_core::workspace::WindowId;
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        let away = Watched {
+            seen: Seen::Away,
+            ..LOOKED_AT
+        };
+        let long = PlanId(1);
+        work.take(&app, started(long, "copy 3 items to Stick", 3), away);
+        let mut ended = finished(long, 3, None);
+        if let ExecEvent::Finished { ran, .. } = &mut ended {
+            *ran = Duration::from_secs(60);
+        }
+        work.take(&app, ended, away);
+        assert_eq!(work.take_telling(), Some(long), "told: it ran long");
+        assert_eq!(work.take_telling(), None, "once");
+        let asker = Told {
+            plan: long,
+            window: WindowId(2),
+            dialog: true,
+        };
+        work.keep_told(asker);
+        for n in 0..u64::try_from(TOLD_KEPT).unwrap() + 8 {
+            let short = PlanId(10 + n);
+            work.take(&app, started(short, "copy 2 items to Stick", 2), away);
+            work.take(&app, finished(short, 2, None), away);
+            assert_eq!(work.take_telling(), None, "short, while away: untold");
+        }
+        assert_eq!(work.told_of(long.0), Some(asker));
+        work.looked_at();
+        assert_eq!(work.told_of(long.0), None, "its notice taken back");
     }
 
     /// Paused and resumed follow the plan; a plan its server stopped is

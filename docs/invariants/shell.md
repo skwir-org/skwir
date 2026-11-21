@@ -2107,7 +2107,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   while one window has the focus), and what it asks (a notice clicked,
   Pause all) is answered there. A notice clicked goes to the window whose
   work it told of while it is up (`finishing::notice_goes`, its plan's
-  window, `finishing::ran`), Activity opening unless that is a dialog's;
+  window, `finishing::ran`, kept for the notices told alone, until
+  someone looks: `Work::keep_told`), Activity opening unless that is a
+  dialog's;
   else to the front window of the user's own, Activity open. With only
   dialogs up, a dialog's work brings one forward, the user's windows
   asleep staying so; what is the user's, or names no window (an agent's
