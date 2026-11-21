@@ -824,7 +824,7 @@ app_sort_by_way = Trier par { $key }, { $way }
 app_sort_descending = Trier par ordre décroissant
 
 # draft
-app_sort_description = Régler la clé de tri, le sens et l’affichage des fichiers cachés d’un panneau
+app_sort_description = Régler la clé de tri, le sens et l’affichage des fichiers cachés d’un panneau, et si les dossiers viennent en premier (`folders_first` : ce que garde une fenêtre qui répond à la boîte de dialogue d’un autre programme, sinon le réglage de l’utilisateur, dans toutes ses fenêtres)
 
 # draft
 app_take_out = Retirer d’ici
@@ -2084,7 +2084,13 @@ op_would_stay_in_trash = { $name } resterait dans la corbeille
 op_write_out_stopped = l’écriture sur le disque s’est arrêtée
 
 # draft
+orders_dialog_order_state = L’ordre dans lequel les fenêtres qui répondent aux boîtes de dialogue d’autres programmes listent les fichiers, celui de la dernière (ADR-145) : { $fields }
+
+# draft
 orders_kept = Les ordres de tri que les emplacements retiennent (ADR-132), chacun { $fields } : appliqués ainsi dans chaque panneau
+
+# draft
+orders_kept_dialogs = Les ordres de tri que les emplacements retiennent dans les fenêtres qui répondent aux boîtes de dialogue d’autres programmes (ADR-145), chacun { $fields } : à part de ceux que retiennent les fenêtres de l’utilisateur
 
 # draft
 orders_not_saved = L’ordre de tri n’a pas été retenu : { $error }

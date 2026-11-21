@@ -1505,9 +1505,10 @@ pub struct SortSpec {
     /// Include dot-prefixed entries.
     pub show_hidden: bool,
     /// Folders before files, each sorted by `key` among themselves; else
-    /// sorted together. The user's setting ([`FOLDERS_FIRST`]), which the
-    /// workspace gives every pane: no pane chooses its own. While grouped,
-    /// within each group (ADR-130, 5).
+    /// sorted together. The same in every folder, never remembered by one
+    /// (ADR-132): the user's setting ([`FOLDERS_FIRST`]), which the
+    /// workspace gives every pane of their windows, and the dialogs' own
+    /// in theirs (ADR-145). While grouped, within each group (ADR-130, 5).
     #[serde(default = "folders_first")]
     pub folders_first: bool,
     /// What the entries are grouped by: the group comes first in the

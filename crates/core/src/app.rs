@@ -1244,7 +1244,7 @@ impl App {
             else {
                 return false;
             };
-            ws.remember_view(&at, Some(view.into()))
+            ws.remember_view(pane, &at, Some(view.into()))
         };
         if changed {
             crate::orders::save(self);
@@ -2163,7 +2163,7 @@ impl App {
             let mut ws = self.workspace.write();
             // Sorted as the place remembers, else as the pane does
             // (ADR-132), from the first listing on.
-            let order = ws.order_of(&location);
+            let order = ws.order_of(pane, &location);
             let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
             (
                 p.take_kept(&location),
@@ -2184,7 +2184,7 @@ impl App {
             ),
         };
         let mut ws = self.workspace.write();
-        let (order, view) = (ws.order_of(&location), ws.view_of(&location));
+        let (order, view) = (ws.order_of(pane, &location), ws.view_of(pane, &location));
         let p = ws.pane_mut(pane).ok_or_else(no_pane)?;
         if how.from.is_some_and(|from| p.location() != Some(from)) {
             drop(ws);
@@ -2226,7 +2226,7 @@ impl App {
                     let listing = self.new_listing(&location);
                     let mut ws = self.workspace.write();
                     // A column in its own folder's order (ADR-132).
-                    let order = ws.order_of(&location);
+                    let order = ws.order_of(pane, &location);
                     if let Some(p) = ws.pane_mut(pane) {
                         p.add_kept(open, listing, order);
                     }
@@ -3773,7 +3773,7 @@ impl App {
                     let listing = self.new_listing(&location);
                     let mut ws = self.workspace.write();
                     // A column in its own folder's order (ADR-132).
-                    let order = ws.order_of(&location);
+                    let order = ws.order_of(pane, &location);
                     if let Some(p) = ws.pane_mut(pane) {
                         p.add_kept(open, listing, order);
                     }
@@ -4100,6 +4100,11 @@ pub struct SortArgs {
     pub ascending: Option<bool>,
     #[serde(default)]
     pub show_hidden: Option<bool>,
+    /// Folders before files (true) or sorted with them: in a dialog's
+    /// pane, the dialogs' own; elsewhere the user's setting, in all of
+    /// their windows (ADR-145).
+    #[serde(default)]
+    pub folders_first: Option<bool>,
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -4115,7 +4120,20 @@ fn remembered_anew(ws: &mut crate::workspace::Workspace, pane: PaneId) -> bool {
         return false;
     };
     let order = crate::orders::Order::of(p.sort);
-    ws.remember_order(&at, Some(order))
+    ws.remember_order(pane, &at, Some(order))
+}
+
+/// Where `pane` is a dialog's, its own order as it is now taken as the one
+/// the next dialog starts with (ADR-145): whether that changed it. Under
+/// the caller's lock.
+fn dialog_order_anew(ws: &mut crate::workspace::Workspace, pane: PaneId) -> bool {
+    if !ws.is_dialogs(pane) {
+        return false;
+    }
+    let Some(sort) = ws.pane(pane).map(crate::workspace::Pane::own_sort) else {
+        return false;
+    };
+    ws.set_dialog_order(sort)
 }
 
 /// `remember_order`: whether the place a pane shows remembers its order.
@@ -5048,7 +5066,7 @@ mod builtin {
             ),
             words!(
                 app_sort_description =
-                    "Set the sort key, direction, and hidden-file visibility of a pane"
+                    "Set the sort key, direction, and hidden-file visibility of a pane, and whether folders come first (`folders_first`: a dialog's own in a window answering another program's dialog, else the user's in all of their windows)"
             ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
@@ -5073,10 +5091,35 @@ mod builtin {
                     p.set_show_hidden(h);
                 }
                 let keyed = p.sort.key != before.key;
+                // Folders first: a dialog's own (ADR-145); in a window of
+                // the user's, the user's setting, in all of theirs.
+                let mut setting = None;
+                if let Some(first) = a.folders_first {
+                    if ws.is_dialogs(pane) {
+                        if let Some(p) = ws.pane_mut(pane) {
+                            p.sort.folders_first = first;
+                        }
+                    } else {
+                        setting = Some(first);
+                    }
+                }
                 let remembered = remembered_anew(&mut ws, pane);
+                let dialogs = dialog_order_anew(&mut ws, pane);
                 drop(ws);
                 if remembered {
                     crate::orders::save(app);
+                }
+                if dialogs {
+                    crate::orders::save_dialog_order(app);
+                }
+                if let Some(first) = setting {
+                    // As Settings changes it, saved, said where it cannot be.
+                    app.dispatch(&Invocation::with_args(
+                        "settings.apply",
+                        &serde_json::json!({
+                            "changes": { crate::location::FOLDERS_FIRST: first.to_string() }
+                        }),
+                    ))?;
                 }
                 if keyed {
                     app.make_keys_again(Some(pane));
@@ -5120,9 +5163,13 @@ mod builtin {
                 }
                 let regrouped = p.sort.group_key() != before.group_key();
                 let remembered = remembered_anew(&mut ws, pane);
+                let dialogs = dialog_order_anew(&mut ws, pane);
                 drop(ws);
                 if remembered {
                     crate::orders::save(app);
+                }
+                if dialogs {
+                    crate::orders::save_dialog_order(app);
                 }
                 if regrouped {
                     app.make_keys_again(Some(pane));
@@ -5156,11 +5203,12 @@ mod builtin {
                         .location()
                         .cloned()
                         .ok_or_else(shows_nothing)?;
+                    let dialogs = ws.is_dialogs(pane);
                     anyhow::ensure!(
-                        !ws.orders().is_unreadable(),
+                        !ws.orders(dialogs).is_unreadable(),
                         words!(
                             app_orders_unreadable = "{ $key } in the data file holds no list: mend it, or take it out, to remember an order",
-                            key = crate::orders::ORDERS,
+                            key = crate::orders::key(dialogs),
                             note = "An error: the folders' remembered orders, kept under a key of the data file (as written), cannot be read."
                         )
                     );
@@ -5191,9 +5239,9 @@ mod builtin {
                             note = "An error: the pane showed another place before its folder's order could be remembered."
                         )
                     })?;
-                let mut changed = ws.remember_order(&at, on.then_some(order));
+                let mut changed = ws.remember_order(pane, &at, on.then_some(order));
                 if on && view.is_some() {
-                    changed |= ws.remember_view(&at, view);
+                    changed |= ws.remember_view(pane, &at, view);
                 }
                 drop(ws);
                 if changed {
@@ -5285,8 +5333,14 @@ mod builtin {
             words!(app_toggle_hidden_description = "Show or hide dot-prefixed entries"),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                let mut ws = app.workspace.write();
+                if let Some(p) = ws.pane_mut(pane) {
                     p.set_show_hidden(!p.sort.show_hidden);
+                }
+                let dialogs = dialog_order_anew(&mut ws, pane);
+                drop(ws);
+                if dialogs {
+                    crate::orders::save_dialog_order(app);
                 }
                 Ok(Outcome::Done)
             },

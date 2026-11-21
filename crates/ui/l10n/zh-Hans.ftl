@@ -375,7 +375,7 @@ address_folders_above = { $folder } 的上级文件夹
 address_folders_first = 文件夹优先
 
 # draft
-address_folders_first_tip = 在每个窗格中将文件夹列在文件之前；关闭时一起排序
+address_folders_first_tip = 在每个文件夹中将文件夹列在文件之前；关闭时一起排序
 
 # draft
 address_forward_tip = 前进 · 按住或右键单击可查看历史记录

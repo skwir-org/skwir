@@ -484,16 +484,28 @@ around the views is in [shell.md](shell.md).
   goes there with the file selected.
 - Columns are chosen in the header's menu (`Shell::open_column_menu`),
   through `settings.apply`, so it never disagrees with Settings.
-- **Folders first** is the user's setting (`location::FOLDERS_FIRST`),
-  never a pane's: it is a field of `SortSpec`, so every order, cache and
-  sort job keys on it, and the workspace gives it to each pane as the
-  pane is made (`Workspace::push_pane`) and to all when it changes; the
-  View menu's row is the setting (`settings.apply`). Off, folders and
+- **Folders first** is never a folder's own, nor a pane's: the user's
+  setting (`location::FOLDERS_FIRST`) in their windows, the dialogs' own
+  in the windows answering other programs' dialogs (ADR-145). It is a
+  field of `SortSpec`, so every order, cache and sort job keys on it, and
+  the workspace gives the user's to each pane of theirs as the pane is
+  made (`Workspace::push_pane`) and to all of them when it changes; the
+  View menu's row runs `sort` with `folders_first`, which sets the
+  setting (`settings.apply`) in a window of the user's and the dialogs'
+  own in a dialog's. Off, folders and
   files are sorted together. A key a folder has none of
   (`SortKey::applies_to`: its size, which is not its files') sorts it as
   none, below every value, and nothing waits for it to be read. Orders
   that are no pane's sort (the address's completions, an archive's tree,
   Usage) keep folders first.
+- **Dialogs list files their own way** (ADR-145): a dialog's window
+  opens marked so (`App::open_dialog_window`), in the order the last
+  dialog was left in (`Workspace::dialog_order`, `core.chooser_order`:
+  the sort, the groups, hidden files, folders first; until one was, the
+  user's window used last's), and what a folder remembers there is the
+  dialogs' (`core.chooser_orders`), apart from what it remembers in the
+  user's windows (`Workspace::orders(dialogs)`, `orders_for`, every
+  lookup by the pane it is for). Both follow what a plan moves.
 - **A folder that remembers its order** (ADR-132) is shown in it in every
   pane: `Pane::sort` is what is shown, the pane's own set aside in
   `Pane::own` meanwhile (`show_order`, from `App::open_in` alone), and

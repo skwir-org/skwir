@@ -565,7 +565,8 @@ fn a_search_remembers_no_order_and_shows_the_pane_s_own() {
     assert!(
         app.workspace
             .read()
-            .order_of(&Location::from_path(&root))
+            .orders(false)
+            .of(&Location::from_path(&root))
             .is_some_and(|order| order.key == SortKey::Size)
     );
 }

@@ -869,23 +869,20 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     }
     // Folders before files, or sorted with them, within each group: the
     // order's too, under the sort and the groups (their criteria are in
-    // their submenus, so a check here reads as none of them). The setting
-    // itself, in every pane, so the row never disagrees with Settings.
+    // their submenus, so a check here reads as none of them). Never a
+    // folder's own: the user's setting in their windows (Settings' row),
+    // the dialogs' own in a dialog's (`sort`'s `folders_first`, ADR-145).
     order.push(MenuPart::Row(menu_item(
         Button::new(
             "menu-folders-first",
             "",
             words!(
                 address_folders_first_tip =
-                    "List folders before files, in every pane; off, sort them together"
+                    "List folders before files, in every folder; off, sort them together"
             ),
-            "settings.apply",
+            "sort",
         )
-        .args(serde_json::json!({
-            "changes": {
-                skwir_core::location::FOLDERS_FIRST: (!spec.folders_first).to_string()
-            }
-        }))
+        .args(serde_json::json!({ "folders_first": !spec.folders_first }))
         .active(spec.folders_first),
         words!(
             address_folders_first = "Folders first",

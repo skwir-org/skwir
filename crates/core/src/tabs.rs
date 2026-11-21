@@ -831,6 +831,32 @@ impl App {
         Ok((window, tab, pane))
     }
 
+    /// A new window answering another program's dialog (ADR-141), showing
+    /// `location` in the order the dialogs list files in, folders first
+    /// theirs (`Workspace::dialog_order`, ADR-145), marked a dialog's
+    /// before anything is listed, so that its places are sorted as the
+    /// dialogs remember them from the first listing on; made active.
+    pub fn open_dialog_window(
+        &self,
+        location: Location,
+    ) -> anyhow::Result<(WindowId, TabId, PaneId)> {
+        let (window, tab, pane) = {
+            let mut ws = self.workspace.write();
+            let from = ws.active_window_id();
+            let sort = ws.dialog_order();
+            let (window, tab, panes) = ws.add_window(Some(from), vec![(location, sort)]);
+            ws.set_chooses(window, true);
+            // Made as the user's panes are (`push_pane`): the dialogs' own.
+            if let Some(pane) = ws.pane_mut(panes[0]) {
+                pane.sort.folders_first = sort.folders_first;
+            }
+            ws.set_active_window(window);
+            (window, tab, panes[0])
+        };
+        self.resume_shown()?;
+        Ok((window, tab, pane))
+    }
+
     /// Close window `id`, which answered another program's dialog
     /// (ADR-141): it goes from the core whatever else is there, never kept
     /// as the last window. Were it the last, a window of the user's own on

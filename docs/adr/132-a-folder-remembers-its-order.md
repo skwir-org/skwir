@@ -9,7 +9,8 @@ ADR-130 left "for an ADR of its own" (decision 11). Amended the same day
 
 - **The order is the pane's** (ADR-130, 11): a pane keeps its sort and
   its groups as it goes from folder to folder, and its tab keeps them for
-  the next start. Folders first is the user's, in every pane. A folder
+  the next start. Folders first is the user's, in every pane (never a
+  folder's; the dialogs keep their own since ADR-145). A folder
   that wants an order of its own (Downloads newest first, pictures by
   month) was sorted again by hand each time.
 - **What other file managers do**, researched 2026-11-12:
@@ -29,7 +30,8 @@ ADR-130 left "for an ADR of its own" (decision 11). Amended the same day
    Folders first, and the command `remember_order` (`on`, toggled when
    omitted; `pane`). It remembers the sort and the groups, each with its
    direction (`orders::Order`); hidden files stay the pane's, and
-   folders first the user's.
+   folders first is never a folder's own (the user's in their windows,
+   the dialogs' own in theirs, ADR-145).
 2. **Shown so wherever it is shown**: every pane that shows it, and
    every window. A change of its sort or groups made there (a header, Sort
    by, Group by) changes what it remembers, and every pane showing it

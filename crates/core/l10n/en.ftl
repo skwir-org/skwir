@@ -736,7 +736,7 @@ app_sort_by_way = Sort by { $key }, { $way }
 
 app_sort_descending = Sort descending
 
-app_sort_description = Set the sort key, direction, and hidden-file visibility of a pane
+app_sort_description = Set the sort key, direction, and hidden-file visibility of a pane, and whether folders come first (`folders_first`: a dialog's own in a window answering another program's dialog, else the user's in all of their windows)
 
 # An action's name: take files out of a tag's or the shelf's list, the files left where they are.
 app_take_out = Take out of here
@@ -1932,8 +1932,14 @@ op_would_stay_in_trash = { $name } would stay in the trash
 # Why a copy to a removable drive failed: handing the drive what was written stopped unexpectedly.
 op_write_out_stopped = the write-out stopped
 
+# What the window keeps, for agents and scripts: the fields, as written.
+orders_dialog_order_state = The order the windows answering other programs' dialogs list files in, the last left (ADR-145): { $fields }
+
 # What a setting holds, read in the settings file and by agents: the fields of each record, as written.
 orders_kept = The orders places remember (ADR-132), each { $fields }: shown so in every pane
+
+# What a setting holds, read in the settings file and by agents: the fields of each record, as written.
+orders_kept_dialogs = The orders places remember in the windows answering other programs' dialogs (ADR-145), each { $fields }: apart from those the user's windows remember
 
 # A folder's order was chosen to be remembered, but the settings could not be written: why follows.
 orders_not_saved = The order was not remembered: { $error }

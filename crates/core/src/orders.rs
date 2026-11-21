@@ -24,9 +24,24 @@ use crate::settings::SettingSpec;
 /// each a place (`at`) and its order.
 pub const ORDERS: &str = "core.orders";
 
+/// The orders places remember in the windows answering other programs'
+/// dialogs, apart from the user's (ADR-145): records as `ORDERS` holds.
+pub const DIALOG_ORDERS: &str = "core.chooser_orders";
+
+/// The order a dialog's pane starts with, the one the last was left in
+/// (ADR-145): the sort, the groups, hidden files and folders first.
+pub const DIALOG_ORDER: &str = "core.chooser_order";
+
+/// The data setting of the orders the user's windows remember, or the
+/// dialogs' (`dialogs`).
+pub fn key(dialogs: bool) -> &'static str {
+    if dialogs { DIALOG_ORDERS } else { ORDERS }
+}
+
 /// What a place remembers of how it is shown: the sort and the groups,
 /// each with its direction. Hidden files stay the pane's, and folders
-/// first the user's, in every pane.
+/// first is never remembered by a folder: the same in every folder, the
+/// user's in their windows and the dialogs' own in theirs (ADR-145).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Order {
     pub key: SortKey,
@@ -404,6 +419,24 @@ pub(crate) fn register(app: &App) {
         ),
         toml::Value::Array(Vec::new()),
     ));
+    app.settings.declare(SettingSpec::data(
+        DIALOG_ORDERS,
+        crate::words!(
+            orders_kept_dialogs = "The orders places remember in the windows answering other programs' dialogs (ADR-145), each { $fields }: apart from those the user's windows remember",
+            fields = "{ at, key, ascending, group, group_ascending }",
+            note = "What a setting holds, read in the settings file and by agents: the fields of each record, as written."
+        ),
+        toml::Value::Array(Vec::new()),
+    ));
+    app.settings.declare(SettingSpec::state(
+        DIALOG_ORDER,
+        crate::words!(
+            orders_dialog_order_state = "The order the windows answering other programs' dialogs list files in, the last left (ADR-145): { $fields }",
+            fields = "{ key, ascending, show_hidden, folders_first, group, group_ascending }",
+            note = "What the window keeps, for agents and scripts: the fields, as written."
+        ),
+        toml::Value::Table(toml::Table::new()),
+    ));
     apply(app);
     look_at_trash(app);
     let weak = app.weak();
@@ -443,7 +476,7 @@ pub struct Emptied {
 /// the start (the trash may have been emptied since) and once a plan
 /// deleted something for good.
 fn look_at_trash(app: &App) {
-    let trashed = app.workspace.read().orders().trashed();
+    let trashed = app.workspace.read().trashed_orders();
     if trashed.is_empty() {
         return;
     }
@@ -504,7 +537,12 @@ pub fn emptied(_trashed: Vec<PathBuf>) -> Emptied {
 /// place's order.
 pub(crate) fn apply(app: &App) {
     let orders = Orders::read(app.settings.get::<toml::Value>(ORDERS));
-    app.workspace.write().set_orders(orders);
+    let dialogs = Orders::read(app.settings.get::<toml::Value>(DIALOG_ORDERS));
+    let order = app.settings.get::<SortSpec>(DIALOG_ORDER);
+    let mut ws = app.workspace.write();
+    ws.set_orders(false, orders);
+    ws.set_orders(true, dialogs);
+    ws.take_dialog_order(order);
 }
 
 /// Write down what places remember, in the data file: on a worker where a
@@ -513,13 +551,39 @@ pub(crate) fn apply(app: &App) {
 pub(crate) fn save(app: &App) {
     {
         let ws = app.workspace.read();
-        let Some(value) = ws.orders().to_value() else {
+        // Set under the workspace's lock, so changes made at once are
+        // set in the order they were made; a list that does not read is
+        // never written over.
+        for dialogs in [false, true] {
+            if let Some(value) = ws.orders(dialogs).to_value()
+                && app.settings.get::<toml::Value>(key(dialogs)).as_ref() != Some(&value)
+            {
+                app.settings.set(key(dialogs), value);
+            }
+        }
+    }
+    write_down(app);
+}
+
+/// Write down the order the next dialog starts with (ADR-145), as `save`
+/// writes what places remember.
+pub(crate) fn save_dialog_order(app: &App) {
+    {
+        let ws = app.workspace.read();
+        let Some(value) = ws
+            .dialog_order_kept()
+            .and_then(|sort| toml::Value::try_from(sort).ok())
+        else {
             return;
         };
-        // Set under the workspace's lock, so changes made at once are
-        // set in the order they were made.
-        app.settings.set(ORDERS, value);
+        app.settings.set(DIALOG_ORDER, value);
     }
+    write_down(app);
+}
+
+/// The settings saved, on a worker where a window draws: what `save` and
+/// `save_dialog_order` set.
+fn write_down(app: &App) {
     let weak = app.weak();
     let write = move || {
         let Some(app) = weak.upgrade() else { return };

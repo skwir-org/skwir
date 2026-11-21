@@ -5739,12 +5739,22 @@ pub struct Workspace {
     /// Counts the times a tab was left for another (`Tab::left`).
     tabs_left: u64,
     /// Whether folders come before files (`location::FOLDERS_FIRST`),
-    /// in every pane's sort: given each pane as it is made (`push_pane`)
-    /// and to all of them when it changes (`set_folders_first`).
+    /// in the sort of every pane of the user's own windows: given each
+    /// pane as it is made (`push_pane`) and to all of them when it changes
+    /// (`set_folders_first`). A dialog's pane has the dialogs' own
+    /// (`dialog_order`, ADR-145).
     folders_first: bool,
     /// The orders places remember (ADR-132), as the data file holds them:
-    /// a pane showing one of them shows it so (`Pane::show_order`).
+    /// a pane of the user's own windows showing one of them shows it so
+    /// (`Pane::show_order`).
     orders: Orders,
+    /// What the windows answering other programs' dialogs keep of how they
+    /// list files, apart from the user's (ADR-145): the orders places
+    /// remember there, and the order a dialog's pane starts with (the
+    /// one the last was left in; none until one was changed, a dialog then
+    /// starting in the order of the user's window used last).
+    dialog_orders: Orders,
+    dialog_order: Option<SortSpec>,
 }
 
 /// A window's tabs, one shown at a time (ADR-122).
@@ -5856,6 +5866,8 @@ impl Default for Workspace {
             tabs_left: 0,
             folders_first: SortSpec::default().folders_first,
             orders: Orders::default(),
+            dialog_orders: Orders::default(),
+            dialog_order: None,
         };
         w.add_window(None, Vec::new());
         w
@@ -5912,85 +5924,205 @@ impl Workspace {
         self.folders_first
     }
 
-    /// Put folders before files, or sort them together, in every pane
-    /// (`location::FOLDERS_FIRST` changed): each one's order is made again
-    /// on a worker (ADR-121), the one before shown until it is back.
+    /// Put folders before files, or sort them together, in every pane of
+    /// the user's own windows (`location::FOLDERS_FIRST` changed): each
+    /// one's order is made again on a worker (ADR-121), the one before
+    /// shown until it is back. A dialog's keeps its own (ADR-145).
     pub(crate) fn set_folders_first(&mut self, first: bool) {
         self.folders_first = first;
+        let dialogs = self.dialog_panes();
         for pane in &mut self.panes {
-            pane.sort.folders_first = first;
+            if !dialogs.contains(&pane.id) {
+                pane.sort.folders_first = first;
+            }
         }
+    }
+
+    /// The panes of the windows answering other programs' dialogs.
+    fn dialog_panes(&self) -> crate::hashing::Set<PaneId> {
+        self.windows
+            .iter()
+            .filter(|w| w.chooses)
+            .flat_map(|w| w.tabs.iter().flat_map(|t| t.panes.iter().copied()))
+            .collect()
+    }
+
+    /// Whether `pane` is a dialog's (its window answers another program's
+    /// dialog, ADR-141): it lists files as dialogs do (ADR-145).
+    pub fn is_dialogs(&self, pane: PaneId) -> bool {
+        self.window_of(pane)
+            .and_then(|w| self.window(w))
+            .is_some_and(WindowTabs::chooses)
+    }
+
+    /// The order a new dialog's pane starts with (ADR-145): the one the
+    /// last dialog was left in, else the own order of the pane in use in
+    /// the user's window used last, its folders first theirs.
+    pub fn dialog_order(&self) -> SortSpec {
+        self.dialog_order.unwrap_or_else(|| {
+            let own = self
+                .used
+                .iter()
+                .rev()
+                .filter_map(|id| self.window(*id))
+                .find(|w| !w.chooses)
+                .and_then(|w| self.pane(w.active_pane()))
+                .map(Pane::own_sort)
+                .unwrap_or_default();
+            SortSpec {
+                folders_first: self.folders_first,
+                ..own
+            }
+        })
+    }
+
+    /// Take `sort` as the order the next dialog starts with: whether it
+    /// was another.
+    pub(crate) fn set_dialog_order(&mut self, sort: SortSpec) -> bool {
+        if self.dialog_order == Some(sort) {
+            return false;
+        }
+        self.dialog_order = Some(sort);
+        true
+    }
+
+    /// The dialogs' order as the state file keeps it, read at the start.
+    pub(crate) fn take_dialog_order(&mut self, sort: Option<SortSpec>) {
+        self.dialog_order = sort;
+    }
+
+    /// The order the dialogs were left in, if one was.
+    pub fn dialog_order_kept(&self) -> Option<SortSpec> {
+        self.dialog_order
     }
 
     /// The orders places remember (ADR-132).
-    pub fn orders(&self) -> &Orders {
-        &self.orders
+    /// The orders places remember (ADR-132) for the user's own windows,
+    /// or for the dialogs' (`dialogs`, ADR-145).
+    pub fn orders(&self, dialogs: bool) -> &Orders {
+        if dialogs {
+            &self.dialog_orders
+        } else {
+            &self.orders
+        }
     }
 
-    /// The order `at` remembers, if it remembers one.
-    pub fn order_of(&self, at: &Location) -> Option<Order> {
-        self.orders.of(at)
+    /// The orders places remember where `pane` is: the dialogs' for a
+    /// dialog's pane, the user's for any other (ADR-145).
+    pub fn orders_for(&self, pane: PaneId) -> &Orders {
+        self.orders(self.is_dialogs(pane))
     }
 
-    /// Remember `order` for `at`, or forget its own, and show it so in
-    /// every pane that shows it: whether that changed anything.
-    pub(crate) fn remember_order(&mut self, at: &Location, order: Option<Order>) -> bool {
-        if !self.orders.set(at, order) {
+    /// The order `at` remembers where `pane` is, if it remembers one.
+    pub fn order_of(&self, pane: PaneId, at: &Location) -> Option<Order> {
+        self.orders_for(pane).of(at)
+    }
+
+    /// Remember `order` for `at`, or forget its own, where `pane` is (the
+    /// user's windows or the dialogs'), and show it so in every pane there
+    /// that shows it: whether that changed anything.
+    pub(crate) fn remember_order(
+        &mut self,
+        pane: PaneId,
+        at: &Location,
+        order: Option<Order>,
+    ) -> bool {
+        let dialogs = self.is_dialogs(pane);
+        let orders = if dialogs {
+            &mut self.dialog_orders
+        } else {
+            &mut self.orders
+        };
+        if !orders.set(at, order) {
             return false;
         }
         self.tell_panes(Some(at));
         true
     }
 
-    /// Remember `view` as the one `at` is shown in (ADR-132), where it
-    /// remembers its order, and show it so in every pane that shows it:
-    /// whether that changed anything.
-    pub(crate) fn remember_view(&mut self, at: &Location, view: Option<Arc<str>>) -> bool {
-        if !self.orders.set_view(at, view) {
+    /// Remember `view` as the one `at` is shown in (ADR-132) where `pane`
+    /// is, where it remembers its order, and show it so in every pane there
+    /// that shows it: whether that changed anything.
+    pub(crate) fn remember_view(
+        &mut self,
+        pane: PaneId,
+        at: &Location,
+        view: Option<Arc<str>>,
+    ) -> bool {
+        let orders = if self.is_dialogs(pane) {
+            &mut self.dialog_orders
+        } else {
+            &mut self.orders
+        };
+        if !orders.set_view(at, view) {
             return false;
         }
         self.tell_panes(Some(at));
         true
     }
 
-    /// The view `at` remembers, if it remembers one.
-    pub fn view_of(&self, at: &Location) -> Option<Arc<str>> {
-        self.orders.view_of(at)
+    /// The view `at` remembers where `pane` is, if it remembers one.
+    pub fn view_of(&self, pane: PaneId, at: &Location) -> Option<Arc<str>> {
+        self.orders_for(pane).view_of(at)
     }
 
     /// Take the orders as the data file says now (changed by another
-    /// skwir, or read at the start): each pane shows its place's.
-    pub(crate) fn set_orders(&mut self, orders: Orders) {
-        self.orders = orders;
+    /// skwir, or read at the start), the user's windows' or the dialogs':
+    /// each pane shows its place's.
+    pub(crate) fn set_orders(&mut self, dialogs: bool, orders: Orders) {
+        if dialogs {
+            self.dialog_orders = orders;
+        } else {
+            self.orders = orders;
+        }
         self.tell_panes(None);
     }
 
     /// Show what `at` remembers (every place's, for none) in every pane
-    /// showing it, and in the columns beside them.
+    /// showing it, and in the columns beside them, each as its windows
+    /// remember (the user's or the dialogs', ADR-145).
     fn tell_panes(&mut self, at: Option<&Location>) {
+        let dialogs = self.dialog_panes();
         for pane in &mut self.panes {
+            let orders = if dialogs.contains(&pane.id) {
+                &self.dialog_orders
+            } else {
+                &self.orders
+            };
             if let Some(shown) = pane.location().cloned()
                 && at.is_none_or(|at| at == &shown)
             {
-                pane.show_order(self.orders.of(&shown), self.orders.view_of(&shown));
+                pane.show_order(orders.of(&shown), orders.view_of(&shown));
             } else if at.is_none() {
                 pane.show_order(None, None);
             }
-            pane.columns_remember(&self.orders);
+            pane.columns_remember(orders);
         }
     }
 
-    /// Follow what a plan changed (`Orders::follow`): whether what the
-    /// places remember changed.
+    /// Follow what a plan changed (`Orders::follow`), in what the user's
+    /// windows and the dialogs remember: whether either changed.
     pub(crate) fn follow_orders(&mut self, changes: &[crate::op::Change]) -> bool {
-        self.orders.follow(changes)
+        let own = self.orders.follow(changes);
+        self.dialog_orders.follow(changes) | own
+    }
+
+    /// The folders remembered trashed, in what the user's windows or the
+    /// dialogs remember (`Orders::trashed`).
+    pub fn trashed_orders(&self) -> Vec<std::path::PathBuf> {
+        let mut trashed = self.orders.trashed();
+        trashed.extend(self.dialog_orders.trashed());
+        trashed.sort();
+        trashed.dedup();
+        trashed
     }
 
     /// Take in what a look at the trash found (`Orders::forget_emptied`):
-    /// whether what the places remember changed. A folder forgotten is
-    /// shown by no pane: it is nowhere.
+    /// whether what the places remember changed, for the user's windows or
+    /// the dialogs. A folder forgotten is shown by no pane: it is nowhere.
     pub(crate) fn forget_emptied(&mut self, found: &crate::orders::Emptied) -> bool {
-        self.orders.forget_emptied(found)
+        let own = self.orders.forget_emptied(found);
+        self.dialog_orders.forget_emptied(found) | own
     }
 
     /// A new pane in the tab shown: the other side of a split.
@@ -6569,6 +6701,7 @@ impl Workspace {
         }
         for (from, to) in moved {
             r.orders_moved |= self.orders.moved(&from, &to);
+            r.orders_moved |= self.dialog_orders.moved(&from, &to);
         }
         r
     }

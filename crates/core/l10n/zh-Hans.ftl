@@ -820,7 +820,7 @@ app_sort_by_way = 按{ $key }排序，{ $way }
 app_sort_descending = 降序排列
 
 # draft
-app_sort_description = 设置窗格的排序键、方向以及是否显示隐藏文件
+app_sort_description = 设置窗格的排序键、方向以及是否显示隐藏文件，以及文件夹是否排在前面（`folders_first`：在应答其他程序对话框的窗口中是对话框自己的设置，否则是用户在其所有窗口中的设置）
 
 # draft
 app_take_out = 从此处移出
@@ -2038,7 +2038,13 @@ op_would_stay_in_trash = { $name }会仍留在回收站中
 op_write_out_stopped = 写入驱动器已停止
 
 # draft
+orders_dialog_order_state = 应答其他程序对话框的窗口列出文件的顺序，即最后一个对话框留下的顺序（ADR-145）：{ $fields }
+
+# draft
 orders_kept = 各位置记住的顺序（ADR-132），每条包含 { $fields }：在每个窗格中都如此显示
+
+# draft
+orders_kept_dialogs = 各位置在应答其他程序对话框的窗口中记住的顺序（ADR-145），每条包含 { $fields }：与用户窗口记住的分开
 
 # draft
 orders_not_saved = 未能记住该顺序：{ $error }

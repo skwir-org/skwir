@@ -381,7 +381,7 @@ address_folders_above = Folders above { $folder }
 # A switch of the View menu: folders are listed before files.
 address_folders_first = Folders first
 
-address_folders_first_tip = List folders before files, in every pane; off, sort them together
+address_folders_first_tip = List folders before files, in every folder; off, sort them together
 
 # The tooltip of the Forward button.
 address_forward_tip = Forward · hold or right-click for the history

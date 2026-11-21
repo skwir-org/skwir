@@ -28,7 +28,10 @@ fn sort_of(app: &App, pane: PaneId) -> SortSpec {
 }
 
 fn remembered(app: &App, folder: &Path) -> Option<Order> {
-    app.workspace.read().order_of(&Location::from_path(folder))
+    app.workspace
+        .read()
+        .orders(false)
+        .of(&Location::from_path(folder))
 }
 
 /// The pane's order: largest first. The folder's: newest first, grouped
@@ -312,9 +315,16 @@ fn a_folder_remembers_the_view_it_is_shown_in() {
         serde_json::json!({ "view": "columns" }),
     );
     let at = Location::from_path(&sorted);
-    assert_eq!(app.workspace.read().view_of(&at), None, "the pane's");
+    assert_eq!(
+        app.workspace.read().orders(false).view_of(&at),
+        None,
+        "the pane's"
+    );
     assert!(app.remember_view(pane, "grid"));
-    assert_eq!(app.workspace.read().view_of(&at).as_deref(), Some("grid"));
+    assert_eq!(
+        app.workspace.read().orders(false).view_of(&at).as_deref(),
+        Some("grid")
+    );
     assert_eq!(
         app.workspace
             .read()
@@ -328,4 +338,75 @@ fn a_folder_remembers_the_view_it_is_shown_in() {
     run(&app, "remember_order", serde_json::json!({ "on": false }));
     assert!(!app.remember_view(pane, "grid"), "nothing remembered");
     assert_eq!(app.workspace.read().pane(pane).unwrap().place_view(), None);
+}
+
+/// The windows answering other programs' dialogs list files their own way
+/// (ADR-145): the first starts as the user's window used last lists them,
+/// the next as the last dialog was left; their order, hidden files and
+/// folders first are theirs, the user's untouched; and what a folder
+/// remembers in a dialog is the dialogs', apart from the user's windows'.
+#[test]
+fn a_dialog_lists_files_its_own_way() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let (sorted, plain) = (
+        dir.path().join("it's sorted"),
+        dir.path().join("plain folder"),
+    );
+    let app = app(dir.path());
+    navigate(&app, &sorted);
+    let own = active(&app);
+    run(
+        &app,
+        "sort",
+        serde_json::json!({ "key": "size", "ascending": false }),
+    );
+
+    let (_, _, dialog) = app.open_dialog_window(Location::from_path(&plain)).unwrap();
+    assert!(app.workspace.read().is_dialogs(dialog));
+    let first = sort_of(&app, dialog);
+    assert_eq!((first.key, first.ascending), by_size(), "the user's order");
+    run(
+        &app,
+        "sort",
+        serde_json::json!({ "key": "modified", "pane": dialog }),
+    );
+    run(&app, "toggle_hidden", serde_json::json!({ "pane": dialog }));
+    run(
+        &app,
+        "sort",
+        serde_json::json!({ "folders_first": false, "pane": dialog }),
+    );
+    let left = sort_of(&app, dialog);
+    assert!(left.key == SortKey::Modified && left.show_hidden && !left.folders_first);
+    let mine = sort_of(&app, own);
+    assert!(
+        mine.key == SortKey::Size && !mine.show_hidden && mine.folders_first,
+        "the user's pane untouched: {mine:?}"
+    );
+    assert!(
+        app.settings
+            .get::<bool>(skwir_core::location::FOLDERS_FIRST)
+            .unwrap_or(true),
+        "the user's setting untouched"
+    );
+    assert_eq!(
+        app.settings
+            .get::<SortSpec>(skwir_core::orders::DIALOG_ORDER),
+        Some(left),
+        "kept for the next start"
+    );
+
+    let (_, _, next) = app.open_dialog_window(Location::from_path(&plain)).unwrap();
+    assert_eq!(sort_of(&app, next), left, "as the last was left");
+    navigate(&app, &sorted);
+    run(&app, "remember_order", serde_json::json!({ "pane": next }));
+    let at = Location::from_path(&sorted);
+    let ws = app.workspace.read();
+    assert!(ws.orders(true).of(&at).is_some(), "the dialogs'");
+    assert!(
+        ws.orders(false).of(&at).is_none(),
+        "not the user's windows'"
+    );
+    assert!(!ws.pane(own).unwrap().keeps_order());
 }

@@ -1827,9 +1827,8 @@ fn open_chooser(cx: &mut App, asking: crate::chooser::Asking) {
         }
     }
     let start = crate::chooser::start_location(&app, choosing.asked(), &asking.gone());
-    match app.open_window(start) {
+    match app.open_dialog_window(start) {
         Ok((id, _, _)) => {
-            app.workspace.write().set_chooses(id, true);
             if !open_window(cx, id, false, None, false, Some(asking)) {
                 choosing.answer(Answer::Failed);
             }

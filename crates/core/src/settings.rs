@@ -2448,7 +2448,11 @@ pub(crate) fn changed(app: &crate::App, keys: &[String]) {
         apply_size_units(app);
         app.wake();
     }
-    if keys.iter().any(|key| key == crate::orders::ORDERS) {
+    if keys.iter().any(|key| {
+        key == crate::orders::ORDERS
+            || key == crate::orders::DIALOG_ORDERS
+            || key == crate::orders::DIALOG_ORDER
+    }) {
         crate::orders::apply(app);
         app.wake();
     }

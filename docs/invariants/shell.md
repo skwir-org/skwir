@@ -2037,7 +2037,7 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   as it was (`SavedTab::filters`, read again by the filter's reader,
   ADR-109) and sorted as it was (`SavedTab::sorts`: its criterion and
   direction, its groups and theirs, hidden files; folders first stays
-  the user's, `Workspace::push_pane`); its history is not kept, nor its
+  the user's, `Workspace::push_pane`, ADR-145); its history is not kept, nor its
   groups folded. A sort written only where a pane's differs from a new
   one's; one that cannot be read (a later Skwir's criterion) is a new
   pane's, never a session lost.

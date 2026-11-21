@@ -394,7 +394,7 @@ address_folders_above = Dossiers au-dessus { GENDER($folder) ->
 address_folders_first = Dossiers en premier
 
 # draft
-address_folders_first_tip = Lister les dossiers avant les fichiers, dans tous les panneaux ; désactivé, les trier ensemble
+address_folders_first_tip = Lister les dossiers avant les fichiers, dans chaque dossier ; désactivé, les trier ensemble
 
 # draft
 address_forward_tip = Suivant · maintenez ou faites un clic droit pour l’historique
