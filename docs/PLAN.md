@@ -1430,14 +1430,12 @@ compound extension selected to its last dot (`backup.tar` of
 `backup.tar.gz`); `ui.quit` from a script while work is under way and no
 window of the user's own is up, not run in a window; a preview's web
 links do nothing in a dialog's window and say nothing of it (each
-renderer draws its links, none told the window's rule); a dialog's
-stopped plan that goes on by itself once its server answers (ADR-080, 9)
-is the program's in Undo, not the dialog's; rclone's forms, asked on
-threads of their own, are not tagged with the dialog and wait for a
-window of the user's own (untested); a server's password and a volume's
-passphrase asked in a dialog, not seen in a window (a test covers a
-worker's question); a plugin from outside cannot yet say one of its
-commands is fit for dialogs, so none is offered there.
+renderer draws its links, none told the window's rule); rclone's forms,
+asked on threads of their own, are not tagged with the dialog and wait
+for a window of the user's own (untested); a server's password and a
+volume's passphrase asked in a dialog, not seen in a window (a test
+covers a worker's question); a plugin from outside cannot yet say one of
+its commands is fit for dialogs, so none is offered there.
 
 **Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
 on Linux; checked on a private dbus-daemon with Xvfb, headless sway and
