@@ -107,7 +107,8 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
 2. **What it does not offer is not drawn either**: no tab bar, no split,
    no terminal panel, no pinned player (a film or a song still plays in
    the preview), no Activity panel (what the user does there is said
-   as anywhere else), no Settings, and the palette offers no setting.
+   as anywhere else; a desktop's notice of its work clicked brings the
+   dialog forward, amended as reviewed, 2026-11-21), no Settings, and the palette offers no setting.
    It holds one tab (`WindowTabs::holds_tabs`): a place asked in a tab
    there (a middle click, Ctrl+Enter, a volume mounted for a tab) opens
    in place (`App::new_tab`), a step Back returns from, its menu offers

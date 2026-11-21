@@ -73,6 +73,9 @@ pub(crate) struct Finishing {
     /// The window each plan it ran was asked from: what the plan says
     /// goes there (its toast, what it made), else to the active window.
     plans: HashMap<PlanId, WindowId>,
+    /// Whose work the desktop's notices told of, newest last, `TOLD_KEPT`
+    /// at most: a notice clicked goes there (`answer_desktop`).
+    told: std::collections::VecDeque<Told>,
     /// The window that started playing last, while it is up: one plays at
     /// a time, what another played paused (`claim_player`).
     pub(crate) player: Option<WindowId>,
@@ -362,6 +365,7 @@ pub(crate) fn start(
         windows: Vec::new(),
         raised: None,
         plans: HashMap::new(),
+        told: std::collections::VecDeque::new(),
         player: None,
         carried: HashMap::new(),
         recording: Recording::default(),
@@ -985,6 +989,29 @@ fn deliver(cx: &mut App) {
             } else {
                 state.plans.get(&plan).copied()
             };
+            // What the desktop may be told of it (`Work::tell_ended`,
+            // `tell_waits_for_server`), its notice keyed by the plan.
+            if let Some(asker) = window
+                && matches!(
+                    taken,
+                    crate::work::Taken::Ended { .. } | crate::work::Taken::WaitsForServer(_)
+                )
+            {
+                let dialog = app
+                    .workspace
+                    .read()
+                    .window(asker)
+                    .is_some_and(WindowTabs::chooses);
+                state.told.retain(|told| told.plan != plan);
+                if state.told.len() == TOLD_KEPT {
+                    state.told.pop_front();
+                }
+                state.told.push_back(Told {
+                    plan,
+                    window: asker,
+                    dialog,
+                });
+            }
             let window = window
                 .filter(|w| state.windows.iter().any(|(up, _)| up == w))
                 .unwrap_or(front);
@@ -1237,25 +1264,80 @@ fn watched(cx: &App) -> Watched {
     }
 }
 
-/// What the desktop asked while windows are up: a notice or the presence
-/// clicked brings the front window of the user's own forward, with the
-/// token the desktop gave where it gave one, and opens Activity there,
-/// never in another program's dialog, which has none (ADR-144, 2): while
-/// dialogs' windows alone are up, the user's windows asleep come back for
-/// it, as with none up (`sync`). Its menu pauses, lets go on or stops what
-/// runs.
+/// Whose work a desktop notice told of (`Work::tell_ended`,
+/// `tell_waits_for_server`: the notice keyed by its plan's id): the window
+/// its plan was asked from, and whether that window answers another
+/// program's dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Told {
+    plan: PlanId,
+    window: WindowId,
+    dialog: bool,
+}
+
+/// How many plans' askers are kept for the notices that told of them: a
+/// notice says what ended since someone last looked, so the desktop shows
+/// a few at most.
+const TOLD_KEPT: usize = 32;
+
+/// Where a notice clicked, or the presence, takes the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoticeGoes {
+    /// That window comes forward, Activity open there or not (a dialog's
+    /// window shows none, ADR-144, 2).
+    To(WindowId, bool),
+    /// The user's windows come back, Activity open (`reopen`).
+    Back,
+}
+
+/// Where a notice clicked takes the user: to the window whose work it told
+/// of (`told`), while it is up (`up`), Activity open there unless it is a
+/// dialog's; else to the front window of the user's own (`own_front`),
+/// Activity open. With only dialogs up, a dialog's work brings the front
+/// one forward (`front`), the user's windows asleep staying so; what is
+/// the user's (their windows' work, or what names no window: an agent's or
+/// a script's plan, a question waiting, the presence) brings their windows
+/// back, as with none up.
+fn notice_goes(
+    told: Option<Told>,
+    up: &[WindowId],
+    own_front: Option<WindowId>,
+    front: Option<WindowId>,
+) -> NoticeGoes {
+    if let Some(told) = told
+        && up.contains(&told.window)
+    {
+        return NoticeGoes::To(told.window, !told.dialog);
+    }
+    match (own_front, front) {
+        (Some(own), _) => NoticeGoes::To(own, true),
+        (None, Some(front)) if told.is_some_and(|told| told.dialog) => NoticeGoes::To(front, false),
+        _ => NoticeGoes::Back,
+    }
+}
+
+/// What the desktop asked: a notice clicked brings the window whose work it
+/// told of forward, or the user's (`notice_goes`), with the token the
+/// desktop gave where it gave one, Activity open in a window of the user's
+/// own, never in another program's dialog, which has none (ADR-144, 2);
+/// the presence clicked, the user's. Its menu pauses, lets go on or stops
+/// what runs.
 fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
     let mut token = None;
     let mut shown = false;
+    // The notice clicked last: whose work it told of.
+    let mut about = None;
     for asked in asked {
         match asked {
             Asked::Notice(clicked) => {
                 shown = true;
                 token = clicked.token.or(token);
+                about = Some(clicked.key);
             }
             Asked::Open { token: given } => {
                 shown = true;
                 token = given.or(token);
+                about = None;
             }
             Asked::PauseAll | Asked::GoOn => {
                 let state = cx.global::<Finishing>();
@@ -1272,7 +1354,25 @@ fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
     if !shown {
         return;
     }
-    let Some(window) = ordinary_handle(cx) else {
+    let state = cx.global::<Finishing>();
+    let told = about.and_then(|key| state.told.iter().rev().find(|t| t.plan.0 == key).copied());
+    let used = by_use(&state.app);
+    let up: Vec<WindowId> = state.windows.iter().map(|(id, _)| *id).collect();
+    let goes = notice_goes(
+        told,
+        &up,
+        front_of(&own_windows(state), &used).map(|(id, _)| *id),
+        front_of(&state.windows, &used).map(|(id, _)| *id),
+    );
+    let to = match goes {
+        NoticeGoes::To(id, activity) => state
+            .windows
+            .iter()
+            .find(|(up, _)| *up == id)
+            .map(|(_, handle)| (*handle, activity)),
+        NoticeGoes::Back => None,
+    };
+    let Some((window, activity)) = to else {
         let opening = Opening {
             token,
             ..Opening::default()
@@ -1282,7 +1382,7 @@ fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
     };
     let _ = window.update(cx, |shell, window, cx| {
         window.activate_window_with_token(token.as_deref());
-        if !shell.activity_open() {
+        if activity && !shell.activity_open() {
             shell.toggle_activity(&serde_json::json!({}), window, cx);
         }
     });
@@ -2794,6 +2894,67 @@ mod tests {
         takers.passing.store(false, Ordering::Release);
         assert!(takers.over());
         assert!(!super::Takers::new(std::sync::Arc::default(), false).over());
+    }
+
+    /// A notice clicked goes to the window whose work it told of while it
+    /// is up, Activity open unless that is a dialog's (FN-2); else to the
+    /// user's front window; with only dialogs up, a dialog's work brings
+    /// one forward, the user's windows asleep staying so, and what is the
+    /// user's (or names no window) brings them back, as with none up.
+    #[test]
+    fn a_notice_clicked_goes_to_the_window_whose_work_it_told_of() {
+        use super::{NoticeGoes, Told, notice_goes};
+        let (own, dialog, other) = (WindowId(1), WindowId(2), WindowId(3));
+        let of = |window, dialog| {
+            Some(Told {
+                plan: PlanId(7),
+                window,
+                dialog,
+            })
+        };
+        // Both up.
+        let up = [own, dialog];
+        assert_eq!(
+            notice_goes(of(dialog, true), &up, Some(own), Some(own)),
+            NoticeGoes::To(dialog, false),
+            "the dialog's, no Activity"
+        );
+        assert_eq!(
+            notice_goes(of(own, false), &up, Some(own), Some(dialog)),
+            NoticeGoes::To(own, true)
+        );
+        assert_eq!(
+            notice_goes(None, &up, Some(own), Some(dialog)),
+            NoticeGoes::To(own, true),
+            "naming no window: the user's"
+        );
+        // The dialog that asked it gone: the user's front window.
+        assert_eq!(
+            notice_goes(of(other, true), &up, Some(own), Some(dialog)),
+            NoticeGoes::To(own, true)
+        );
+        // Dialogs alone up.
+        let up = [dialog];
+        assert_eq!(
+            notice_goes(of(dialog, true), &up, None, Some(dialog)),
+            NoticeGoes::To(dialog, false)
+        );
+        assert_eq!(
+            notice_goes(of(other, true), &up, None, Some(dialog)),
+            NoticeGoes::To(dialog, false),
+            "another dialog's work: the user's windows stay asleep"
+        );
+        assert_eq!(
+            notice_goes(of(own, false), &up, None, Some(dialog)),
+            NoticeGoes::Back,
+            "the user's work: their windows back"
+        );
+        assert_eq!(notice_goes(None, &up, None, Some(dialog)), NoticeGoes::Back);
+        // None up.
+        assert_eq!(
+            notice_goes(of(dialog, true), &[], None, None),
+            NoticeGoes::Back
+        );
     }
 
     /// The bus as a skwir it started finds it while another Skwir holds

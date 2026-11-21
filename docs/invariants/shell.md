@@ -2100,7 +2100,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `finishing::said_in`); then each window syncs (`Shell::sync`, which
   takes its `inbox`). The desktop is told once for the program (looked at
   while one window has the focus), and what it asks (a notice clicked,
-  Pause all) is answered there. A shell never takes a program-wide queue
+  Pause all) is answered there. A notice clicked goes to the window whose
+  work it told of while it is up (`finishing::notice_goes`, its plan's
+  window, `finishing::ran`), Activity opening unless that is a dialog's;
+  else to the front window of the user's own, Activity open. With only
+  dialogs up, a dialog's work brings one forward, the user's windows
+  asleep staying so; what is the user's, or names no window (an agent's
+  plan, a question waiting, the presence), brings them back. A shell never takes a program-wide queue
   of the core's.
 - **What is one, what is each window's.** One for the program: the
   queue, the History and Undo, Activity's work (`Work`), the shelf, cut
