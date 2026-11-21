@@ -483,7 +483,9 @@ impl Shell {
     /// What the tabs of the user's own windows show, as they were used
     /// (`Workspace::tabs_by_use`: each window's shown tab first, the
     /// window used last first, then the others, the one left last first),
-    /// those this window offers alone (not the Trash, ADR-144, 3).
+    /// those this window offers alone (not the Trash, ADR-144, 3). Read
+    /// once a change of them (`arranged_places`'s `TabsRead`), never at
+    /// each frame.
     fn tab_locations(&self) -> Vec<Location> {
         let shown: Vec<Location> = {
             let ws = self.app.workspace.read();
@@ -575,14 +577,20 @@ pub(crate) fn shown_nowhere(
 }
 
 /// The places arranged (`arrange`) for a revision of the places, of the
-/// folders a dialog's program chose in, of what words say, and an
-/// arrangement of them.
+/// folders a dialog's program chose in, of what words say, of what a
+/// dialog's Skwir Tabs read (`TabsRead`), and an arrangement of them.
 pub(crate) type ArrangedAt = (
-    (u64, u64, u64, Vec<Location>),
+    (u64, u64, u64, Option<TabsRead>),
     Sections,
     Arranging,
     std::sync::Arc<[Arranged]>,
 );
+
+/// What a dialog's Skwir Tabs are read from, each by what counts its
+/// changes: what the tabs show (`Workspace::tabs_shown`), and what names
+/// them (`App::location_title`: the remotes mounted, the names the user
+/// gave places).
+pub(crate) type TabsRead = ((u64, u64), u64, u64);
 
 /// For whom the places are arranged (ADR-144, 3 and 7): a window of the
 /// user's own, a dialog's, or a dialog's opening files where the files
@@ -640,13 +648,15 @@ impl Shell {
                 .as_ref()
                 .map_or(0, crate::chooser::Chooser::folders_revision),
             skwir_core::words::revision(),
-            // What the user's tabs show, which a dialog lists: asked at
-            // each frame, few, and changed by no revision of the places.
-            if self.chooser.is_some() {
-                self.tab_locations()
-            } else {
-                Vec::new()
-            },
+            // What a dialog lists of the user's tabs, read again only once
+            // what they show or what names them changed.
+            self.chooser.is_some().then(|| {
+                (
+                    self.app.workspace.read().tabs_shown(),
+                    self.app.registry.remotes.revision(),
+                    self.app.registry.place_titles_revision(),
+                )
+            }),
         );
         let arranging = match &self.chooser {
             None => Arranging::Own,

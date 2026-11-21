@@ -1594,8 +1594,10 @@ asks the direction.
   each tab knowing when it was last left, `Tab::left`), five at most,
   none another place shows; its places are listed (`Place::listed`,
   `Role::Listed`): opened, never arranged, hidden or taken out, each in
-  the order it was listed. Read at each frame, so they follow the tabs
-  as the window is drawn again.
+  the order it was listed. Read again once what the tabs show or what
+  names them changed (`Workspace::tabs_shown`, the remotes' and the place
+  titles' revisions), never at each frame, so they follow the tabs as the
+  window is drawn again.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
   command, which keeps what the pane shows as it shows it (ADR-109): the
   location and the pane's filter go to the `Keeper` that keeps them, the

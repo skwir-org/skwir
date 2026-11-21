@@ -113,6 +113,18 @@ static SWEEPS_DRAWN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 
 static SELECTION_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// Counts the times a pane's location shown (`Pane::shown`) may have
+/// changed: opened, let go of, reopened, its history stepped or a step
+/// put in place (a folder moved, a redirect). With the workspace's
+/// revision, what keys a reading of what the tabs show
+/// (`Workspace::tabs_shown`).
+static SHOWN_MOVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A pane's location shown may have changed (`SHOWN_MOVES`).
+fn shown_moved() {
+    SHOWN_MOVES.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+}
+
 impl Selection {
     /// Changes whenever the selected items may have changed: a summary of
     /// the selection (counts, sizes) keyed on it with the listing's version
@@ -2287,6 +2299,7 @@ impl Pane {
     /// ahead go, and `left`, the entry the cursor was on, is kept for Back
     /// to select again.
     pub(crate) fn go_on(&mut self, location: Location, left: Option<EntryId>) {
+        shown_moved();
         if !self.history.is_empty() {
             self.remember_left(self.history_pos, left);
             self.history.truncate(self.history_pos + 1);
@@ -2299,6 +2312,7 @@ impl Pane {
     /// Put `location` in place of the current step of `history`: where
     /// the location shown said it is reached (`ListingEvent::Redirect`).
     pub(crate) fn replace_here(&mut self, location: Location) {
+        shown_moved();
         if let Some(step) = self.history.get_mut(self.history_pos) {
             *step = location;
         } else {
@@ -2324,6 +2338,7 @@ impl Pane {
         let Some(before) = from.checked_sub(1) else {
             return;
         };
+        shown_moved();
         if self.history_pos != from || self.history.get(before) != Some(location) {
             self.go_on(location.clone(), left);
             return;
@@ -2347,6 +2362,7 @@ impl Pane {
     /// (a navigation from elsewhere meanwhile, an agent's) no longer has it
     /// there: what is shown is a step of its own.
     pub(crate) fn go_to(&mut self, pos: usize, location: &Location, left: Option<EntryId>) {
+        shown_moved();
         if self.history.get(pos) != Some(location) {
             self.go_on(location.clone(), left);
             return;
@@ -2444,6 +2460,7 @@ impl Pane {
         listing: Listing,
         lensed: Lensed,
     ) {
+        shown_moved();
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
         self.shown_lifetime.cancel();
@@ -2526,6 +2543,7 @@ impl Pane {
     /// caller opens again, the filter), the selection comes back through
     /// `set_restore`; a location holding its lens (a search) holds it again.
     pub(crate) fn reopen(&mut self, open: Arc<dyn OpenLocation>, listing: Listing, lensed: Lensed) {
+        shown_moved();
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
         self.listing = listing;
@@ -3455,6 +3473,7 @@ impl Pane {
         let Some(open) = self.open.take() else {
             return;
         };
+        shown_moved();
         open.close();
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
@@ -5717,6 +5736,10 @@ impl Drop for Pane {
 /// and which ones are active (ADR-122).
 pub struct Workspace {
     panes: Vec<Pane>,
+    /// Where each pane is in `panes`, by its id: `pane` and `pane_mut` in
+    /// constant time. Kept by `push_pane` and `remove_pane_at`, the only
+    /// ways in and out.
+    at: HashMap<PaneId, usize>,
     /// Never empty; every tab is in exactly one window, every pane in
     /// exactly one tab.
     windows: Vec<WindowTabs>,
@@ -5855,6 +5878,7 @@ impl Default for Workspace {
     fn default() -> Self {
         let mut w = Workspace {
             panes: Vec::new(),
+            at: HashMap::new(),
             windows: Vec::new(),
             active_window: 0,
             used: Vec::new(),
@@ -5916,7 +5940,18 @@ impl Workspace {
     /// is no longer the user's (a closed tab's, reopened).
     fn push_pane(&mut self, mut pane: Pane) {
         pane.sort.folders_first = self.folders_first;
+        self.at.insert(pane.id, self.panes.len());
         self.panes.push(pane);
+    }
+
+    /// Take the pane at `i` out of `panes`, where the others are kept.
+    fn remove_pane_at(&mut self, i: usize) -> Pane {
+        let pane = self.panes.remove(i);
+        self.at.remove(&pane.id);
+        for (at, later) in self.panes.iter().enumerate().skip(i) {
+            self.at.insert(later.id, at);
+        }
+        pane
     }
 
     /// Whether folders come before files in every pane's sort.
@@ -6234,7 +6269,7 @@ impl Workspace {
     /// Close pane `id`. Refused for the last pane of its window: a window
     /// keeps a tab, and a tab a pane.
     pub fn close_pane(&mut self, id: PaneId) -> bool {
-        let Some(i) = self.panes.iter().position(|p| p.id == id) else {
+        let Some(&i) = self.at.get(&id) else {
             return false;
         };
         let Some((w, t)) = self.place_of(id) else {
@@ -6244,7 +6279,7 @@ impl Workspace {
         if window.tabs.len() == 1 && window.tabs[t].panes.len() == 1 {
             return false;
         }
-        self.panes.remove(i);
+        self.remove_pane_at(i);
         self.revision += 1;
         let window = &mut self.windows[w];
         let tab = &mut window.tabs[t];
@@ -6282,8 +6317,8 @@ impl Workspace {
     fn take_panes(&mut self, panes: &[PaneId]) -> Vec<Pane> {
         let mut taken = Vec::with_capacity(panes.len());
         for pane in panes {
-            if let Some(i) = self.panes.iter().position(|p| p.id == *pane) {
-                taken.push(self.panes.remove(i));
+            if let Some(&i) = self.at.get(pane) {
+                taken.push(self.remove_pane_at(i));
             }
         }
         taken
@@ -6445,6 +6480,18 @@ impl Workspace {
     /// one is made active.
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Changes whenever what the tabs show may have: a tab come, gone,
+    /// moved or shown (`revision`), or a pane's location shown changed
+    /// (`Pane::shown`, counted for every workspace of the process): what
+    /// reads it once per change (a dialog's Skwir Tabs, ADR-144, 8) keys on
+    /// it.
+    pub fn tabs_shown(&self) -> (u64, u64) {
+        (
+            self.revision,
+            SHOWN_MOVES.load(std::sync::atomic::Ordering::Acquire),
+        )
     }
 
     /// The active window's tabs, in order.
@@ -6647,11 +6694,11 @@ impl Workspace {
     }
 
     pub fn pane(&self, id: PaneId) -> Option<&Pane> {
-        self.panes.iter().find(|p| p.id == id)
+        self.at.get(&id).map(|&i| &self.panes[i])
     }
 
     pub fn pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
-        self.panes.iter_mut().find(|p| p.id == id)
+        self.at.get(&id).map(|&i| &mut self.panes[i])
     }
 
     /// Pump every pane, each for at most `PUMP_BUDGET`, and say which ones
@@ -6778,6 +6825,30 @@ mod tests {
         pane.note(&renamed[..1]);
         assert_eq!(pane.kept.len(), RENAMES_KEPT);
         assert_eq!(pane.kept.back(), renamed.first());
+    }
+
+    /// Each pane is found by its id as panes come and go (the index of
+    /// `pane`), and what the tabs show counts a pane's location shown
+    /// changing, which the workspace's revision does not (RS-5).
+    #[test]
+    fn panes_are_found_by_id_and_what_they_show_is_counted() {
+        let mut ws = Workspace::default();
+        let first = ws.active_id();
+        let panes: Vec<PaneId> = (0..4).map(|_| ws.add_pane()).collect();
+        assert!(ws.close_pane(panes[1]));
+        let (_, tab_pane) = ws.add_tab(9);
+        for id in [first, panes[0], panes[2], panes[3], tab_pane] {
+            assert_eq!(ws.pane(id).map(|p| p.id), Some(id));
+            assert_eq!(ws.pane_mut(id).map(|p| p.id), Some(id));
+        }
+        assert!(ws.pane(panes[1]).is_none(), "closed");
+        let before = ws.tabs_shown();
+        ws.pane_mut(panes[2])
+            .unwrap()
+            .go_on(Location::from_path("/example/a"), None);
+        let after = ws.tabs_shown();
+        assert_eq!(after.0, before.0, "no tab came, went or was shown");
+        assert_ne!(after.1, before.1);
     }
 
     #[test]

@@ -1251,6 +1251,8 @@ pub struct Registry {
     /// `Place::key`: the sidebar publishes its arrangement's, so a tab, a
     /// toast and `tab.list` name a place as the sidebar does.
     titles: RwLock<std::collections::HashMap<(String, String), String>>,
+    /// Counts the changes of `titles`: what names places keeps up with it.
+    titles_revision: std::sync::atomic::AtomicU64,
     gate: Arc<OwnerGate>,
 }
 
@@ -1274,6 +1276,7 @@ impl Default for Registry {
             sorters: Contributions::gated(Arc::clone(&gate)),
             news: Contributions::gated(Arc::clone(&gate)),
             titles: RwLock::default(),
+            titles_revision: std::sync::atomic::AtomicU64::new(0),
             gate,
         }
     }
@@ -1295,7 +1298,20 @@ impl Registry {
     /// The names the user gave sidebar places, by group and `Place::key`,
     /// in place of those published before.
     pub fn set_place_titles(&self, titles: std::collections::HashMap<(String, String), String>) {
-        *self.titles.write() = titles;
+        let mut kept = self.titles.write();
+        if *kept != titles {
+            *kept = titles;
+            self.titles_revision
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
+    }
+
+    /// Changes whenever the names the user gave places do
+    /// (`set_place_titles`): what reads `place_title` once per change keys
+    /// on it.
+    pub fn place_titles_revision(&self) -> u64 {
+        self.titles_revision
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// What `location` is called as a sidebar place: the name the user

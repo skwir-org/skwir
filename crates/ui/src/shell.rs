@@ -2459,7 +2459,12 @@ impl Shell {
             .all()
             .into_iter()
             .filter(|s| self.ui().views.contains_key(&*s.id))
-            .filter(|s| self.offers("ui.view", &serde_json::json!({ "id": &*s.id })))
+            // Asked only where the window chooses: a window of the user's
+            // own offers every view, and the address row asks at each frame.
+            .filter(|s| {
+                self.chooser.is_none()
+                    || self.offers("ui.view", &serde_json::json!({ "id": &*s.id }))
+            })
             .collect();
         specs.sort_by_key(|s| s.order);
         specs
