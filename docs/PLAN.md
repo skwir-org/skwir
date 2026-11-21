@@ -1416,13 +1416,14 @@ work and the fixes before it; what its fixes left):
 - History lists a retry under way at the entry it continues, even when
   it will make an entry of its own (what is shown only; Undo is right).
 - KConfig's files are read as KDE Frameworks reads them
-  (`desktop_settings::kconfig_value`, after kconfig's source), but for
-  `[$e]` expansion, not read, and two choices of Skwir's own: a value
-  said empty leaves the earlier file's standing (KConfig reads it
-  empty), and a locked group stops every later file (KConfig lets a
-  later defaults file change a key the group holds unlocked); none of it
-  tried in a real Plasma session. GTK's data prefix is taken as `/usr`
-  (`/usr/share/gtk-3.0`).
+  (`desktop_settings::kconfig_value`, after kconfig's source: every global
+  file, `/etc/kde5rc` and `system.kdeglobals` included, escapes and `[$e]`
+  expansion), but for three choices of Skwir's own: a value read empty
+  leaves the earlier file's standing (KConfig reads it empty), a locked
+  group stops every later file (KConfig lets a later defaults file change
+  a key the group holds unlocked), and a file is read whole (KConfig stops
+  at its hundredth line in error); none of it tried in a real Plasma
+  session. GTK's data prefix is taken as `/usr` (`/usr/share/gtk-3.0`).
 
 **From the review of the 2026-11-21 fixes** (a second review, the same
 day; what its fixes left):
@@ -1448,6 +1449,24 @@ day; what its fixes left):
   `Name`, quoted, where words.md says a `Folder` (`op_not_moved`,
   `op_not_moved_as`, `op_not_placed`, `op_not_linked`, print's
   `print_not_placed` and its save steps); their drafts follow the code.
+
+**From the third review of 2026-11-21** (of the second round's fixes;
+what its fixes left):
+- The place names: a name given in 0.5.1 after this build last wrote is
+  not seen on coming back (the program's names win; the copy in each
+  group's `titles`, for 0.5.1, is written, never read).
+- Until ADR-132's question above is answered, commands.md's "keeps no
+  preference, whatever it runs" holds only if a folder's remembered order
+  or view (`core.orders`, written by an agent's `sort`, `group` or
+  `ui.view`) is not counted as a preference.
+- The pane index's fallback (`Workspace::index_of`, a pane looked for
+  along the list when the index is behind) ran only in debug builds,
+  where it asserts; its release path was read, not run.
+- Type-ahead (`Keymap::typeahead`) is decided once for both kinds of
+  window: a binding of a dialog's window alone that takes a character
+  would turn type-ahead off in the user's windows too (none does today).
+- In the terminal only plain Escape is bound; Escape with a modifier
+  reaches the program through the key listener, as before.
 - Not tried in a window: a desktop notice of a dialog's work clicked
   (where it goes is tested), the keys that keep a preference run behind
   a plan being made, a skwir the bus started whose hand-over fails (a
