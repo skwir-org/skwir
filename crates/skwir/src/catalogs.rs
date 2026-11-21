@@ -11,6 +11,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-core",
+        language: "it",
+        source: include_str!("../../core/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-core",
         language: "zh-Hans",
         source: include_str!("../../core/l10n/zh-Hans.ftl"),
     },
@@ -18,6 +23,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-extend",
         language: "fr",
         source: include_str!("../../extend/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-extend",
+        language: "it",
+        source: include_str!("../../extend/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-extend",
@@ -31,6 +41,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-platform",
+        language: "it",
+        source: include_str!("../../platform/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-platform",
         language: "zh-Hans",
         source: include_str!("../../platform/l10n/zh-Hans.ftl"),
     },
@@ -38,6 +53,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-archives",
         language: "fr",
         source: include_str!("../../plugins/archives/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-archives",
+        language: "it",
+        source: include_str!("../../plugins/archives/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-archives",
@@ -51,6 +71,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-books",
+        language: "it",
+        source: include_str!("../../plugins/books/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-books",
         language: "zh-Hans",
         source: include_str!("../../plugins/books/l10n/zh-Hans.ftl"),
     },
@@ -58,6 +83,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-checksums",
         language: "fr",
         source: include_str!("../../plugins/checksums/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-checksums",
+        language: "it",
+        source: include_str!("../../plugins/checksums/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-checksums",
@@ -71,6 +101,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-circuits",
+        language: "it",
+        source: include_str!("../../plugins/circuits/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-circuits",
         language: "zh-Hans",
         source: include_str!("../../plugins/circuits/l10n/zh-Hans.ftl"),
     },
@@ -78,6 +113,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-comics",
         language: "fr",
         source: include_str!("../../plugins/comics/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-comics",
+        language: "it",
+        source: include_str!("../../plugins/comics/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-comics",
@@ -91,6 +131,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-control",
+        language: "it",
+        source: include_str!("../../plugins/control/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-control",
         language: "zh-Hans",
         source: include_str!("../../plugins/control/l10n/zh-Hans.ftl"),
     },
@@ -98,6 +143,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-djvu",
         language: "fr",
         source: include_str!("../../plugins/djvu/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-djvu",
+        language: "it",
+        source: include_str!("../../plugins/djvu/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-djvu",
@@ -111,6 +161,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-documents",
+        language: "it",
+        source: include_str!("../../plugins/documents/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-documents",
         language: "zh-Hans",
         source: include_str!("../../plugins/documents/l10n/zh-Hans.ftl"),
     },
@@ -118,6 +173,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-edit-as-buffer",
         language: "fr",
         source: include_str!("../../plugins/edit-as-buffer/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-edit-as-buffer",
+        language: "it",
+        source: include_str!("../../plugins/edit-as-buffer/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-edit-as-buffer",
@@ -131,6 +191,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-email",
+        language: "it",
+        source: include_str!("../../plugins/email/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-email",
         language: "zh-Hans",
         source: include_str!("../../plugins/email/l10n/zh-Hans.ftl"),
     },
@@ -138,6 +203,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-fonts",
         language: "fr",
         source: include_str!("../../plugins/fonts/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-fonts",
+        language: "it",
+        source: include_str!("../../plugins/fonts/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-fonts",
@@ -151,6 +221,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-geo",
+        language: "it",
+        source: include_str!("../../plugins/geo/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-geo",
         language: "zh-Hans",
         source: include_str!("../../plugins/geo/l10n/zh-Hans.ftl"),
     },
@@ -158,6 +233,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-git",
         language: "fr",
         source: include_str!("../../plugins/git/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-git",
+        language: "it",
+        source: include_str!("../../plugins/git/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-git",
@@ -171,6 +251,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-hex",
+        language: "it",
+        source: include_str!("../../plugins/hex/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-hex",
         language: "zh-Hans",
         source: include_str!("../../plugins/hex/l10n/zh-Hans.ftl"),
     },
@@ -178,6 +263,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-jump",
         language: "fr",
         source: include_str!("../../plugins/jump/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-jump",
+        language: "it",
+        source: include_str!("../../plugins/jump/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-jump",
@@ -191,6 +281,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-map-tiles",
+        language: "it",
+        source: include_str!("../../plugins/map-tiles/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-map-tiles",
         language: "zh-Hans",
         source: include_str!("../../plugins/map-tiles/l10n/zh-Hans.ftl"),
     },
@@ -198,6 +293,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-markdown",
         language: "fr",
         source: include_str!("../../plugins/markdown/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-markdown",
+        language: "it",
+        source: include_str!("../../plugins/markdown/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-markdown",
@@ -211,6 +311,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-media",
+        language: "it",
+        source: include_str!("../../plugins/media/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-media",
         language: "zh-Hans",
         source: include_str!("../../plugins/media/l10n/zh-Hans.ftl"),
     },
@@ -218,6 +323,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-models",
         language: "fr",
         source: include_str!("../../plugins/models/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-models",
+        language: "it",
+        source: include_str!("../../plugins/models/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-models",
@@ -231,6 +341,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-mpris",
+        language: "it",
+        source: include_str!("../../plugins/mpris/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-mpris",
         language: "zh-Hans",
         source: include_str!("../../plugins/mpris/l10n/zh-Hans.ftl"),
     },
@@ -238,6 +353,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-name-tags",
         language: "fr",
         source: include_str!("../../plugins/name-tags/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-name-tags",
+        language: "it",
+        source: include_str!("../../plugins/name-tags/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-name-tags",
@@ -251,6 +371,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-open-with",
+        language: "it",
+        source: include_str!("../../plugins/open-with/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-open-with",
         language: "zh-Hans",
         source: include_str!("../../plugins/open-with/l10n/zh-Hans.ftl"),
     },
@@ -258,6 +383,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-ops-basic",
         language: "fr",
         source: include_str!("../../plugins/ops-basic/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-ops-basic",
+        language: "it",
+        source: include_str!("../../plugins/ops-basic/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-ops-basic",
@@ -271,6 +401,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-places",
+        language: "it",
+        source: include_str!("../../plugins/places/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-places",
         language: "zh-Hans",
         source: include_str!("../../plugins/places/l10n/zh-Hans.ftl"),
     },
@@ -278,6 +413,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-playlists",
         language: "fr",
         source: include_str!("../../plugins/playlists/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-playlists",
+        language: "it",
+        source: include_str!("../../plugins/playlists/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-playlists",
@@ -291,6 +431,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-print",
+        language: "it",
+        source: include_str!("../../plugins/print/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-print",
         language: "zh-Hans",
         source: include_str!("../../plugins/print/l10n/zh-Hans.ftl"),
     },
@@ -298,6 +443,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-query",
         language: "fr",
         source: include_str!("../../plugins/query/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-query",
+        language: "it",
+        source: include_str!("../../plugins/query/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-query",
@@ -311,6 +461,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-remote",
+        language: "it",
+        source: include_str!("../../plugins/remote/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-remote",
         language: "zh-Hans",
         source: include_str!("../../plugins/remote/l10n/zh-Hans.ftl"),
     },
@@ -318,6 +473,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-rename-bulk",
         language: "fr",
         source: include_str!("../../plugins/rename-bulk/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-rename-bulk",
+        language: "it",
+        source: include_str!("../../plugins/rename-bulk/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-rename-bulk",
@@ -331,6 +491,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-shelf",
+        language: "it",
+        source: include_str!("../../plugins/shelf/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-shelf",
         language: "zh-Hans",
         source: include_str!("../../plugins/shelf/l10n/zh-Hans.ftl"),
     },
@@ -338,6 +503,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-shell",
         language: "fr",
         source: include_str!("../../plugins/shell/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-shell",
+        language: "it",
+        source: include_str!("../../plugins/shell/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-shell",
@@ -351,6 +521,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-shrink",
+        language: "it",
+        source: include_str!("../../plugins/shrink/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-shrink",
         language: "zh-Hans",
         source: include_str!("../../plugins/shrink/l10n/zh-Hans.ftl"),
     },
@@ -358,6 +533,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-structured-data",
         language: "fr",
         source: include_str!("../../plugins/structured-data/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-structured-data",
+        language: "it",
+        source: include_str!("../../plugins/structured-data/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-structured-data",
@@ -371,6 +551,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-tables",
+        language: "it",
+        source: include_str!("../../plugins/tables/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-tables",
         language: "zh-Hans",
         source: include_str!("../../plugins/tables/l10n/zh-Hans.ftl"),
     },
@@ -378,6 +563,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-tags",
         language: "fr",
         source: include_str!("../../plugins/tags/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-tags",
+        language: "it",
+        source: include_str!("../../plugins/tags/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-tags",
@@ -391,6 +581,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-tagspaces",
+        language: "it",
+        source: include_str!("../../plugins/tagspaces/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-tagspaces",
         language: "zh-Hans",
         source: include_str!("../../plugins/tagspaces/l10n/zh-Hans.ftl"),
     },
@@ -398,6 +593,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-terminal",
         language: "fr",
         source: include_str!("../../plugins/terminal/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-terminal",
+        language: "it",
+        source: include_str!("../../plugins/terminal/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-terminal",
@@ -411,6 +611,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-thumbnails",
+        language: "it",
+        source: include_str!("../../plugins/thumbnails/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-thumbnails",
         language: "zh-Hans",
         source: include_str!("../../plugins/thumbnails/l10n/zh-Hans.ftl"),
     },
@@ -418,6 +623,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-timeline",
         language: "fr",
         source: include_str!("../../plugins/timeline/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-timeline",
+        language: "it",
+        source: include_str!("../../plugins/timeline/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-timeline",
@@ -431,6 +641,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-trash",
+        language: "it",
+        source: include_str!("../../plugins/trash/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-trash",
         language: "zh-Hans",
         source: include_str!("../../plugins/trash/l10n/zh-Hans.ftl"),
     },
@@ -438,6 +653,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-updates",
         language: "fr",
         source: include_str!("../../plugins/updates/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-updates",
+        language: "it",
+        source: include_str!("../../plugins/updates/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-updates",
@@ -451,6 +671,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-usage",
+        language: "it",
+        source: include_str!("../../plugins/usage/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-usage",
         language: "zh-Hans",
         source: include_str!("../../plugins/usage/l10n/zh-Hans.ftl"),
     },
@@ -458,6 +683,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-plugin-vim",
         language: "fr",
         source: include_str!("../../plugins/vim/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-vim",
+        language: "it",
+        source: include_str!("../../plugins/vim/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-vim",
@@ -471,6 +701,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
     },
     skwir_core::words::Shipped {
         domain: "skwir-plugin-xmp",
+        language: "it",
+        source: include_str!("../../plugins/xmp/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-xmp",
         language: "zh-Hans",
         source: include_str!("../../plugins/xmp/l10n/zh-Hans.ftl"),
     },
@@ -478,6 +713,11 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         domain: "skwir-ui",
         language: "fr",
         source: include_str!("../../ui/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-ui",
+        language: "it",
+        source: include_str!("../../ui/l10n/it.ftl"),
     },
     skwir_core::words::Shipped {
         domain: "skwir-ui",
@@ -498,6 +738,14 @@ pub static SHARES: &[skwir_core::words::Share] = &[
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "Français",
+    },
+    skwir_core::words::Share {
+        language: "it",
+        messages: 6_981,
+        translated: 6_981,
+        reviewed: 0,
+        offered: skwir_core::words::Offer::Draft,
+        name: "Italiano",
     },
     skwir_core::words::Share {
         language: "zh-Hans",
