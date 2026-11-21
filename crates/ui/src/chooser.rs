@@ -190,8 +190,9 @@ fn with_folder(mut kept: toml::Table, app: &str, folder: &Path, now: i64) -> tom
 pub(crate) enum FoldersAsked {
     /// One forgotten, or all (`None`).
     Forget(Option<PathBuf>),
-    /// Those it had put back, newest first, and when it last chose: what
-    /// the Undo of `Forget(forgot)` runs, whose Redo asks it again.
+    /// The folders as they were before `Forget(forgot)`, newest first, and
+    /// when it last chose then: what its Undo runs, putting back what that
+    /// took out (`undo_forget`), whose Redo asks it again.
     PutBack {
         folders: Vec<PathBuf>,
         used: Option<i64>,
@@ -226,6 +227,53 @@ fn put_back(
     }
     kept.insert(app.to_owned(), toml::Value::Table(program));
     kept
+}
+
+/// `kept` with what forgetting `forgot` (every folder, `None`) took out of
+/// program `app`'s folders put back where it was among `before` (the
+/// folders as they were then, newest first, chosen last at `used`), and
+/// nothing else: another dialog of the program may have chosen since, or
+/// taken another folder out (FC-3). What was chosen since stays first,
+/// and the later choice is kept: every choice puts its folder first, so
+/// what was chosen since leads, as far as the last folder `before` lacks
+/// and at least the one chosen last once a choice came since.
+fn undo_forget(
+    kept: toml::Table,
+    app: &str,
+    before: &[PathBuf],
+    used: Option<i64>,
+    forgot: Option<&Path>,
+) -> toml::Table {
+    let now = folders_of(&kept, app);
+    let now_used = kept
+        .get(app)
+        .and_then(|program| program.get("used"))
+        .and_then(toml::Value::as_integer);
+    let was: std::collections::HashMap<&Path, usize> = before
+        .iter()
+        .enumerate()
+        .map(|(at, folder)| (folder.as_path(), at))
+        .collect();
+    let new_until = now
+        .iter()
+        .rposition(|folder| !was.contains_key(folder.as_path()))
+        .map_or(0, |at| at + 1);
+    let since = new_until.max(usize::from(now_used > used).min(now.len()));
+    let (chosen, rest) = now.split_at(since);
+    let chosen_since: HashSet<&Path> = chosen.iter().map(PathBuf::as_path).collect();
+    let taken = before
+        .iter()
+        .filter(|folder| forgot.is_none_or(|forgot| folder.as_path() == forgot));
+    let mut others: Vec<&PathBuf> = rest
+        .iter()
+        .chain(taken)
+        .filter(|folder| !chosen_since.contains(folder.as_path()))
+        .collect();
+    // All of them were there before: in the order they had.
+    others.sort_by_key(|folder| was.get(folder.as_path()).copied().unwrap_or(usize::MAX));
+    others.dedup();
+    let folders: Vec<PathBuf> = chosen.iter().chain(others).cloned().collect();
+    put_back(kept, app, &folders, now_used.max(used))
 }
 
 /// What `asked` did, as its message says it: what was asked, whatever is
@@ -1711,11 +1759,9 @@ impl Shell {
                 used,
                 forgot,
             } => {
+                let kept = undo_forget(kept, &app_id, folders, *used, forgot.as_deref());
                 let forgot = forgot.as_deref().map(skwir_core::os_path::PathArg::from);
-                (
-                    put_back(kept, &app_id, folders, *used),
-                    serde_json::json!({ "folder": forgot, "undo": !undo }),
-                )
+                (kept, serde_json::json!({ "folder": forgot, "undo": !undo }))
             }
         };
         let after = folders_of(&kept, &app_id);
@@ -2242,6 +2288,56 @@ mod tests {
             "“two” put back in Recent Folders"
         );
         assert_eq!(said(undone(None)), "Recent Folders put back");
+    }
+
+    /// The Undo of Remove From Sidebar or Clear puts back what it took out
+    /// and nothing else, where it was, after what another dialog of the
+    /// program chose since, the later choice kept (FC-3).
+    #[test]
+    fn an_undo_puts_back_what_it_took_out_and_keeps_what_came_since() {
+        let program = "org.example.App";
+        let at = |name: &str| PathBuf::from(format!("/home/a/{name}"));
+        let (src, docs, pics, inbox) = (at("src"), at("docs"), at("pics"), at("inbox"));
+        let before = [src.clone(), docs.clone(), pics.clone()];
+        let record = put_back(toml::Table::new(), program, &before, Some(7));
+        let used = |kept: &toml::Table| kept[program].get("used").cloned();
+        let removed = without_folder(record.clone(), program, Some(&src));
+        let undo = |kept: toml::Table, forgot: Option<&Path>| {
+            undo_forget(kept, program, &before, Some(7), forgot)
+        };
+
+        // Nothing since: as it was.
+        let back = undo(removed.clone(), Some(&src));
+        assert_eq!(folders_of(&back, program), before);
+        assert_eq!(used(&back), Some(toml::Value::Integer(7)));
+        // Another dialog chose a new folder: it stays first, and its time.
+        let since = with_folder(removed.clone(), program, &inbox, 9);
+        let back = undo(since, Some(&src));
+        assert_eq!(
+            folders_of(&back, program),
+            [inbox.clone(), src.clone(), docs.clone(), pics.clone()]
+        );
+        assert_eq!(used(&back), Some(toml::Value::Integer(9)));
+        // ... or chose again in a folder it had: that one stays first.
+        let since = with_folder(removed.clone(), program, &docs, 9);
+        assert_eq!(
+            folders_of(&undo(since, Some(&src)), program),
+            [docs.clone(), src.clone(), pics.clone()]
+        );
+        // ... or took another out: only what this took out comes back.
+        let since = without_folder(removed, program, Some(&docs));
+        assert_eq!(
+            folders_of(&undo(since, Some(&src)), program),
+            [src.clone(), pics.clone()]
+        );
+        // Clear, then a choice elsewhere: everything back after it.
+        let cleared = without_folder(record, program, None);
+        let since = with_folder(cleared.clone(), program, &inbox, 9);
+        assert_eq!(
+            folders_of(&undo(since, None), program),
+            [inbox, src.clone(), docs.clone(), pics.clone()]
+        );
+        assert_eq!(folders_of(&undo(cleared, None), program), before);
     }
 
     /// Every dialog of a program follows where it chose as the record
