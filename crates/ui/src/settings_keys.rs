@@ -76,6 +76,10 @@ pub(crate) struct Action {
     pub place_id: String,
     pub rank: usize,
     pub inside: bool,
+    /// Its keys work in a window answering another program's dialog
+    /// alone (`keymap::works_in_window`): a row of its own, which its
+    /// conditions say, never a key of the user's windows' row beside it.
+    pub dialog: bool,
     pub command: String,
     pub args: Value,
     /// What it is called, said: what the page draws, finds and sorts by.
@@ -88,18 +92,33 @@ pub(crate) struct Action {
 }
 
 /// An action, known again once the keymap is read anew: by its place as
-/// data (`keymap::Where::id`), its command and its arguments.
+/// data (`keymap::Where::id`), whether its keys are a dialog's window's
+/// alone (`Action::dialog`), its command and its arguments.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ActionId {
     pub place: String,
+    pub dialog: bool,
     pub command: String,
     pub args: String,
+}
+
+impl ActionId {
+    /// The action a binding of `context` runs `command` with `args` for.
+    fn of(context: &str, command: &str, args: &Value) -> ActionId {
+        ActionId {
+            place: keymap::place_of(context).id,
+            dialog: !keymap::works_in_window(context, false),
+            command: command.to_owned(),
+            args: args.to_string(),
+        }
+    }
 }
 
 impl Action {
     pub fn id(&self) -> ActionId {
         ActionId {
             place: self.place_id.clone(),
+            dialog: self.dialog,
             command: self.command.clone(),
             args: self.args.to_string(),
         }
@@ -183,17 +202,18 @@ impl Keyboard {
                 Some(_) => continue,
             };
             let place = keymap::place_of(&binding.context);
-            let id = ActionId {
-                place: place.id.clone(),
-                command: command.clone(),
-                args: args.to_string(),
-            };
+            // A dialog's window's key (`choosing`) is listed in a row of
+            // its own, saying so: a key of the user's windows' row beside
+            // it would say they have it.
+            let id = ActionId::of(&binding.context, command, args);
+            let dialog = id.dialog;
             let index = *at.entry(id).or_insert_with(|| {
                 actions.push(Action {
                     place: place.place.say(),
                     place_id: place.id.clone(),
                     rank: place.rank,
                     inside: place.inside,
+                    dialog,
                     command: command.clone(),
                     args: args.clone(),
                     // Said as the keymap is read, as the page reads it
@@ -240,8 +260,11 @@ impl Keyboard {
             .iter()
             .filter_map(|spec| Some((&*spec.name, spec.same_as.as_deref()?)))
             .collect();
+        // What a key runs in a window of the user's own: a dialog's
+        // window's keys leave an action without keys there.
         let keyed: std::collections::HashSet<&str> = actions
             .iter()
+            .filter(|action| !action.dialog)
             .map(|action| action.command.as_str())
             .collect();
         // The commands whose twin, either way, is a keyed action.
@@ -253,16 +276,16 @@ impl Keyboard {
             .collect();
         let mut unkeyed: Vec<Action> = unkeyed(app, &specs)
             .filter(|(command, args)| {
-                !actions
-                    .iter()
-                    .any(|action| action.command == *command && action.args == *args)
-                    && !twin_keyed.contains(command.as_str())
+                !actions.iter().any(|action| {
+                    !action.dialog && action.command == *command && action.args == *args
+                }) && !twin_keyed.contains(command.as_str())
             })
             .map(|(command, args)| Action {
                 place: no_keys.clone(),
                 place_id: NO_KEYS.to_owned(),
                 rank: usize::MAX,
                 inside: false,
+                dialog: false,
                 title: keymap::title_words(app, &command, &args).say(),
                 title_words: keymap::title_words(app, &command, &args),
                 command,
@@ -583,11 +606,7 @@ fn running(app: &App, records: &[Record]) -> Vec<Running> {
         .filter_map(|binding| {
             let (command, args) = binding.command?;
             Some(Running {
-                id: ActionId {
-                    place: keymap::place_of(&binding.context).id,
-                    command: command.clone(),
-                    args: args.to_string(),
-                },
+                id: ActionId::of(&binding.context, &command, &args),
                 command,
                 args,
                 normal: keymap::normal_keys(&binding.keys),
@@ -957,6 +976,7 @@ mod tests {
             place_id: "pane".into(),
             rank: 1,
             inside: false,
+            dialog: false,
             command: "toggle_hidden".into(),
             args: serde_json::json!({}),
             title: "Toggle hidden files".into(),

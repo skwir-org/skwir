@@ -156,10 +156,14 @@ pub struct KeyHint {
 
 /// Every binding's hint, and which are each command's: every button drawn
 /// asks for its shortcut at each frame (a menu of folders, five hundred
-/// times), which scanned every binding.
+/// times), which scanned every binding. Read only for a window, as it is
+/// (`named_in`): a key of a dialog's window is named there alone.
 #[derive(Clone, Default)]
 pub struct Hints {
     all: Vec<KeyHint>,
+    /// Whether each works in a window of the user's own, and in one
+    /// answering another program's dialog (`works_in_window`).
+    windows: Vec<[bool; 2]>,
     by_command: HashMap<String, Vec<usize>>,
 }
 
@@ -169,32 +173,51 @@ impl Hints {
         for (i, hint) in all.iter().enumerate() {
             by_command.entry(hint.command.clone()).or_default().push(i);
         }
-        Hints { all, by_command }
+        let windows = all
+            .iter()
+            .map(|hint| [false, true].map(|choosing| works_in_window(&hint.context, choosing)))
+            .collect();
+        Hints {
+            all,
+            windows,
+            by_command,
+        }
     }
 
-    /// The hints of `command`, in the order of all of them.
-    pub fn of<'a>(&'a self, command: &str) -> impl Iterator<Item = &'a KeyHint> + 'a {
+    /// The hints a window names, in their order: one answering another
+    /// program's dialog (`choosing`) its own keys too, a window of the
+    /// user's own never those. What names a key (the palette, the menus,
+    /// the buttons' tooltips, F1, the strip of a sequence) reads them so.
+    pub fn named_in(&self, choosing: bool) -> impl Iterator<Item = &KeyHint> + Clone {
+        let at = usize::from(choosing);
+        self.all
+            .iter()
+            .zip(&self.windows)
+            .filter(move |(_, windows)| windows[at])
+            .map(|(hint, _)| hint)
+    }
+
+    /// The hints of `command` a window names (`named_in`), in the order
+    /// of all of them.
+    pub fn of<'a>(&'a self, command: &str, choosing: bool) -> impl Iterator<Item = &'a KeyHint> {
+        let at = usize::from(choosing);
         self.by_command
             .get(command)
             .into_iter()
             .flatten()
+            .filter(move |&&i| self.windows[i][at])
             .map(|&i| &self.all[i])
     }
 }
 
-impl std::ops::Deref for Hints {
-    type Target = [KeyHint];
-    fn deref(&self) -> &[KeyHint] {
-        &self.all
-    }
-}
-
-impl<'a> IntoIterator for &'a Hints {
-    type Item = &'a KeyHint;
-    type IntoIter = std::slice::Iter<'a, KeyHint>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.all.iter()
-    }
+/// Whether a binding of `context` works in a window answering another
+/// program's dialog (`choosing`), or in one of the user's own: what its
+/// root and its places say for as long as it is one (`Dialog`), the one
+/// condition a window holds whatever has the keyboard. A binding that says
+/// `choosing` (a dialog's Cancel, its copy of the filter's Escape) works
+/// in a dialog's window alone; one that says neither, in both.
+pub fn works_in_window(context: &str, choosing: bool) -> bool {
+    predicate_holds(context, &|token| (token == "choosing").then_some(choosing))
 }
 
 /// Bindings the shell always needs, independent of plugins: every `ui.*`
@@ -3062,8 +3085,13 @@ fn shadowed(specs: &[Spec]) -> Vec<Option<usize>> {
 /// `install` binds, and what the Keyboard page lists. Keys GPUI cannot
 /// read are left out, with a warning.
 pub fn bindings(app: &App, user: &[UserBinding]) -> Vec<Bound> {
+    bound_of(specs(app, user))
+}
+
+/// `specs` as they are bound, each saying which hides it.
+fn bound_of(specs: Vec<Spec>) -> Vec<Bound> {
     let mirrored = crate::sides::rtl();
-    let specs: Vec<Spec> = specs(app, user)
+    let specs: Vec<Spec> = specs
         .into_iter()
         .map(|spec| as_drawn(spec, mirrored))
         .filter(|spec| {
@@ -3152,26 +3180,11 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
     // Read before the bindings: a change in between is picked up next time.
     let revisions = Stamp::revisions(app);
     let bound = bindings(app, &user);
-    let mut hints = Vec::new();
-    let mut typeahead = true;
-    for binding in &bound {
-        let hidden = binding.hidden_by.is_some();
-        if !hidden && takes_a_character(&binding.keys, &binding.context, binding.command.is_some())
-        {
-            typeahead = false;
-        }
-        if let Some((name, args)) = &binding.command
-            && !hidden
-        {
-            hints.push(KeyHint {
-                keys: binding.keys.clone(),
-                command: name.clone(),
-                args: args.clone(),
-                context: binding.context.clone(),
-                layer: binding.layer,
-            });
-        }
-    }
+    let typeahead = !bound.iter().any(|binding| {
+        binding.hidden_by.is_none()
+            && takes_a_character(&binding.keys, &binding.context, binding.command.is_some())
+    });
+    let hints = hints_of(&bound);
     cx.clear_key_bindings();
     cx.bind_keys(crate::input::key_bindings());
     cx.bind_keys(gpui_bindings(&bound));
@@ -3181,6 +3194,25 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
         stamp: Stamp { revisions, user },
         typeahead,
     }
+}
+
+/// The hints of `bound`: every binding of a command that runs, which no
+/// later one hides.
+fn hints_of(bound: &[Bound]) -> Vec<KeyHint> {
+    bound
+        .iter()
+        .filter(|binding| binding.hidden_by.is_none())
+        .filter_map(|binding| {
+            let (name, args) = binding.command.as_ref()?;
+            Some(KeyHint {
+                keys: binding.keys.clone(),
+                command: name.clone(),
+                args: args.clone(),
+                context: binding.context.clone(),
+                layer: binding.layer,
+            })
+        })
+        .collect()
 }
 
 /// What GPUI binds for `bound`, beside the text input's own keys.
@@ -3826,7 +3858,9 @@ mod tests {
     /// typed first, then a plan being made, then the dialog's Cancel, the
     /// scheme's selection never (as the plugins' `select_none`). A window
     /// of the user's own keeps the scheme's Escape as it was, over a
-    /// filter too, and what hides what there is unchanged.
+    /// filter too, and what hides what there is unchanged; it names none
+    /// of a dialog's keys, with the scheme or without
+    /// (`the_users_windows_name_no_dialog_key`).
     #[test]
     fn a_scheme_keeps_a_dialogs_escape_in_its_order() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3914,6 +3948,96 @@ mod tests {
             hidden("ui.plan_cancel", "pane choosing planning"),
             Some(false)
         );
+        the_users_windows_name_no_dialog_key(&app, true);
+        let tmp = tempfile::tempdir().unwrap();
+        let plain =
+            skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&plain);
+        the_users_windows_name_no_dialog_key(&plain, false);
+    }
+
+    /// A window of the user's own names what it would name if no binding
+    /// said `choosing`: the hints the palette, the menus, F1 and the strip
+    /// of a sequence read there (`Hints::named_in`), and the Keyboard
+    /// page's rows of its keys. A dialog's window names its own keys, each
+    /// listed once on the page, in a row of its own saying so. `scheme`:
+    /// whether the app has the scheme's Escape (which hides the filter's
+    /// in the user's windows).
+    fn the_users_windows_name_no_dialog_key(app: &skwir_core::App, scheme: bool) {
+        let all = super::bindings(app, &[]);
+        let without = super::bound_of(
+            specs(app, &[])
+                .into_iter()
+                .filter(|spec| super::works_in_window(&spec.context, false))
+                .collect(),
+        );
+        assert!(without.len() < all.len(), "the shell binds a dialog's keys");
+        let said = |hint: &KeyHint| {
+            (
+                hint.keys.clone(),
+                hint.command.clone(),
+                hint.args.clone(),
+                hint.context.clone(),
+                hint.layer,
+            )
+        };
+        let hints = super::Hints::new(super::hints_of(&all));
+        let named: Vec<_> = hints.named_in(false).map(said).collect();
+        let before: Vec<_> = super::hints_of(&without).iter().map(said).collect();
+        assert_eq!(named, before, "scheme: {scheme}");
+        for command in ["ui.chooser_cancel", "ui.type_end"] {
+            assert_eq!(hints.of(command, false).count(), 0, "{command}");
+            assert!(hints.of(command, true).count() > 0, "{command}");
+        }
+        // The filter's Escape, which the scheme's hides in the user's
+        // windows and not in a dialog's.
+        let escape = Some(display_keys("escape"));
+        let filter = |choosing| {
+            super::keys_for(
+                hints.of("filter", choosing),
+                "filter",
+                &serde_json::json!({}),
+            )
+        };
+        assert_eq!(filter(false), escape.clone().filter(|_| !scheme));
+        assert_eq!(filter(true), escape);
+        // The Keyboard page: the rows of the user's windows as they would
+        // be without a dialog's keys, and those listed apart.
+        let page = |bound: &[super::Bound]| crate::settings_keys::Keyboard::read(app, bound, &[]);
+        let rows = |keyboard: &crate::settings_keys::Keyboard| {
+            keyboard
+                .actions
+                .iter()
+                .filter(|action| !action.dialog)
+                .map(|action| {
+                    (
+                        action.place_id.clone(),
+                        action.command.clone(),
+                        action.args.clone(),
+                        action.chips.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let (shown, plain) = (page(&all), page(&without));
+        assert_eq!(rows(&shown), rows(&plain), "scheme: {scheme}");
+        let dialogs: Vec<_> = shown.actions.iter().filter(|a| a.dialog).collect();
+        assert!(
+            dialogs.iter().any(|a| a.command == "filter"),
+            "the filter's copy, apart"
+        );
+        // Each of its keys says it is a dialog's window's.
+        for action in dialogs {
+            for chip in &action.chips {
+                assert!(
+                    chip.flags.split_whitespace().any(|flag| flag == "choosing"),
+                    "{} {}: {}",
+                    action.place_id,
+                    action.command,
+                    chip.flags
+                );
+            }
+        }
     }
 
     /// In a dialog's window Ctrl+Q is the dialog's Cancel wherever the

@@ -1907,6 +1907,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   dialog's window (`choosing`) come after a scheme's that would hide them
   (`keymap::dialog_after_schemes`, ADR-024 amended): vim's Escape in the
   files gives way there to the dialog's order, a sweep's end going first.
+  They are named there alone: hints are read for a window
+  (`keymap::Hints::named_in`, `Shell::hints_here`, `keys_for`,
+  `keys_here`: the palette, the menus, the tooltips, F1, the strip of a
+  sequence), so a window of the user's own names what it would with no
+  binding saying `choosing`, and the Keyboard page lists each of a
+  dialog's window's keys in a row of its own, which says so
+  (`settings_keys::Action::dialog`).
   A user's record without a command frees its keys (`gpui::NoAction`);
   one whose command nothing registers waits for its plugin, bound to
   nothing (`keymap::dormant`).

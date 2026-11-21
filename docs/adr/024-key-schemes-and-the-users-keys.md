@@ -196,4 +196,6 @@ files, a selection like the plugins' `select_none`, no longer keeps
 Escape from cancelling the dialog or letting a plan go, while a scheme's
 Escape that asks for more (ending a sweep) still goes first, as what is
 typed or filtered does. A window of the user's own says no `choosing`:
-its keys are as the layers give them.
+its keys are as the layers give them, and it names none of a dialog's
+window's (`keymap::Hints::named_in`; the Keyboard page lists those in
+rows of their own, each saying it is a dialog's).

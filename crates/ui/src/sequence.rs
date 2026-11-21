@@ -68,7 +68,7 @@ impl Shell {
         let stack = window.context_stack();
         let holds = |token: &str| stack.iter().any(|context| context.contains(token));
         let mut next: Vec<(String, skwir_core::words::Words)> = Vec::new();
-        for hint in &self.key_hints {
+        for hint in self.hints_here() {
             if !crate::shortcuts::applies(&hint.context, &holds) {
                 continue;
             }

@@ -570,6 +570,7 @@ impl SettingsView {
                 place_id: at.id,
                 rank: at.rank,
                 inside: at.inside,
+                dialog: !keymap::works_in_window(&context, false),
                 title: keymap::title_words(&self.app, &command, &args).say(),
                 title_words: keymap::title_words(&self.app, &command, &args),
                 command,

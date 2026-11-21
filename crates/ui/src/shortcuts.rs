@@ -325,17 +325,20 @@ impl Shell {
                 })
                 .max()
         };
+        // The keys of this window (`Shell::hints_here`): a dialog's window
+        // has keys of its own, which no window of the user's own lists,
+        // under Elsewhere neither.
+        let hints: Vec<&KeyHint> = self.hints_here().collect();
         // A key whose command the window does not offer (a dialog's,
         // ADR-144, 1) is listed nowhere: it does there what it would with
         // nothing bound, a binding below it the one that runs.
-        let offered: Vec<bool> = self
-            .key_hints
+        let offered: Vec<bool> = hints
             .iter()
             .map(|hint| self.offers(&hint.command, &hint.args))
             .collect();
-        let applying: Vec<(usize, &KeyHint)> = self
-            .key_hints
+        let applying: Vec<(usize, &KeyHint)> = hints
             .iter()
+            .copied()
             .enumerate()
             .filter(|(i, hint)| offered[*i] && applies(&hint.context, &holds))
             .collect();
@@ -365,13 +368,13 @@ impl Shell {
         // Elsewhere, by place and the condition that says why it is not
         // here: each as data, its heading the words they make.
         let mut elsewhere: Vec<((String, String), String, Vec<Item>)> = Vec::new();
-        for (i, hint) in self.key_hints.iter().enumerate() {
+        for (i, &hint) in hints.iter().enumerate() {
             if !offered[i] {
                 continue;
             }
             if applying.iter().any(|(j, _)| *j == i) && wins(i, hint) {
                 here.push(item(hint, depth(hint)));
-            } else if !self.key_hints[i + 1..]
+            } else if !hints[i + 1..]
                 .iter()
                 .any(|later| later.keys == hint.keys && later.context == hint.context)
             {
@@ -448,8 +451,7 @@ impl Shell {
         let empty = serde_json::json!({});
         let args = if args.is_null() { &empty } else { args };
         let Some(hint) = self
-            .key_hints
-            .iter()
+            .hints_here()
             .find(|hint| hint.command == command && hint.args == *args)
             .cloned()
         else {

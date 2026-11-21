@@ -1274,7 +1274,7 @@ impl Shell {
     /// start (ADR-122): remembered even if it never changes.
     fn keep_shape(&self) {
         if let Some(session) = &self.stored_session
-            && let Ok(value) = toml::Value::try_from(session)
+            && let Ok(value) = crate::session::shape_value(&self.app, session)
         {
             self.app
                 .workspace
@@ -2476,16 +2476,25 @@ impl Shell {
         specs
     }
 
-    /// The keys bound to `command` with `args`, as people read them.
+    /// The keys bound to `command` with `args` in this window, as people
+    /// read them.
     pub fn keys_for(&self, command: &str, args: &serde_json::Value) -> Option<String> {
-        keymap::keys_for(self.key_hints.of(command), command, args)
+        let hints = self.key_hints.of(command, self.chooser.is_some());
+        keymap::keys_for(hints, command, args)
+    }
+
+    /// The keys' hints this window names (`keymap::Hints::named_in`): a
+    /// dialog's window's own keys there alone.
+    pub(crate) fn hints_here(&self) -> impl Iterator<Item = &keymap::KeyHint> + Clone {
+        self.key_hints.named_in(self.chooser.is_some())
     }
 
     /// The keys that run `command` in the pane being rendered, as it is
     /// now: a binding whose condition does not hold there is not named.
     pub fn keys_here(&self, command: &str, args: &serde_json::Value) -> Option<String> {
         let ctx = self.selection_ctx();
-        keymap::keys_for_where(self.key_hints.of(command), command, args, |flag| {
+        let hints = self.key_hints.of(command, self.chooser.is_some());
+        keymap::keys_for_where(hints, command, args, |flag| {
             crate::menu::SELECTION_TOKENS
                 .contains(&flag)
                 .then(|| ctx.holds(flag))

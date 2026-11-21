@@ -86,12 +86,14 @@ struct Asked {
 impl KeysPage {
     /// The keys bound to `command` without arguments, as people read
     /// them: the binding of the highest layer that no later one hides.
-    /// What a tooltip names beside a control (a field's `?`, ADR-137).
+    /// What a tooltip names beside a control (a field's `?`, ADR-137), in
+    /// Settings, a window of the user's own: never a dialog's window's key.
     pub(crate) fn keys_for(&self, command: &str) -> Option<String> {
         self.bound
             .iter()
             .filter(|bound| {
                 bound.hidden_by.is_none()
+                    && crate::keymap::works_in_window(&bound.context, false)
                     && bound.command.as_ref().is_some_and(|(name, args)| {
                         name == command && args.as_object().is_none_or(serde_json::Map::is_empty)
                     })
