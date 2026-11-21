@@ -21566,3 +21566,112 @@ windows on Xvfb with a private bus and the portal back end.
   it passed alone, and in the full run after, no mount left behind. Not
   run: the native workers' tests, Wine, a11y-check, bench-check,
   `release-check`; the lighter start not measured on the user's session.
+
+## 2026-11-21: the last review before 0.6.0, in three rounds, and the release's source
+
+Asked by the user: review the last round's fixes (aa392b16,
+034f82ee..7d1f5e3d, which had no second review) and the dialogs' work
+since (84ac4243..737f545a), fix what is found, then review the fixes,
+"so we are ready for the release"; then do what can be done of the
+release without the user's key or a push.
+
+- **First round**: five readers by area (the core and the plugins; the
+  platform, gpui and the build; the dialog's window and the start; the
+  sidebar and the shell; the documents and the words): 46 findings,
+  none high, four medium: a program's own All files made every typed
+  extension the program's (393cf3f1); what a dialog's own action said,
+  Recent Folders' Remove and Clear with their Undo included, was shown
+  in a window of the user's, where the Undo did nothing: a notification
+  now carries the pane whose window's action said it, as questions do
+  (14763a81, seen on Xvfb); Escape on a prompt's or a form's button
+  cancelled the whole dialog: a modal's frame binds Escape, depth
+  decides (11e8fd3b, seen on Xvfb); the changelog described Recent
+  Folders as a list of the bar (ff443bf5). Five fixers, 42 commits
+  (ff443bf5..4ce5a949, the catalogs 57624514). Every last-round finding
+  the readers checked was fixed.
+- **Second round**: five fresh readers on those 42 commits: 27
+  findings, one medium: Escape with Rename Several's case list open
+  closed the dialog, in the user's windows too, since a modal binds
+  Escape (e3311a59, seen on Xvfb). Among the rest: what saves a user's
+  preference through the window's commands (text size, the view
+  buttons, the list's columns, 21 commands) asks an agent first, as
+  ADR-044 counts a preference (`Effect::Keeps`, aad22397), while the
+  window still runs them at once behind a plan; the names given places
+  are one set every window says (`ui.place_names`, ed650bed), a skwir
+  the bus started included; KDE's files read as KConfig reads them,
+  locks included (ed320c83, 8253afd9); a bus-started skwir ends even if
+  its hand-over panics (ae0c9a20); the vim scheme's Escape in a dialog
+  (ace1fe79). Five fixers, 22 commits (e76c4ff6..8a41b3d5, the catalogs
+  163010c4, a formatting fix 9089c1dd).
+- **Third round**: two fresh readers on the second round's commits: 11
+  findings, none high or medium. Three fixers, ten commits
+  (aeedb9e3..799140db, the catalogs fe9bc08c) and the changelog's and
+  plan's lines (8dac7108): a dialog's keys named in its window alone
+  (04e5d61a), Escape in the terminal reaching its program while a plan
+  is made (ac1c04ee, seen on Xvfb: `cat -v` printed `^[`), Reset for a
+  renamed place and every window's names kept on upgrading (aeedb9e3),
+  the names written where 0.5.1 reads them (bbfefba4), every global
+  kdeglobals KConfig reads, `/etc/kde5rc` included (9d86e628), its
+  escapes and `[$e]` values (8c8a8bcc).
+- **Decided along the way** (the conservative reading, the user may
+  revisit): an agent's `sort` with `folders_first` asks first, `sort` by
+  a key does not; Show companion files stays the user's one setting, a
+  dialog's button turning it on for every window; a notification goes to
+  the window whose action said it, one naming no window to the user's;
+  a bus-started skwir's Quit with no window ends with status 3; its end
+  waits up to 5 s for the recent-files write; Plasma's colors, fonts and
+  icon theme read through the same cascade; GTK's `False` read as GLib
+  reads it; `*.*` and `application/octet-stream` taken as All files for
+  the swap; in a dialog's window a plan takes Escape before the Cancel;
+  KConfig's `[$e]` expanded from the environment, nothing run. Left for
+  the user: whether an agent's sort, group or view in a folder that
+  remembers its order asks first (ADR-132), and whether a user's own
+  Escape in a dialog's files should give way to its Cancel.
+- **Checked between rounds**, in capped scopes: after the first, `just
+  lint`, `just words --check`, every test of the default members (4094
+  run, all passed; `fs::reach::tests::the_table_is_followed` failed once
+  under the run's load, a burst told twice within 600 ms, and passed
+  three times alone and in the full run), `just check-cross`; after the
+  second, the same (4102 tests, all passed), `just lint` again after
+  9089c1dd; after the third, `just lint`.
+- **The release's source** (82176d90): the workspace, both versioned
+  PKGBUILDs (their `.SRCINFO` made again), AppStream and the changelog's
+  section say 0.6.0, dated 2026-11-21; the lock changes only the
+  workspace's crates; the README names 0.6.0's files; `just
+  release-metadata v0.6.0` agrees; `just package-l10n` with
+  desktop-file-validate and appstreamcli; `just words --release`.
+  `target/debug/incremental` deleted first (the user's choice), 44 GB.
+  `just startup-order` (fcd2b5e0): 12,975 functions, 18.8 MiB, four
+  starts on Wayland and four on X11.
+- **The release's gate**: `just release-check`, in a capped scope. A
+  first run stopped in test-all at
+  `app::tests::a_filter_is_read_again_when_its_words_read_otherwise`:
+  the second reading is counted before it is in its pane, and under the
+  run's load the test read the pane first; it now waits for the pane
+  (6a335dd8, five runs alone). Run again whole, it passed: lint-all
+  (Windows and macOS included, the catalogs with the languages offered),
+  deny, notices-check, test-all (4142 run, all passed, 32 skipped),
+  smoke, a11y-check, poppler-check, mupdf-check, djvu-check, bench-check
+  (every budget met), release-tools-check.
+- **The packages, unsigned**, built as `release-build` will build them,
+  to meet what would stop it: `just package-nix-check` (minimal and
+  default from scratch), `package-try` Debian, Ubuntu, Fedora (its
+  packages unsigned: signing takes the key's passphrase, the user's) and
+  Arch, `package-windows` (tried under Wine), `package-macos` (looked
+  over): each passed. The AppImage stopped at its last check, "missing:
+  the desktop entry or the metainfo in zh_CN": Ubuntu 22.04's gettext
+  0.21 writes the metainfo's language as its PO file names it (`zh_CN`),
+  where newer gettext writes `zh-Hans-CN`, and `l10n.sh installed`
+  looked for the latter alone; French, with no region, never met it,
+  nor 0.5.1, before Chinese. Both forms are taken now (aac654b0, a test
+  with the metainfo as gettext 0.21 writes it); Ubuntu 24.04, on gettext
+  0.21 too, built after the fix.
+  Built again, the AppImage and its tarball passed every check of
+  their runtime root (204 MB and 220 MB, 0.5.1's 196 MB and 211 MB).
+- **Left for the user**: the release page's review; whether the site's
+  French and Chinese pages go live; `just idle-pss` (on the user's
+  display); the tag; `just release-build v0.6.0` and `release-verify`
+  (gpg signs Fedora's packages); the push, the upload, publishing, the
+  AUR, `just repositories`, the site and winget.
+- **Privacy**: test paths synthetic (`/home/a/…`); no screenshot kept;
+  the session's display untouched by every check on Xvfb.

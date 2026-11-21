@@ -104,7 +104,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   published and Fedora's packages signed (ADR-142); a drag that moves
   what has nothing to select (ADR-143); thumbnails shown before they are
   kept, a progressive JPEG's read from its DC scans; the reviews since
-  0.5.1 fixed (2026-11-19, 2026-11-20 and two on 2026-11-21).
+  0.5.1 fixed (2026-11-19, 2026-11-20 and three on 2026-11-21).
 - **Work in 0.5.1 (2026-11-14 to 11-16):** the title bar where the user
   wants it (ADR-138, #11), fields that say what they take (ADR-137), the
   player following its file (ADR-136), what changes files worked out
