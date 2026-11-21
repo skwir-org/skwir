@@ -169,8 +169,9 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   Enter and Shift+Enter answer with what they name, never opening another
   program; what the dialog's own action asks (a password, names taken) is
   asked in it; Escape cancels the dialog wherever the keyboard is (a menu,
-  a list or what you type there taking it first), and Ctrl+Q cancels it
-  alone. Its sidebar starts with **Skwir Tabs**, what your windows' tabs
+  a list, a question or a form, the changes a paste is working out, or
+  what you type there taking it first), and Ctrl+Q cancels it alone. Its
+  sidebar starts with **Skwir Tabs**, what your windows' tabs
   show (five at most, the last used first), then **Recent Folders**, up to
   five of the folders the program last chose in, none gone and none another
   place shows (Remove From Sidebar and Clear Recent Folders, each with

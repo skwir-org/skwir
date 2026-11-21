@@ -1094,12 +1094,13 @@ in place. Enter answers with what is chosen, Shift+Enter on a path
 typed in the address with that file, and nothing opens in another
 program. Escape cancels the dialog wherever the keyboard is in it, once
 what is open or typed there has taken its own Escape (a menu, a list of
-the bar, the address being edited, a filter, a name typed to find a
-file); a selection does not hold it. Ctrl+Q and Ctrl+W cancel the dialog
-alone. What the dialog's own action asks (a server's password, names a
-paste found taken) is asked in the dialog. The Trash is offered nowhere
-there, and its files answer nothing: a trashed file is gone from where
-it was.
+the bar, a question or a form the dialog asks, such as New Folder or a
+server's password, the address being edited, a filter, a name typed to
+find a file, the changes a paste is working out); a selection does not
+hold it. Ctrl+Q and Ctrl+W cancel the dialog alone. What the dialog's
+own action asks (a server's password, names a paste found taken) is
+asked in the dialog. The Trash is offered nowhere there, and its files
+answer nothing: a trashed file is gone from where it was.
 
 The dialogs keep a layout of their own, apart from your windows': turn
 the preview off in one and the next opens without it, while your own
