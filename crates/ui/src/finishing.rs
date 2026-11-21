@@ -152,6 +152,13 @@ pub(crate) struct Takers {
     /// default for folders); the program then ends at the next wake unless
     /// a window opened or something was asked.
     windowless: Option<Arc<AtomicBool>>,
+    /// Started without a window, its taking over is under way: still asking
+    /// the bus, or passing what it was started for to the Skwir that holds
+    /// launches (`answer_*_for_holder`), which lasts until each request it
+    /// passed on is answered, the user choosing there. Meanwhile the program
+    /// never ends, whatever its wait or a script asks: what it passes on
+    /// would go with it (`passing`).
+    passing: Arc<AtomicBool>,
     /// The launches handed over, for the next wake.
     openings: Openings,
     /// Other programs' dialogs handed in (ADR-141), for the wake after what
@@ -168,6 +175,7 @@ impl Takers {
             handed_away: Arc::default(),
             following: Arc::default(),
             windowless: windowless.then(Arc::default),
+            passing: Arc::default(),
             openings,
             choosings: Arc::default(),
         }
@@ -178,6 +186,17 @@ impl Takers {
     fn asked(&self) -> bool {
         !self.openings.lock().is_empty() || !self.choosings.lock().is_empty()
     }
+
+    /// Whether a program started without a window may end now that nothing
+    /// is to come (`windowless`): set, and nothing passed on meanwhile
+    /// (`passing`).
+    fn over(&self) -> bool {
+        !self.passing.load(Ordering::Acquire)
+            && self
+                .windowless
+                .as_ref()
+                .is_some_and(|over| over.load(Ordering::Acquire))
+    }
 }
 
 /// A skwir the session bus started without a window (`windowless`, for a
@@ -187,9 +206,16 @@ impl Takers {
 /// asked nothing (the portal starting its back ends as the session comes
 /// up) ends having touched none of them. What woke it waits for the
 /// program (`start`, given the `Takers`); `None` where it ends here: asked
-/// nothing within `ASKED_WITHIN` (`ended_unasked`), or its request handed
-/// to the skwir that holds launches. On the thread the window system will
-/// run on, before it does.
+/// nothing within `ASKED_WITHIN` (`ended_unasked`), its request handed to
+/// the skwir that holds launches and answered there, or Quit asked. It
+/// never ends while it passes a request on (`Takers::passing`). On the
+/// thread the window system will run on, before it does.
+///
+/// What scripts and agents ask of the window meanwhile starts nothing: it
+/// waits for a window of the user's own, which only a request it takes
+/// opens, and goes with the program if none comes (`sort_asked_meanwhile`:
+/// Close window has none to close); Quit ends the program here, once
+/// nothing is passed on, with the window system never started.
 pub(crate) fn wait_asked(
     app: &Arc<skwir_core::App>,
     wakes: &flume::Receiver<()>,
@@ -197,50 +223,60 @@ pub(crate) fn wait_asked(
     windowless: Windowless,
 ) -> Option<Takers> {
     let takers = Takers::new(openings, true);
+    // Its wait (`end_unless_asked`) starts once it holds launches; one that
+    // finds another Skwir holding them passes its request on, the wait for
+    // it the program's (`take_over`).
     take_over(app, &takers, None, Some(windowless));
-    end_unless_asked(app, &takers);
+    let mut held = Vec::new();
+    let mut quit = false;
+    // The program takes what was asked meanwhile, in its order.
+    let goes_on = |held: Vec<skwir_core::command::Invocation>, quit: bool| {
+        for request in held {
+            app.request_front(request);
+        }
+        if quit {
+            app.request_front(skwir_core::command::Invocation::new("ui.quit"));
+        }
+        Some(takers.clone())
+    };
     loop {
         if wakes.recv().is_err() {
-            return Some(takers);
+            return goes_on(held, quit);
         }
         while wakes.try_recv().is_ok() {}
         if takers.handed_away.load(Ordering::Acquire) {
             if under_way(app) {
-                return Some(takers);
+                return goes_on(held, quit);
             }
             tracing::info!("another Skwir took this request over");
             return None;
         }
-        // Asked from elsewhere (an agent's Quit): the program takes it.
-        let asked = app.take_front_requests();
-        if !asked.is_empty() {
-            for request in asked {
-                app.request_front(request);
-            }
-            return Some(takers);
-        }
+        let (quit_asked, waiting) = sort_asked_meanwhile(app.take_front_requests());
+        held.extend(waiting);
+        quit |= quit_asked;
         if takers.asked() {
-            return Some(takers);
+            return goes_on(held, quit);
         }
-        if takers
-            .windowless
-            .as_ref()
-            .is_some_and(|over| over.load(Ordering::Acquire))
-        {
+        if (quit && !takers.passing.load(Ordering::Acquire)) || takers.over() {
             // Nothing taken from now on, unless one came just now.
-            let goes_on = takers
+            let taken_now = takers
                 .taking
                 .lock()
                 .as_ref()
                 .is_some_and(|taking| !taking.close_unless(|| takers.asked()));
-            if goes_on {
-                return Some(takers);
+            if taken_now {
+                return goes_on(held, quit);
             }
             stop_taking_over(&takers);
             if takers.asked() {
-                return Some(takers);
+                return goes_on(held, quit);
             }
-            tracing::info!("started for another program, and asked nothing");
+            if quit {
+                tracing::info!("started for another program, and asked to quit before anything");
+            } else {
+                tracing::info!("started for another program, and asked nothing");
+            }
+            // Ended with no window: not 0, for the bus (`ended_unasked`).
             ENDED_UNASKED.store(true, Ordering::Release);
             return None;
         }
@@ -254,10 +290,9 @@ pub(crate) fn wait_asked(
 pub(crate) struct Launch {
     pub(crate) initial: Option<Location>,
     pub(crate) asked: Option<Opening>,
-    /// Started by the session bus without a window, and why.
-    pub(crate) windowless: Option<Windowless>,
     /// What took launches and requests over while it waited for what it
-    /// was asked, started without a window (`wait_asked`).
+    /// was asked, started by the session bus without a window
+    /// (`wait_asked`): such a start always waited there first.
     pub(crate) takers: Option<Takers>,
 }
 
@@ -306,13 +341,12 @@ pub(crate) fn start(
     let Launch {
         initial,
         asked,
-        windowless,
         takers,
     } = launch;
     // Waited without a window for what woke it (`wait_asked`): taking
     // over already, what it was asked queued for the next wake.
     let waited = takers.is_some();
-    let takers = takers.unwrap_or_else(|| Takers::new(openings, windowless.is_some()));
+    let takers = takers.unwrap_or_else(|| Takers::new(openings, false));
     // The program ends when nothing keeps it (`closed`), not with its last
     // window.
     cx.set_quit_mode(gpui::QuitMode::Explicit);
@@ -348,7 +382,7 @@ pub(crate) fn start(
     // (`handed_away`).
     if !waited {
         let state = cx.global::<Finishing>();
-        take_over(&state.app, &state.takers, asked, windowless);
+        take_over(&state.app, &state.takers, asked, None);
     }
     prepare(&prepared, cx);
     cx.on_window_closed(|cx, _| {
@@ -361,23 +395,15 @@ pub(crate) fn start(
     if waited {
         // What it was asked opens its window at once.
         cx.global::<Finishing>().app.wake();
-    } else if windowless.is_some() {
-        // The request opens the window (`woken`); one that does not come
-        // ends the program.
-        let state = cx.global::<Finishing>();
-        end_unless_asked(&state.app, &state.takers);
     } else if !handed_away(cx) {
         show(cx, initial, None, false);
     }
 }
 
-/// Started without a window: once `ASKED_WITHIN` has passed, the program
-/// ends at the next wake unless a request came (`woken`).
-fn end_unless_asked(app: &skwir_core::App, takers: &Takers) {
-    let Some(over) = takers.windowless.clone() else {
-        return;
-    };
-    let wake = app.waker_handle();
+/// Started without a window and holding launches: once `ASKED_WITHIN` has
+/// passed, the program ends at the next wake unless a request came
+/// (`wait_asked`, `woken`). Started by `take_over` once it took them.
+fn end_unless_asked(over: Arc<AtomicBool>, wake: skwir_core::location::Waker) {
     let started = std::thread::Builder::new()
         .name("skwir-asked-within".into())
         .spawn(move || {
@@ -702,13 +728,7 @@ fn woken(cx: &mut App) -> bool {
         if take_asked_meanwhile(cx) && quit_as_asked(cx) {
             return false;
         }
-        if cx
-            .global::<Finishing>()
-            .takers
-            .windowless
-            .as_ref()
-            .is_some_and(|over| over.load(Ordering::Acquire))
-        {
+        if cx.global::<Finishing>().takers.over() {
             // Started without a window, and nothing was asked of it.
             tracing::info!("started to show files for another program, and asked nothing");
             ENDED_UNASKED.store(true, Ordering::Release);
@@ -1501,6 +1521,13 @@ fn take_over(
     let (handed_away, wake_handed) = (Arc::clone(&state.handed_away), wake.clone());
     let following = Arc::clone(&state.following);
     let over = state.windowless.clone().filter(|_| windowless.is_some());
+    // Started without a window, the program waits for this: whatever it
+    // finds, until it has passed on what it was started for.
+    let passing = Arc::clone(&state.passing);
+    let wake_passed = wake.clone();
+    if over.is_some() {
+        passing.store(true, Ordering::Release);
+    }
     let started = std::thread::Builder::new()
         .name("skwir-take-over".into())
         .spawn(move || {
@@ -1518,7 +1545,11 @@ fn take_over(
                     asking.read_then(Arc::clone(&reads), move || wake());
                 },
             );
-            if matches!(taken, Err(NotTaken::Elsewhere)) {
+            let elsewhere = matches!(taken, Err(NotTaken::Elsewhere));
+            if elsewhere {
+                // Started without a window, what is passed on waits here for
+                // its request, `ASKED_WITHIN` at most, then until each one
+                // passed on is answered: that is the program's wait.
                 let handed = match (launch, windowless) {
                     (Some(launch), _) => skwir_platform::handover::hand_over_to_holder(&launch),
                     (None, Some(Windowless::FileManager)) => {
@@ -1532,6 +1563,9 @@ fn take_over(
                 if handed {
                     handed_away.store(true, Ordering::Release);
                     wake_handed();
+                } else if let Some(over) = &over {
+                    // Nothing came to pass on: asked nothing.
+                    over.store(true, Ordering::Release);
                 }
             }
             // Followed while launches are taken over, by the program that
@@ -1541,21 +1575,38 @@ fn take_over(
                 .ok()
                 .map(|taking| skwir_platform::file_manager::follow(&taking.answering()));
             // Started for a dialog, only its wait ends it (`end_unless_asked`).
-            if let Some(over) = over
+            if let Some(over) = &over
                 && windowless == Some(Windowless::FileManager)
                 && !followed.as_ref().is_some_and(|(chosen, _)| *chosen)
             {
                 over.store(true, Ordering::Release);
                 wake_handed();
             }
-            let mut taking = taking.lock();
-            if rounds.load(Ordering::Acquire) == round {
-                *taking = taken.ok();
-                *following.lock() = followed.map(|(_, following)| following);
+            {
+                let mut taking = taking.lock();
+                if rounds.load(Ordering::Acquire) == round {
+                    *taking = taken.ok();
+                    *following.lock() = followed.map(|(_, following)| following);
+                }
+            }
+            if let Some(over) = over {
+                // Holding launches (or unable to), it waits for what it is
+                // asked; one that passed its request on has waited for it.
+                if !elsewhere {
+                    end_unless_asked(over, Arc::clone(&wake_passed));
+                }
+                passing.store(false, Ordering::Release);
+                wake_passed();
             }
         });
     if let Err(error) = started {
         tracing::debug!("later launches start a Skwir of their own: {error}");
+        // Started without a window, nothing can come.
+        if let Some(over) = state.windowless.as_ref().filter(|_| windowless.is_some()) {
+            over.store(true, Ordering::Release);
+            state.passing.store(false, Ordering::Release);
+            app.wake();
+        }
     }
 }
 
@@ -2470,6 +2521,58 @@ mod tests {
         );
         assert_eq!(said(Some(PaneId(20)), true, Some(own), own), Some(own));
         assert_eq!(said(Some(PaneId(20)), true, None, dialog), None, "waits");
+    }
+
+    /// Started by the bus without a window, a script's request starts no
+    /// window system: it waits, and Quit ends the program there, once the
+    /// taking over has settled, with the status the bus is told; what waited
+    /// goes with it.
+    #[test]
+    fn quit_ends_a_program_the_bus_started_with_no_window_system() {
+        use skwir_core::command::Invocation;
+        skwir_platform::handover::keep_apart();
+        let tmp = tempfile::tempdir().unwrap();
+        let app = std::sync::Arc::new(
+            skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap(),
+        );
+        let (wake, wakes) = flume::bounded::<()>(1);
+        app.set_waker(Some(std::sync::Arc::new(move || {
+            let _ = wake.try_send(());
+        })));
+        app.request_front(Invocation::new("ui.toggle_sidebar"));
+        app.request_front(Invocation::new("ui.quit"));
+        let waited = super::wait_asked(
+            &app,
+            &wakes,
+            std::sync::Arc::default(),
+            super::Windowless::Portal,
+        );
+        assert!(waited.is_none(), "ended where it waited");
+        assert!(
+            super::ended_unasked(),
+            "the bus is told it answered nothing"
+        );
+        assert!(app.take_front_requests().is_empty(), "nothing left asked");
+    }
+
+    /// A program started without a window never ends while it passes a
+    /// request on to the Skwir that holds launches, whatever its wait says:
+    /// the request would go with it.
+    #[test]
+    fn a_program_passing_a_request_on_is_not_over() {
+        use std::sync::atomic::Ordering;
+        let takers = super::Takers::new(std::sync::Arc::default(), true);
+        assert!(!takers.over(), "nothing said yet");
+        takers.passing.store(true, Ordering::Release);
+        takers
+            .windowless
+            .as_ref()
+            .unwrap()
+            .store(true, Ordering::Release);
+        assert!(!takers.over(), "passing a request on");
+        takers.passing.store(false, Ordering::Release);
+        assert!(takers.over());
+        assert!(!super::Takers::new(std::sync::Arc::default(), false).over());
     }
 
     /// The tags are an interface people's window rules name (ADR-141, 9):

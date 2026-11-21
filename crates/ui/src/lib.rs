@@ -314,7 +314,6 @@ pub fn run_from(
         let launch = finishing::Launch {
             initial,
             asked: launch,
-            windowless,
             takers,
         };
         finishing::start(cx, app, keymap, started, wake_rx, openings, launch);

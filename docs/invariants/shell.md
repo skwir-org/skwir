@@ -2211,8 +2211,15 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   kept by the program), restores nothing, hands the request to a skwir
   of its instance that runs, and one that ends asked nothing ends with a
   status that is not 0 (`ended_unasked`), which dbus-daemon would wait
-  for. Nothing here names another program's service, nor takes a name
-  its holder does not let go.
+  for. One that hands its requests on never ends while it does
+  (`Takers::passing`): the hand-over's wait for its request is the
+  program's, and it ends once each request it passed on is answered,
+  the user choosing there; its own wait (`ASKED_WITHIN`) starts only
+  once it holds launches. What a script asks of it meanwhile starts no
+  window system: it waits for a window of the user's own, which only a
+  request opens, and Quit ends the program there, once nothing is
+  passed on. Nothing here names another program's service, nor takes a
+  name its holder does not let go.
 - **Other programs' Open and Save dialogs are windows of skwir's own**
   (ADR-141, Linux): the program that takes launches over answers the
   portal's FileChooser back end, its requests (`chooser::Choosing`)
