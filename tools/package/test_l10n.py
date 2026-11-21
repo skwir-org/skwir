@@ -38,6 +38,20 @@ class Translations(unittest.TestCase):
             self.assertNotEqual(told.returncode, 0)
             self.assertIn("missing: the desktop entry or the metainfo in", told.stdout)
 
+    @unittest.skipUnless(GETTEXT, "gettext is in the Nix shell")
+    def test_a_language_named_as_its_po_file_is_installed(self):
+        # gettext 0.21 (Ubuntu 22.04's, the AppImage's) names a language in
+        # the metainfo as its PO file does (zh_CN), not as BCP 47 does.
+        with tempfile.TemporaryDirectory() as share:
+            self.assertEqual(run("merge", share).returncode, 0)
+            metainfo = Path(share, "metainfo/org.skwir.skwir.metainfo.xml")
+            text = metainfo.read_text()
+            older = re.sub(r'xml:lang="zh(-Hans)?-CN"', 'xml:lang="zh_CN"', text)
+            self.assertNotEqual(older, text, "the metainfo says zh-CN or zh-Hans-CN")
+            metainfo.write_text(older)
+            installed = run("installed", share)
+            self.assertEqual(installed.returncode, 0, installed.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

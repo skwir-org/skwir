@@ -50,11 +50,13 @@ merge() {
 # Whether the files installed in $1 hold each language: a key of the
 # desktop entry, and an element of the metainfo, in it. The desktop entry
 # names it as its PO file does (zh_CN), the metainfo as BCP 47 does, which
-# msgfmt writes with the script CLDR gives it (zh-Hans-CN).
+# msgfmt writes with the script CLDR gives it (zh-Hans-CN), or, from
+# gettext 0.21 (Ubuntu 22.04's, which the AppImage is built on), as the PO
+# file does (zh_CN), which AppStream reads as well.
 installed() {
     missing=0
     for language in $(languages); do
-        tag="$(printf '%s' "$language" | sed 's/_/(-[A-Z][a-z][a-z][a-z])?-/')"
+        tag="$(printf '%s' "$language" | sed 's/_/((-[A-Z][a-z][a-z][a-z])?-|_)/')"
         if grep -q "^[A-Za-z-]*\[$language\]=" "$1/applications/$desktop" &&
             grep -Eq "xml:lang=\"$tag\"" "$1/metainfo/$metainfo"; then
             echo "ok: the desktop entry and the metainfo in $language"
