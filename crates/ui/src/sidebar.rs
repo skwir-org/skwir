@@ -282,13 +282,15 @@ pub struct Arranged {
 /// Every place, shown or not, as the user arranged them: the groups in
 /// their order; within a group, folders before virtual places (Shelf,
 /// Recent) whatever order their plugins published them in, then the
-/// offered places in the user's order among the slots they hold.
+/// offered places in the user's order among the slots they hold. A place
+/// listed (`Place::listed`) keeps the order it was listed in.
 pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
     // By name too, so that two groups the sidebar does not know never mix.
     // What is no folder comes after the folders (the servers the tools
     // know, after the mounts), unless it moves: what the user orders keeps
-    // its owner's order (a remote bookmark among the folders').
-    let after = |p: &Place| !p.location.is_path() && p.reorder.is_none();
+    // its owner's order (a remote bookmark among the folders'), and what
+    // is listed the order it was listed in (Skwir Tabs, by use).
+    let after = |p: &Place| !p.location.is_path() && p.reorder.is_none() && !p.listed;
     places.sort_by(|a, b| {
         (sections.rank(&a.group), &a.group, after(a)).cmp(&(
             sections.rank(&b.group),
@@ -679,13 +681,17 @@ impl Shell {
 
 /// What lists the files used lately first in its group, the rest as they
 /// were arranged (ADR-144, 7: a dialog opening files, where they have one
-/// to give).
+/// to give). A place listed keeps the order it was listed in (a tab
+/// showing Recent, among Skwir Tabs by use).
 fn recent_first(arranged: &mut [Arranged], recent: impl Fn(&Place) -> bool) {
     let mut first: HashMap<String, usize> = HashMap::new();
     for (at, one) in arranged.iter().enumerate() {
         first.entry(one.place.group.clone()).or_insert(at);
     }
-    arranged.sort_by_key(|one| (first[&one.place.group], !recent(&one.place)));
+    arranged.sort_by_key(|one| {
+        let leads = one.role != Role::Listed && recent(&one.place);
+        (first[&one.place.group], !leads)
+    });
 }
 
 /// A folder the sidebar shows, where a trail starts (`address::crumbs`):
@@ -3110,6 +3116,35 @@ mod tests {
         assert!(arranged[0].shown, "no hiding it");
         assert!(arranged[0].moves.is_none());
         assert!(!Role::Listed.hides());
+    }
+
+    /// Skwir Tabs keep the order the tabs were used in (RS-3): a tab
+    /// showing a tag, a search or Recent comes where its use puts it, not
+    /// after the folders, nor first as Recent is in a dialog opening files.
+    #[test]
+    fn listed_places_keep_the_order_they_were_listed_in() {
+        let listed = |location: &str| {
+            let mut tab = place("skwir_tabs", location);
+            tab.listed = true;
+            tab
+        };
+        let mut arranged = arrange(
+            vec![
+                listed("tags:/work"),
+                listed("/home/a/src"),
+                listed("recent:"),
+                listed("/home/a/docs"),
+            ],
+            &Sections::default(),
+        );
+        let order = ["tags:/work", "home/a/src", "recent:", "home/a/docs"];
+        assert_eq!(titles(&arranged), order);
+        super::recent_first(&mut arranged, |place| &*place.location.scheme == "recent");
+        assert_eq!(
+            titles(&arranged),
+            order,
+            "Recent leads only where it is offered"
+        );
     }
 
     fn titles_of(places: &[skwir_core::registry::Place]) -> Vec<String> {
