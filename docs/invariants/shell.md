@@ -2138,7 +2138,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `finishing::hand_on`, taken at the next `deliver`) and are asked again
   there. Answered Cancel only when the last window leaves.
 - **What names no window goes to one that is up** (`finishing::front_of`:
-  the core's active window while it is up, else the one opened last). A
+  the core's active window while it is up, else the one used last that
+  is up, `Workspace::windows_by_use`, else the one opened last): with
+  another program's dialog in use, the user's own front window is the
+  one they used last of theirs (`ordinary_handle`). A
   window that cannot open (`open_window`) is taken out of the core, so no
   ghost stays active; one that went as it was made (a dialog its program
   closed meanwhile) is never among the windows up, and one gpui no longer

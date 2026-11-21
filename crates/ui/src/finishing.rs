@@ -602,21 +602,33 @@ fn say_in_active(cx: &mut App, text: Words) {
     }
 }
 
-/// What takes what names no window: the core's active window while it is
-/// up, else the one opened last. The core's may not be up: it was just made
-/// and has yet to open, or could not (`open_window`).
-fn front_of<H>(windows: &[(WindowId, H)], active: WindowId) -> Option<&(WindowId, H)> {
-    windows
+/// The core's windows in the order what names no window looks for one up
+/// (`front_of`): the core's active window, then the others as they were
+/// used, the one used last first (ADR-122).
+fn by_use(app: &skwir_core::App) -> Vec<WindowId> {
+    let ws = app.workspace.read();
+    std::iter::once(ws.active_window_id())
+        .chain(ws.windows_by_use())
+        .collect()
+}
+
+/// What takes what names no window: of `windows`, the first up in
+/// `by_use` (`by_use()`): the core's active window while it is up, else
+/// the one used last, so that with another program's dialog in use the
+/// user's own front window is the one they used last, not the one opened
+/// last. The core's may not be up: it was just made and has yet to open,
+/// or could not (`open_window`); none of `by_use` up, the one opened last.
+fn front_of<'a, H>(windows: &'a [(WindowId, H)], by_use: &[WindowId]) -> Option<&'a (WindowId, H)> {
+    by_use
         .iter()
-        .find(|(id, _)| *id == active)
+        .find_map(|used| windows.iter().find(|(id, _)| id == used))
         .or(windows.last())
 }
 
 /// The window that takes what names no window (`front_of`).
 pub(crate) fn active_handle(cx: &App) -> Option<WindowHandle<Shell>> {
     let state = cx.global::<Finishing>();
-    let active = state.app.workspace.read().active_window_id();
-    front_of(&state.windows, active).map(|(_, handle)| *handle)
+    front_of(&state.windows, &by_use(&state.app)).map(|(_, handle)| *handle)
 }
 
 /// How many windows are up.
@@ -915,7 +927,7 @@ pub(crate) struct Inbox {
 fn deliver(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
-    let active = app.workspace.read().active_window_id();
+    let used = by_use(&app);
     // What is asked from elsewhere (an agent's, a script's) and what no
     // window asked go to a window of the user's own, never to one
     // answering another program's dialog (ADR-141, 8): while those alone
@@ -927,8 +939,8 @@ fn deliver(cx: &mut App) {
         .map(|(id, _)| *id)
         .filter(|id| !own.iter().any(|(mine, _)| mine == id))
         .collect();
-    let own_front = front_of(&own, active).map(|(id, _)| *id);
-    let Some(front) = own_front.or_else(|| front_of(&state.windows, active).map(|(id, _)| *id))
+    let own_front = front_of(&own, &used).map(|(id, _)| *id);
+    let Some(front) = own_front.or_else(|| front_of(&state.windows, &used).map(|(id, _)| *id))
     else {
         return;
     };
@@ -2113,11 +2125,10 @@ fn open_chooser(cx: &mut App, asking: crate::chooser::Asking) {
 }
 
 /// The front window up that is the user's own, not another program's
-/// dialog (`front_of`).
+/// dialog (`front_of`): the one used last of them.
 fn ordinary_handle(cx: &App) -> Option<WindowHandle<Shell>> {
     let state = cx.global::<Finishing>();
-    let active = state.app.workspace.read().active_window_id();
-    front_of(&own_windows(state), active).map(|(_, handle)| *handle)
+    front_of(&own_windows(state), &by_use(&state.app)).map(|(_, handle)| *handle)
 }
 
 /// The windows up that are the user's own: all but those answering
@@ -2570,18 +2581,21 @@ mod tests {
     }
 
     /// What names no window goes to the active window while it is up, else
-    /// to the one opened last: never to one that did not open.
+    /// to the one used last that is up, else the one opened last: never to
+    /// one that did not open. Another program's dialog in use, the user's
+    /// own front window is the one they used last of theirs.
     #[test]
     fn what_names_no_window_goes_to_one_that_is_up() {
         let up = [(WindowId(1), "first"), (WindowId(2), "second")];
-        let front = |active| front_of(&up, active).map(|(_, name)| *name);
-        assert_eq!(front(WindowId(1)), Some("first"));
-        assert_eq!(
-            front(WindowId(9)),
-            Some("second"),
-            "the active one is not up"
-        );
-        assert_eq!(front_of::<&str>(&[], WindowId(1)), None);
+        let front = |used: &[u32]| {
+            let used: Vec<WindowId> = used.iter().copied().map(WindowId).collect();
+            front_of(&up, &used).map(|(_, name)| *name)
+        };
+        assert_eq!(front(&[1, 2]), Some("first"));
+        assert_eq!(front(&[2, 1]), Some("second"));
+        assert_eq!(front(&[9, 1, 2]), Some("first"), "a dialog in use");
+        assert_eq!(front(&[9]), Some("second"), "none of them up");
+        assert_eq!(front_of::<&str>(&[], &[WindowId(1)]), None);
     }
 
     /// What a window's action says is said there, a dialog's window too,

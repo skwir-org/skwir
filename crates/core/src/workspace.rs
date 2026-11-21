@@ -6603,6 +6603,13 @@ impl Workspace {
         self.windows[self.active_index()].id
     }
 
+    /// The windows in the order they were used, the one used last first
+    /// (ADR-122), one not used yet after those used: the UI's front window
+    /// among those up is the first of them it has.
+    pub fn windows_by_use(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.used.iter().rev().copied()
+    }
+
     /// Where the active window is: the one used last; for a call from
     /// elsewhere (an agent's, a script's, `permissions::from_elsewhere`),
     /// the one used last of the user's own, never the window answering
