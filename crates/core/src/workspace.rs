@@ -6031,7 +6031,6 @@ impl Workspace {
         self.dialog_order
     }
 
-    /// The orders places remember (ADR-132).
     /// The orders places remember (ADR-132) for the user's own windows,
     /// or for the dialogs' (`dialogs`, ADR-145).
     pub fn orders(&self, dialogs: bool) -> &Orders {

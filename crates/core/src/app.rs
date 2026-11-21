@@ -1669,12 +1669,9 @@ impl App {
     }
 
     /// Whether the window `pane` is in answers another program's dialog
-    /// (`WindowTabs::chooses`): not for a pane in no window.
+    /// (`Workspace::is_dialogs`): not for a pane in no window.
     pub fn chooses_in(&self, pane: PaneId) -> bool {
-        let ws = self.workspace.read();
-        ws.window_of(pane)
-            .and_then(|window| ws.window(window))
-            .is_some_and(crate::workspace::WindowTabs::chooses)
+        self.workspace.read().is_dialogs(pane)
     }
 
     /// Whether what `location` lists may be handed to another program as

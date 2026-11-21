@@ -641,7 +641,7 @@ pub enum DialogRule {
 
 /// Where what a command opens is shown (`CommandSpec::opens`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Opens {
+pub enum OpensIn {
     /// In Skwir's own window, or nothing to open.
     #[default]
     Here,
@@ -774,9 +774,9 @@ pub struct CommandSpec {
     /// (`Declared::leads_to`, see [`LeadsTo`]).
     #[serde(skip)]
     pub leads_to: Option<LeadsTo>,
-    /// Where what it opens is shown (see [`Opens`]).
+    /// Where what it opens is shown (see [`OpensIn`]).
     #[serde(skip)]
-    pub opens: Opens,
+    pub opens: OpensIn,
     /// When a key held down runs it again (ADR-066): a step along
     /// something (the cursor, a page, the volume, the next tab), never an
     /// act or a switch, which the key's repeats would run over and over.
@@ -791,10 +791,10 @@ impl CommandSpec {
     /// what its topic and effect say, where it says nothing of dialogs
     /// (ADR-144, 1): by its topic (`Topic::in_dialogs`), but never what
     /// changes files (`Effect::Plans`) nor what opens another program
-    /// (`Opens::Elsewhere`), whatever it is about, which a dialog offers
+    /// (`OpensIn::Elsewhere`), whatever it is about, which a dialog offers
     /// only where they say so (`Declared::in_dialogs`).
     pub fn in_dialogs_by_default(&self) -> bool {
-        self.topic.in_dialogs() && self.effect != Effect::Plans && self.opens == Opens::Here
+        self.topic.in_dialogs() && self.effect != Effect::Plans && self.opens == OpensIn::Here
     }
 
     /// What it does run with `args` (ADR-044): what they make it do where
@@ -949,12 +949,12 @@ impl Declared<'_> {
         self.update(|spec| spec.leads_to = Some(leads_to));
     }
 
-    /// It opens something in another program (see [`Opens::Elsewhere`]).
+    /// It opens something in another program (see [`OpensIn::Elsewhere`]).
     // Said as it is declared: what it returns only goes on to say more
     // (`.opens_elsewhere().reads()`), and may be dropped.
     #[allow(clippy::return_self_not_must_use)]
     pub fn opens_elsewhere(self) -> Self {
-        self.update(|spec| spec.opens = Opens::Elsewhere);
+        self.update(|spec| spec.opens = OpensIn::Elsewhere);
         self
     }
 
@@ -1297,7 +1297,7 @@ impl CommandRegistry {
             asked_only: false,
             in_dialogs: None,
             leads_to: None,
-            opens: Opens::Here,
+            opens: OpensIn::Here,
             repeats: None,
         };
         let mut commands = self.commands.write();

@@ -4107,7 +4107,7 @@ mod tests {
         for name in super::OPENS_ELSEWHERE {
             let spec = app.commands.get(name).expect(name);
             assert!(
-                spec.opens == skwir_core::command::Opens::Elsewhere
+                spec.opens == skwir_core::command::OpensIn::Elsewhere
                     && !app.in_dialogs(name, &none).runs(),
                 "{name}"
             );

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use skwir_core::SortKey;
 use skwir_core::app::{App, AppConfig};
-use skwir_core::command::{Effect, Opens};
+use skwir_core::command::{Effect, OpensIn};
 
 fn app(tmp: &std::path::Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(tmp)).unwrap();
@@ -65,7 +65,7 @@ fn a_dialog_offers_what_changes_files_or_opens_elsewhere_only_where_said() {
             .collect::<BTreeSet<String>>()
     };
     let plans = offered(&|spec| spec.effect == Effect::Plans);
-    let elsewhere = offered(&|spec| spec.opens == Opens::Elsewhere);
+    let elsewhere = offered(&|spec| spec.opens == OpensIn::Elsewhere);
     let expected = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect();
     assert_eq!(plans, expected(PLANS), "plans a dialog offers");
     assert_eq!(elsewhere, expected(ELSEWHERE), "what opens elsewhere");
