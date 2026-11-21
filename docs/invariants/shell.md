@@ -483,15 +483,15 @@ draws none, Compact; below).
   `address::crumbs`): `Papers › 2026`, `stick › Photos`, else Home. With
   `ui.full_path`, every trail starts at `/` under real names.
 - Tabs and history use the sidebar's name (`App::location_title`: the
-  names the user gave places, one set every window says, `sidebar::Names`);
-  listings, toasts and Properties use the folder's own. Up goes to the real
-  parent; Ctrl+L edits the real path. Whatever goes up (Up, a place of the
-  trail, of the sidebar or of the columns view, a path typed), the way
-  back down is selected there once listed (`App::way_down`: the folder on
-  the path, or the next place's label in the place before it), as every
-  file manager does; quietly (`Pane::reveal_way_down`): only if shown, so a
-  hidden folder left turns no hidden files on. An entry asked for
-  (`navigate`'s `select`) wins.
+  names the user gave places, one set every window says,
+  `sidebar::Names`); listings, toasts and Properties use the folder's own.
+  Up goes to the real parent; Ctrl+L edits the real path. Whatever goes up
+  (Up, a place of the trail, of the sidebar or of the columns view, a path
+  typed), the way back down is selected there once listed
+  (`App::way_down`: the folder on the path, or the next place's label in
+  the place before it), as every file manager does; quietly
+  (`Pane::reveal_way_down`): only if shown, so a hidden folder left turns
+  no hidden files on. An entry asked for (`navigate`'s `select`) wins.
 - Back and Forward list history on right-click or a long press, as in a
   browser (`ui.history_menu`; `back`/`forward` take `steps`). A long
   press is any button's `toolbar::Button::on_hold`: held `HOLD`, it runs
@@ -1654,13 +1654,13 @@ asks the direction.
   arrangement; the names the user gave them are one set, the program's
   (`sidebar::Names`, `ui.place_names`), which every window says, a
   dialog's included, whatever window is up: read into the core at the
-  start (`Registry::user_title`), changed by a rename alone, never
-  written back from a window's arrangement. A place moves only among those the same command moves
-  (`sidebar::mover`); `arrange` is the one reading of all this. Within a
-  group, what is no folder comes after the folders (a server the tools
-  know after the mounts) unless it moves: what moves keeps its owner's
-  order (a remote folder's bookmark among the folders', as the file has
-  them).
+  start (`Registry::user_title`), changed by a rename alone, never written
+  back from a window's arrangement. A place moves only among those the
+  same command moves (`sidebar::mover`); `arrange` is the one reading of
+  all this. Within a group, what is no folder comes after the folders (a
+  server the tools know after the mounts) unless it moves: what moves
+  keeps its owner's order (a remote folder's bookmark among the folders',
+  as the file has them).
 - A group with every place hidden keeps its header, whose menu lists
   them; places offered hidden (`Place::hidden`) appear there unchecked.
 - Rename… (`Place::rename`, F2) and Remove From Sidebar
@@ -2306,12 +2306,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   a filter, a name typed to find a file (`pane choosing typing`,
   `ui.type_end`), a plan being made (which the files, the sidebar and the
   timeline say too, `keymap::Dialog`, so it lets go there before the
-  dialog does); a selection does not. The name field lets Escape go on
-  to these bindings (`TextInput::let_escape_go_on`): its own, deeper,
-  cancelled the dialog before a plan being made or a list of the bar.
-  A name taken is asked Replace? in skwir
-  (`Confirmed::Replace`, read on a worker in the folder's lane), and a
-  request its program closes takes its window away at the next wake.
+  dialog does); a selection does not. The name field lets Escape go on to
+  these bindings (`TextInput::let_escape_go_on`): its own, deeper,
+  cancelled the dialog before a plan being made or a list of the bar. A
+  name taken is asked Replace? in skwir (`Confirmed::Replace`, read on a
+  worker in the folder's lane), and a request its program closes takes its
+  window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no
   call from elsewhere reaches its window (commands.md). It offers what
   finds and chooses (ADR-144, commands.md's "In a dialog's window"), by

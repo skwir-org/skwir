@@ -97,20 +97,19 @@ ADR-144 (what a dialog's window offers, its own layout, Recent).
    cancels (once a name typed to find a file has gone: the first Escape
    lets go of it, the user's choice of 2026-11-19; a dialog of Skwir's
    open in the window, a question, a prompt or a form, its buttons and
-   switches included, and a plan being made take it before, wherever the
-   keyboard is, the name field included: amended after review,
-   2026-11-21), and closing the
-   window cancels. As built: a dialog's size at first (1000 × 680 at
-   100 %), then the size the dialogs were left at, never a tile's, never
-   maximized, its shape kept for the next dialog alone (ADR-144, 4); a
-   core window marked a dialog's (`WindowTabs::chooses`), never recorded
-   for the next start nor reopened; the windows asleep stay asleep while
-   dialogs' windows alone are up, a launch going to a window of the
-   user's own; nothing recorded in a run until a window of the user's
-   own opened, so a skwir the bus started never replaces the windows the
-   user left. A folder typed in the name is gone into; Replace? is read
-   on a worker, in the folder's lane. A second request opens a second
-   window.
+   switches included, and a plan being made take it before, wherever
+   the keyboard is, the name field included: amended after review,
+   2026-11-21), and closing the window cancels. As built: a dialog's
+   size at first (1000 × 680 at 100 %), then the size the dialogs were
+   left at, never a tile's, never maximized, its shape kept for the
+   next dialog alone (ADR-144, 4); a core window marked a dialog's
+   (`WindowTabs::chooses`), never recorded for the next start nor
+   reopened; the windows asleep stay asleep while dialogs' windows
+   alone are up, a launch going to a window of the user's own; nothing
+   recorded in a run until a window of the user's own opened, so a
+   skwir the bus started never replaces the windows the user left. A
+   folder typed in the name is gone into; Replace? is read on a worker,
+   in the folder's lane. A second request opens a second window.
 5. **What is chosen.** Opening: the file under the cursor or the
    selection; several only with `multiple`, which the shelf gathers
    across folders; `directory` chooses folders only, the one selected or
