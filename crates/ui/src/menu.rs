@@ -1053,7 +1053,10 @@ impl Shell {
             ));
             // In a window of one tab (a dialog's), a place asked in a tab
             // opens in place, as Open does: no row offers a tab there
-            // (ADR-144, 2).
+            // (ADR-144, 2). Told by the window's shape, as its tab strip
+            // is (`WindowTabs::holds_tabs`), not by the command: a place
+            // opened by a command of its own (a volume mounted, a server)
+            // asks it with `tab`, which a dialog runs as it runs Open.
             if self.holds_tabs {
                 items.push(item(
                     words!(menu_place_open_tab = "Open in New Tab"),

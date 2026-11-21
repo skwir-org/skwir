@@ -462,8 +462,12 @@ fn a_dialog_s_window_opens_a_tab_asked_in_place() {
     run(&app, "tab.new", asked.clone());
     assert_eq!(tabs_of(&app, dialog), [tab]);
     assert_eq!(location_of(&app, pane), Some(quote));
-    // Offered there where it names a place; a new tab of what is shown, not.
-    assert!(app.in_dialogs("tab.new", &asked).offered());
+    // Run there where it names a place, listed nowhere (what Enter does
+    // there); a new tab of what is shown, not run.
+    assert_eq!(
+        app.in_dialogs("tab.new", &asked),
+        skwir_core::command::InDialogs::Asked
+    );
     assert!(!app.in_dialogs("tab.new", &serde_json::json!({})).runs());
     // No tab of the user's moves into it.
     let theirs = shown_in(&app, own);

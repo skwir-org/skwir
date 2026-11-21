@@ -72,7 +72,10 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
     one tab opens in place, `WindowTabs::holds_tabs`), which may also say
     it runs where it is asked and is listed nowhere (`InDialogs::Asked`:
     the sidebar's Ctrl+Enter, the middle click's key, does what the click
-    does there, Enter's).
+    does there, Enter's, as `tab.new` naming a place does). A menu draws
+    a row that runs where it is asked (a switch's save of a setting), so
+    the place menu's Open in New Tab is left out by the window's shape
+    (`holds_tabs`, as the tab strip), whatever command opens the place.
   - A command that runs another with its arguments says so
     (`Declared::leads_to`: `ui.choose`'s source and choices, `ui.ask`'s
     command, `ui.preview_invoke`'s), and is offered only where that one is.

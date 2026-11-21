@@ -1578,12 +1578,14 @@ pub(crate) fn register(app: &App) {
         },
     );
     // A place asked in a tab of a window of one tab (a dialog's) opens in
-    // place (`App::new_tab`): offered there where it names one, as a middle
-    // click and Ctrl+Enter on a place ask it; a new tab of what the pane
-    // shows is none there (ADR-144, 2).
+    // place (`App::new_tab`): run there where it names one, as a middle
+    // click and Ctrl+Enter on a place ask it, and listed nowhere, being
+    // what Enter and Open do there (`InDialogs::Asked`, as the sidebar's
+    // Ctrl+Enter); a new tab of what the pane shows is none there
+    // (ADR-144, 2).
     new_tab.in_dialogs_by(|_, args| {
         if args.get("location").is_some_and(|l| !l.is_null()) {
-            crate::command::InDialogs::Offered
+            crate::command::InDialogs::Asked
         } else {
             crate::command::InDialogs::Not
         }
