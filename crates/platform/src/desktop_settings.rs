@@ -240,17 +240,44 @@ pub(crate) fn hyprlang_value(text: &str, key: &str) -> Option<String> {
     found.filter(|value| !value.is_empty())
 }
 
-/// Plasma's `kdeglobals` as `KConfig` cascades them, each as text: the
-/// user's, then those of `XDG_CONFIG_DIRS` (the system's, and the global
-/// theme's defaults, `kdedefaults`, which Plasma names there).
+/// Plasma's `kdeglobals` as `KConfig` cascades them, each file's text,
+/// the most specific first (`kdeglobals_cascade_in`, in the session's
+/// folders).
 pub(crate) fn kdeglobals_cascade() -> Vec<String> {
-    crate::xdg::config_home()
-        .into_iter()
-        .chain(crate::xdg::config_dirs())
-        .filter_map(|config| {
-            crate::file::read_regular_text(&config.join("kdeglobals"), crate::file::DESKTOP_FILE)
-                .ok()
-        })
+    // `KConfig` reads no `/etc/kde5rc` where `KDE_SKIP_KDERC` is set.
+    let kderc = std::env::var_os("KDE_SKIP_KDERC")
+        .is_none()
+        .then(|| PathBuf::from("/etc/kde5rc"));
+    kdeglobals_cascade_in(
+        crate::xdg::config_home().as_deref(),
+        &crate::xdg::config_dirs(),
+        kderc,
+    )
+}
+
+/// The files `KConfig` reads as `kdeglobals`
+/// (`KConfigPrivate::ensureGlobalFilesAreInitialized`), each as text, the
+/// most specific first, as `kconfig_value` takes them: the user's
+/// `kdeglobals`, then the user's `system.kdeglobals` (`config_home`), the
+/// `kdeglobals` of the system's folders (`config_dirs`, in their order:
+/// the global theme's defaults, `kdedefaults`, which Plasma names there,
+/// and the system's), their `system.kdeglobals`, and last `kderc`,
+/// `/etc/kde5rc` (the name KDE Frameworks 6 reads still), where an
+/// administrator may keep Kiosk's locks. A file not there, or not
+/// readable, is passed over, as `KConfig` passes it over.
+fn kdeglobals_cascade_in(
+    config_home: Option<&Path>,
+    config_dirs: &[PathBuf],
+    kderc: Option<PathBuf>,
+) -> Vec<String> {
+    let in_dirs = |name: &'static str| config_dirs.iter().map(move |dir| dir.join(name));
+    config_home
+        .iter()
+        .flat_map(|home| [home.join("kdeglobals"), home.join("system.kdeglobals")])
+        .chain(in_dirs("kdeglobals"))
+        .chain(in_dirs("system.kdeglobals"))
+        .chain(kderc)
+        .filter_map(|file| crate::file::read_regular_text(&file, crate::file::DESKTOP_FILE).ok())
         .collect()
 }
 
@@ -283,9 +310,9 @@ pub(crate) fn keyfile_value(text: &str, group: &str, key: &str) -> Option<String
 }
 
 /// `key` of `group` in a cascade of `KConfig` files (each file's text,
-/// the user's first, then the system's in `XDG_CONFIG_DIRS`' order:
-/// `kdeglobals_cascade`), as `KConfig` reads them (KDE Frameworks'
-/// `KConfigIniBackend::parseConfig`, `KEntryMap::setEntry`, and
+/// the most specific first, the user's before the system's and
+/// `/etc/kde5rc`: `kdeglobals_cascade`), as `KConfig` reads them (KDE
+/// Frameworks' `KConfigIniBackend::parseConfig`, `KEntryMap::setEntry`, and
 /// `KConfigPrivate`'s reading of the global files): from the least
 /// specific to the user's, each saying it replacing what one before
 /// said, but where a file locks it (Kiosk's `[$i]`: after the key, after
@@ -312,8 +339,9 @@ pub(crate) fn kconfig_value(cascade: &[impl AsRef<str>], group: &str, key: &str)
 /// so what the file says of the key under another header of it still
 /// counts), or the key (`[$i]` among its options, or said under a locked
 /// header), whereupon no later line of the file changes it either.
-/// (`KConfig` lets a later file of defaults, though not the user's,
-/// change a key a locked group holds unlocked; here no later file does.)
+/// (`KConfig` lets a later file of defaults, though not the user's
+/// `kdeglobals`, change a key a locked group holds unlocked; here no
+/// later file does.)
 fn kconfig_read(text: &str, group: &str, key: &str, value: &mut Option<String>) -> bool {
     let (mut file_locked, mut header_locked) = (false, false);
     let (mut group_locked, mut key_locked) = (false, false);
@@ -652,6 +680,62 @@ mod tests {
         assert_eq!(
             value(&["[Recent]\nUse[$i]=1\nUse=2\n"]).as_deref(),
             Some("1")
+        );
+    }
+
+    /// The files `KConfig` reads as `kdeglobals`, in its order: the
+    /// user's `kdeglobals` and `system.kdeglobals`, the system folders'
+    /// `kdeglobals`, then their `system.kdeglobals`, `/etc/kde5rc` last,
+    /// so an administrator's lock in either holds over the user's word.
+    #[test]
+    fn kdeglobals_are_found_where_kconfig_looks() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |relative: &str| dir.path().join(relative);
+        let write = |relative: &str, text: &str| {
+            std::fs::create_dir_all(at(relative).parent().unwrap()).unwrap();
+            std::fs::write(at(relative), text).unwrap();
+        };
+        let (home, dirs) = (at("home"), [at("look"), at("system")]);
+        let kderc = Some(at("kde5rc"));
+        let cascade = || kdeglobals_cascade_in(Some(&home), &dirs, kderc.clone());
+        assert!(cascade().is_empty());
+        let files = [
+            "home/kdeglobals",
+            "home/system.kdeglobals",
+            "look/kdeglobals",
+            "system/kdeglobals",
+            "look/system.kdeglobals",
+            "system/system.kdeglobals",
+            "kde5rc",
+        ];
+        for file in files {
+            write(file, &format!("[Recent]\nUse={file}\n"));
+        }
+        let said: Vec<String> = files
+            .iter()
+            .map(|f| format!("[Recent]\nUse={f}\n"))
+            .collect();
+        assert_eq!(cascade(), said);
+        assert_eq!(
+            kconfig_value(&cascade(), "Recent", "Use").as_deref(),
+            Some("home/kdeglobals")
+        );
+        // An administrator's lock, in a system's `system.kdeglobals` or
+        // in `/etc/kde5rc`, holds over every file before it.
+        write("system/system.kdeglobals", "[Recent][$i]\nUse=locked\n");
+        assert_eq!(
+            kconfig_value(&cascade(), "Recent", "Use").as_deref(),
+            Some("locked")
+        );
+        write("kde5rc", "[$i]\n[Recent]\nUse=kiosk\n");
+        assert_eq!(
+            kconfig_value(&cascade(), "Recent", "Use").as_deref(),
+            Some("kiosk")
+        );
+        // `KDE_SKIP_KDERC`: no `/etc/kde5rc`.
+        assert_eq!(
+            kdeglobals_cascade_in(Some(&home), &dirs, None).len(),
+            files.len() - 1
         );
     }
 

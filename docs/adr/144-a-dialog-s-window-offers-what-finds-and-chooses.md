@@ -181,8 +181,9 @@ forms makes no extension the program's), 7 (KConfig's locks read) and
    4 reads through the settings portal on any desktop), Cinnamon's on
    Cinnamon, KDE's `[RecentDocuments]` `UseRecent` false (or `no`, `off`,
    `0`) or `MaxEntries` 0 in `kdeglobals`, read as KConfig reads them
-   (an administrator's lock, `[$i]`, over the user's word; amended
-   after review, 2026-11-21); one of them is enough. A bookmark the
+   (an administrator's lock, `[$i]`, over the user's word, in
+   `system.kdeglobals` and `/etc/kde5rc` too; amended after review,
+   2026-11-21); one of them is enough. A bookmark the
    list holds is visited and Skwir's count of it goes up, another is
    added, typed by what the file is, each file once, the rest kept
    byte for byte, the list kept as GTK keeps it (a file older than an

@@ -1,7 +1,8 @@
 //! Plasma's color scheme (ADR-071, point 4), as Plasma's applications read
-//! it: `kdeglobals`, the user's before the system's (`XDG_CONFIG_DIRS`),
-//! a system's lock (Kiosk's `[$i]`) over the user's word, as `KConfig`
-//! reads them, and for what they leave out the scheme they name (`[General]
+//! it: `kdeglobals`, the user's before the system's (`XDG_CONFIG_DIRS`,
+//! `/etc/kde5rc` last: `kdeglobals_cascade`), a system's lock (Kiosk's
+//! `[$i]`) over the user's word, as `KConfig` reads them, and for what
+//! they leave out the scheme they name (`[General]
 //! ColorScheme`, a `color-schemes/<name>.colors` of the data folders),
 //! Breeze's when they name none. Read on the desktop style's thread, and
 //! again each time Plasma replaces the user's `kdeglobals`.
