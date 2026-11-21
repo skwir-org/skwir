@@ -360,9 +360,13 @@ fn a_mount_let_go_of_elsewhere_is_disconnected_all_the_same() {
     let left = Unmounted(connected.point.clone());
     let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
     let recognised = rclone.recognises(&remote).expect("rclone's");
+    // Let go of lazily, as rclone and a user's `fusermount3 -uz` may: a
+    // plain unmount is refused as busy while any program is in the
+    // middle of a call there (a test beside it, a program of the
+    // session), and how it was let go of is not what is tested.
     assert!(
         Command::new("fusermount3")
-            .arg("-u")
+            .arg("-uz")
             .arg(&connected.point)
             .status()
             .unwrap()

@@ -1267,9 +1267,12 @@ fn connect_at_login_under_the_user_s_own_systemd() {
     // removed.
     manager.install(&at, &cancel).unwrap();
     until_mounted(&at.point, 30);
+    // Lazily: a plain unmount is refused as busy while any program is in
+    // the middle of a call there (a test beside it, a program of the
+    // session).
     assert!(
         Command::new("fusermount3")
-            .arg("-u")
+            .arg("-uz")
             .arg(&at.point)
             .status()
             .unwrap()
