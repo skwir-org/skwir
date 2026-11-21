@@ -104,7 +104,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   published and Fedora's packages signed (ADR-142); a drag that moves
   what has nothing to select (ADR-143); thumbnails shown before they are
   kept, a progressive JPEG's read from its DC scans; the reviews since
-  0.5.1 fixed (2026-11-19, 2026-11-20).
+  0.5.1 fixed (2026-11-19, 2026-11-20, 2026-11-21).
 - **Work in 0.5.1 (2026-11-14 to 11-16):** the title bar where the user
   wants it (ADR-138, #11), fields that say what they take (ADR-137), the
   player following its file (ADR-136), what changes files worked out
@@ -1399,6 +1399,34 @@ yet); `finishing::hand_on` drops a question waiting in the inbox of one
 of the user's windows that closes before its sync while only dialogs'
 windows remain.
 
+**From the review of 2026-11-21** (the last before 0.6.0: the dialogs'
+work and the fixes before it; what its fixes left):
+- The windows' bookkeeping has no test without a display: a request
+  closed while its window is being made, a notice clicked while a dialog
+  is in front, where what a window says goes; each is tested in its
+  parts and was tried on Xvfb. A gpui test harness in `crates/ui` would
+  hold them, and `finishing::deliver`'s routing (ADR-141's leftover).
+  `chooser.rs`'s `answer_dialog` still ends a window while it is being
+  made when its request was closed meanwhile (`finishing` copes; closing
+  it at its first sync would be cleaner).
+- A skwir the bus started passing a dialog to a running one, through a
+  real xdg-desktop-portal: only a private dbus-daemon was run.
+- Place titles stay one per program while each window of the user's own
+  keeps its own arrangement: the last window to sync writes them
+  (ADR-122). A skwir the bus started has its dialogs name places by
+  their owners' names until a window of the user's own opens (Skwir
+  Tabs, the trail's places that are not folders; the dialog's sidebar
+  keeps its arrangement's names).
+- Not tried in a window: two dialogs of one program following Recent
+  Folders, a file dropped on a dialog saving several.
+- History lists a retry under way at the entry it continues, even when
+  it will make an entry of its own (what is shown only; Undo is right).
+- Plasma's icon theme is read from the user's `kdeglobals` alone,
+  without the cascade and the locks its colors, fonts and recent switch
+  now follow (`desktop_settings::kconfig_value`); KConfig's `[$e]`
+  expansion is not read; GTK's data prefix is taken as `/usr`
+  (`/usr/share/gtk-3.0`).
+
 **Show in folder for other programs** (ADR-140, 2026-11-18): built on
 Linux and checked against a private dbus-daemon on Xvfb. Left: a real
 session's dbus-broker (its rules read in its source, not run: whether a
@@ -1409,12 +1437,14 @@ holding the name, seen to keep it until it ends (a test's holder, not
 Dolphin); the startup id on Wayland.
 
 **A dialog lists files its own way** (ADR-145, built 2026-11-21).
-Left: Skwir Tabs follows the user's tabs as the dialog draws again (a
-pointer move, coming back to it), not as the tabs change; a folder that
-remembers its order in a dialog, and the dialogs' Folders first, seen in
-a window only through the View menu's row (a core test covers the
-rest); the bus-started program's lighter start measured on a debug
-build on Xvfb, not on the user's session with its GPU.
+Left: Skwir Tabs, read again once the tabs or their names change (no
+longer at each frame), shows it as the dialog draws again (a pointer
+move, coming back to it): a change in the user's window does not wake
+the dialog's; a folder that remembers its order in a dialog, and the
+dialogs' Folders first, seen in a window only through the View menu's
+row (a core test covers the rest); the bus-started program's lighter
+start measured on a debug build on Xvfb, not on the user's session with
+its GPU.
 
 **A dialog's window offers what finds and chooses** (ADR-144, built
 2026-11-20): on Linux, each step checked in a window on Xvfb.
