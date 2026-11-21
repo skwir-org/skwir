@@ -2736,7 +2736,7 @@ impl Executor {
     /// waiting or running, once it ends, as [`Executor::undo_entry`] takes
     /// an entry. `None` when that window asked nothing Undo takes back.
     pub fn undo_in(self: &Arc<Self>, pane: PaneId, cancel: CancelToken) -> Option<PlanId> {
-        let seq = self.latest_asked_in(Some(pane))?;
+        let (seq, ..) = self.latest_asked_in(Some(pane))?;
         Some(self.undo_entry(seq, cancel))
     }
 
@@ -2755,32 +2755,55 @@ impl Executor {
         Some(self.redo_entry(seq, cancel))
     }
 
-    /// The place in the history of what `only`'s window (any, with none)
-    /// asked last that Undo takes back: a plan waiting or running, else an
-    /// entry of the undo stack.
-    fn latest_asked_in(&self, only: Option<PaneId>) -> Option<u64> {
-        let pending = {
-            let lane = self.lane.lock();
-            let queued = lane.queue.iter().filter_map(|job| match &job.work {
-                Work::Execute { .. } if asked_in(only, job.asking) => Some(job.seq),
-                _ => None,
-            });
-            let running = lane
-                .started
-                .iter()
-                .filter(|b| b.title.is_some() && asked_in(only, b.asking))
-                .map(|b| b.seq);
-            queued.chain(running).max()
+    /// What Undo takes back of what `only`'s window (any, with none) asked
+    /// last: the latest by its place in the history of a plan waiting or
+    /// running and an entry of the undo stack; its place, its title, and
+    /// whether it has not ended (Undo waits for it then). A retry's place
+    /// is the entry it joins as `run_execute` places it: the one it
+    /// continues, unless an entry was put after that one since; its own
+    /// otherwise.
+    fn latest_asked_in(&self, only: Option<PaneId>) -> Option<(u64, Words, bool)> {
+        let lane = self.lane.lock();
+        let journal = self.journal.lock();
+        let place = |seq: u64, joins: Option<u64>| match joins {
+            Some(first)
+                if !journal
+                    .undo
+                    .iter()
+                    .any(|e| e.stacked > first && e.stacked < seq) =>
+            {
+                first
+            }
+            _ => seq,
         };
-        let entry = self
-            .journal
-            .lock()
+        let queued = lane.queue.iter().filter_map(|job| match &job.work {
+            Work::Execute {
+                plan, continues, ..
+            } if asked_in(only, job.asking) => Some((
+                place(job.seq, continues.as_ref().map(|c| c.seq)),
+                plan.title.clone(),
+            )),
+            _ => None,
+        });
+        let running = lane
+            .started
+            .iter()
+            .filter(|b| !b.ended && asked_in(only, b.asking))
+            .filter_map(|b| Some((place(b.seq, b.joins), b.title.clone()?)));
+        let pending = queued.chain(running).max_by_key(|(at, _)| *at);
+        let entry = journal
             .undo
             .iter()
             .rev()
             .find(|e| !e.going && asked_in(only, e.asking))
-            .map(|e| e.seq);
-        pending.max(entry)
+            .map(|e| (e.stacked, e.title.clone()));
+        match (pending, entry) {
+            // A retry joining the entry it continues is that entry's.
+            (Some((at, title)), entry) if entry.as_ref().is_none_or(|(on, _)| at >= *on) => {
+                Some((at, title, true))
+            }
+            (_, entry) => entry.map(|(on, title)| (on, title, false)),
+        }
     }
 
     /// Redo the most recently undone plan when its turn comes (module
@@ -2853,37 +2876,8 @@ impl Executor {
     /// [`Executor::undo_target`] of what `only`'s window asked, when one is
     /// named (another program's dialog's, ADR-144, 1: `undo_in`).
     pub fn undo_target_of(&self, only: Option<PaneId>) -> Option<(Words, bool)> {
-        let lane = self.lane.lock();
-        let pending = lane
-            .queue
-            .iter()
-            .filter_map(|job| match &job.work {
-                Work::Execute { plan, .. } if asked_in(only, job.asking) => {
-                    Some((job.seq, plan.title.clone()))
-                }
-                _ => None,
-            })
-            .chain(
-                lane.started
-                    .iter()
-                    .filter(|b| asked_in(only, b.asking))
-                    .filter_map(|b| b.title.clone().map(|title| (b.seq, title))),
-            )
-            .max_by_key(|(seq, _)| *seq);
-        let entry = self
-            .journal
-            .lock()
-            .undo
-            .iter()
-            .rev()
-            .find(|e| !e.going && asked_in(only, e.asking))
-            .map(|e| (e.stacked, e.title.clone()));
-        match (pending, entry) {
-            (Some((seq, title)), entry) if entry.as_ref().is_none_or(|(at, _)| seq > *at) => {
-                Some((title, true))
-            }
-            (_, entry) => entry.map(|(_, title)| (title, false)),
-        }
+        self.latest_asked_in(only)
+            .map(|(_, title, pending)| (title, pending))
     }
 
     /// Titles of the undo stack, most recent last, but for one being
@@ -5627,6 +5621,59 @@ mod tests {
         server.said();
         executor.undo_blocking(&CancelToken::new()).unwrap();
         assert_eq!(server.said(), ["unmade /srv/b"]);
+    }
+
+    /// Another program's dialog's Undo asked while its Retry runs takes
+    /// back the whole action once the retry ends, as the user's Undo
+    /// does: the retry stands at the entry it joins, not at its own place
+    /// (ADR-144, 1).
+    #[test]
+    fn a_dialog_s_undo_while_its_retry_runs_takes_the_action_back_whole() {
+        let executor = Executor::new(Scheduler::new(2));
+        let dialog = PaneId(7);
+        let server = Server::new();
+        server.down.store(true, Ordering::SeqCst);
+        let mut plan = server.plan("paste", &["/srv/a", "/srv/b"], "/srv/b");
+        let held = Gate::new("/srv/c", false, false, &server.log);
+        plan.steps.push(Box::new(held.clone()));
+        let r = {
+            let _asking = crate::app::asking_in(Some(dialog));
+            executor.execute_blocking(&plan, &CancelToken::new())
+        };
+        assert_eq!(r.applied, 1, "{r:?}");
+        assert_eq!(executor.last_stopped_of(Some(dialog)), Some(plan.id));
+        server.down.store(false, Ordering::SeqCst);
+        {
+            let _asking = crate::app::asking_in(Some(dialog));
+            assert!(executor.retry(plan.id, CancelToken::new()));
+        }
+        assert!(logged(&server.log, "began /srv/c"), "the retry runs");
+        let target = executor.undo_target_of(Some(dialog));
+        assert_eq!(
+            target.map(|(title, pending)| (title.english(), pending)),
+            Some(("paste".to_owned(), true))
+        );
+        let undo = executor
+            .undo_in(dialog, CancelToken::new())
+            .expect("the dialog's action");
+        held.opened();
+        let seen = events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::Finished { plan, .. } if *plan == undo),
+        );
+        assert!(
+            matches!(
+                seen.last(),
+                Some(ExecEvent::Finished {
+                    applied: 3,
+                    error: None,
+                    ..
+                })
+            ),
+            "{seen:?}"
+        );
+        assert!(logged(&server.log, "unmade /srv/a"), "{:?}", server.said());
+        assert!(!executor.can_undo(), "{:?}", executor.undo_titles());
     }
 
     /// Wait until `log` says `line`, at most five seconds.

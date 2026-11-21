@@ -327,8 +327,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   plan asked now, checked whole; refused before it applies anything, it
   stays to be retried. What it applies joins the stopped plan's journal
   entry, its inverses first, unless an entry asked since sits after
-  that one: then it has its own. Cancel and a failed write-out are not
-  retried.
+  that one: then it has its own. Until it ends, Undo takes it at that
+  place (`Executor::undo_target_of`, `undo_in`), waiting for it. Cancel
+  and a failed write-out are not retried.
 - **Going on by itself (ADR-080, 9).** A plan stopped by a step that
   reaches a remote (its footprint's paths, `fs::reach`) notes the
   server's mount; that mount is asked whether it answers
