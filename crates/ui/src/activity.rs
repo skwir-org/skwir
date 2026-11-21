@@ -777,7 +777,9 @@ impl Shell {
             self.fold_activity(window, cx);
             return;
         }
-        self.open_by_hand();
+        if !self.open_by_hand() {
+            return;
+        }
         // Covered, it is open for when the window shows the files again,
         // and the keyboard stays where it is (`activity_shown`).
         if !pointer && !self.files_covered() {
@@ -789,24 +791,30 @@ impl Shell {
     }
 
     /// Activity open for what `opened` says, at its top, unless it is
-    /// open already: what it was opened for stays.
-    fn open_activity(&mut self, opened: Opened) {
+    /// open already: what it was opened for stays. Never where the window
+    /// does not run `ui.activity`, a dialog's (ADR-144, 2), whoever asks:
+    /// its strip says what runs. Whether it is open.
+    fn open_activity(&mut self, opened: Opened) -> bool {
+        if !self.runs_here("ui.activity", &serde_json::Value::Null) {
+            return false;
+        }
         if self.activity.open.is_none() {
             self.activity.reveal = Reveal::default();
             self.activity.open = Some(opened);
         }
+        true
     }
 
     /// Activity opened by hand: for the spell of work while something is
     /// under way, waits or stopped, going with it; else for what ended,
-    /// staying until folded.
-    fn open_by_hand(&mut self) {
+    /// staying until folded. Whether it is open (`open_activity`).
+    fn open_by_hand(&mut self) -> bool {
         let opened = if self.activity_holds(&self.under_way()) {
             Opened::Spell
         } else {
             Opened::Ended
         };
-        self.open_activity(opened);
+        self.open_activity(opened)
     }
 
     /// The keyboard on Activity's first button, once it is drawn: Activity
@@ -879,7 +887,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_by_hand();
+        if !self.open_by_hand() {
+            return;
+        }
         self.close_popup(window, cx);
         let shell = cx.weak_entity();
         once_drawn(window, move |window, cx| {

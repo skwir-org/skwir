@@ -1220,9 +1220,12 @@ fn watched(cx: &App) -> Watched {
 }
 
 /// What the desktop asked while windows are up: a notice or the presence
-/// clicked brings the active window forward, with the token the desktop
-/// gave where it gave one, and opens Activity there; its menu pauses, lets
-/// go on or stops what runs.
+/// clicked brings the front window of the user's own forward, with the
+/// token the desktop gave where it gave one, and opens Activity there,
+/// never in another program's dialog, which has none (ADR-144, 2): while
+/// dialogs' windows alone are up, the user's windows asleep come back for
+/// it, as with none up (`sync`). Its menu pauses, lets go on or stops what
+/// runs.
 fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
     let mut token = None;
     let mut shown = false;
@@ -1248,14 +1251,23 @@ fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
             }
         }
     }
-    if shown && let Some(window) = active_handle(cx) {
-        let _ = window.update(cx, |shell, window, cx| {
-            window.activate_window_with_token(token.as_deref());
-            if !shell.activity_open() {
-                shell.toggle_activity(&serde_json::json!({}), window, cx);
-            }
-        });
+    if !shown {
+        return;
     }
+    let Some(window) = ordinary_handle(cx) else {
+        let opening = Opening {
+            token,
+            ..Opening::default()
+        };
+        reopen(cx, Some(opening), true);
+        return;
+    };
+    let _ = window.update(cx, |shell, window, cx| {
+        window.activate_window_with_token(token.as_deref());
+        if !shell.activity_open() {
+            shell.toggle_activity(&serde_json::json!({}), window, cx);
+        }
+    });
 }
 
 /// When the windows were recorded last (`record_windows`).

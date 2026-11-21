@@ -1374,7 +1374,9 @@ asks the direction.
   does not have the focus (`Shell::window_active`), is a notification,
   one at a time, replacing the last, withdrawn once the window has the
   focus or a waiting one goes on; a click brings the window forward and
-  opens Activity. A cancelled one tells nothing, and nothing is undone
+  opens Activity: the front window of the user's own, never another
+  program's dialog, the user's windows coming back for it while dialogs'
+  windows alone are up (`finishing::answer_desktop`). A cancelled one tells nothing, and nothing is undone
   from a notification. While something runs, the taskbar's entry shows
   how far, and the machine is kept awake unless all of it is paused
   (`ui.notify_desktop`, `ui.keep_awake`). Every call to the desktop
@@ -2297,8 +2299,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   and Retry take back what it did alone (`App::dialog_asking`,
   `Executor::undo_in`; the footer's Undo and More's rows say those,
   `Shell::actions_here`, and no History beside them), views are offered
-  but a lens (`ui.view`'s rule), Activity does not open there, by itself
-  or from the strip and the rows arriving, nothing is pinned to the
+  but a lens (`ui.view`'s rule), Activity does not open there, by itself,
+  from the strip and the rows arriving or from a notice of the desktop's
+  (`Shell::open_activity` refuses where `ui.activity` is not run), nothing is pinned to the
   player, and it offers no place whose files are not to give
   (`App::gives_files`: the Trash) wherever places are offered (the
   sidebar, its Places heading's menu, the address field's places:
