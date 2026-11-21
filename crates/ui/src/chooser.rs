@@ -1014,10 +1014,10 @@ impl Shell {
     /// or another program (ADR-144, 10): gone to, never copied or moved,
     /// nor answered. Opening, the first's folder is shown and what of them
     /// is in it selected (the first alone where the request takes one);
-    /// saving, a folder dropped is gone into, a file's folder shown and
-    /// its name taken. Whether the window took the drop: any, in a
-    /// dialog's. Whether the first is a folder is read on a worker, in its
-    /// lane.
+    /// saving one file or several, a folder dropped is gone into, a file's
+    /// folder shown and, saving one, its name taken. Whether the window
+    /// took the drop: any, in a dialog's. Whether the first is a folder is
+    /// read on a worker, in its lane.
     pub(crate) fn dialog_takes_drop(
         &mut self,
         paths: &[PathBuf],
@@ -1058,7 +1058,12 @@ impl Shell {
         let Some(first) = paths.first() else {
             return;
         };
-        let saving = matches!(chooser.asked().kind, Kind::Save { .. });
+        // Saving one file or several, a folder dropped is gone into; a
+        // file's name is taken where one is typed.
+        let saving = matches!(
+            chooser.asked().kind,
+            Kind::Save { .. } | Kind::SaveFiles { .. }
+        );
         let several = matches!(chooser.asked().kind, Kind::Open { multiple: true, .. });
         let field = chooser.name.clone();
         if saving && first_is_folder {
