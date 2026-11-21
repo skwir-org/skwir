@@ -313,7 +313,10 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   plugin is titled Search, and a command nobody declared shows its name as
   written (`gone.open`, not "Gone open").
 - **Smaller fixes**: a folder's tab draws the theme's folder icon, as the
-  views do, where only the sidebar's places did; a notice's buttons go under
+  views do, where only the sidebar's places did; two folders' places of one
+  sidebar group shown under one name (two bookmarks named `src`) say after
+  it the first folder above that tells them apart (`skwir/…`), and a
+  folder's place shows its path when pointed at; a notice's buttons go under
   its words where both do not fit beside each other; a setting's dropdown
   leaves its description the room the buttons left, where the description
   wrapped in a third of the row; Tab reaches a toast's buttons (Undo, Show,
@@ -323,13 +326,14 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   what the window had kept unchanged (its tabs, its hints): it is written
   again whole; a tile server that gives no tile says why in words (no
   connection, refused, a certificate refused), where the network
-  library's English was shown; a message an action gives, with its Undo,
-  appears in the window the action was done in, not whichever window is
-  in front; Escape closes a question, a prompt or a form while one of its
-  buttons has the keyboard, even while changes are being worked out,
+  library's English was shown; a message an action gives, with its Undo, and
+  a question it asks (a password or a passphrase, the names a paste found
+  taken, a form) appear in the window the action was done in, not whichever
+  window is in front; Escape closes a question, a prompt or a form while one
+  of its buttons has the keyboard, even while changes are being worked out,
   which it cancelled instead; on Plasma, colors and fonts an administrator
-  locks in the system's `kdeglobals` (KDE's Kiosk, `[$i]`) win over
-  yours, as in Plasma's own applications.
+  locks in the system's `kdeglobals` (KDE's Kiosk, `[$i]`) win over yours, as
+  in Plasma's own applications.
 - **For packagers**: the Linux packages install
   `share/xdg-desktop-portal/portals/skwir.portal` and
   `share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service`
