@@ -814,18 +814,37 @@ pub(crate) fn take_carried(
 /// The windows follow the core's (ADR-122): one it made (`window.new`, a
 /// tab moved out, a window reopened) opens; one it closed (`window.close`,
 /// its last tab closed) goes; one a command made active comes forward.
+/// A window gpui no longer has is no window up, however it went: taken out
+/// as one that left (`left`), so that nothing names it the front window,
+/// hands it what the core sent, or counts it as one of the user's own.
 fn follow_windows(cx: &mut App) {
+    let alive: HashSet<gpui::WindowId> = cx
+        .windows()
+        .iter()
+        .map(gpui::AnyWindowHandle::window_id)
+        .collect();
+    let dead: Vec<WindowId> = cx
+        .global::<Finishing>()
+        .windows
+        .iter()
+        .filter(|(_, handle)| !alive.contains(&handle.window_id()))
+        .map(|(id, _)| *id)
+        .collect();
+    for id in dead {
+        tracing::debug!("a window went without leaving");
+        left(cx, id);
+    }
     let state = cx.global::<Finishing>();
     let (core, active) = {
         let ws = state.app.workspace.read();
         let ids: Vec<WindowId> = ws.windows().iter().map(|w| w.id).collect();
         (ids, ws.active_window_id())
     };
-    let gone: Vec<WindowHandle<Shell>> = state
+    let gone: Vec<(WindowId, WindowHandle<Shell>)> = state
         .windows
         .iter()
         .filter(|(id, _)| !core.contains(id))
-        .map(|(_, handle)| *handle)
+        .copied()
         .collect();
     // What sleeps while dialogs' windows alone are up stays asleep.
     let new: Vec<WindowId> = core
@@ -833,11 +852,14 @@ fn follow_windows(cx: &mut App) {
         .copied()
         .filter(|id| !state.windows.iter().any(|(up, _)| up == id) && !state.asleep.contains(id))
         .collect();
-    for window in gone {
+    for (id, window) in gone {
         let _ = window.update(cx, |shell, window, cx| {
             shell.leave(window, cx);
             window.remove_window();
         });
+        // Out of the windows up whatever the update did: one that left
+        // already leaves nothing more (`Shell::leave`).
+        left(cx, id);
     }
     for id in new {
         open_window(cx, id, false, None, false, None);
@@ -2337,7 +2359,6 @@ fn open_window(
         "window opened"
     );
     let state = cx.global_mut::<Finishing>();
-    state.windows.push((id, window));
     state.opened = state.opened.max(if choosing.is_some() {
         Opened::Dialogs
     } else {
@@ -2346,6 +2367,16 @@ fn open_window(
     // A request that came as the program ended unasked opened this: it
     // was asked after all.
     ENDED_UNASKED.store(false, Ordering::Release);
+    // Gone as it was made: another program closed its dialog meanwhile,
+    // which the window answers as it is made (`Shell::answer_dialog`), its
+    // core window going with it. It left before it was up: never one of the
+    // windows up, and gpui lets go of it now.
+    if state.app.workspace.read().window(id).is_none() {
+        tracing::debug!("a window went as it was made");
+        let _ = window.update(cx, |_, window, _| window.remove_window());
+        return true;
+    }
+    state.windows.push((id, window));
     if state.shown.take().is_some() {
         state.work.borrow().present(None);
     }

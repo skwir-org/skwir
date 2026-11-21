@@ -2132,7 +2132,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - **What names no window goes to one that is up** (`finishing::front_of`:
   the core's active window while it is up, else the one opened last). A
   window that cannot open (`open_window`) is taken out of the core, so no
-  ghost stays active.
+  ghost stays active; one that went as it was made (a dialog its program
+  closed meanwhile) is never among the windows up, and one gpui no longer
+  has is taken out of them as one that left (`follow_windows`), so none
+  counts as one of the user's own nor takes what names no window.
 - **Opening and closing.** Ctrl+N (`window.new`) opens a window on the
   folder shown, shaped as its window (unsplit); Open in New Window on a
   folder (`window.open`) or a sidebar place (`sidebar::open_in_window`),
