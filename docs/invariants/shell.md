@@ -2248,7 +2248,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`Takers::passing`): the hand-over's wait for its request is the
   program's, and it ends once each request it passed on is answered,
   the user choosing there; its own wait (`ASKED_WITHIN`) starts only
-  once it holds launches. What a script asks of it meanwhile starts no
+  once it holds launches. The thread taking over lets go of `passing`
+  as it ends, however it ends (`finishing::PassingOn`, a panic
+  included), its wait started unless the hand-over's was: a program the
+  bus started always ends. What a script asks of it meanwhile starts no
   window system: it waits for a window of the user's own, which only a
   request opens, and Quit ends the program there, once nothing is
   passed on. Nothing here names another program's service, nor takes a

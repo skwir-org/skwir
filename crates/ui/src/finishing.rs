@@ -400,14 +400,20 @@ pub(crate) fn start(
     }
 }
 
-/// Started without a window and holding launches: once `ASKED_WITHIN` has
-/// passed, the program ends at the next wake unless a request came
-/// (`wait_asked`, `woken`). Started by `take_over` once it took them.
-fn end_unless_asked(over: Arc<AtomicBool>, wake: skwir_core::location::Waker) {
+/// Started without a window and holding launches: once `within`
+/// (`ASKED_WITHIN`) has passed, the program ends at the next wake unless a
+/// request came (`wait_asked`, `woken`). Started as `take_over`'s thread
+/// ends, however it ends (`PassingOn`), unless the program waited for its
+/// request as it passed it on.
+fn end_unless_asked(
+    over: Arc<AtomicBool>,
+    within: std::time::Duration,
+    wake: skwir_core::location::Waker,
+) {
     let started = std::thread::Builder::new()
         .name("skwir-asked-within".into())
         .spawn(move || {
-            std::thread::sleep(ASKED_WITHIN);
+            std::thread::sleep(within);
             over.store(true, Ordering::Release);
             wake();
         });
@@ -1606,6 +1612,102 @@ fn take_over(
     launch: Option<Opening>,
     windowless: Option<Windowless>,
 ) {
+    take_over_by(app, state, launch, windowless, Bus);
+}
+
+/// The bus's side of taking launches and requests over (`take_over_by`):
+/// the system's (`Bus`), or a test's stand-in.
+trait Handing: Send + 'static {
+    /// Take later launches and other programs' dialogs over
+    /// (`handover::take_over_choosing`).
+    fn take(
+        &self,
+        taken: impl Fn(Opening) + Send + Sync + 'static,
+        chose: impl Fn(skwir_platform::chooser::Choosing) + Send + Sync + 'static,
+    ) -> Result<TakingOver, NotTaken>;
+
+    /// Pass what this program was started for on to the Skwir that holds
+    /// launches (`launch`, or the request the bus started it for, which it
+    /// waits `within` for), until it is answered there: whether it was
+    /// taken.
+    fn pass_on(
+        &self,
+        launch: Option<Opening>,
+        windowless: Option<Windowless>,
+        within: std::time::Duration,
+    ) -> bool;
+
+    /// How long a program started without a window waits to be asked.
+    fn asked_within(&self) -> std::time::Duration {
+        ASKED_WITHIN
+    }
+}
+
+/// The system's bus (`skwir_platform::handover`).
+struct Bus;
+
+impl Handing for Bus {
+    fn take(
+        &self,
+        taken: impl Fn(Opening) + Send + Sync + 'static,
+        chose: impl Fn(skwir_platform::chooser::Choosing) + Send + Sync + 'static,
+    ) -> Result<TakingOver, NotTaken> {
+        skwir_platform::handover::take_over_choosing(taken, chose)
+    }
+
+    fn pass_on(
+        &self,
+        launch: Option<Opening>,
+        windowless: Option<Windowless>,
+        within: std::time::Duration,
+    ) -> bool {
+        match (launch, windowless) {
+            (Some(launch), _) => skwir_platform::handover::hand_over_to_holder(&launch),
+            (None, Some(Windowless::FileManager)) => {
+                skwir_platform::handover::answer_for_holder(within)
+            }
+            (None, Some(Windowless::Portal)) => {
+                skwir_platform::handover::answer_chooser_for_holder(within)
+            }
+            (None, None) => false,
+        }
+    }
+}
+
+/// A program started without a window, its taking over under way
+/// (`Takers::passing`): held by the thread that takes launches over and
+/// let go as that thread ends, however it ends, a panic included. Then the
+/// program may end: at once where it passed its request on (or found none
+/// to pass on, `waited`), else once `within` passed with nothing asked
+/// (`end_unless_asked`). Never a program that waits for good.
+struct PassingOn {
+    passing: Arc<AtomicBool>,
+    over: Arc<AtomicBool>,
+    within: std::time::Duration,
+    /// The program waited for its request as it passed it on: that wait
+    /// was its own.
+    waited: bool,
+    wake: skwir_core::location::Waker,
+}
+
+impl Drop for PassingOn {
+    fn drop(&mut self) {
+        if !self.waited {
+            end_unless_asked(Arc::clone(&self.over), self.within, self.wake.clone());
+        }
+        self.passing.store(false, Ordering::Release);
+        (self.wake)();
+    }
+}
+
+/// `take_over`, through `bus`.
+fn take_over_by(
+    app: &Arc<skwir_core::App>,
+    state: &Takers,
+    launch: Option<Opening>,
+    windowless: Option<Windowless>,
+    bus: impl Handing,
+) {
     let round = state.round.fetch_add(1, Ordering::AcqRel) + 1;
     let (openings, wake) = (Arc::clone(&state.openings), app.waker_handle());
     let (choosings, wake_chose) = (Arc::clone(&state.choosings), wake.clone());
@@ -1615,7 +1717,7 @@ fn take_over(
     let following = Arc::clone(&state.following);
     let over = state.windowless.clone().filter(|_| windowless.is_some());
     // Started without a window, the program waits for this: whatever it
-    // finds, until it has passed on what it was started for.
+    // finds, until it has passed on what it was started for (`PassingOn`).
     let passing = Arc::clone(&state.passing);
     let wake_passed = wake.clone();
     if over.is_some() {
@@ -1624,7 +1726,15 @@ fn take_over(
     let started = std::thread::Builder::new()
         .name("skwir-take-over".into())
         .spawn(move || {
-            let taken = skwir_platform::handover::take_over_choosing(
+            // Let go last, as the thread ends, however it does.
+            let mut passed = over.clone().map(|over| PassingOn {
+                passing,
+                over,
+                within: bus.asked_within(),
+                waited: false,
+                wake: wake_passed,
+            });
+            let taken = bus.take(
                 move |opening| {
                     openings.lock().push(opening);
                     wake();
@@ -1638,27 +1748,20 @@ fn take_over(
                     asking.read_then(Arc::clone(&reads), move || wake());
                 },
             );
-            let elsewhere = matches!(taken, Err(NotTaken::Elsewhere));
-            if elsewhere {
+            if matches!(taken, Err(NotTaken::Elsewhere)) {
                 // Started without a window, what is passed on waits here for
-                // its request, `ASKED_WITHIN` at most, then until each one
+                // its request, `asked_within` at most, then until each one
                 // passed on is answered: that is the program's wait.
-                let handed = match (launch, windowless) {
-                    (Some(launch), _) => skwir_platform::handover::hand_over_to_holder(&launch),
-                    (None, Some(Windowless::FileManager)) => {
-                        skwir_platform::handover::answer_for_holder(ASKED_WITHIN)
-                    }
-                    (None, Some(Windowless::Portal)) => {
-                        skwir_platform::handover::answer_chooser_for_holder(ASKED_WITHIN)
-                    }
-                    (None, None) => false,
-                };
+                let handed = bus.pass_on(launch, windowless, bus.asked_within());
                 if handed {
                     handed_away.store(true, Ordering::Release);
                     wake_handed();
                 } else if let Some(over) = &over {
                     // Nothing came to pass on: asked nothing.
                     over.store(true, Ordering::Release);
+                }
+                if let Some(passed) = &mut passed {
+                    passed.waited = true;
                 }
             }
             // Followed while launches are taken over, by the program that
@@ -1682,15 +1785,9 @@ fn take_over(
                     *following.lock() = followed.map(|(_, following)| following);
                 }
             }
-            if let Some(over) = over {
-                // Holding launches (or unable to), it waits for what it is
-                // asked; one that passed its request on has waited for it.
-                if !elsewhere {
-                    end_unless_asked(over, Arc::clone(&wake_passed));
-                }
-                passing.store(false, Ordering::Release);
-                wake_passed();
-            }
+            // Holding launches (or unable to), it waits for what it is
+            // asked; one that passed its request on has waited for it.
+            drop(passed);
         });
     if let Err(error) = started {
         tracing::debug!("later launches start a Skwir of their own: {error}");
@@ -2679,9 +2776,9 @@ mod tests {
         assert!(wait_written(Duration::ZERO));
     }
 
-    /// A program started without a window never ends while it passes a
-    /// request on to the Skwir that holds launches, whatever its wait says:
-    /// the request would go with it.
+    /// What says a program started without a window is over: never while
+    /// it passes a request on (`passing`), whatever its wait says. What
+    /// sets the two, `a_program_passing_a_request_on_ends_once_it_is_passed`.
     #[test]
     fn a_program_passing_a_request_on_is_not_over() {
         use std::sync::atomic::Ordering;
@@ -2697,6 +2794,104 @@ mod tests {
         takers.passing.store(false, Ordering::Release);
         assert!(takers.over());
         assert!(!super::Takers::new(std::sync::Arc::default(), false).over());
+    }
+
+    /// The bus as a skwir it started finds it while another Skwir holds
+    /// launches: what it passes on there waits for the test's answer (a
+    /// sender dropped: a panic as it is passed on).
+    struct Relay {
+        asked: flume::Sender<()>,
+        answer: flume::Receiver<bool>,
+    }
+
+    impl super::Handing for Relay {
+        fn take(
+            &self,
+            _: impl Fn(skwir_platform::handover::Opening) + Send + Sync + 'static,
+            _: impl Fn(skwir_platform::chooser::Choosing) + Send + Sync + 'static,
+        ) -> Result<skwir_platform::handover::TakingOver, skwir_platform::handover::NotTaken>
+        {
+            Err(skwir_platform::handover::NotTaken::Elsewhere)
+        }
+
+        fn pass_on(
+            &self,
+            _: Option<skwir_platform::handover::Opening>,
+            _: Option<super::Windowless>,
+            _: Duration,
+        ) -> bool {
+            self.asked.send(()).unwrap();
+            self.answer
+                .recv()
+                .expect("passing the request on fails (the test's stand-in)")
+        }
+
+        fn asked_within(&self) -> Duration {
+            Duration::from_millis(20)
+        }
+    }
+
+    /// A program the bus started without a window, passing its request on
+    /// to the Skwir that holds launches (RC-1), is never ended by its own
+    /// wait while the request waits there: it ends once the request was
+    /// taken there (`handed_away`), at once where none came to pass on,
+    /// and after its wait where passing it on failed (a panic on that
+    /// thread, FN-1): never a program that waits for good.
+    #[test]
+    fn a_program_passing_a_request_on_ends_once_it_is_passed() {
+        use std::sync::atomic::Ordering;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = std::sync::Arc::new(
+            skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap(),
+        );
+        let until = |what: &dyn Fn() -> bool, said: &str| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !what() {
+                assert!(std::time::Instant::now() < deadline, "{said}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        for answer in [Some(true), Some(false), None] {
+            let takers = super::Takers::new(std::sync::Arc::default(), true);
+            let (asked, asking) = flume::bounded(1);
+            let (answering, answered) = flume::bounded(1);
+            super::take_over_by(
+                &app,
+                &takers,
+                None,
+                Some(super::Windowless::Portal),
+                Relay {
+                    asked,
+                    answer: answered,
+                },
+            );
+            let passing = || takers.passing.load(Ordering::Acquire);
+            assert!(passing(), "from the start");
+            asking.recv_timeout(Duration::from_secs(10)).unwrap();
+            // Ten times its own wait, the request still waiting there: no
+            // wait of its own runs.
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(passing() && !takers.over(), "{answer:?}: passing it on");
+            match answer {
+                Some(taken) => answering.send(taken).unwrap(),
+                None => drop(answering),
+            }
+            until(&|| !passing(), "let go of");
+            let handed = takers.handed_away.load(Ordering::Acquire);
+            match answer {
+                Some(true) => {
+                    assert!(handed);
+                    // What ends it is its request taken there, no wait.
+                    std::thread::sleep(Duration::from_millis(100));
+                    assert!(!takers.over());
+                }
+                Some(false) => assert!(!handed && takers.over(), "none came: over at once"),
+                None => {
+                    assert!(!handed);
+                    until(&|| takers.over(), "over after its wait");
+                }
+            }
+        }
     }
 
     /// The tags are an interface people's window rules name (ADR-141, 9):
