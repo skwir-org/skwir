@@ -1864,7 +1864,7 @@ op_no_longer_there = { $name }已不在该处
 op_no_record = { $name }不是回收站中某个项目的记录
 
 # draft
-op_no_room = { $folder } 中空间不足：需要 { $needs }，可用 { $free }
+op_no_room = { $folder }中空间不足：需要 { $needs }，可用 { $free }
 
 # draft
 op_no_trash_s = { $name }未指向回收站中的任何项目
@@ -1894,19 +1894,19 @@ op_not_empty = { $name }不是空的
 op_not_in_trash = { $name }不在回收站中
 
 # draft
-op_not_linked = 无法在 { $folder } 中创建指向{ $name }的链接
+op_not_linked = 无法在{ $folder }中创建指向{ $name }的链接
 
 # draft
 op_not_made = 无法创建{ $name }
 
 # draft
-op_not_moved = 无法将{ $name }移动到 { $folder }
+op_not_moved = 无法将{ $name }移动到{ $folder }
 
 # draft
-op_not_moved_as = 无法将{ $name }移动到 { $folder } 并命名为{ $new }
+op_not_moved_as = 无法将{ $name }移动到{ $folder }并命名为{ $new }
 
 # draft
-op_not_placed = 无法将{ $name }放入 { $folder }
+op_not_placed = 无法将{ $name }放入{ $folder }
 
 # draft
 op_not_removed = 无法移除{ $name }
@@ -2713,8 +2713,8 @@ settings_unreadable_kept = { $file ->
 
 # draft
 settings_unreadable_set_aside = { $file ->
-        [data] 无法读取您已保存的搜索、固定的标签和标签颜色（{ $why }），因此 Skwir 启动时未加载它们。该文件已被重命名为 { $aside } 并保留。
-       *[settings] 无法读取您的设置（{ $why }），因此 Skwir 以默认设置启动。该文件已被重命名为 { $aside } 并保留。
+        [data] 无法读取您已保存的搜索、固定的标签和标签颜色（{ $why }），因此 Skwir 启动时未加载它们。该文件已被重命名为{ $aside }并保留。
+       *[settings] 无法读取您的设置（{ $why }），因此 Skwir 以默认设置启动。该文件已被重命名为{ $aside }并保留。
     }
 
 # draft

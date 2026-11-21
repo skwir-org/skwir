@@ -744,7 +744,7 @@ chooser_folder_forgotten = 已从最近的文件夹中移除{ $folder }
 chooser_folder_put_back = 已将{ $folder }放回最近的文件夹
 
 # draft
-chooser_folder_taken = { $folder } 中已有名为 { $name } 的文件夹：请选择另一个文件夹来保存
+chooser_folder_taken = { $folder } 中已有名为{ $name }的文件夹：请选择另一个文件夹来保存
 
 # draft
 chooser_folders_cleared = 已清除最近的文件夹
@@ -804,7 +804,7 @@ clashes_folders_for_all = 所有文件夹
 clashes_folders_onto_folders_for_all = 所有遇同名文件夹的文件夹
 
 # draft
-clashes_for_good = { $folder } 位于网络文件夹中，该处没有回收站：在那里被替换的内容将被永久删除。
+clashes_for_good = { $folder }位于网络文件夹中，该处没有回收站：在那里被替换的内容将被永久删除。
 
 # draft
 clashes_keep_both = 保留两者
@@ -873,7 +873,7 @@ clashes_sides_yours_newer = 您的：{ $yours } · 较新 — 现有的：{ $the
 clashes_skip = 跳过
 
 # draft
-clashes_title = { $count } 个名称在 { $folder } 中已被占用
+clashes_title = { $count } 个名称在{ $folder }中已被占用
 
 # draft
 clipboard_all_gone = 复制的项目已不存在

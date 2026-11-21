@@ -5,10 +5,10 @@ print_alone = 每个 PDF 以其文件命名，保存在此文件夹中
 
 # draft
 print_already_saved = { $what ->
-        [file] { $name }已作为{ $pdf }保存在 { $folder } 中
-        [files] { $name }及另外 { $more } 个文件已作为{ $pdf }保存在 { $folder } 中
-        [sheet] 包含 { $count } 个文件的联系表已作为{ $pdf }保存在 { $folder } 中
-       *[listing] { $name }的列表已作为{ $pdf }保存在 { $folder } 中
+        [file] { $name }已作为{ $pdf }保存在{ $folder }中
+        [files] { $name }及另外 { $more } 个文件已作为{ $pdf }保存在{ $folder }中
+        [sheet] 包含 { $count } 个文件的联系表已作为{ $pdf }保存在{ $folder }中
+       *[listing] { $name }的列表已作为{ $pdf }保存在{ $folder }中
     }
 
 # draft
@@ -150,7 +150,7 @@ print_handed = 已将{ $what ->
     }，但它未确认已接收
 
 # draft
-print_in_folder = 在 { $folder } 中
+print_in_folder = 在{ $folder }中
 
 # draft
 print_in_folder_listed = 在所列出的文件夹中
@@ -237,7 +237,7 @@ print_not_pictures = { $count ->
     }
 
 # draft
-print_not_placed = 无法将{ $name }放入 { $folder }
+print_not_placed = 无法将{ $name }放入{ $folder }
 
 # draft
 print_not_printed = { $what ->
@@ -399,10 +399,10 @@ print_save_sheet = 将包含 { $count } 个文件的联系表保存为 PDF
 
 # draft
 print_save_step = { $what ->
-        [file] 将{ $name }作为{ $pdf }保存到 { $folder }
-        [files] 将{ $name }及另外 { $more } 个文件作为{ $pdf }保存到 { $folder }
-        [sheet] 将包含 { $count } 个文件的联系表作为{ $pdf }保存到 { $folder }
-       *[listing] 将{ $name }的列表作为{ $pdf }保存到 { $folder }
+        [file] 将{ $name }作为{ $pdf }保存到{ $folder }
+        [files] 将{ $name }及另外 { $more } 个文件作为{ $pdf }保存到{ $folder }
+        [sheet] 将包含 { $count } 个文件的联系表作为{ $pdf }保存到{ $folder }
+       *[listing] 将{ $name }的列表作为{ $pdf }保存到{ $folder }
     }
 
 # draft
@@ -416,10 +416,10 @@ print_save_verb = 另存为 PDF
 
 # draft
 print_saved_step = { $what ->
-        [file] 已将{ $name }作为{ $pdf }保存到 { $folder }
-        [files] 已将{ $name }及另外 { $more } 个文件作为{ $pdf }保存到 { $folder }
-        [sheet] 已将包含 { $count } 个文件的联系表作为{ $pdf }保存到 { $folder }
-       *[listing] 已将{ $name }的列表作为{ $pdf }保存到 { $folder }
+        [file] 已将{ $name }作为{ $pdf }保存到{ $folder }
+        [files] 已将{ $name }及另外 { $more } 个文件作为{ $pdf }保存到{ $folder }
+        [sheet] 已将包含 { $count } 个文件的联系表作为{ $pdf }保存到{ $folder }
+       *[listing] 已将{ $name }的列表作为{ $pdf }保存到{ $folder }
     }
 
 # draft
