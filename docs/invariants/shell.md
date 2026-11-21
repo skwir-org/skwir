@@ -482,7 +482,9 @@ draws none, Compact; below).
   the sidebar's name (`sidebar::roots`, re-read only when places change;
   `address::crumbs`): `Papers › 2026`, `stick › Photos`, else Home. With
   `ui.full_path`, every trail starts at `/` under real names.
-- Tabs and history use the sidebar's name (`App::location_title`);
+- Tabs and history use the sidebar's name (`App::location_title`: the
+  names the user gave places in their own windows, which a dialog's
+  window never writes, its arrangement being the dialogs', ADR-144, 4);
   listings, toasts and Properties use the folder's own. Up goes to the real
   parent; Ctrl+L edits the real path. Whatever goes up (Up, a place of the
   trail, of the sidebar or of the columns view, a path typed), the way

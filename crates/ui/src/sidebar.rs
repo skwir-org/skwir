@@ -798,19 +798,25 @@ impl Shell {
             return;
         }
         // The names the user gave places, for everything that names a
-        // location (`App::location_title`).
-        let titles = self
-            .sidebar_sections
-            .places
-            .iter()
-            .flat_map(|(group, arrangement)| {
-                arrangement
-                    .titles
-                    .iter()
-                    .map(move |(key, title)| ((group.clone(), key.clone()), title.clone()))
-            })
-            .collect();
-        self.app.registry.set_place_titles(titles);
+        // location (`App::location_title`): their own windows', which every
+        // window shares. A dialog's arrangement is the dialogs' (ADR-144,
+        // 4), and taken from the user's at the first: written there, it
+        // would give back names the user changed since, and a dialog's
+        // Skwir Tabs name the tabs as the user's windows do.
+        if self.chooser.is_none() {
+            let titles = self
+                .sidebar_sections
+                .places
+                .iter()
+                .flat_map(|(group, arrangement)| {
+                    arrangement
+                        .titles
+                        .iter()
+                        .map(move |(key, title)| ((group.clone(), key.clone()), title.clone()))
+                })
+                .collect();
+            self.app.registry.set_place_titles(titles);
+        }
         let home = skwir_core::os_path::home();
         self.roots = Roots {
             roots: if full {
