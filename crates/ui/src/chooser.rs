@@ -287,21 +287,34 @@ impl Asking {
     }
 
     /// What is gone, read on a thread of its own (`gone_of`, half a second
-    /// at most), then `done`.
+    /// at most), then `done`; where no thread could be started, none is
+    /// gone, and `done` at once.
     pub(crate) fn read_then(
         &self,
         app: std::sync::Arc<skwir_core::App>,
         done: impl FnOnce() + Send + 'static,
     ) {
+        type Done = Box<dyn FnOnce() + Send>;
+        // Called once, by the thread or, where it never started, here.
+        let done: std::sync::Arc<parking_lot::Mutex<Option<Done>>> =
+            std::sync::Arc::new(parking_lot::Mutex::new(Some(Box::new(done))));
         let (gone, program) = (self.gone.clone(), self.choosing.asked().app_id.clone());
+        let then = std::sync::Arc::clone(&done);
         let started = std::thread::Builder::new()
             .name("skwir-chosen-folders".into())
             .spawn(move || {
                 let _ = gone.set(gone_of(&app, &program));
-                done();
+                let done = then.lock().take();
+                if let Some(done) = done {
+                    done();
+                }
             });
         if started.is_err() {
             let _ = self.gone.set(HashSet::new());
+            let done = done.lock().take();
+            if let Some(done) = done {
+                done();
+            }
         }
     }
 
@@ -323,10 +336,16 @@ fn gone_of(app: &skwir_core::App, program: &str) -> HashSet<PathBuf> {
         .get::<toml::Table>(FOLDERS_KEY)
         .map(|kept| folders_of(&kept, program))
         .unwrap_or_default();
+    gone_among(kept, |folder| skwir_core::fs::reach::of(folder).is_some())
+}
+
+/// Which of `folders` are not there (`gone_of`), those `on_server` takes
+/// for a server's never asked.
+fn gone_among(folders: Vec<PathBuf>, on_server: impl Fn(&Path) -> bool) -> HashSet<PathBuf> {
     let (sent, answers) = flume::unbounded();
     let mut asked = 0;
-    for folder in kept {
-        if skwir_core::fs::reach::of(&folder).is_some() {
+    for folder in folders {
+        if on_server(&folder) {
             continue;
         }
         let sent = sent.clone();
@@ -2274,7 +2293,13 @@ mod tests {
         );
         app.settings.set(FOLDERS_KEY, toml::Value::Table(kept));
         let found = gone_of(&app, "org.example.App");
-        assert_eq!(found, HashSet::from([gone]));
+        assert_eq!(found, HashSet::from([gone.clone()]));
+        // A server's folder, there or not, is never asked: never gone.
+        let server = tmp.path().join("server");
+        let away = gone_among(vec![server.join("away"), gone.clone()], |folder| {
+            folder.starts_with(&server)
+        });
+        assert_eq!(away, HashSet::from([gone]));
         let asked = Asked {
             app_id: "org.example.App".into(),
             parent_window: String::new(),
