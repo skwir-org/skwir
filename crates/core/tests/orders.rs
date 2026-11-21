@@ -410,3 +410,46 @@ fn a_dialog_lists_files_its_own_way() {
     );
     assert!(!ws.pane(own).unwrap().keeps_order());
 }
+
+/// A folder a dialog remembers, moved by another program while a pane
+/// shows it, takes along what the dialogs remember of it (ADR-145, 2),
+/// though no place remembers an order in the user's windows; a new folder
+/// at its old name remembers nothing.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_folder_moved_elsewhere_takes_along_what_the_dialogs_remember() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let sorted = dir.path().join("it's sorted");
+    let app = app(dir.path());
+    let (_, _, dialog) = app
+        .open_dialog_window(Location::from_path(&sorted))
+        .unwrap();
+    assert!(app.pump_until_complete(dialog, Duration::from_secs(10)));
+    run(
+        &app,
+        "remember_order",
+        serde_json::json!({ "pane": dialog }),
+    );
+    run(
+        &app,
+        "sort",
+        serde_json::json!({ "key": "size", "pane": dialog }),
+    );
+    assert!(app.workspace.read().orders(false).is_empty());
+
+    let moved = dir.path().join("it’s moved, été");
+    std::fs::rename(&sorted, &moved).unwrap();
+    std::fs::create_dir(&sorted).unwrap();
+    let at = Location::from_path(&moved);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while app.workspace.read().pane(dialog).unwrap().location() != Some(&at) {
+        assert!(std::time::Instant::now() < deadline, "never shown moved");
+        app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let ws = app.workspace.read();
+    let dialogs = ws.orders(true);
+    assert_eq!(dialogs.of(&at).map(|o| o.key), Some(SortKey::Size));
+    assert_eq!(dialogs.of(&Location::from_path(&sorted)), None);
+}

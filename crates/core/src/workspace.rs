@@ -6707,8 +6707,9 @@ impl Workspace {
         let mut r = PumpReport::default();
         // A folder shown that moved, whatever moved it, takes along what it
         // and the folders it holds remember (ADR-132): looked for only
-        // while any place remembers an order.
-        let remembers = !self.orders.is_empty();
+        // while any place remembers an order, in the user's windows or the
+        // dialogs' (ADR-145, 2).
+        let remembers = !self.orders.is_empty() || !self.dialog_orders.is_empty();
         let mut moved = Vec::new();
         for p in &mut self.panes {
             let before = if remembers {
