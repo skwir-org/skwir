@@ -2848,8 +2848,9 @@ pub fn remember(
     remember_all(shell, [(key.into(), value)], cx);
 }
 
-/// `remember` several preferences, saved together: the one way the window
-/// keeps one (and `keeps_here` asked first).
+/// `remember` several preferences, saved together, once `keeps_here` lets
+/// the window keep them (the view buttons, kept with the user's data, ask
+/// it too).
 pub fn remember_all(
     shell: &mut crate::shell::Shell,
     changes: impl IntoIterator<Item = (String, String)>,

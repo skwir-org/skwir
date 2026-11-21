@@ -830,8 +830,10 @@ const SHOWS: &[&str] = &[
 /// (`Effect::Keeps`, ADR-044): a column or a caption shown, the view
 /// buttons, a text size, a switch of the preview's or the player's. An
 /// agent's call runs once the user allows it; the window runs them at once
-/// while a plan is made (`planning::turn`). One asked from elsewhere that
-/// is not among them keeps nothing (`settings::remember`).
+/// while a plan is made (`planning::turn`). A window command an agent runs
+/// unasked (one this list forgot) keeps no preference
+/// (`settings::keeps_here`); one that acts, run once the user allowed it,
+/// keeps what it keeps.
 const KEEPS: &[&str] = &[
     "ui.columns",
     "ui.grid_caption",

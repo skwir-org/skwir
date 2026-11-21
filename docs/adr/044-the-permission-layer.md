@@ -48,7 +48,7 @@ Each kind of code can be held to a different degree:
    (changes only what the window shows); `keeps` (changes how it shows
    things and keeps that as the user's preference; added 2026-11-21, see
    Amendments); `plans` (changes files only by plan); `acts` (anything
-   else: a preference, the sidebar, the clipboard, a program, an undo);
+   else: a setting, the sidebar, the clipboard, a program, an undo);
    `user_only` (answers what the window asked the user, or presses for
    them: a review's Apply, a menu item, the focused button). Undeclared
    means `acts`. `ui.*` commands are user only unless `commands.rs`
@@ -141,8 +141,14 @@ Each kind of code can be held to a different degree:
   file. What a command's arguments make it do only raises what it
   declares (`CommandSpec::effect_with`, the stricter of the two). And a
   window command asked from elsewhere that an agent runs unasked keeps
-  no preference, whatever it runs (`settings::keeps_here`, the window's
-  one way to keep one), so a command its list forgot fails safe.
+  no preference, whatever it runs (`settings::keeps_here`, asked before
+  the window keeps one: `settings::remember_all`, the view buttons), so
+  a command its list forgot fails safe. `show_companions` (hidden files
+  shown in the pane, and Show companion files turned on for every
+  folder) would fit `keeps`, yet stays `acts`: it changes the user's
+  setting through `settings.apply`, as acting does, and it waits behind
+  a plan being made, as it did in 0.5.1, where a `keeps` command would
+  run at once; an agent's call of it asks first either way.
   `remote.keep_as_server`, declared `shows`, keeps a server in the
   Network section and takes a bookmark out: it acts, as making a
   bookmark does. The rule by the arguments came with ADR-145, 3 (the

@@ -141,8 +141,9 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   alone unless `commands.rs` lists it among those that show, keep or act:
   one that answers a dialog or presses for the user must never be an
   agent's. One asked from elsewhere that an agent runs unasked keeps no
-  preference, whatever it runs (`settings::keeps_here`, the window's one
-  way to keep one): a command its list forgot fails safe. Another
+  preference, whatever it runs (`settings::keeps_here`, asked before the
+  window keeps one: `settings::remember_all`, the view buttons): a
+  command its list forgot fails safe. Another
   program's Open or Save dialog is answered by the user alone
   (`ui.chooser_*`, ADR-141, 8), and what answers those dialogs is chosen
   by the user alone (`dialogs.choose`, `.user_only()`): an agent can
