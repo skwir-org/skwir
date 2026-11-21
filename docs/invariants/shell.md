@@ -2198,8 +2198,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   whose `properties` shows Properties (`Shell::show_properties`). It
   keeps the bus's service file in step (`$XDG_DATA_HOME/dbus-1/services`,
   only skwir's own, naming the program the desktop entry runs, never the
-  running build's path). Started by the bus (`--file-manager`), the
-  program opens no window until asked, restores nothing, hands the
+  running build's path). Started by the bus (`--file-manager`, and
+  `--portal`), the program opens no window until asked, nor reaches the
+  display or starts the window system (`finishing::wait_asked`, before
+  `run_from` makes gpui's application: what takes requests over, the
+  `Takers`, is made there and kept by the program), restores nothing, hands the
   request to a skwir of its instance that runs, and one that ends asked
   nothing ends with a status that is not 0 (`ended_unasked`), which
   dbus-daemon would wait for. Nothing here names another program's

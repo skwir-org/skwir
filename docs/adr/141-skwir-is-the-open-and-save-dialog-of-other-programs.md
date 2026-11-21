@@ -75,7 +75,11 @@ Recent).
    `.portal` file and a bus service file for the name, `skwir --portal`,
    which starts without a window as `--file-manager` does (ADR-140, 5):
    a request opens its window; nothing asked within 30 seconds, it ends
-   with status 3. One that finds another skwir of its instance taking
+   with status 3. (Amended 2026-11-21: until it is asked, it neither
+   reaches the display nor starts the window system,
+   `finishing::wait_asked`; the portal starts its back ends as the
+   session comes up, asking nothing, and one started then reached a
+   display that was being replaced, and ended with it.) One that finds another skwir of its instance taking
    launches over takes the request and asks that one
    (`org.skwir.skwir.Finishing.Choose`, the request as the portal gave
    it), waiting for its answer, which it gives the portal, then ends:

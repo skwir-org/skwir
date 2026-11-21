@@ -236,6 +236,19 @@ pub fn run_from(
     dialogs_setting::register(&app);
     // What the shell offers the address field (ADR-098).
     suggestions::register(&app);
+    // Started by the bus without a window: what takes requests over is up
+    // before the window system, which starts once one comes; asked nothing,
+    // the program ends having reached no display (`finishing::wait_asked`).
+    let openings: finishing::Openings = Arc::default();
+    let takers = match windowless {
+        Some(windowless) => {
+            match finishing::wait_asked(&app, &wake_rx, Arc::clone(&openings), windowless) {
+                Some(takers) => Some(takers),
+                None => return Ok(()),
+            }
+        }
+        None => None,
+    };
     // What the desktop said when skwir last ran, then what it says
     // (ADR-071): its colors and fonts are the theme's (ADR-073).
     desktop_style::start(&app);
@@ -249,7 +262,6 @@ pub fn run_from(
     application.on_reopen(|cx| finishing::reopen(cx, None, false));
     // macOS: folders the Finder or the Dock opens in the running program
     // (ADR-122), handed in as a launch's are, at the next wake.
-    let openings: finishing::Openings = Arc::default();
     {
         let (openings, wake) = (Arc::clone(&openings), app.waker_handle());
         application.on_open_urls(move |urls| {
@@ -303,6 +315,7 @@ pub fn run_from(
             initial,
             asked: launch,
             windowless,
+            takers,
         };
         finishing::start(cx, app, keymap, started, wake_rx, openings, launch);
     });
