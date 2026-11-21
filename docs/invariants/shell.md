@@ -2306,7 +2306,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   a filter, a name typed to find a file (`pane choosing typing`,
   `ui.type_end`), a plan being made (which the files, the sidebar and the
   timeline say too, `keymap::Dialog`, so it lets go there before the
-  dialog does); a selection does not. A name taken is asked Replace? in skwir
+  dialog does); a selection does not. The name field lets Escape go on
+  to these bindings (`TextInput::let_escape_go_on`): its own, deeper,
+  cancelled the dialog before a plan being made or a list of the bar.
+  A name taken is asked Replace? in skwir
   (`Confirmed::Replace`, read on a worker in the folder's lane), and a
   request its program closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no

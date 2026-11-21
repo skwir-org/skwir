@@ -674,7 +674,9 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // timeline, before theirs, which only give the keyboard back to the
     // files. Each of these says `choosing` and `planning` itself
     // (`placed`, `Dialog`): gpui runs the deepest binding, so the plan's
-    // there is its own, not the root's.
+    // there is its own, not the root's. The Save dialog's name field,
+    // whose own Escape is deeper still, lets the key go on to these
+    // (`TextInput::let_escape_go_on`).
     (
         "escape",
         "ui.chooser_cancel",
@@ -3640,20 +3642,26 @@ mod tests {
         let mut bindings = crate::input::key_bindings();
         bindings.extend(super::gpui_bindings(&super::bindings(&app, &[])));
         let keymap = gpui::Keymap::new(bindings);
-        let run = |stack: &[gpui::KeyContext]| -> Option<String> {
+        // What Escape runs there, in the order gpui tries them: the next
+        // runs where one lets the key go on.
+        let all = |stack: &[gpui::KeyContext]| -> Vec<String> {
             let stroke = super::parse_keystroke("escape").unwrap();
             let (found, _) = keymap.bindings_for_input(&[stroke], stack);
-            found.first().map(|binding| {
-                binding
-                    .action()
-                    .as_any()
-                    .downcast_ref::<super::RunCommand>()
-                    .map_or_else(
-                        || binding.action().name().to_owned(),
-                        |run| run.name.clone(),
-                    )
-            })
+            found
+                .iter()
+                .map(|binding| {
+                    binding
+                        .action()
+                        .as_any()
+                        .downcast_ref::<super::RunCommand>()
+                        .map_or_else(
+                            || binding.action().name().to_owned(),
+                            |run| run.name.clone(),
+                        )
+                })
+                .collect()
         };
+        let run = |stack: &[gpui::KeyContext]| all(stack).into_iter().next();
         let root = |dialog: super::Dialog| {
             let mut context = gpui::KeyContext::parse(super::ROOT).unwrap();
             if dialog.planning {
@@ -3746,6 +3754,24 @@ mod tests {
             run(&[root(own), super::placed(super::SIDEBAR, own)]).as_deref(),
             Some("ui.focus_pane")
         );
+        // The Save dialog's name lets Escape go on past its field's own
+        // (`TextInput::let_escape_go_on`): to a list of the bar open, then
+        // to a plan being made, then to the dialog's Cancel (FP-2).
+        let own_cancel = run(&[parse(crate::input::KEY_CONTEXT)]);
+        let name = |dialog, lists: bool| {
+            let mut bar = parse(super::CHOOSER);
+            if lists {
+                bar.add("lists");
+            }
+            let found = all(&[root(dialog), bar, parse(crate::input::KEY_CONTEXT)]);
+            assert_eq!(found.first(), own_cancel.as_ref(), "the field's");
+            found.get(1).cloned()
+        };
+        assert_eq!(name(planning, false).as_deref(), Some("ui.plan_cancel"));
+        assert_eq!(name(choosing, false).as_deref(), Some("ui.chooser_cancel"));
+        for dialog in [planning, choosing] {
+            assert_eq!(name(dialog, true).as_deref(), Some("ui.toolbar_close"));
+        }
     }
 
     /// In a dialog's window Ctrl+Q is the dialog's Cancel wherever the

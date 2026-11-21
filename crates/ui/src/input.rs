@@ -464,6 +464,9 @@ pub struct TextInput {
     styles: Vec<(Range<usize>, Paint)>,
     /// Whether Backspace and Left at the start are said (`AtStart`).
     start_events: bool,
+    /// Whether Escape goes on to the window's bindings rather than being
+    /// the field's (`let_escape_go_on`).
+    escape_goes_on: bool,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -494,6 +497,7 @@ impl TextInput {
             hint: None,
             styles: Vec::new(),
             start_events: false,
+            escape_goes_on: false,
         }
     }
 
@@ -513,6 +517,15 @@ impl TextInput {
     /// something stands before it.
     pub fn send_start(&mut self, on: bool) {
         self.start_events = on;
+    }
+
+    /// Leave Escape to the window's bindings, which the field's own would
+    /// run before (gpui runs the deepest first): where what is open or
+    /// being made around the field takes it first, in the order they give
+    /// it everywhere else (the Save dialog's name, ADR-141, 4). No
+    /// `InputEvent::Cancel` is said then.
+    pub fn let_escape_go_on(&mut self) {
+        self.escape_goes_on = true;
     }
 
     /// Where the caret is, a byte offset into the text.
@@ -906,6 +919,11 @@ impl TextInput {
     }
 
     fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        if self.escape_goes_on {
+            // The key's next binding, a shallower place's, runs.
+            cx.propagate();
+            return;
+        }
         cx.emit(InputEvent::Cancel);
     }
 

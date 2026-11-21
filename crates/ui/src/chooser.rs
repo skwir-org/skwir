@@ -808,6 +808,10 @@ impl Shell {
                 );
                 input.set_text(start.clone(), cx);
                 input.select_range(0..stem_len(&start), cx);
+                // Escape goes on to the window's bindings, in their order:
+                // a list of the bar, a plan being made, then the dialog's
+                // Cancel (ADR-141, 4).
+                input.let_escape_go_on();
                 input
             })
         });
@@ -817,8 +821,7 @@ impl Shell {
                 window,
                 |this, _, event: &InputEvent, window, cx| match event {
                     InputEvent::Submit => this.chooser_accept(window, cx),
-                    InputEvent::Cancel => this.chooser_cancel(window, cx),
-                    InputEvent::Changed => {}
+                    InputEvent::Cancel | InputEvent::Changed => {}
                 },
             )
         });
