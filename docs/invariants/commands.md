@@ -55,7 +55,10 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   rows, pickers' choices, Properties' links, toasts' buttons, and what
   the window asks of itself. Never test for the dialog beside a feature,
   nor match a command's name for it in the shell: what a surface shows
-  is told by the commands it runs.
+  is told by the commands it runs. One command alone is the window's
+  own there, and `Shell::in_window` offers it by name: `open`, the
+  dialog's answer, carried out by the window whatever plugin registers
+  it (`Shell::chooser_open`, ADR-144, 1); none other is added so.
   - A command is offered by its topic (`Topic::in_dialogs`), but what
     changes files (`Effect::Plans`) and what opens another program
     (`Declared::opens_elsewhere`) never by its topic alone
