@@ -2090,7 +2090,7 @@ orders_dialog_order_state = L’ordre dans lequel les fenêtres qui répondent a
 orders_kept = Les ordres de tri que les emplacements retiennent (ADR-132), chacun { $fields } : appliqués ainsi dans chaque panneau
 
 # draft
-orders_kept_dialogs = Les ordres de tri que les emplacements retiennent dans les fenêtres qui répondent aux boîtes de dialogue d’autres programmes (ADR-145), chacun { $fields } : à part de ceux que retiennent les fenêtres de l’utilisateur
+orders_kept_dialogs = Les ordres de tri que les emplacements retiennent dans les fenêtres qui répondent aux boîtes de dialogue d’autres programmes (ADR-145), chacun { $fields } : distincts de ceux que retiennent les fenêtres de l’utilisateur
 
 # draft
 orders_not_saved = L’ordre de tri n’a pas été retenu : { $error }

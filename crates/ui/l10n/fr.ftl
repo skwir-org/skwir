@@ -784,7 +784,11 @@ chooser_name_placeholder = Nom du fichier
 chooser_no_folder = Le dossier { $folder } n’existe pas
 
 # draft
-chooser_not_given = Impossible de choisir un fichier de cet endroit : { $place }
+chooser_not_given = Impossible de choisir les fichiers { GENDER($place) ->
+        [masculine] { FORM($place, case: "de") }
+        [feminine] { FORM($place, case: "de") }
+       *[other] de { $place }
+    }
 
 # draft
 chooser_replace = Remplacer { $name } ? Un fichier de ce nom se trouve déjà dans { $folder }.
@@ -1018,7 +1022,7 @@ commands_chooser_choice = Régler un choix de la boîte de dialogue
 commands_chooser_choice_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : régler son choix `id` sur `value`, true ou false pour un interrupteur, l’id d’une option pour une liste
 
 # draft
-commands_chooser_clear_folders = Effacer les dossiers récents
+commands_chooser_clear_folders = Effacer les Dossiers récents
 
 # draft
 commands_chooser_filter = Afficher les fichiers d’un filtre

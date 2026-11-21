@@ -732,10 +732,10 @@ chooser_choose_folder = 请先选择一个文件夹
 chooser_filter = 显示的文件
 
 # draft
-chooser_folder_forgotten = 已从最近的文件夹中移除 { $folder }
+chooser_folder_forgotten = 已从最近的文件夹中移除{ $folder }
 
 # draft
-chooser_folder_put_back = 已将 { $folder } 放回最近的文件夹
+chooser_folder_put_back = 已将{ $folder }放回最近的文件夹
 
 # draft
 chooser_folder_taken = { $folder } 中已有名为 { $name } 的文件夹：请选择另一个文件夹来保存

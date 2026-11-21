@@ -33,12 +33,15 @@ translators.
   「？」「（）」. Half-width only inside what stays as written (a path, a
   command, `tag:`, a file name).
 - **Quotes:** “name” (U+201C, U+201D). Skwir adds them itself around a
-  `Name` or `Folder` argument (its catalog's `name_quote_open` and
-  `name_quote_close`): never write quotes around `{ $name }`.
+  `Name` argument (its catalog's `name_quote_open` and
+  `name_quote_close`): never write quotes around `{ $name }`. A `Folder`
+  (where something goes, "to Docs") is not quoted.
 - **A half-width space** between Chinese and Latin letters or digits,
   arguments included: 「3 个文件」「移到 { $folder }」「打开 PDF 文件」. None
   beside full-width punctuation or the quotes: 「已删除{ $name }。」 needs
-  none, the quotes being Skwir's.
+  none, the quotes being Skwir's: a `Name` argument (a file's, a
+  folder's, a place's or a tag's name, `docs/invariants/words.md`)
+  takes no space on either side.
 - **No-break spaces** stay where the English has them: a number and its
   unit (`{ $n }\u{a0}MB`) are never parted by a plain space (the catalogs'
   test refuses it). A percent follows its number: `{ $n }%`.
