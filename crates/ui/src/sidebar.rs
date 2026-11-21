@@ -479,6 +479,13 @@ fn above(path: &Path, home: Option<&Path>) -> Vec<String> {
 /// The places of Skwir Tabs a dialog's window shows at most.
 const TABS_SHOWN: usize = 5;
 
+/// How much faster what tells a place apart from another of the same
+/// name (`told_apart`) shrinks than the title before it: cut away first,
+/// the title then cut within the row. A weight on the title below one
+/// would not do: once the note is gone, a shrink factor alone under one
+/// takes only that share of what is still too wide (CSS's flex rule).
+const NOTE_GIVES_WAY_FIRST: f32 = 1e4;
+
 impl Shell {
     /// What the tabs of the user's own windows show, as they were used
     /// (`Workspace::tabs_by_use`: each window's shown tab first, the
@@ -1338,7 +1345,9 @@ pub fn render(
         };
         // A title cut by the sidebar's width is said whole by the row's
         // tooltip, before what the row has to say of its own. What tells
-        // it apart from a place of the same name follows it, cut first.
+        // it apart from a place of the same name follows it, cut first:
+        // the title gives way only once that is cut away, within the row,
+        // never past it by the gap between them.
         let (title, clip) = crate::elements::clip::text(said.clone());
         let named = div()
             .min_w_0()
@@ -1346,11 +1355,12 @@ pub fn render(
             .items_baseline()
             .gap(sized(6.))
             .whitespace_nowrap()
-            .child(div().flex_shrink_0().max_w_full().truncate().child(title))
+            .child(div().min_w_0().truncate().child(title))
             .when_some(note.clone(), |d, note| {
                 d.child(
                     div()
                         .min_w_0()
+                        .flex_shrink(NOTE_GIVES_WAY_FIRST)
                         .truncate()
                         .text_small()
                         .text_color(theme.text_muted)
