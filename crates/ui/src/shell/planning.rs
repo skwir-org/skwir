@@ -14,9 +14,11 @@
 //! - **One at a time; what acts waits, what shows does not.** A command
 //!   acts on what the window showed when the user asked. While a plan is
 //!   made, what changes only what the window shows runs at once (its
-//!   `Effect` says so, `turn`: `Shows`, `Reads`, `UserOnly`: the cursor,
-//!   the selection, navigation, panels, a dialog's own keys), so each key
-//!   finds the screen as the user saw it and the window stays live. What
+//!   `Effect` with its arguments says so, `turn`: `Shows`, `Reads`,
+//!   `UserOnly`: the cursor, the selection, navigation, panels, a dialog's
+//!   own keys; and `Keeps`, how it shows things kept as the user's
+//!   preference: a text size, Folders first), so each key finds the
+//!   screen as the user saw it and the window stays live. What
 //!   changes files or the program (`Plans`, `Acts`, Undo and Redo
 //!   whatever they declare; a question's answer that makes a plan, which
 //!   comes here as that plan) waits its turn in order (`Plans::waiting`),
@@ -152,7 +154,9 @@ pub(super) enum Turn {
 /// (`Shell::leave`). What changes files or the program (`Plans`, `Acts`,
 /// one that declares nothing, and Undo and Redo whatever they declare)
 /// waits; what changes only what the window shows (`Shows`, `Reads`,
-/// `UserOnly`) runs at once.
+/// `UserOnly`), or how it shows things as the user's preference (`Keeps`),
+/// runs at once: as it does with these arguments
+/// (`CommandSpec::effect_with`).
 pub(super) fn turn(
     app: &skwir_core::App,
     window: WindowId,
@@ -164,8 +168,8 @@ pub(super) fn turn(
     {
         return Turn::EndsWindow;
     }
-    match app.commands.get(name).map(|spec| spec.effect) {
-        Some(Effect::Shows | Effect::Reads | Effect::UserOnly)
+    match app.commands.get(name).map(|spec| spec.effect_with(args)) {
+        Some(Effect::Shows | Effect::Keeps | Effect::Reads | Effect::UserOnly)
             if !matches!(name, "undo" | "redo") =>
         {
             Turn::Now
@@ -435,6 +439,12 @@ mod tests {
         for shows in ["select_all", "ui.cursor", "navigate", "ui.plan_cancel"] {
             assert_eq!(side(shows), Turn::Now, "{shows} runs at once");
         }
+        // A preference kept, as before an agent's call asked for it: at once.
+        for keeps in ["ui.text_size", "ui.wrap_lines"] {
+            assert_eq!(side(keeps), Turn::Now, "{keeps} runs at once");
+        }
+        let first = json!({ "folders_first": false });
+        assert_eq!(turn(&app, window, "sort", &first), Turn::Now);
         for acts in ["trash", "delete", "undo", "redo", "ui.ask"] {
             assert_eq!(side(acts), Turn::Waits, "{acts} waits its turn");
         }

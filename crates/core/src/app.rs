@@ -6360,20 +6360,15 @@ mod builtin {
     }
 }
 
-/// What `sort` does with `args` (ADR-044): it changes how a pane shows its
-/// files, but given `folders_first` it changes the user's setting, in all
-/// of their windows (ADR-145, 3), which acts: an agent's call asks the user
-/// first, as one of `settings.apply` does. The dialogs' own, which it sets
-/// in a dialog's pane, no call from elsewhere reaches (ADR-141, 8).
-fn sort_effect(args: &serde_json::Value) -> crate::command::Effect {
-    if args
-        .get("folders_first")
+/// What `sort`'s `args` make it do beyond showing (ADR-044): given
+/// `folders_first`, it keeps the user's preference, in all of their windows
+/// (ADR-145, 3), which an agent's call asks the user for first, as one of
+/// `settings.apply` does. The dialogs' own, which it sets in a dialog's
+/// pane, no call from elsewhere reaches (ADR-141, 8).
+fn sort_effect(args: &serde_json::Value) -> Option<crate::command::Effect> {
+    args.get("folders_first")
         .is_some_and(|first| !first.is_null())
-    {
-        crate::command::Effect::Acts
-    } else {
-        crate::command::Effect::Shows
-    }
+        .then_some(crate::command::Effect::Keeps)
 }
 
 /// `sort`'s forms: each key, each way, in words (ADR-024).

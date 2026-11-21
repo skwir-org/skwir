@@ -529,6 +529,11 @@ pub struct Shell {
     /// Preferences changed from the toolbars and not saved yet
     /// (`settings::remember`).
     pub(crate) unsaved: std::collections::BTreeMap<String, String>,
+    /// The window's command asked from elsewhere (an agent, a script)
+    /// being carried out, by its name, where an agent's call of it runs
+    /// unasked (`permissions::for_agent_call`): it keeps no preference
+    /// (`settings::keeps_here`).
+    pub(crate) unasked_elsewhere: Option<String>,
     /// How the user arranged the sidebar's groups (`ui.sidebar_section`).
     pub sidebar_sections: crate::sidebar::Sections,
     /// The places as the user arranged them, and the places' revision
@@ -952,6 +957,7 @@ impl Shell {
             type_names: crate::typenames::TypeNames::default(),
             prefs: Preferences::default(),
             unsaved: std::collections::BTreeMap::new(),
+            unasked_elsewhere: None,
             pumped: Vec::new(),
             sidebar_sections: crate::sidebar::Sections::default(),
             arranged_places: std::cell::RefCell::default(),
@@ -2655,7 +2661,7 @@ impl Shell {
     /// What the user made, kept with their data (ADR-057) as pinned tags
     /// are, on a worker.
     fn save_view_buttons(&mut self, chosen: crate::address::ViewButtons, cx: &mut Context<Self>) {
-        if chosen == self.view_buttons {
+        if chosen == self.view_buttons || !crate::settings::keeps_here(self) {
             return;
         }
         self.app
@@ -2739,16 +2745,12 @@ impl Shell {
     fn set_model_look(&mut self, look: crate::elements::model::Look, cx: &mut Context<Self>) {
         self.prefs.model_look = look;
         cx.notify();
-        self.unsaved.insert(
-            crate::settings::MODEL_PERSPECTIVE_KEY.to_owned(),
-            look.perspective.to_string(),
-        );
-        crate::settings::remember(
-            self,
-            crate::settings::MODEL_SMOOTH_KEY,
-            look.smooth.to_string(),
-            cx,
-        );
+        let changes = [
+            (crate::settings::MODEL_PERSPECTIVE_KEY, look.perspective),
+            (crate::settings::MODEL_SMOOTH_KEY, look.smooth),
+        ];
+        let changes = changes.map(|(key, on)| (key.to_owned(), on.to_string()));
+        crate::settings::remember_all(self, changes, cx);
     }
 
     /// `ui.full_width`: the reading column takes the whole panel, or goes
@@ -3147,11 +3149,11 @@ impl Shell {
             && !changes.is_empty()
             && changes.values().all(serde_json::Value::is_string)
         {
-            for (key, value) in changes {
-                let value = value.as_str().unwrap_or_default().to_owned();
-                self.unsaved.insert(key.clone(), value);
-            }
-            return crate::settings::flush_remembered(self, cx);
+            let changes: Vec<(String, String)> = changes
+                .iter()
+                .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_owned()))
+                .collect();
+            return crate::settings::remember_all(self, changes, cx);
         }
         if let Some(ui) = name.strip_prefix("ui.") {
             // Declared as every command is (`commands.rs`): a name or
@@ -4636,7 +4638,18 @@ impl Shell {
             // have changed it, here or in the core, with no sync between.
             self.sync_tabs(window, cx);
             if self.admit_here(&request.name, &request.args, window, cx) {
+                // One an agent runs unasked keeps no preference (ADR-044).
+                self.unasked_elsewhere = self
+                    .app
+                    .commands
+                    .get(&request.name)
+                    .filter(|spec| {
+                        skwir_core::permissions::for_agent_call(spec, &request.args)
+                            == skwir_core::permissions::AgentGate::Runs
+                    })
+                    .map(|_| request.name.to_string());
                 self.carry_out(&request.name, request.args, window, cx);
+                self.unasked_elsewhere = None;
             }
         }
         if let Some(settings) = self.settings.clone() {

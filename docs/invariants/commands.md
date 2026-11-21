@@ -124,17 +124,26 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   returned applied hears it by the plan's id (`Executor::observe_plans`),
   never by what its steps describe.
 - **Effects (ADR-044).** A command says what it does when registered
-  (`command::Effect`: `register(..).reads()`, `.shows()`, `.plans()`,
-  `.user_only()`); this decides what an agent may run. A command that says
-  nothing acts, and an agent's call of it asks the user first. One whose
+  (`command::Effect`: `register(..).reads()`, `.shows()`, `.keeps()`,
+  `.plans()`, `.user_only()`); this decides what an agent may run. A
+  command that says nothing acts, and an agent's call of it asks the user
+  first. One that changes how the window shows things and keeps that as
+  the user's preference, for every window and every later start (a text
+  size, a column shown, a switch of the preview's), keeps: an agent's call
+  of it asks the user first too, while the window runs it at once behind
+  a plan being made, as what shows (`planning::turn`). One whose
   arguments make it do more says so by them (`Declared::effect_by`:
-  `sort` given `folders_first` changes the user's setting, which acts),
-  and an agent's call is let do what it does with the arguments given
-  (`permissions::for_agent_call`): a preference changes only behind the
-  ask its own command has, never under another's gate. A window
-  command (`ui.*`) is the user's alone unless `commands.rs` lists it among
-  those that show or act: one that answers a dialog or presses for the
-  user must never be an agent's. Another program's Open or Save dialog
+  `sort` given `folders_first` keeps the user's setting), and an agent's
+  call is let do what it does with the arguments given, never less than
+  it declares (`CommandSpec::effect_with`, `permissions::for_agent_call`):
+  a preference changes only behind the ask of the command that keeps it,
+  never under another's gate. A window command (`ui.*`) is the user's
+  alone unless `commands.rs` lists it among those that show, keep or act:
+  one that answers a dialog or presses for the user must never be an
+  agent's. One asked from elsewhere that an agent runs unasked keeps no
+  preference, whatever it runs (`settings::keeps_here`, the window's one
+  way to keep one): a command its list forgot fails safe. Another
+  program's Open or Save dialog
   is answered by the user alone (`ui.chooser_*`, ADR-141, 8), and what
   answers those dialogs is chosen by the user alone (`dialogs.choose`,
   `.user_only()`): an agent can neither choose for another program nor

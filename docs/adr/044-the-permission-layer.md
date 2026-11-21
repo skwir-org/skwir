@@ -41,17 +41,19 @@ Each kind of code can be held to a different degree:
    - Built-in plugins are Skwir: they show these folders to the user.
 3. **Each command declares its effect** at registration
    (`command::Effect`, `register(..).reads()`…): `reads`; `shows`
-   (changes only what the window shows); `plans` (changes files only by
-   plan); `acts` (anything else: a preference, the sidebar, the
-   clipboard, a program, an undo); `user_only` (answers what the window
-   asked the user, or presses for them: a review's Apply, a menu item,
-   the focused button). Undeclared means `acts`. `ui.*` commands are
-   user only unless `commands.rs` lists them as showing or acting.
+   (changes only what the window shows); `keeps` (changes how it shows
+   things and keeps that as the user's preference; added 2026-11-21, see
+   Amendments); `plans` (changes files only by plan); `acts` (anything
+   else: a preference, the sidebar, the clipboard, a program, an undo);
+   `user_only` (answers what the window asked the user, or presses for
+   them: a review's Apply, a menu item, the focused button). Undeclared
+   means `acts`. `ui.*` commands are user only unless `commands.rs`
+   lists them as showing, keeping or acting.
 4. **An agent's call** (`permissions::for_agent`, enforced by the
    control plugin): reads, shows and plans run (plans go to review);
-   acts runs once the user allows it in the review queue ("An agent
-   asks to run …", Allow or Refuse: `App::ask`); user only is refused
-   and not listed. A script (`skwir cmd`) is the user's own and exempt.
+   keeps and acts run once the user allows it in the review queue ("An
+   agent asks to run …", Allow or Refuse: `App::ask`); user only is
+   refused and not listed. A script (`skwir cmd`) is the user's own and exempt.
 5. **What an agent counts** (2026-10-07, after the first MCP trial).
    Redaction removed names, not counts: a content search answered
    `total: 1` with the private match removed, so an agent could probe a
@@ -115,3 +117,21 @@ Each kind of code can be held to a different degree:
   them while a 0.3.1 file holds them. Only the user lowers privacy: a
   settings change that would take the agents role from a folder is
   refused to an agent's call and asked about in the dialog.
+- 2026-11-21 (after review): the window's commands that change how it
+  shows things and keep that as the user's preference, for every window
+  and every later start (a text size, a column or a caption shown, the
+  view buttons, a switch of the preview's or the player's), were declared
+  `shows` and ran for an agent unasked, though decision 3 counts a
+  preference as acting; so did `sort` given `folders_first` before
+  `Declared::effect_by`. They are `keeps` now (`Effect::Keeps`,
+  `.keeps()`; the window's are `commands.rs`'s `KEEPS`): an agent's call
+  asks the user first, as for what acts, and the window runs them at
+  once behind a plan being made, as what shows, since they change no
+  file. What a command's arguments make it do only raises what it
+  declares (`CommandSpec::effect_with`, the stricter of the two). And a
+  window command asked from elsewhere that an agent runs unasked keeps
+  no preference, whatever it runs (`settings::keeps_here`, the window's
+  one way to keep one), so a command its list forgot fails safe.
+  `remote.keep_as_server`, declared `shows`, keeps a server in the
+  Network section and takes a bookmark out: it acts, as making a
+  bookmark does.

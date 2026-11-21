@@ -706,17 +706,9 @@ const SHOWS: &[&str] = &[
     "ui.find",
     "ui.find_next",
     "ui.view",
-    "ui.columns",
     "ui.columns_reset",
     "ui.select_group",
-    "ui.grid_caption",
-    "ui.view_button",
-    "ui.view_buttons_reset",
-    "ui.view_buttons_shown",
-    "ui.up_button",
     "ui.zoom",
-    "ui.text_size",
-    "ui.grid_fill",
     "ui.quick_filters",
     "ui.peek",
     "ui.peek_close",
@@ -797,22 +789,13 @@ const SHOWS: &[&str] = &[
     "ui.preview_seek",
     "ui.preview_zoom",
     "ui.inspect",
-    "ui.printed_pages",
-    "ui.wrap_lines",
-    "ui.text_continuous",
-    "ui.model_perspective",
-    "ui.model_smooth",
-    "ui.full_width",
     "ui.note",
-    "ui.reader_continuous",
-    "ui.reader_drag",
     "ui.reader_page",
     "ui.preview_goto",
     "ui.reader_page_submit",
     "ui.reader_page_cancel",
     "ui.preview_select_all",
     "ui.preview_contents",
-    "ui.contents_pin",
     "ui.preview_find",
     "ui.preview_find_close",
     "ui.preview_match",
@@ -820,9 +803,6 @@ const SHOWS: &[&str] = &[
     "ui.media_control",
     "ui.media_play",
     "ui.media_pin",
-    "ui.media_keep_playing",
-    "ui.media_autoplay",
-    "ui.media_continue",
     "ui.media_step",
     "ui.media_scrub",
     "ui.media_escape",
@@ -830,7 +810,6 @@ const SHOWS: &[&str] = &[
     "ui.fullscreen_controls",
     "ui.fullscreen_step",
     "ui.slideshow",
-    "ui.slideshow_pace",
     "ui.player",
     "ui.player_volume",
     "ui.volume_step",
@@ -844,6 +823,37 @@ const SHOWS: &[&str] = &[
     // The window's own state, as its buttons change it (ADR-138).
     "ui.maximize_window",
     "ui.minimize_window",
+];
+
+/// The window's commands that change how it shows things and keep that as
+/// the user's preference, for every window and every later start
+/// (`Effect::Keeps`, ADR-044): a column or a caption shown, the view
+/// buttons, a text size, a switch of the preview's or the player's. An
+/// agent's call runs once the user allows it; the window runs them at once
+/// while a plan is made (`planning::turn`). One asked from elsewhere that
+/// is not among them keeps nothing (`settings::remember`).
+const KEEPS: &[&str] = &[
+    "ui.columns",
+    "ui.grid_caption",
+    "ui.view_button",
+    "ui.view_buttons_reset",
+    "ui.view_buttons_shown",
+    "ui.up_button",
+    "ui.text_size",
+    "ui.grid_fill",
+    "ui.printed_pages",
+    "ui.wrap_lines",
+    "ui.text_continuous",
+    "ui.model_perspective",
+    "ui.model_smooth",
+    "ui.full_width",
+    "ui.contents_pin",
+    "ui.reader_continuous",
+    "ui.reader_drag",
+    "ui.media_keep_playing",
+    "ui.media_autoplay",
+    "ui.media_continue",
+    "ui.slideshow_pace",
 ];
 
 /// The window's commands an agent's call runs only once the user allows
@@ -911,13 +921,15 @@ fn reaches_out(name: &str, args: &serde_json::Value) -> Option<Words> {
     }
 }
 
-/// What a window command does for an agent: every one in neither list
+/// What a window command does for an agent: every one in none of the lists
 /// answers a dialog or presses for the user's hand (a review's Apply, a
 /// menu's item, the focused button, a key in the sidebar or the
 /// settings), the user's alone.
 fn effect_of(name: &str) -> Effect {
     if SHOWS.contains(&name) {
         Effect::Shows
+    } else if KEEPS.contains(&name) {
+        Effect::Keeps
     } else if ACTS.contains(&name) {
         Effect::Acts
     } else {
@@ -3826,10 +3838,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         super::declare_all(&app);
-        for name in super::SHOWS.iter().chain(super::ACTS) {
+        let mut listed = std::collections::HashSet::new();
+        for name in super::SHOWS.iter().chain(super::KEEPS).chain(super::ACTS) {
             assert!(app.commands.get(name).is_some(), "{name} is declared");
+            assert!(listed.insert(name), "{name} is listed once");
         }
         let effect = |name: &str| app.commands.get(name).unwrap().effect;
+        // What keeps the user's preference asks an agent first (ADR-044).
+        for keeps in super::KEEPS {
+            let spec = app.commands.get(keeps).unwrap();
+            assert_eq!(spec.effect, Effect::Keeps, "{keeps}");
+            assert_eq!(
+                skwir_core::permissions::for_agent(&spec),
+                skwir_core::permissions::AgentGate::Asks,
+                "{keeps}"
+            );
+        }
         for answer in [
             "ui.review_apply",
             "ui.review_cancel",

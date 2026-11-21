@@ -522,3 +522,56 @@ fn a_dialog_offers_a_command_by_its_topic_unless_it_says_otherwise() {
         assert!(!here(name, none()).runs(), "{name}");
     }
 }
+
+/// What a command's arguments make it do only ever raises what it declares
+/// (ADR-044): one that shows keeps the user's preference by an argument,
+/// so an agent's call of it with that argument asks first; one that acts
+/// is never let run unasked by a rule saying less. What keeps a
+/// preference asks, as what acts does; `sort` keeps Folders first.
+#[test]
+fn what_arguments_make_a_command_do_never_lowers_what_it_declares() {
+    use serde_json::json;
+    use skwir_core::command::Effect;
+    use skwir_core::permissions::{AgentGate, for_agent, for_agent_call};
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let register = |name: &'static str| {
+        app.commands.register::<serde_json::Value, _>(
+            "probe",
+            Topic::View,
+            name,
+            Words::as_written(""),
+            Words::as_written(""),
+            |_, _| Ok(Outcome::Done),
+        )
+    };
+    let shows = register("probe.shows");
+    shows.effect_by(|args| args.get("keep").map(|_| Effect::Keeps));
+    shows.shows();
+    // A rule that would let it run unasked: never heeded.
+    register("probe.acts").effect_by(|_| Some(Effect::Shows));
+    let user_only = register("probe.user_only");
+    user_only.effect_by(|_| Some(Effect::Keeps));
+    user_only.user_only();
+    let spec = |name: &str| app.commands.get(name).unwrap();
+    let (none, keep) = (json!({}), json!({ "keep": true }));
+    assert_eq!(spec("probe.shows").effect_with(&none), Effect::Shows);
+    assert_eq!(spec("probe.shows").effect_with(&keep), Effect::Keeps);
+    assert_eq!(for_agent_call(&spec("probe.shows"), &none), AgentGate::Runs);
+    assert_eq!(for_agent_call(&spec("probe.shows"), &keep), AgentGate::Asks);
+    assert_eq!(spec("probe.acts").effect_with(&none), Effect::Acts);
+    assert_eq!(for_agent_call(&spec("probe.acts"), &none), AgentGate::Asks);
+    assert_eq!(
+        for_agent_call(&spec("probe.user_only"), &keep),
+        AgentGate::Refused
+    );
+    // Its tool, without arguments, says what it declares.
+    assert_eq!(for_agent(&spec("probe.shows")), AgentGate::Runs);
+    for (args, effect) in [
+        (json!({ "key": "size" }), Effect::Shows),
+        (json!({ "folders_first": null }), Effect::Shows),
+        (json!({ "folders_first": false }), Effect::Keeps),
+    ] {
+        assert_eq!(spec("sort").effect_with(&args), effect, "{args}");
+    }
+}

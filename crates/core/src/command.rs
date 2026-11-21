@@ -201,8 +201,15 @@ pub enum Effect {
     /// Changes files only through a plan, which its caller applies or
     /// proposes for review.
     Plans,
-    /// Anything else: changes a preference, the sidebar, the clipboard,
-    /// starts a program, applies without a plan. An agent asks first.
+    /// Changes how the window shows things and keeps it as the user's
+    /// preference, for every window and every later start: a text size,
+    /// a column shown, a switch of the preview's, Folders first. An agent
+    /// asks first, as for what acts; it changes no file, so the window
+    /// runs it at once while a plan is made, as what shows.
+    Keeps,
+    /// Anything else: changes a setting (`settings.apply`), the sidebar,
+    /// the clipboard, starts a program, applies without a plan. An agent
+    /// asks first.
     #[default]
     Acts,
     /// Answers what the window asked the user, or presses what the
@@ -211,10 +218,35 @@ pub enum Effect {
     UserOnly,
 }
 
-/// What a command does with the arguments it is given, where they make it
-/// do more than its [`Effect`] says (`Declared::effect_by`): an argument
-/// that changes a preference makes a command that shows act.
-pub type EffectBy = fn(&serde_json::Value) -> Effect;
+impl Effect {
+    /// The stricter of the two, by what an agent's call may do (ADR-044):
+    /// what runs (reads, shows, plans), then what asks the user first
+    /// (keeps, acts), then what is refused (user only).
+    #[must_use]
+    pub fn at_least(self, other: Effect) -> Effect {
+        fn rank(effect: Effect) -> u8 {
+            match effect {
+                Effect::Reads => 0,
+                Effect::Shows => 1,
+                Effect::Plans => 2,
+                Effect::Keeps => 3,
+                Effect::Acts => 4,
+                Effect::UserOnly => 5,
+            }
+        }
+        if rank(other) > rank(self) {
+            other
+        } else {
+            self
+        }
+    }
+}
+
+/// What a command's arguments make it do beyond its [`Effect`], where they
+/// do (`Declared::effect_by`): `sort` given `folders_first` keeps the
+/// user's preference. `None`: nothing more. It only ever raises what the
+/// command declares (`CommandSpec::effect_with`).
+pub type EffectBy = fn(&serde_json::Value) -> Option<Effect>;
 
 /// What a command is about, as a person looks for it: F1 lists the keys
 /// that work here under these, in this order (`Topic::ALL`). Every command
@@ -724,11 +756,13 @@ pub struct CommandSpec {
     pub topic: Topic,
     /// What it does: what an agent may run without asking.
     pub effect: Effect,
-    /// What it does with arguments that make it do more than its `effect`
-    /// says (`Declared::effect_by`): `sort` given `folders_first` changes
-    /// the user's setting, which acts. `None`: its `effect`, whatever its
-    /// arguments. What an agent's call is let do reads it
-    /// (`permissions::for_agent_call`), so it is not said to agents.
+    /// What arguments that make it do more than its `effect` says make it
+    /// do (`Declared::effect_by`): `sort` given `folders_first` keeps the
+    /// user's preference. `None`: its `effect`, whatever its arguments.
+    /// What an agent's call is let do reads it, never lower than `effect`
+    /// (`CommandSpec::effect_with`, `permissions::for_agent_call`), and so
+    /// does the window behind a plan being made; its description says it
+    /// to agents.
     #[serde(skip)]
     pub effect_by: Option<EffectBy>,
     /// The arguments that make it one thing to do, each with its title:
@@ -797,10 +831,13 @@ impl CommandSpec {
         self.topic.in_dialogs() && self.effect != Effect::Plans && self.opens == OpensIn::Here
     }
 
-    /// What it does run with `args` (ADR-044): what they make it do where
-    /// they decide it (`Declared::effect_by`), else its `effect`.
+    /// What it does run with `args` (ADR-044): its `effect`, or what they
+    /// make it do where that is stricter (`Declared::effect_by`); never
+    /// less than it declares.
     pub fn effect_with(&self, args: &serde_json::Value) -> Effect {
-        self.effect_by.map_or(self.effect, |rule| rule(args))
+        self.effect_by
+            .and_then(|rule| rule(args))
+            .map_or(self.effect, |by| self.effect.at_least(by))
     }
 
     /// Whether a key held down runs it again with `args`.
@@ -965,8 +1002,8 @@ impl Declared<'_> {
         self.update(|spec| spec.repeats = Some(rule));
     }
 
-    /// What it does run with its arguments, where they make it do more
-    /// than its effect says (see `CommandSpec::effect_by`).
+    /// What its arguments make it do, where they make it do more than its
+    /// effect says (see `CommandSpec::effect_by`): never less.
     pub fn effect_by(&self, rule: EffectBy) {
         self.update(|spec| spec.effect_by = Some(rule));
     }
@@ -994,6 +1031,12 @@ impl Declared<'_> {
     /// It changes only what the window shows.
     pub fn shows(self) {
         self.effect(Effect::Shows);
+    }
+
+    /// It changes how the window shows things and keeps it as the user's
+    /// preference (see [`Effect::Keeps`]).
+    pub fn keeps(self) {
+        self.effect(Effect::Keeps);
     }
 
     /// It changes files only through a plan.

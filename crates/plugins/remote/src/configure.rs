@@ -1157,6 +1157,9 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         },
     );
     let remotes_ = remotes.clone();
+    // It acts, as making a bookmark does (ADR-044): the server the Network
+    // section keeps, and the bookmark it takes out, are the user's in every
+    // window and at every later start, so an agent's call asks first.
     app.commands
         .register::<KeepArgs, _>(
             ID, Topic::Places,
@@ -1180,8 +1183,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     keep_as_server(remotes, app, &address, name)
                 })
             },
-        )
-        .shows();
+        );
 }
 
 /// The one server selected in `pane` where it shows the Nearby place: its

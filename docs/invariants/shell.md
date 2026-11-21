@@ -225,7 +225,9 @@ Views are in [views.md](views.md); what locations decide, in
   `finishing::ran`, `apply_user_plan`). One at a time per window, and a
   command acts on what the window showed when the user asked: what only
   shows (`Effect::Shows`, `Reads`, `UserOnly`: the cursor, the
-  selection, navigation, panels, a dialog's keys) runs at once meanwhile;
+  selection, navigation, panels, a dialog's keys), or keeps how it shows
+  as the user's preference (`Keeps`: a text size, Folders first), runs
+  at once meanwhile, as it does with its arguments;
   what changes files or the program (`Plans`, `Acts`, what declares
   nothing, Undo and Redo) waits its turn in order, each with what its
   own key found; what ends the window (Close Window, Quit, closing its

@@ -2845,8 +2845,38 @@ pub fn remember(
     value: String,
     cx: &mut gpui::Context<crate::shell::Shell>,
 ) {
-    shell.unsaved.insert(key.into(), value);
+    remember_all(shell, [(key.into(), value)], cx);
+}
+
+/// `remember` several preferences, saved together: the one way the window
+/// keeps one (and `keeps_here` asked first).
+pub fn remember_all(
+    shell: &mut crate::shell::Shell,
+    changes: impl IntoIterator<Item = (String, String)>,
+    cx: &mut gpui::Context<crate::shell::Shell>,
+) {
+    if !keeps_here(shell) {
+        return;
+    }
+    shell.unsaved.extend(changes);
     flush_remembered(shell, cx);
+}
+
+/// Whether what the window carries out now may keep the user's preference
+/// (ADR-044): what the user does, always; a command asked from elsewhere
+/// (an agent, a script), only where an agent's call of it asks the user
+/// first (`Effect::Keeps`, `commands.rs`'s `KEEPS`). So one an agent runs
+/// unasked never keeps a preference, whatever its declaration forgot: it
+/// changes what the window shows, and the log says what was not kept.
+pub(crate) fn keeps_here(shell: &crate::shell::Shell) -> bool {
+    let Some(name) = shell.unasked_elsewhere.as_deref() else {
+        return true;
+    };
+    tracing::error!(
+        name,
+        "kept no preference: asked from elsewhere, the command is declared as keeping none"
+    );
+    false
 }
 
 /// Send the waiting changes as one batch, unless a save is running.
