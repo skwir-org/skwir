@@ -829,6 +829,9 @@ app_take_out = 从此处移出
 app_take_out_description = 将所选内容从列出保存在别处的文件的位置中移出，具体如该位置所说明（标签的位置会去掉文件上的该标签，暂存架会将其取下）：文件本身留在原处。这也是 Delete 键在那里的作用
 
 # draft
+app_take_out_not_in_dialogs = 在应答其他程序对话框的窗口中不执行{ $action }
+
+# draft
 app_toast_redo = 重做
 
 # draft

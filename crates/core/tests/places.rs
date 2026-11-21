@@ -326,6 +326,40 @@ fn delete_takes_out_what_the_location_says_and_nothing_where_it_says_nothing() {
         "a folder takes nothing out: Move to Trash deletes"
     );
     assert!(asked.lock().is_none());
+
+    // In a window answering another program's dialog, only a verb that
+    // window runs (ADR-144, 1): this one's topic is not offered there.
+    let (_, _, dialog) = app.open_dialog_window(Location::new(SCHEME, "/")).unwrap();
+    let take_out = || {
+        app.dispatch(&Invocation::with_args(
+            "take_out",
+            &serde_json::json!({ "pane": dialog }),
+        ))
+    };
+    let refused = Words::of_error(take_out().expect_err("not run in a dialog")).english();
+    assert!(
+        refused.contains("“Remove from Fake”"),
+        "names what it would have done: {refused}"
+    );
+    assert!(asked.lock().is_none());
+    {
+        let asked = Arc::clone(&asked);
+        app.commands
+            .register::<serde_json::Value, _>(
+                "test",
+                Topic::Files,
+                "fake.out",
+                Words::as_written("Out"),
+                Words::as_written(""),
+                move |a, _| {
+                    *asked.lock() = Some(a);
+                    Ok(Outcome::Done)
+                },
+            )
+            .in_dialogs();
+    }
+    take_out().expect("offered there, it runs");
+    assert!(asked.lock().is_some());
 }
 
 #[test]

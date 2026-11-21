@@ -4968,6 +4968,19 @@ mod builtin {
                     invocation.args = serde_json::json!({});
                 }
                 invocation.args["pane"] = serde_json::json!(pane);
+                // Offered in a dialog's window for what it leads to, which
+                // no `LeadsTo` can name (the location's verb): a verb that
+                // window does not run is not run behind its Delete key
+                // (ADR-144, 1).
+                if app.chooses_in(pane)
+                    && !app.in_dialogs(&invocation.name, &invocation.args).runs()
+                {
+                    anyhow::bail!(words!(
+                        app_take_out_not_in_dialogs = "{ $action } is not done in a window answering another program's dialog",
+                        action = crate::words::Named(remove.title),
+                        note = "An error: the Delete key, in a list of files kept elsewhere (a tag's), would run an action that a window answering another program's Open or Save dialog does not offer. action: that action's name, as its menu item says it (Remove from “France”)."
+                    ));
+                }
                 app.dispatch(&invocation)
             },
         )

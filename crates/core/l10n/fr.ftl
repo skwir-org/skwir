@@ -833,6 +833,9 @@ app_take_out = Retirer d’ici
 app_take_out_description = Retirer la sélection d’un emplacement qui liste des fichiers gardés ailleurs, à sa façon (celui d’une étiquette leur retire son étiquette, celui de l’Étagère les retire de l’Étagère) : les fichiers restent où ils sont. Ce que fait la touche Suppr à cet endroit
 
 # draft
+app_take_out_not_in_dialogs = { $action } ne se fait pas dans une fenêtre qui répond à la boîte de dialogue d’un autre programme
+
+# draft
 app_toast_redo = Rétablir
 
 # draft

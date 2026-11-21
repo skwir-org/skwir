@@ -743,6 +743,9 @@ app_take_out = Take out of here
 
 app_take_out_description = Take the selection out of a location that lists files kept elsewhere, as it says (a tag's takes its tag off them, the shelf's unshelves them): the files stay where they are. What the Delete key does there
 
+# An error: the Delete key, in a list of files kept elsewhere (a tag's), would run an action that a window answering another program's Open or Save dialog does not offer. action: that action's name, as its menu item says it (Remove from “France”).
+app_take_out_not_in_dialogs = { $action } is not done in a window answering another program's dialog
+
 # A button on a message saying what an edit did: does it again.
 app_toast_redo = Redo
 
