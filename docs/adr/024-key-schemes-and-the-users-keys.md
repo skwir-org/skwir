@@ -1,8 +1,8 @@
 # ADR-024: Key schemes and the user's keys
 
 Status: accepted, 2026-09-28. Built. Amended 2026-10-05 (scheme keys that
-mean a standard gesture) and 2026-10-13 (the Keyboard page edits in
-place).
+mean a standard gesture), 2026-10-13 (the Keyboard page edits in place)
+and 2026-11-21 (a dialog's window keeps its Escape).
 
 ## Context
 
@@ -186,3 +186,14 @@ blocked every later save.
   bound anywhere or in a place is bound to nothing in the field's own
   context (`keymap::typed_in_fields`), as the terminal keeps its keys,
   so `.` bound anywhere still types a dot in the address bar.
+
+### 2026-11-21: a dialog's window keeps its Escape
+
+In a window answering another program's dialog (ADR-141), the shell's
+keys there (their `when` says `choosing`) come after a scheme's binding
+that would hide them (`keymap::dialog_after_schemes`): vim's Escape in the
+files, a selection like the plugins' `select_none`, no longer keeps
+Escape from cancelling the dialog or letting a plan go, while a scheme's
+Escape that asks for more (ending a sweep) still goes first, as what is
+typed or filtered does. A window of the user's own says no `choosing`:
+its keys are as the layers give them.

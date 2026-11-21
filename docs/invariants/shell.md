@@ -1896,9 +1896,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`Registry::keymap`), the shell's (`keymap::BUILTIN`), key schemes
   (`Registry::schemes`, e.g. `vim`), the user's (`keyboard.bindings`).
   `keymap::install` installs them in that order. A binding hidden by a
-  later layer is left out of hints and tooltips. A user's record without a
-  command frees its keys (`gpui::NoAction`); one whose command nothing
-  registers waits for its plugin, bound to nothing (`keymap::dormant`).
+  later layer is left out of hints and tooltips. The shell's keys of a
+  dialog's window (`choosing`) come after a scheme's that would hide them
+  (`keymap::dialog_after_schemes`, ADR-024 amended): vim's Escape in the
+  files gives way there to the dialog's order, a sweep's end going first.
+  A user's record without a command frees its keys (`gpui::NoAction`);
+  one whose command nothing registers waits for its plugin, bound to
+  nothing (`keymap::dormant`).
 - **Text fields keep their characters.** A binding whose first stroke
   types a character (a letter, `.`, Space, with Shift at most), wherever
   it is bound, is bound to nothing in the text field's context
@@ -2309,12 +2313,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   a filter, a name typed to find a file (`pane choosing typing`,
   `ui.type_end`), a plan being made (which the files, the sidebar and the
   timeline say too, `keymap::Dialog`, so it lets go there before the
-  dialog does); a selection does not. The name field lets Escape go on to
-  these bindings (`TextInput::let_escape_go_on`): its own, deeper,
-  cancelled the dialog before a plan being made or a list of the bar. A
-  name taken is asked Replace? in skwir (`Confirmed::Replace`, read on a
-  worker in the folder's lane), and a request its program closes takes its
-  window away at the next wake.
+  dialog does), a sweep a scheme ends (vim's); a selection does not, a
+  scheme's neither (`keymap::dialog_after_schemes`). The name field lets
+  Escape go on to these bindings (`TextInput::let_escape_go_on`): its
+  own, deeper, cancelled the dialog before a plan being made or a list of
+  the bar. A name taken is asked Replace? in skwir (`Confirmed::Replace`,
+  read on a worker in the folder's lane), and a request its program
+  closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no
   call from elsewhere reaches its window (commands.md). It offers what
   finds and chooses (ADR-144, commands.md's "In a dialog's window"), by

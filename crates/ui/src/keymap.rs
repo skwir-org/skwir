@@ -674,7 +674,9 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // timeline, before theirs, which only give the keyboard back to the
     // files. Each of these says `choosing` and `planning` itself
     // (`placed`, `Dialog`): gpui runs the deepest binding, so the plan's
-    // there is its own, not the root's. The Save dialog's name field,
+    // there is its own, not the root's. They come after a scheme's keys
+    // that would hide them (vim's Escape in the files: `specs`,
+    // `dialog_after_schemes`). The Save dialog's name field,
     // whose own Escape is deeper still, lets the key go on to these
     // (`TextInput::let_escape_go_on`).
     (
@@ -729,8 +731,12 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // A pane filtered by name shows everything again before Escape
     // deselects (`select_none`, the plugins' binding).
     ("escape", "filter", "{}", Some("pane filtered")),
+    // And in a dialog's window, before its Cancel whatever scheme is on:
+    // there the dialog's keys come after a scheme's (`dialog_after_schemes`),
+    // which the one above does not.
+    ("escape", "filter", "{}", Some("pane choosing filtered")),
     // In a dialog's window, a name typed to reach a file goes before the
-    // dialog does (the user's choice, 2026-11-19): after the two above.
+    // dialog does (the user's choice, 2026-11-19): after those above.
     ("escape", "ui.type_end", "{}", Some("pane choosing typing")),
     // Escape only closes About: bound with arguments of its own, it is not
     // named beside About in the palette (`keys_for` matches them).
@@ -2856,8 +2862,9 @@ pub fn keys_for_where<'a>(
 }
 
 /// Every binding, in the order of their layers: the plugins', the shell's
-/// own, the schemes', the user's. A binding declared twice is listed once,
-/// in the higher of its layers.
+/// own, the schemes', the user's; the shell's keys of a dialog's window
+/// after a scheme's that would hide them (`dialog_after_schemes`). A
+/// binding declared twice is listed once, in the higher of its layers.
 fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
     let registered = |bindings: Vec<skwir_core::registry::KeyBinding>, layer| {
         bindings.into_iter().map(move |b| Spec {
@@ -2917,7 +2924,7 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
         .chain(mine)
         .flat_map(|spec| like(spec, &standard))
         .collect();
-    let specs: Vec<Spec> = standard.into_iter().chain(above).collect();
+    let specs = dialog_after_schemes(standard.into_iter().chain(above).collect());
     let mut seen = std::collections::HashSet::new();
     let mut kept: Vec<Spec> = specs
         .into_iter()
@@ -2934,6 +2941,45 @@ fn specs(app: &App, user: &[UserBinding]) -> Vec<Spec> {
         .collect();
     kept.reverse();
     kept
+}
+
+/// `specs`, the shell's keys of a window answering another program's
+/// dialog (theirs says `choosing`, which no window of the user's own says)
+/// moved after the last of a scheme's that asks for no more than one of
+/// them, so that it no longer hides them there: in a dialog's window,
+/// vim's Escape in the files (a selection, as the plugins' is) comes after
+/// the dialog's Cancel, a plan being made and what is typed or filtered
+/// (ADR-141, 4), while a scheme's that asks for more (Escape while
+/// sweeping: what is open) still comes after them and goes first. Their
+/// order among themselves is kept. Nothing changes in a window of the
+/// user's own, where none of them applies, nor without such a scheme.
+fn dialog_after_schemes(mut specs: Vec<Spec>) -> Vec<Spec> {
+    let is_dialog =
+        |spec: &Spec| spec.layer == Layer::Shell && conditions(&spec.context).contains(&"choosing");
+    let dialog: Vec<(String, Vec<&str>)> = specs
+        .iter()
+        .filter(|spec| is_dialog(spec))
+        .map(|spec| (normal_keys(&spec.keys), conditions(&spec.context)))
+        .collect();
+    let hides = |spec: &Spec| {
+        if spec.layer != Layer::Scheme {
+            return false;
+        }
+        let keys = normal_keys(&spec.keys);
+        let mine = conditions(&spec.context);
+        dialog
+            .iter()
+            .any(|(theirs, of)| *theirs == keys && mine.iter().all(|atom| of.contains(atom)))
+    };
+    let Some(last) = specs.iter().rposition(hides) else {
+        return specs;
+    };
+    // The shell's keys come before every scheme's: all those moved stood
+    // before `last`.
+    let moved: Vec<Spec> = specs.extract_if(.., |spec| is_dialog(spec)).collect();
+    let at = last + 1 - moved.len();
+    specs.splice(at..at, moved);
+    specs
 }
 
 /// Whether a binding of the user's runs a command nothing registers now:
@@ -3772,6 +3818,102 @@ mod tests {
         for dialog in [planning, choosing] {
             assert_eq!(name(dialog, true).as_deref(), Some("ui.toolbar_close"));
         }
+    }
+
+    /// With a key scheme that binds Escape in the files (vim's: back to
+    /// the item under the cursor, and the end of a sweep), a dialog's
+    /// window keeps the order Escape has there: what is swept, filtered or
+    /// typed first, then a plan being made, then the dialog's Cancel, the
+    /// scheme's selection never (as the plugins' `select_none`). A window
+    /// of the user's own keeps the scheme's Escape as it was, over a
+    /// filter too, and what hides what there is unchanged.
+    #[test]
+    fn a_scheme_keeps_a_dialogs_escape_in_its_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        for (command, args, when) in [
+            (
+                "ui.cursor",
+                serde_json::json!({"to": "here", "step": "select"}),
+                "pane",
+            ),
+            ("select_sweep_end", serde_json::json!({}), "pane sweep"),
+        ] {
+            app.registry.schemes.add(
+                "vim",
+                KeyBinding {
+                    keys: "escape".into(),
+                    command: Invocation::with_args(command, &args),
+                    when: Some(when.into()),
+                },
+            );
+        }
+        let bound = super::bindings(&app, &[]);
+        let keymap = gpui::Keymap::new(super::gpui_bindings(&bound));
+        let run = |dialog: super::Dialog, flags: &[&str]| -> Option<String> {
+            let mut root = gpui::KeyContext::parse(super::ROOT).unwrap();
+            if dialog.planning {
+                root.add("planning");
+            }
+            if dialog.choosing {
+                root.add("choosing");
+            }
+            let mut pane = super::placed(super::PANE, dialog);
+            for flag in flags {
+                pane.add(*flag);
+            }
+            let stroke = super::parse_keystroke("escape").unwrap();
+            let (found, _) = keymap.bindings_for_input(&[stroke], &[root, pane]);
+            found.first().map(|binding| {
+                let run = binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<super::RunCommand>();
+                run.expect("a command").name.clone()
+            })
+        };
+        let dialog = |choosing, planning| super::Dialog { choosing, planning };
+        let (own, own_planning) = (dialog(false, false), dialog(false, true));
+        let (choosing, planning) = (dialog(true, false), dialog(true, true));
+        for (at, flags, runs) in [
+            (own, &[][..], "ui.cursor"),
+            (own_planning, &[], "ui.cursor"),
+            (own, &["filtered"], "ui.cursor"),
+            (own, &["sweep"], "select_sweep_end"),
+            (choosing, &[], "ui.chooser_cancel"),
+            (planning, &[], "ui.plan_cancel"),
+            (choosing, &["filtered"], "filter"),
+            (planning, &["filtered"], "filter"),
+            (choosing, &["typing"], "ui.type_end"),
+            (choosing, &["sweep"], "select_sweep_end"),
+            (planning, &["sweep"], "select_sweep_end"),
+        ] {
+            assert_eq!(run(at, flags).as_deref(), Some(runs), "{at:?} {flags:?}");
+        }
+        // What the Keyboard page, F1 and the menus read: the scheme's
+        // Escape still hides the filter's in a window of the user's own,
+        // and hides none of the dialog's.
+        let hidden = |command: &str, when: &str| {
+            bound
+                .iter()
+                .find(|b| {
+                    b.keys == "escape"
+                        && b.command.as_ref().is_some_and(|(name, _)| name == command)
+                        && b.context == context_of(Some(when))
+                })
+                .map(|b| b.hidden_by.is_some())
+        };
+        assert_eq!(hidden("filter", "pane filtered"), Some(true));
+        assert_eq!(hidden("filter", "pane choosing filtered"), Some(false));
+        assert_eq!(
+            hidden("ui.chooser_cancel", "pane choosing !planning"),
+            Some(false)
+        );
+        assert_eq!(
+            hidden("ui.plan_cancel", "pane choosing planning"),
+            Some(false)
+        );
     }
 
     /// In a dialog's window Ctrl+Q is the dialog's Cancel wherever the

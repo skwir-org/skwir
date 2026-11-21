@@ -37,7 +37,7 @@ them by topic.
 | [021](021-remote-file-systems.md) | Remote file systems come from installed tools | direction; revised by 077 |
 | [022](022-maps-later.md) | Search by place, writing locations, offline names and backgrounds | parts 1–3 built; part 4 partly |
 | [023](023-fields-on-demand.md) | Fields read on demand | built; extended by 091 |
-| [024](024-key-schemes-and-the-users-keys.md) | Key schemes and the user's keys, in layers | built |
+| [024](024-key-schemes-and-the-users-keys.md) | Key schemes and the user's keys, in layers | built; amended 2026-11-21: a dialog's window keeps its Escape |
 | [025](025-folders-opened-in-place.md) | Folders opened in place | built; revised by 032 |
 | [026](026-search-hints.md) | Indexes hint, the walk answers | built; amended by 050, and by 094: a proof and a score |
 | [027](027-notes-stores.md) | Notes read from every store, written where the user says | built; amended 2026-11-08 (the volume is asked) |
