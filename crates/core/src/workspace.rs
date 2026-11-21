@@ -1084,6 +1084,9 @@ enum Revealing {
 
 /// One pane: an open location, its listing, selection, and history.
 pub struct Pane {
+    /// Which pane it is, for good: the workspace finds it by it
+    /// (`Workspace::pane`, which checks the pane its index finds), so it is
+    /// never written once the pane is made.
     pub id: PaneId,
     pub open: Option<Arc<dyn OpenLocation>>,
     location_lifetime: CancelToken,
@@ -5738,7 +5741,10 @@ pub struct Workspace {
     panes: Vec<Pane>,
     /// Where each pane is in `panes`, by its id: `pane` and `pane_mut` in
     /// constant time. Kept by `push_pane` and `remove_pane_at`, the only
-    /// ways in and out.
+    /// ways in and out; nothing outside reorders `panes` (`panes_mut`
+    /// hands out each pane, not the list), and what the index finds is
+    /// checked to be the pane asked for (`index_of`), so it never answers
+    /// another.
     at: HashMap<PaneId, usize>,
     /// Never empty; every tab is in exactly one window, every pane in
     /// exactly one tab.
@@ -6661,8 +6667,10 @@ impl Workspace {
         &self.panes
     }
 
-    pub fn panes_mut(&mut self) -> &mut [Pane] {
-        &mut self.panes
+    /// Each pane, to change: one by one, never the list, whose order the
+    /// index of panes keeps (`at`).
+    pub fn panes_mut(&mut self) -> impl Iterator<Item = &mut Pane> {
+        self.panes.iter_mut()
     }
 
     pub fn active(&self) -> &Pane {
@@ -6700,11 +6708,28 @@ impl Workspace {
     }
 
     pub fn pane(&self, id: PaneId) -> Option<&Pane> {
-        self.at.get(&id).map(|&i| &self.panes[i])
+        self.index_of(id).map(|i| &self.panes[i])
     }
 
     pub fn pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
-        self.at.get(&id).map(|&i| &mut self.panes[i])
+        self.index_of(id).map(|i| &mut self.panes[i])
+    }
+
+    /// Where pane `id` is in `panes`, by the index (`at`), the pane found
+    /// there checked to be it: the index never answers another pane, even
+    /// one whose place or id changed behind it (two swapped through
+    /// `panes_mut`, an id written), which is then looked for along the
+    /// panes, and a test that did so fails.
+    fn index_of(&self, id: PaneId) -> Option<usize> {
+        let at = *self.at.get(&id)?;
+        if self.panes.get(at).is_some_and(|p| p.id == id) {
+            return Some(at);
+        }
+        debug_assert!(
+            false,
+            "{id:?} is no longer where the index of panes has it: panes reordered, or an id written"
+        );
+        self.panes.iter().position(|p| p.id == id)
     }
 
     /// Pump every pane, each for at most `PUMP_BUDGET`, and say which ones
@@ -6832,6 +6857,30 @@ mod tests {
         pane.note(&renamed[..1]);
         assert_eq!(pane.kept.len(), RENAMES_KEPT);
         assert_eq!(pane.kept.back(), renamed.first());
+    }
+
+    /// The index of panes never answers another pane: two panes swapped
+    /// behind it (the one way left to move them, with `panes_mut` handing
+    /// out each, not the list) are each found as themselves, and a test
+    /// that does so fails.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "no longer where the index of panes has it")
+    )]
+    fn the_index_of_panes_never_answers_another() {
+        let mut ws = Workspace::default();
+        let first = ws.active_id();
+        let second = ws.add_pane();
+        {
+            let mut each: Vec<&mut Pane> = ws.panes_mut().collect();
+            let (one, other) = each.split_at_mut(1);
+            std::mem::swap(&mut *one[0], &mut *other[0]);
+        }
+        for id in [first, second] {
+            assert_eq!(ws.pane(id).map(|p| p.id), Some(id));
+            assert_eq!(ws.pane_mut(id).map(|p| p.id), Some(id));
+        }
     }
 
     /// Each pane is found by its id as panes come and go (the index of

@@ -725,7 +725,6 @@ impl App {
                         let asked: Vec<PaneId> = {
                             let mut ws = app.workspace.write();
                             ws.panes_mut()
-                                .iter_mut()
                                 .filter_map(|p| p.ask_again_above(&above).then_some(p.id))
                                 .collect()
                         };
