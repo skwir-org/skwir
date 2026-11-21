@@ -2443,6 +2443,12 @@ commands_terminal_copy_description = Copier la sélection du terminal
 commands_terminal_description = Afficher ou masquer le terminal
 
 # draft
+commands_terminal_escape = Terminal : Échap
+
+# draft
+commands_terminal_escape_description = Retirer les repères des liens du terminal, ou envoyer Échap au programme qui y tourne
+
+# draft
 commands_terminal_links = Terminal : suivre un lien…
 
 # draft

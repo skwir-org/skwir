@@ -3932,6 +3932,7 @@ impl Shell {
             "terminal_paths" => self.terminal_type_selection(window, cx),
             "terminal_page" => self.terminal_page(args),
             "terminal_links" => self.label_terminal_links(cx),
+            "terminal_escape" => self.terminal_escape(cx),
             "timeline_bucket" => {
                 let b = arg("bucket").unwrap_or_else(|| "month".into());
                 self.timeline_set_bucket(&b, cx);

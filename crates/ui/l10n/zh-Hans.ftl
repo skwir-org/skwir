@@ -2390,6 +2390,12 @@ commands_terminal_copy_description = 复制终端中选中的内容
 commands_terminal_description = 显示或隐藏终端
 
 # draft
+commands_terminal_escape = 终端：Esc
+
+# draft
+commands_terminal_escape_description = 停止为终端中的链接添加标记，或将 Esc 发送给终端中运行的程序
+
+# draft
 commands_terminal_links = 终端：打开链接…
 
 # draft

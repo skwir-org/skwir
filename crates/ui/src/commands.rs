@@ -1613,6 +1613,9 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         // A dialog's Save as, a folder up at each repeat.
         | "ui.form_up"
         | "ui.terminal_page"
+        // Escape to the program in the terminal, as every key typed there
+        // repeats.
+        | "ui.terminal_escape"
         | "ui.preview_page"
         | "ui.preview_scroll"
         | "ui.preview_seek"
@@ -3146,6 +3149,20 @@ pub fn declare_all(app: &App) {
         "ui.terminal_links",
         words!(commands_terminal_links = "Terminal: follow a link…"),
         words!(commands_terminal_links_description = "Label the terminal's links for the keyboard"),
+    );
+    // Escape in the terminal, bound there so that nothing the window binds
+    // Escape to (a plan's) takes it first: the user's alone, as typing is.
+    none(
+        Topic::Terminal,
+        "ui.terminal_escape",
+        words!(
+            commands_terminal_escape = "Terminal: Escape",
+            note = "A key's action in the terminal: Escape, which stops labelling its links, or else goes to the program running there."
+        ),
+        words!(
+            commands_terminal_escape_description =
+                "Stop labelling the terminal's links, or send Escape to the program running there"
+        ),
     );
     for (name, title) in [
         ("ui.menu_up", words!(commands_menu_up = "Previous item")),

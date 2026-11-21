@@ -184,6 +184,17 @@ fn key_of(keystroke: &gpui::Keystroke) -> Option<Key> {
     Some(Key { code, mods })
 }
 
+/// Escape, as the program in the terminal gets it from a press of the key
+/// alone (`key_of`).
+const ESCAPE: Key = Key {
+    code: KeyCode::Escape,
+    mods: Mods {
+        ctrl: false,
+        alt: false,
+        shift: false,
+    },
+};
+
 #[derive(Clone, Copy)]
 pub(crate) struct HeightHandle;
 
@@ -555,9 +566,22 @@ impl Shell {
         cx.notify();
     }
 
+    /// `ui.terminal_escape`, Escape in the terminal, bound in its place so
+    /// that nothing the window binds Escape to (a plan's, at its root)
+    /// takes it first: the links labelled stop being, else the program
+    /// gets it, as it got the key typed.
+    pub(crate) fn terminal_escape(&mut self, cx: &mut Context<Self>) {
+        if self.terminal.labelled.is_some() {
+            self.terminal.label(None);
+            cx.notify();
+        } else {
+            self.terminal_input(Input::Key(ESCAPE));
+        }
+    }
+
     /// A key while the links are labelled: a letter of a label (a capital
-    /// for a tab of its own), Backspace, or Escape. Nothing reaches the
-    /// shell.
+    /// for a tab of its own), or Backspace; Escape, bound, stops
+    /// (`terminal_escape`). Nothing reaches the shell.
     fn terminal_label_key(
         &mut self,
         event: &KeyDownEvent,
@@ -568,21 +592,17 @@ impl Shell {
             return;
         };
         let keystroke = &event.keystroke;
-        match keystroke.key.as_str() {
-            "escape" => return self.terminal.label(None),
-            "backspace" => {
-                typed.pop();
-                return self.terminal.label(Some(typed));
-            }
-            _ => {}
+        if keystroke.key == "backspace" {
+            typed.pop();
+            return self.terminal.label(Some(typed));
         }
-        let letter = keystroke
-            .key_char
-            .as_deref()
-            .unwrap_or(&keystroke.key)
-            .chars()
+        // A letter, typed or named: never the first of a key's name
+        // (Escape with Shift, Enter, Tab), which types no letter.
+        let text = keystroke.key_char.as_deref().unwrap_or(&keystroke.key);
+        let mut chars = text.chars();
+        let letter = chars
             .next()
-            .filter(char::is_ascii_alphabetic);
+            .filter(|c| c.is_ascii_alphabetic() && chars.next().is_none());
         let Some(letter) = letter else {
             return;
         };
@@ -961,6 +981,8 @@ mod tests {
                 }
             )
         );
+        // What `ui.terminal_escape` sends is what the key alone was.
+        assert_eq!(key_of(&stroke("escape")), Some(ESCAPE));
         // Text goes through the input handler, composed.
         assert_eq!(key("a"), None);
         assert_eq!(key("shift-a"), None);

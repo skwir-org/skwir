@@ -2550,15 +2550,19 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   wake the app; the UI thread only compares a revision. The shell starts
   on a worker.
 - With the keyboard, every root binding is shadowed (`NoAction` in the
-  `Terminal` context, built by `keymap::install`) except
-  `TERMINAL_PASSTHROUGH`; add a key there if it must work from the
-  terminal.
-- The terminal's own keys (copy, paste, paging, links) are bound in its
-  place (`when: terminal`). The shadows are bound before every other
-  binding, so a key of the terminal's wins over the same keys bound to
-  the window in any layer. A key it takes never reaches the program: an
-  unbound Ctrl+Shift+C was Ctrl+C to it. Test a new one as GPUI reads the
-  keymap (`keymap::tests::the_terminals_keys_are_its_own_there`).
+  `Terminal` context, built by `keymap::install`), every one that names
+  no place (`keymap::names_no_place`: the root's flags, `planning`,
+  included) except `TERMINAL_PASSTHROUGH`; add a key there if it must
+  work from the terminal.
+- The terminal's own keys (copy, paste, paging, links, and Escape:
+  `ui.terminal_escape`, the links' labels stopped, else Escape to the
+  program) are bound in its place (`when: terminal`): no key listener
+  takes Escape, and a plan being made never takes it from there. The
+  shadows are bound before every other binding, so a key of the
+  terminal's wins over the same keys bound to the window in any layer.
+  A key it takes never reaches the program: an unbound Ctrl+Shift+C was
+  Ctrl+C to it. Test a new one as GPUI reads the keymap
+  (`keymap::tests::the_terminals_keys_are_its_own_there`).
 - Its menu (`Shell::open_terminal_menu`) opens with the right button,
   or the Menu key, standing above the cursor (`MenuHost::Terminal`, its
   row marked by the grid in prepaint). Shift+F10 stays the program's,

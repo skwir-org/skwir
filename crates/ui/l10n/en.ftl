@@ -1992,6 +1992,11 @@ commands_terminal_copy_description = Copy the terminal's selection
 
 commands_terminal_description = Show or hide the terminal
 
+# A key's action in the terminal: Escape, which stops labelling its links, or else goes to the program running there.
+commands_terminal_escape = Terminal: Escape
+
+commands_terminal_escape_description = Stop labelling the terminal's links, or send Escape to the program running there
+
 commands_terminal_links = Terminal: follow a link…
 
 commands_terminal_links_description = Label the terminal's links for the keyboard

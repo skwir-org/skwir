@@ -104,7 +104,9 @@ pub const TERMINAL: &str = "Terminal";
 /// the panel, and the palette, from which everything else can be run. Every
 /// other key bound anywhere in the window belongs to the shell and its
 /// programs while the terminal has the keyboard (Tab completes, Ctrl+L
-/// clears, F-keys drive a file manager). `install` shadows them.
+/// clears, F-keys drive a file manager). `install` shadows them: every
+/// binding that names no place (`names_no_place`), one the root's flags
+/// make run included (`planning`).
 const TERMINAL_PASSTHROUGH: [&str; 2] = ["ui.terminal", "ui.palette"];
 pub const BULK: &str = "BulkRename";
 /// The case of the bulk rename, its values side by side or a dropdown:
@@ -374,6 +376,11 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // The terminal's menu from the keyboard. Shift+F10 stays the
     // program's, as the other F-keys are.
     ("menu", "ui.terminal_menu", Some("terminal")),
+    // Escape in the terminal: the links labelled stop being, else the
+    // program gets it. Bound there, deeper than what Escape does in the
+    // window (a plan's, at its root), never taken by its key listener,
+    // which gpui runs after every binding.
+    ("escape", "ui.terminal_escape", Some("terminal")),
     ("enter", "ui.review_apply", Some("review")),
     ("escape", "ui.review_cancel", Some("review")),
     ("alt-a", "ui.choose_option", Some("choose")),
@@ -3196,6 +3203,24 @@ pub fn install(app: &App, user: Vec<UserBinding>, cx: &mut gpui::App) -> Keymap 
     }
 }
 
+/// Whether a binding of `context` names no place, only the root or flags:
+/// one runs wherever the keyboard is while they hold, from the terminal
+/// too (`planning`, which the root says while a plan is made), unless the
+/// terminal binds its keys to nothing (`gpui_bindings`).
+fn names_no_place(context: &str) -> bool {
+    let said_by_the_root = |alt: &str| {
+        let alt = alt.trim().trim_start_matches('!');
+        alt == ROOT || alt.starts_with(|c: char| c.is_ascii_lowercase())
+    };
+    conditions(context).into_iter().all(|atom| {
+        atom.strip_prefix('(')
+            .and_then(|alts| alts.strip_suffix(')'))
+            .unwrap_or(atom)
+            .split("||")
+            .all(said_by_the_root)
+    })
+}
+
 /// The hints of `bound`: every binding of a command that runs, which no
 /// later one hides.
 fn hints_of(bound: &[Bound]) -> Vec<KeyHint> {
@@ -3225,7 +3250,7 @@ fn gpui_bindings(bound: &[Bound]) -> Vec<KeyBinding> {
     let mut out: Vec<KeyBinding> = bound
         .iter()
         .filter(|binding| {
-            binding.context == ROOT
+            names_no_place(&binding.context)
                 && binding
                     .command
                     .as_ref()
@@ -3530,7 +3555,9 @@ mod tests {
     /// In the terminal its own keys run, even where a later layer binds the
     /// same keys to the window, and the window's other keys go on to the
     /// program but F4 and the palette: unbound, Ctrl+Shift+C reached the
-    /// shell as Ctrl+C. Read as GPUI reads the bindings `install` makes.
+    /// shell as Ctrl+C. Escape is its own while a plan is made too, which
+    /// the root's `planning` took from it; so is a key bound to what the
+    /// root says alone. Read as GPUI reads the bindings `install` makes.
     #[test]
     fn the_terminals_keys_are_its_own_there() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3544,12 +3571,20 @@ mod tests {
                 when: None,
             },
         );
-        let user = [UserBinding {
-            id: "1".into(),
-            keys: "ctrl-shift-c".into(),
-            command: Some(Invocation::new("toggle_hidden")),
-            when: None,
-        }];
+        let user = [
+            UserBinding {
+                id: "1".into(),
+                keys: "ctrl-shift-c".into(),
+                command: Some(Invocation::new("toggle_hidden")),
+                when: None,
+            },
+            UserBinding {
+                id: "2".into(),
+                keys: "ctrl-k".into(),
+                command: Some(Invocation::new("toggle_hidden")),
+                when: Some("planning".into()),
+            },
+        ];
         let keymap = gpui::Keymap::new(super::gpui_bindings(&super::bindings(&app, &user)));
         let run = |keys: &str, places: &[&str]| -> Option<String> {
             let stack: Vec<gpui::KeyContext> = places
@@ -3593,6 +3628,24 @@ mod tests {
         assert_eq!(
             run("shift-insert", &terminal).as_deref(),
             Some("ui.terminal_paste")
+        );
+        let planning = format!("{} planning", super::ROOT);
+        for root in [super::ROOT, &planning] {
+            assert_eq!(
+                run("escape", &[root, super::TERMINAL]).as_deref(),
+                Some("ui.terminal_escape"),
+                "{root}"
+            );
+        }
+        assert_eq!(run("ctrl-k", &[&planning, super::TERMINAL]), None);
+        // Elsewhere in the window, as before.
+        assert_eq!(
+            run("escape", &[&planning, super::PANE]).as_deref(),
+            Some("ui.plan_cancel")
+        );
+        assert_eq!(
+            run("ctrl-k", &[&planning]).as_deref(),
+            Some("toggle_hidden")
         );
     }
 
