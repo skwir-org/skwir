@@ -67,8 +67,8 @@ pub struct Remembered {
 /// Whether the desktop remembers the files used, and for how long: not
 /// where one of its switches says to remember none, read as each program
 /// that keeps the list reads its own, each where it is cheap to read:
-/// GTK's `settings.ini` as GTK cascades them (the user's, `/etc`'s, those
-/// of `XDG_CONFIG_DIRS`; GTK 4's and GTK 3's: `gtk-recent-files-enabled`,
+/// GTK's `settings.ini` as GTK cascades them (`gtk_settings_files`; GTK
+/// 4's and GTK 3's: `gtk-recent-files-enabled`,
 /// `gtk-recent-files-max-age`), GNOME's privacy settings, which GTK 4
 /// reads through the settings portal (`remember-recent-files`,
 /// `recent-files-max-age`), Cinnamon's on Cinnamon, and KDE's
@@ -83,16 +83,14 @@ pub fn remembered() -> Option<Remembered> {
     let gtk: Vec<Vec<String>> = ["gtk-4.0", "gtk-3.0"]
         .iter()
         .map(|version| {
-            let file = std::path::Path::new(version).join("settings.ini");
-            crate::xdg::config_home()
-                .into_iter()
-                .chain(std::iter::once(PathBuf::from("/etc")))
-                .chain(crate::xdg::config_dirs())
-                .filter_map(|folder| {
-                    crate::file::read_regular_text(&folder.join(&file), crate::file::DESKTOP_FILE)
-                        .ok()
-                })
-                .collect()
+            gtk_settings_files(
+                version,
+                crate::xdg::config_home(),
+                &crate::xdg::config_dirs(),
+            )
+            .iter()
+            .filter_map(|file| crate::file::read_regular_text(file, crate::file::DESKTOP_FILE).ok())
+            .collect()
         })
         .collect();
     let schema = |schema: &str| {
@@ -212,8 +210,31 @@ impl Said {
     }
 }
 
+/// GTK's `settings.ini`s of `version` (`gtk-3.0`), the one whose word
+/// wins first: GTK loads its data prefix's (`/usr/share`, where the
+/// system installs it), its `sysconfdir`'s (`/etc`), each of
+/// `XDG_CONFIG_DIRS` (`config_dirs`) from the first, then the user's
+/// (`config_home`), each one's keys replacing those loaded before
+/// (`gtk_settings_init`, GTK 3 and 4 alike): the user's first here, then
+/// `XDG_CONFIG_DIRS` from the last, `/etc`'s, the data prefix's.
+#[cfg(target_os = "linux")]
+fn gtk_settings_files(
+    version: &str,
+    config_home: Option<PathBuf>,
+    config_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
+    let file = Path::new(version).join("settings.ini");
+    config_home
+        .into_iter()
+        .chain(config_dirs.iter().rev().cloned())
+        .chain([PathBuf::from("/etc"), PathBuf::from("/usr/share")])
+        .map(|folder| folder.join(&file))
+        .collect()
+}
+
 /// What GTK's `settings.ini`s say, each GTK's (`versions`) in the order
-/// it reads them, the first that says a key saying it.
+/// whose word wins first (`gtk_settings_files`), the first that says a
+/// key saying it.
 #[cfg(target_os = "linux")]
 fn gtk_said(versions: &[Vec<String>]) -> Said {
     let value = |texts: &[String], key: &str| {
@@ -1141,6 +1162,26 @@ mod tests {
             .map(|b| b.0.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, ["old-used.txt", "new.txt", "undated.txt"]);
+    }
+
+    /// GTK's `settings.ini`s are asked in the order whose word wins
+    /// first, as GTK loads them the other way round: the user's, the last
+    /// of `XDG_CONFIG_DIRS` before the first, `/etc`'s, the data prefix's.
+    #[test]
+    fn gtk_s_settings_are_asked_as_gtk_cascades_them() {
+        let dirs = [PathBuf::from("/etc/xdg"), PathBuf::from("/opt/look/xdg")];
+        let files = gtk_settings_files("gtk-3.0", Some(PathBuf::from("/u/.config")), &dirs);
+        let expected: Vec<PathBuf> = [
+            "/u/.config",
+            "/opt/look/xdg",
+            "/etc/xdg",
+            "/etc",
+            "/usr/share",
+        ]
+        .iter()
+        .map(|folder| Path::new(folder).join("gtk-3.0/settings.ini"))
+        .collect();
+        assert_eq!(files, expected);
     }
 
     /// Each desktop's switch is read where it keeps it: GTK's
