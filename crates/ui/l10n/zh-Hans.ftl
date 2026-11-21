@@ -3771,7 +3771,7 @@ keymap_flag_folder = 在文件夹中
 keymap_flag_labelling = 链接已标记时
 
 # draft
-keymap_flag_lists = 字段的列表显示时
+keymap_flag_lists = 其列表显示时
 
 # draft
 keymap_flag_offers = 字段提供可选行时

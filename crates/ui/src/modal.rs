@@ -199,7 +199,10 @@ impl Shell {
 /// bound there, the scrim's key context (`keymap::MODAL`, `ui.dismiss`),
 /// so that the dialog takes it before what the window behind binds it to
 /// (a plan's Cancel, another program's dialog's): gpui runs the deepest
-/// binding before any key's listener. The panel keeps its presses.
+/// binding before any key's listener. So what is open in the dialog (a
+/// dropdown's list) binds Escape in its own key context (`lists`), never
+/// in a listener, which this binding would run before. The panel keeps
+/// its presses.
 /// `priority` orders deferred overlays (menus above dialogs).
 pub fn modal(
     panel: Stateful<Div>,

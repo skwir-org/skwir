@@ -661,13 +661,21 @@ fn case_segments(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
 }
 
 /// The case as a dropdown: its value, and the list of them a press or
-/// Space opens, Escape, a press outside or a value taken closes.
+/// Space opens, Escape, a press outside or a value taken closes. Its list
+/// open, it says `lists`, where Escape is bound to close it
+/// (`ui.toolbar_close`): deeper than the dialog's own Escape, which gpui
+/// runs before any key listener.
 fn case_dropdown(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let open = b.case_open;
+    let mut context = gpui::KeyContext::default();
+    context.add(keymap::BULK_CASE);
+    if open {
+        context.add("lists");
+    }
     let control = controls::dropdown("bulk-case", case_label(b.case).say(), &b.case_focus, theme)
         .aria_label(case_title().say())
         .aria_expanded(open)
-        .key_context(keymap::BULK_CASE)
+        .key_context(context)
         .child(b.case_anchor.marker())
         .on_click(cx.listener(
             move |this, event: &gpui::ClickEvent, window, cx| match event {
@@ -679,13 +687,15 @@ fn case_dropdown(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyEl
                 _ => this.bulk_case_list(!open, cx),
             },
         ))
-        .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
-            let key = &event.keystroke;
-            if open && key.key == "escape" && !key.modifiers.modified() {
-                cx.stop_propagation();
-                this.bulk_case_list(false, cx);
-            }
-        }));
+        .on_action(
+            cx.listener(move |this, action: &keymap::RunCommand, _, cx| {
+                if open && action.name == "ui.toolbar_close" {
+                    this.bulk_case_list(false, cx);
+                } else {
+                    cx.propagate();
+                }
+            }),
+        );
     if !open {
         return control.into_any_element();
     }

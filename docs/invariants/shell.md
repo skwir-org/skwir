@@ -1774,7 +1774,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   button or a switch included: it is bound in the dialog's frame
   (`keymap::MODAL`, `ui.dismiss`), deeper than what the window behind
   binds Escape to (a plan's Cancel, another program's dialog's), as gpui
-  runs the deepest binding before any key's listener.
+  runs the deepest binding before any key's listener. **What is open
+  takes Escape where it hangs**, in a dialog or the window: a dropdown's
+  list, a popup, a menu, a field's list each says so in its own key
+  context (`lists` for a list hung from its control, as the bulk rename's
+  case and the bar of another program's dialog say it) and binds Escape
+  there (`ui.toolbar_close`, which the element answers), never in a key
+  listener, which every binding runs before: the case list's listener
+  let the dialog's Escape close the whole dialog.
 - **A few choices are in sight side by side**, in every dialog:
   segments (`controls::segmented`), one stop for Tab and a radio group
   to a screen reader, as a form's `Kind::Row`, a setting's choice and

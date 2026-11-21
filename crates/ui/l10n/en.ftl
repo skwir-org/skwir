@@ -3390,7 +3390,8 @@ keymap_flag_folder = in a folder
 # Where keys work: while a preview's links show letters to follow them by.
 keymap_flag_labelling = while links are labelled
 
-keymap_flag_lists = while a field's list shows
+# Where keys work: while a list shows under what it belongs to (a field, a dropdown).
+keymap_flag_lists = while its list shows
 
 keymap_flag_offers = while a field offers a row to take
 

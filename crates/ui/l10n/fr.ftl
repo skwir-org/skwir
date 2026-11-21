@@ -3929,7 +3929,7 @@ keymap_flag_folder = dans un dossier
 keymap_flag_labelling = quand les liens portent des repères
 
 # draft
-keymap_flag_lists = quand la liste d’un champ est affichée
+keymap_flag_lists = quand sa liste est affichée
 
 # draft
 keymap_flag_offers = quand un champ propose une suggestion

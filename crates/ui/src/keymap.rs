@@ -299,6 +299,12 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // Escape does in the window behind it (a plan's, another program's
     // dialog's Cancel), so the dialog goes first.
     ("escape", "ui.dismiss", Some("modal")),
+    // What is open inside a dialog or the window takes Escape before it,
+    // where it hangs: its own key context says `lists` while its list
+    // shows, and answers `ui.toolbar_close` (the bulk rename's case here,
+    // the bar of another program's dialog below). Never a key listener,
+    // which gpui runs after every binding, the dialog's included.
+    ("escape", "ui.toolbar_close", Some("bulk_case lists")),
     // A plan being worked out for what was asked (`shell/planning.rs`):
     // Escape lets it go, where nothing nearer takes Escape.
     ("escape", "ui.plan_cancel", Some("planning")),
@@ -1873,7 +1879,10 @@ pub(crate) fn condition_words(flag: &str) -> Words {
             note = "Where keys work: while a preview's links show letters to follow them by."
         ),
         "reference" => words!(keymap_flag_reference = "in a field that says what it takes"),
-        "lists" => words!(keymap_flag_lists = "while a field's list shows"),
+        "lists" => words!(
+            keymap_flag_lists = "while its list shows",
+            note = "Where keys work: while a list shows under what it belongs to (a field, a dropdown)."
+        ),
         "offers" => words!(keymap_flag_offers = "while a field offers a row to take"),
         "planning" => words!(keymap_flag_planning = "while a plan is worked out"),
         "choosing" => words!(
@@ -3617,9 +3626,11 @@ mod tests {
     /// makes, its contexts said as the window says them: a modal dialog,
     /// wherever its keyboard is (a button, a switch of a form, a field's
     /// own Escape first), and a plan being made, from the files, the
-    /// sidebar and the timeline alike (RS-2, RC-2). In a window of the
-    /// user's own, a modal's Escape is still its own while a plan is made,
-    /// and the sidebar's gives the keyboard back.
+    /// sidebar and the timeline alike (RS-2, RC-2). What is open inside a
+    /// modal (the bulk rename's case list) takes it before the modal, in
+    /// either window (FP-1). In a window of the user's own, a modal's
+    /// Escape is still its own while a plan is made, and the sidebar's
+    /// gives the keyboard back.
     #[test]
     fn a_modal_and_a_plan_take_escape_before_a_dialog() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3693,6 +3704,19 @@ mod tests {
             assert_eq!(
                 run(&[root(dialog), parse(super::MODAL), parse(super::REVIEW)]).as_deref(),
                 Some("ui.review_cancel")
+            );
+            // The bulk rename's case as a dropdown, its list open: Escape
+            // closes the list, the dialog stays; closed, the dialog's.
+            let mut case = parse(super::BULK_CASE);
+            let bulk = [root(dialog), parse(super::MODAL), parse(super::BULK)];
+            let closed = [bulk.as_slice(), &[case.clone()]].concat();
+            assert_eq!(run(&closed).as_deref(), Some("ui.dismiss"), "{dialog:?}");
+            case.add("lists");
+            let open = [bulk.as_slice(), &[case]].concat();
+            assert_eq!(
+                run(&open).as_deref(),
+                Some("ui.toolbar_close"),
+                "{dialog:?}"
             );
         }
         // A plan being made lets go before the dialog does, wherever the
