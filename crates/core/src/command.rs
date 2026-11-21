@@ -211,6 +211,11 @@ pub enum Effect {
     UserOnly,
 }
 
+/// What a command does with the arguments it is given, where they make it
+/// do more than its [`Effect`] says (`Declared::effect_by`): an argument
+/// that changes a preference makes a command that shows act.
+pub type EffectBy = fn(&serde_json::Value) -> Effect;
+
 /// What a command is about, as a person looks for it: F1 lists the keys
 /// that work here under these, in this order (`Topic::ALL`). Every command
 /// names one where it is registered (`CommandRegistry::register`), the
@@ -719,6 +724,13 @@ pub struct CommandSpec {
     pub topic: Topic,
     /// What it does: what an agent may run without asking.
     pub effect: Effect,
+    /// What it does with arguments that make it do more than its `effect`
+    /// says (`Declared::effect_by`): `sort` given `folders_first` changes
+    /// the user's setting, which acts. `None`: its `effect`, whatever its
+    /// arguments. What an agent's call is let do reads it
+    /// (`permissions::for_agent_call`), so it is not said to agents.
+    #[serde(skip)]
+    pub effect_by: Option<EffectBy>,
     /// The arguments that make it one thing to do, each with its title:
     /// what every list of actions calls it (`CommandSpec::title_for`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -783,6 +795,12 @@ impl CommandSpec {
     /// only where they say so (`Declared::in_dialogs`).
     pub fn in_dialogs_by_default(&self) -> bool {
         self.topic.in_dialogs() && self.effect != Effect::Plans && self.opens == Opens::Here
+    }
+
+    /// What it does run with `args` (ADR-044): what they make it do where
+    /// they decide it (`Declared::effect_by`), else its `effect`.
+    pub fn effect_with(&self, args: &serde_json::Value) -> Effect {
+        self.effect_by.map_or(self.effect, |rule| rule(args))
     }
 
     /// Whether a key held down runs it again with `args`.
@@ -945,6 +963,12 @@ impl Declared<'_> {
     /// steps.
     pub fn repeats(&self, rule: Repeats) {
         self.update(|spec| spec.repeats = Some(rule));
+    }
+
+    /// What it does run with its arguments, where they make it do more
+    /// than its effect says (see `CommandSpec::effect_by`).
+    pub fn effect_by(&self, rule: EffectBy) {
+        self.update(|spec| spec.effect_by = Some(rule));
     }
 
     /// Say what it does.
@@ -1265,6 +1289,7 @@ impl CommandRegistry {
             owner: owner.into(),
             topic,
             effect: Effect::default(),
+            effect_by: None,
             forms: Vec::new(),
             keeps_a_key: false,
             data: false,

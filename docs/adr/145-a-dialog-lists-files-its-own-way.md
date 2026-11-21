@@ -45,7 +45,10 @@ after the research below). Amends ADR-144 (decision 4) and ADR-132.
    was said as "the user's, in every pane" meant that no folder keeps
    one): the user's setting in their windows, the dialogs' own in a
    dialog's. The View menu's row runs `sort` with `folders_first`, which
-   sets the one of the window it is run in.
+   sets the one of the window it is run in; the user's setting changed
+   so, an agent's call asks the user first, as one of `settings.apply`
+   does (`Declared::effect_by`, ADR-044; amended after review,
+   2026-11-21).
 4. **Text sizes stay one**: how large the user reads, not how a folder is
    listed.
 

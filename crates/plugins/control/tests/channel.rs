@@ -400,6 +400,56 @@ fn an_agent_asks_before_a_command_that_acts_and_never_answers_for_the_user() {
     assert_eq!(script.value, json!("acted"));
 }
 
+/// What a command does with its arguments decides an agent's call
+/// (ADR-044): `sort` changes what a pane shows, unasked, but given
+/// `folders_first` the user's setting in all of their windows (ADR-145,
+/// 3), which the user allows first, as a call of `settings.apply` asks.
+#[test]
+fn an_agent_asks_before_sort_changes_the_user_s_folders_first() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let (_server, address) = listening(&app, tmp.path());
+    let first = || {
+        app.settings
+            .get::<bool>(skwir_core::location::FOLDERS_FIRST)
+            .unwrap_or(true)
+    };
+    let sorted = client::call(
+        &address,
+        "sort",
+        arguments(json!({ "key": "size" })),
+        PlanMode::Propose,
+    )
+    .unwrap();
+    assert!(!sorted.failed, "{sorted:?}");
+    assert!(
+        app.take_questions().is_empty(),
+        "a pane's order asks nothing"
+    );
+    for allow in [false, true] {
+        let call = {
+            let address = address.clone();
+            std::thread::spawn(move || {
+                client::call(
+                    &address,
+                    "sort",
+                    arguments(json!({ "folders_first": false })),
+                    PlanMode::Propose,
+                )
+            })
+        };
+        let mut asked = Vec::new();
+        wait_until("a question", || {
+            asked.extend(app.take_questions());
+            !asked.is_empty()
+        });
+        assert!(app.answer(asked[0].id, allow));
+        let answer = call.join().unwrap().unwrap();
+        assert_eq!(answer.failed, !allow, "{answer:?}");
+        assert_eq!(first(), !allow, "the setting changed once allowed");
+    }
+}
+
 #[test]
 fn an_agent_never_names_nor_sees_a_private_folder() {
     let tmp = tempfile::tempdir().unwrap();

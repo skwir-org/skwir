@@ -820,7 +820,7 @@ app_sort_by_way = 按{ $key }排序，{ $way }
 app_sort_descending = 降序排列
 
 # draft
-app_sort_description = 设置窗格的排序键、方向以及是否显示隐藏文件，以及文件夹是否排在前面（`folders_first`：在应答其他程序对话框的窗口中是对话框自己的设置，否则是用户在其所有窗口中的设置）
+app_sort_description = 设置窗格的排序键、方向以及是否显示隐藏文件，以及文件夹是否排在前面（`folders_first`：在应答其他程序对话框的窗口中是对话框自己的设置，否则是用户在其所有窗口中的设置，代理的调用会先征得用户同意）
 
 # draft
 app_take_out = 从此处移出

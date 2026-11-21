@@ -358,7 +358,9 @@ impl Tools {
                     input_schema(&spec.args_schema),
                 );
                 tool.title = Some(spec.title.english());
-                let read_only = matches!(spec.effect, Effect::Reads | Effect::Shows);
+                // Whose arguments may make it act, it may change more.
+                let read_only = matches!(spec.effect, Effect::Reads | Effect::Shows)
+                    && spec.effect_by.is_none();
                 Some(tool.annotate(ToolAnnotations::new().read_only(read_only)))
             })
             .collect();
@@ -523,8 +525,8 @@ pub fn run(
 }
 
 /// Whether an agent may run `invocation` (ADR-044): nothing it names is
-/// private, and what the command does allows it, the user asked first
-/// for a command that acts without a plan.
+/// private, and what the command does with its arguments allows it, the
+/// user asked first for what acts without a plan.
 fn admit(
     app: &App,
     invocation: &Invocation,
@@ -553,7 +555,7 @@ fn admit(
             note = "Read by agents and scripts: no command has the id they named, as typed."
         ))
     })?;
-    match permissions::for_agent(&spec) {
+    match permissions::for_agent_call(&spec, &invocation.args) {
         AgentGate::Runs => Ok(()),
         AgentGate::Refused => anyhow::bail!(words!(
             control_user_only =

@@ -824,7 +824,7 @@ app_sort_by_way = Trier par { $key }, { $way }
 app_sort_descending = Trier par ordre décroissant
 
 # draft
-app_sort_description = Régler la clé de tri, le sens et l’affichage des fichiers cachés d’un panneau, et si les dossiers viennent en premier (`folders_first` : ce que garde une fenêtre qui répond à la boîte de dialogue d’un autre programme, sinon le réglage de l’utilisateur, dans toutes ses fenêtres)
+app_sort_description = Régler la clé de tri, le sens et l’affichage des fichiers cachés d’un panneau, et si les dossiers viennent en premier (`folders_first` : ce que garde une fenêtre qui répond à la boîte de dialogue d’un autre programme, sinon le réglage de l’utilisateur, dans toutes ses fenêtres, que l’appel d’un agent ne change qu’une fois l’utilisateur d’accord)
 
 # draft
 app_take_out = Retirer d’ici

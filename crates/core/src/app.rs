@@ -5086,7 +5086,7 @@ mod builtin {
             ),
             words!(
                 app_sort_description =
-                    "Set the sort key, direction, and hidden-file visibility of a pane, and whether folders come first (`folders_first`: a dialog's own in a window answering another program's dialog, else the user's in all of their windows)"
+                    "Set the sort key, direction, and hidden-file visibility of a pane, and whether folders come first (`folders_first`: a dialog's own in a window answering another program's dialog, else the user's setting in all of their windows, which an agent's call asks the user for first)"
             ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
@@ -5148,6 +5148,7 @@ mod builtin {
             },
         );
         sort.forms(sort_forms());
+        sort.effect_by(sort_effect);
         sort.shows();
 
         let group = c.register::<GroupArgs, _>(
@@ -6337,6 +6338,22 @@ mod builtin {
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.commands.list())?)),
         )
         .data();
+    }
+}
+
+/// What `sort` does with `args` (ADR-044): it changes how a pane shows its
+/// files, but given `folders_first` it changes the user's setting, in all
+/// of their windows (ADR-145, 3), which acts: an agent's call asks the user
+/// first, as one of `settings.apply` does. The dialogs' own, which it sets
+/// in a dialog's pane, no call from elsewhere reaches (ADR-141, 8).
+fn sort_effect(args: &serde_json::Value) -> crate::command::Effect {
+    if args
+        .get("folders_first")
+        .is_some_and(|first| !first.is_null())
+    {
+        crate::command::Effect::Acts
+    } else {
+        crate::command::Effect::Shows
     }
 }
 

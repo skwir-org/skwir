@@ -123,7 +123,12 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
 - **Effects (ADR-044).** A command says what it does when registered
   (`command::Effect`: `register(..).reads()`, `.shows()`, `.plans()`,
   `.user_only()`); this decides what an agent may run. A command that says
-  nothing acts, and an agent's call of it asks the user first. A window
+  nothing acts, and an agent's call of it asks the user first. One whose
+  arguments make it do more says so by them (`Declared::effect_by`:
+  `sort` given `folders_first` changes the user's setting, which acts),
+  and an agent's call is let do what it does with the arguments given
+  (`permissions::for_agent_call`): a preference changes only behind the
+  ask its own command has, never under another's gate. A window
   command (`ui.*`) is the user's alone unless `commands.rs` lists it among
   those that show or act: one that answers a dialog or presses for the
   user must never be an agent's. Another program's Open or Save dialog

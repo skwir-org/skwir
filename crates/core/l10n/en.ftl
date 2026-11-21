@@ -736,7 +736,7 @@ app_sort_by_way = Sort by { $key }, { $way }
 
 app_sort_descending = Sort descending
 
-app_sort_description = Set the sort key, direction, and hidden-file visibility of a pane, and whether folders come first (`folders_first`: a dialog's own in a window answering another program's dialog, else the user's in all of their windows)
+app_sort_description = Set the sort key, direction, and hidden-file visibility of a pane, and whether folders come first (`folders_first`: a dialog's own in a window answering another program's dialog, else the user's setting in all of their windows, which an agent's call asks the user for first)
 
 # An action's name: take files out of a tag's or the shelf's list, the files left where they are.
 app_take_out = Take out of here

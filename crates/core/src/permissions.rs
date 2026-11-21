@@ -863,9 +863,22 @@ pub enum AgentGate {
     Refused,
 }
 
-/// What an agent's call of `spec` does before it runs.
+/// What an agent's call of `spec` does before it runs, as it is declared
+/// (the tool listed for it); a call with its arguments,
+/// [`for_agent_call`].
 pub fn for_agent(spec: &CommandSpec) -> AgentGate {
-    match spec.effect {
+    gate(spec.effect)
+}
+
+/// What an agent's call of `spec` with `args` does before it runs: by what
+/// it does with them (`CommandSpec::effect_with`), so that an argument
+/// changing the user's preference asks first, as `settings.apply` does.
+pub fn for_agent_call(spec: &CommandSpec, args: &Value) -> AgentGate {
+    gate(spec.effect_with(args))
+}
+
+fn gate(effect: Effect) -> AgentGate {
+    match effect {
         Effect::Reads | Effect::Shows | Effect::Plans => AgentGate::Runs,
         Effect::Acts => AgentGate::Asks,
         Effect::UserOnly => AgentGate::Refused,
