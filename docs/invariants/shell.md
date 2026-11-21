@@ -1585,27 +1585,27 @@ asks the direction.
   Sidebar forgets it, the heading's Clear Recent Folders forgets them
   all (`ui.chooser_forget_folders`), each said as it was asked (a last
   folder taken out is that one taken out) with its Undo, which puts back
-  what it took out where it was, after what another dialog of the
-  program chose since, the later choice kept (`chooser::undo_forget`),
-  and whose Redo asks it again; with none left, the next dialog starts as one that chose
-  nowhere would. Every dialog of the program follows what any of them
-  forgets or chooses in (`chooser::Followed`: the record read again once
-  written, `chooser::keep_folders` its one writer). It shows five at
-  most of the ten a program keeps (`chooser::FOLDERS_SHOWN`),
-  none another shown place leads to (`sidebar::shown_nowhere`, a folded
-  section showing its places), none gone: the request waits for that,
-  half a second at most, before its window opens (`chooser::Asking`,
-  read on a thread of its own, a server's folder never asked), and the
-  dialog starts in the first there. Above it, **Skwir Tabs**
-  (`groups::SKWIR_TABS`, `Shell::tab_places`): what the tabs of the
-  user's own windows show, as they were used (`Workspace::tabs_by_use`,
-  each tab knowing when it was last left, `Tab::left`), five at most,
-  none another place shows; its places are listed (`Place::listed`,
-  `Role::Listed`): opened, never arranged, hidden or taken out, each in
-  the order it was listed. Read again once what the tabs show or what
-  names them changed (`Workspace::tabs_shown`, the remotes' and the place
-  titles' revisions), never at each frame, so they follow the tabs as the
-  window is drawn again.
+  what it took out where it was, after what another dialog of the program
+  chose since, the later choice kept (`chooser::undo_forget`), and whose
+  Redo asks it again; with none left, the next dialog starts as one that
+  chose nowhere would. Every dialog of the program follows what any of
+  them forgets or chooses in (`chooser::Followed`: the record read again
+  once written, `chooser::keep_folders` its one writer). It shows five at
+  most of the ten a program keeps (`chooser::FOLDERS_SHOWN`), none another
+  shown place leads to (`sidebar::shown_nowhere`, a folded section showing
+  its places), none gone: the request waits for that, half a second at
+  most, before its window opens (`chooser::Asking`, read on a thread of
+  its own, a server's folder never asked), and the dialog starts in the
+  first there. Above it, **Skwir Tabs** (`groups::SKWIR_TABS`,
+  `Shell::tab_places`): what the tabs of the user's own windows show, as
+  they were used (`Workspace::tabs_by_use`, each tab knowing when it was
+  last left, `Tab::left`), five at most, none another place shows; its
+  places are listed (`Place::listed`, `Role::Listed`): opened, never
+  arranged, hidden or taken out, each in the order it was listed. Read
+  again once what the tabs show or what names them changed
+  (`Workspace::tabs_shown`, the remotes' and the place titles' revisions),
+  never at each frame, so they follow the tabs as the window is drawn
+  again.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
   command, which keeps what the pane shows as it shows it (ADR-109): the
   location and the pane's filter go to the `Keeper` that keeps them, the
@@ -2108,8 +2108,8 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   else to the front window of the user's own, Activity open. With only
   dialogs up, a dialog's work brings one forward, the user's windows
   asleep staying so; what is the user's, or names no window (an agent's
-  plan, a question waiting, the presence), brings them back. A shell never takes a program-wide queue
-  of the core's.
+  plan, a question waiting, the presence), brings them back. A shell never
+  takes a program-wide queue of the core's.
 - **What is one, what is each window's.** One for the program: the
   queue, the History and Undo, Activity's work (`Work`), the shelf, cut
   files, settings, the keymap, the player, the agents' channel, the

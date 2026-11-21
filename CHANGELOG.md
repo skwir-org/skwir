@@ -148,53 +148,54 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
 - **Other programs' Open and Save dialogs** (ADR-141): on Linux, Settings ›
   General › Open and save dialogs can name Skwir for the programs that ask the
   desktop portal for one. Each dialog is a Skwir window of its own, attached
-  to the asking program's, opening where it asks, else where that program
-  last chose, with the name, the program's filters and choices, Cancel and
-  its answer; only you answer it, never an agent or a script. Where none
-  runs, the bus starts Skwir for it (`skwir --portal`; the portal has it
-  started at login too, asking nothing), and it reaches no display until a
-  program asks. The row writes your portal configuration, applied once the
-  portal starts again (the next login), and leaves one a link keeps (Home
-  Manager's, a dotfiles folder's) to its keeper. Home Manager's
-  `programs.skwir.fileChooser.enable` sets it.
+  to the asking program's, opening where it asks, else where that program last
+  chose, with the name, the program's filters and choices, Cancel and its
+  answer; only you answer it, never an agent or a script. Where none runs, the
+  bus starts Skwir for it (`skwir --portal`; the portal has it started at
+  login too, asking nothing), and it reaches no display until a program asks
+  and ends once it has nothing left to answer. The row writes your portal
+  configuration, applied once the portal starts again (the next login), and
+  leaves one a link keeps (Home Manager's, a dotfiles folder's) to its keeper.
+  Home Manager's `programs.skwir.fileChooser.enable` sets it.
 - **A dialog's window kept to finding and choosing** (ADR-144, ADR-145): it
-  offers places, the address, search, tags, views, the preview and
-  Properties, the shelf; of what changes files, New Folder, Rename, Move to
-  Trash, the clipboard and Paste, a file's tags, rating and comment, and
-  Undo, Redo and Retry of what that dialog did alone. Tabs, the split, the
-  terminal, the pinned player, Activity, Settings, Usage, Open With,
-  printing, the commands of plugins from outside and the Trash place are
-  gone from its menus, buttons, palette, F1 and links, their keys doing
-  there what they would unbound, and a notice clicked opens no Activity
-  there; a place opened in a tab opens in place; Enter and Shift+Enter
-  answer with what they name, never opening another program; what the
-  dialog's own action asks (a password, names taken) is asked in it, and
-  what it did (a tag, a bookmark) is said in it with its Undo; Escape
-  cancels the dialog wherever the keyboard is (a menu, a list, a question
-  or a form, the changes a paste is working out, or what you type there
-  taking it first), and Ctrl+Q cancels it alone. Its sidebar starts with
-  **Skwir Tabs**, what your windows' tabs show (five at most, the last
-  used first), then **Recent Folders**, up to five of the folders the
-  program last chose in, none gone and none another place shows: Remove
-  From Sidebar and Clear Recent Folders say what they did, with Undo then
-  Redo, and every dialog of the program follows. The dialogs keep a
-  layout of their own (the first takes your window's view and no panel),
-  the size you leave them at, a grid for a program asking for pictures or
-  films, and an order of their own: the sort, the groups, hidden files and
-  Folders first the last dialog was left with (at first your window's),
-  and what a folder remembers there is theirs, apart from your windows';
-  an agent's `sort` that sets Folders first asks you first. Opening files,
-  Recent comes first and is where a program with no folder starts while
-  the desktop's list has a file to give, and what you choose is added to
-  the desktop's recently used files, by a Skwir started for that dialog
-  alone too, unless your desktop says to remember none; a program's own
-  All files is listed once, under its own name; the filter changes a saved
-  name's extension, never one you typed that only All files takes;
-  choosing a folder, its files show dimmed; a file dropped is gone to,
-  never copied; the answer counts ("Open 3 files"). Every Skwir window
-  says what it is for, `main window` or `file chooser` (Wayland's toplevel
-  tag, X11's window role), so a compositor rule can float a dialog where
-  nothing else does ([the guide](docs/guide.md#skwir-for-other-programs)
+  offers places, the address, search, tags, views, the preview and Properties,
+  the shelf; of what changes files, New Folder, Rename, Move to Trash, the
+  clipboard and Paste, a file's tags, rating and comment, and Undo, Redo and
+  Retry of what that dialog did alone. Tabs, the split, the terminal, the
+  pinned player, Activity, Settings, Usage, Open With, printing, the commands
+  of plugins from outside and the Trash place are gone from its menus,
+  buttons, palette, F1 and links, their keys doing there what they would
+  unbound, and a desktop notice of its work clicked brings it forward, opening
+  no Activity; a place opened in a tab opens in place; Enter and Shift+Enter
+  answer with what they name, never opening another program; what the dialog's
+  own action asks (a password, names taken) is asked in it, and what it did (a
+  tag, a bookmark) is said in it with its Undo; Escape cancels the dialog
+  wherever the keyboard is, the name field included, whatever key scheme is on
+  (a menu, a list, a question or a form, the changes a paste is working out,
+  or what you type there taking it first), and Ctrl+Q cancels it alone. Its
+  sidebar starts with **Skwir Tabs**, what your windows' tabs show (five at
+  most, the last used first), then **Recent Folders**, up to five of the
+  folders the program last chose in, none gone and none another place shows:
+  Remove From Sidebar and Clear Recent Folders say what they did, with Undo
+  (which keeps a folder chosen since) then Redo, and every dialog of the
+  program follows; the names you gave places are said there as in your
+  windows. The dialogs keep a layout of their own (the first takes your
+  window's view and no panel), the size you leave them at, a grid for a
+  program asking for pictures or films, and an order of their own: the sort,
+  the groups, hidden files and Folders first the last dialog was left with (at
+  first your window's), and what a folder remembers there is theirs, apart
+  from your windows'; an agent's `sort` that sets Folders first asks you
+  first. Opening files, Recent comes first and is where a program with no
+  folder starts while the desktop's list has a file to give, and what you
+  choose is added to the desktop's recently used files, by a Skwir started for
+  that dialog alone too, unless your desktop says to remember none; a
+  program's own All files is listed once, under its own name (Qt's, sent as a
+  type, too); the filter changes a saved name's extension, never one you typed
+  that only All files takes; choosing a folder, its files show dimmed; a file
+  dropped is gone to, never copied; the answer counts ("Open 3 files"). Every
+  Skwir window says what it is for, `main window` or `file chooser` (Wayland's
+  toplevel tag, X11's window role), so a compositor rule can float a dialog
+  where nothing else does ([the guide](docs/guide.md#skwir-for-other-programs)
   gives Hyprland's, sway's, i3's and KDE Plasma's).
 - **General's essentials** (ADR-072 amended): the language, Open at startup,
   the startup folder (dimmed unless Open at startup is A chosen folder), the
@@ -312,28 +313,38 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   "42%" everywhere (Activity and the text sizes wrote "42 %"), the search
   plugin is titled Search, and a command nobody declared shows its name as
   written (`gone.open`, not "Gone open").
+- **An agent asks you first before it keeps a preference** (ADR-044 amended):
+  before it changes one through the window's commands (the text size, the Up
+  and view buttons, the list's columns and the grid's captions, wrapped lines,
+  page mode, the player's and the slideshow's choices…) or keeps a remote
+  folder as a server, as it does before changing a setting. What you do in the
+  window is done at once, as before.
 - **Smaller fixes**: a folder's tab draws the theme's folder icon, as the
   views do, where only the sidebar's places did; two folders' places of one
-  sidebar group shown under one name (two bookmarks named `src`) say after
-  it the first folder above that tells them apart (`skwir/…`), and a
-  folder's place shows its path when pointed at; a notice's buttons go under
-  its words where both do not fit beside each other; a setting's dropdown
-  leaves its description the room the buttons left, where the description
-  wrapped in a third of the row; Tab reaches a toast's buttons (Undo, Show,
-  Close), and a key meant for one toast's button never presses the button
-  of the toast said after it; a state file cut short (a crash, a full
-  drive) or edited into something that is no TOML lost, at the next save,
+  sidebar group shown under one name (two bookmarks named `src`) say after it
+  the first folder above that tells them apart (`skwir/…`), and a folder's
+  place shows its path when pointed at; a place renamed in the sidebar (Home,
+  a drive) is renamed in every window, and in every tab title, history row,
+  message and search, not only in the window it was renamed in; a notice's
+  buttons go under its words where both do not fit beside each other; a
+  setting's dropdown leaves its description the room the buttons left, where
+  the description wrapped in a third of the row; Tab reaches a toast's buttons
+  (Undo, Show, Close), and a key meant for one toast's button never presses
+  the button of the toast said after it; a state file cut short (a crash, a
+  full drive) or edited into something that is no TOML lost, at the next save,
   what the window had kept unchanged (its tabs, its hints): it is written
   again whole; a tile server that gives no tile says why in words (no
-  connection, refused, a certificate refused), where the network
-  library's English was shown; a message an action gives, with its Undo, and
-  a question it asks (a password or a passphrase, the names a paste found
-  taken, a form) appear in the window the action was done in, not whichever
-  window is in front; Escape closes a question, a prompt or a form while one
-  of its buttons has the keyboard, even while changes are being worked out,
-  which it cancelled instead; on Plasma, colors and fonts an administrator
-  locks in the system's `kdeglobals` (KDE's Kiosk, `[$i]`) win over yours, as
-  in Plasma's own applications.
+  connection, refused, a certificate refused), where the network library's
+  English was shown; a message an action gives, with its Undo, and a question
+  it asks (a password or a passphrase, the names a paste found taken, a form)
+  appear in the window the action was done in, not whichever window is in
+  front, and a desktop notice clicked brings forward the window whose action
+  it told of; Escape closes a question, a prompt or a form while one of its
+  buttons has the keyboard, even while changes are being worked out, which it
+  cancelled instead; on Plasma, the icon theme your global theme or the system
+  names is worn where you named none, and colors, fonts and the icon theme an
+  administrator locks in the system's `kdeglobals` (KDE's Kiosk, `[$i]`) win
+  over yours, as in Plasma's own applications.
 - **For packagers**: the Linux packages install
   `share/xdg-desktop-portal/portals/skwir.portal` and
   `share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service`

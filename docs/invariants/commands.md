@@ -143,21 +143,20 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   agent's. One asked from elsewhere that an agent runs unasked keeps no
   preference, whatever it runs (`settings::keeps_here`, the window's one
   way to keep one): a command its list forgot fails safe. Another
-  program's Open or Save dialog
-  is answered by the user alone (`ui.chooser_*`, ADR-141, 8), and what
-  answers those dialogs is chosen by the user alone (`dialogs.choose`,
-  `.user_only()`): an agent can neither choose for another program nor
-  see what it asks. The window answering a dialog is out of reach of
-  every call from elsewhere, an agent's or a script's
-  (`permissions::from_elsewhere`, set by the control plugin): listed
-  nowhere (`window.list`, `tab.list`), refused when its window, a tab or
-  a pane of it is named (`App::names_a_dialog`, in control's `run`), and
-  never the active window such a call acts in for want of naming one
-  (the workspace's active window for it is the one used last of the
-  user's own). The player's `player.request` (play,
-  pause, seek, the volume) shows: sound from the window is the window's,
-  so an agent plays and sets the volume unasked, as the media keys do
-  (decided 2026-10-24).
+  program's Open or Save dialog is answered by the user alone
+  (`ui.chooser_*`, ADR-141, 8), and what answers those dialogs is chosen
+  by the user alone (`dialogs.choose`, `.user_only()`): an agent can
+  neither choose for another program nor see what it asks. The window
+  answering a dialog is out of reach of every call from elsewhere, an
+  agent's or a script's (`permissions::from_elsewhere`, set by the control
+  plugin): listed nowhere (`window.list`, `tab.list`), refused when its
+  window, a tab or a pane of it is named (`App::names_a_dialog`, in
+  control's `run`), and never the active window such a call acts in for
+  want of naming one (the workspace's active window for it is the one used
+  last of the user's own). The player's `player.request` (play, pause,
+  seek, the volume) shows: sound from the window is the window's, so an
+  agent plays and sets the volume unasked, as the media keys do (decided
+  2026-10-24).
 - **Data.** A command that only answers whoever asks (an agent's
   question, a menu's items, Properties' rows, the timeline's bars) is
   registered `.data()`: it reads, and run by a person it would show

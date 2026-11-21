@@ -104,7 +104,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   published and Fedora's packages signed (ADR-142); a drag that moves
   what has nothing to select (ADR-143); thumbnails shown before they are
   kept, a progressive JPEG's read from its DC scans; the reviews since
-  0.5.1 fixed (2026-11-19, 2026-11-20, 2026-11-21).
+  0.5.1 fixed (2026-11-19, 2026-11-20 and two on 2026-11-21).
 - **Work in 0.5.1 (2026-11-14 to 11-16):** the title bar where the user
   wants it (ADR-138, #11), fields that say what they take (ADR-137), the
   player following its file (ADR-136), what changes files worked out
@@ -1411,21 +1411,47 @@ work and the fixes before it; what its fixes left):
   it at its first sync would be cleaner).
 - A skwir the bus started passing a dialog to a running one, through a
   real xdg-desktop-portal: only a private dbus-daemon was run.
-- Place titles stay one per program while each window of the user's own
-  keeps its own arrangement: the last window to sync writes them
-  (ADR-122). A skwir the bus started has its dialogs name places by
-  their owners' names until a window of the user's own opens (Skwir
-  Tabs, the trail's places that are not folders; the dialog's sidebar
-  keeps its arrangement's names).
 - Not tried in a window: two dialogs of one program following Recent
   Folders, a file dropped on a dialog saving several.
 - History lists a retry under way at the entry it continues, even when
   it will make an entry of its own (what is shown only; Undo is right).
-- Plasma's icon theme is read from the user's `kdeglobals` alone,
-  without the cascade and the locks its colors, fonts and recent switch
-  now follow (`desktop_settings::kconfig_value`); KConfig's `[$e]`
-  expansion is not read; GTK's data prefix is taken as `/usr`
+- KConfig's files are read as KDE Frameworks reads them
+  (`desktop_settings::kconfig_value`, after kconfig's source), but for
+  `[$e]` expansion, not read, and two choices of Skwir's own: a value
+  said empty leaves the earlier file's standing (KConfig reads it
+  empty), and a locked group stops every later file (KConfig lets a
+  later defaults file change a key the group holds unlocked); none of it
+  tried in a real Plasma session. GTK's data prefix is taken as `/usr`
   (`/usr/share/gtk-3.0`).
+
+**From the review of the 2026-11-21 fixes** (a second review, the same
+day; what its fixes left):
+- ADR-132, the user to say: an agent's `sort`, `group` or `view` in a
+  folder that remembers its order rewrites what the folder remembers
+  without asking, as showing does (`remembered_anew`, `orders::save`);
+  whether that keeps the user's choice, and so asks first (ADR-044's
+  `keeps`), is not decided. `show_companions` stays acting.
+- A command an agent was let run unasked may dispatch, nested, one that
+  would ask: the window keeps no preference then
+  (`settings::keeps_here`), but the core has only the declarations; a
+  guard in core would refuse the nested call.
+- In a dialog's window, an Escape the user bound in the file list still
+  comes before the dialog's Cancel (the user's layer is last, ADR-024):
+  whether the dialog's keys should come after it too is the user's to
+  say.
+- Nothing checks that a Chinese draft writes no space beside a quoted
+  argument (`docs/glossary-zh-Hans.md`, swept by hand on 2026-11-21):
+  `tools/words/extract.py` cannot tell a `Name` from a `Folder` in the
+  source; the check needs each argument's type, which the `words!` macro
+  knows.
+- Some messages name the folder something goes to or is placed in by a
+  `Name`, quoted, where words.md says a `Folder` (`op_not_moved`,
+  `op_not_moved_as`, `op_not_placed`, `op_not_linked`, print's
+  `print_not_placed` and its save steps); their drafts follow the code.
+- Not tried in a window: a desktop notice of a dialog's work clicked
+  (where it goes is tested), the keys that keep a preference run behind
+  a plan being made, a skwir the bus started whose hand-over fails (a
+  test stands in for the other Skwir).
 
 **Show in folder for other programs** (ADR-140, 2026-11-18): built on
 Linux and checked against a private dbus-daemon on Xvfb. Left: a real
