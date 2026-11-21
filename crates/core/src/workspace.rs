@@ -5743,8 +5743,8 @@ pub struct Workspace {
     /// constant time. Kept by `push_pane` and `remove_pane_at`, the only
     /// ways in and out; nothing outside reorders `panes` (`panes_mut`
     /// hands out each pane, not the list), and what the index finds is
-    /// checked to be the pane asked for (`index_of`), so it never answers
-    /// another.
+    /// checked to be the pane asked for (`index_of`, the one reading of
+    /// it), so it never answers another.
     at: HashMap<PaneId, usize>,
     /// Never empty; every tab is in exactly one window, every pane in
     /// exactly one tab.
@@ -6274,7 +6274,7 @@ impl Workspace {
     /// Close pane `id`. Refused for the last pane of its window: a window
     /// keeps a tab, and a tab a pane.
     pub fn close_pane(&mut self, id: PaneId) -> bool {
-        let Some(&i) = self.at.get(&id) else {
+        let Some(i) = self.index_of(id) else {
             return false;
         };
         let Some((w, t)) = self.place_of(id) else {
@@ -6321,8 +6321,8 @@ impl Workspace {
     /// Take `panes` out of the workspace, in their order.
     fn take_panes(&mut self, panes: &[PaneId]) -> Vec<Pane> {
         let mut taken = Vec::with_capacity(panes.len());
-        for pane in panes {
-            if let Some(&i) = self.at.get(pane) {
+        for &pane in panes {
+            if let Some(i) = self.index_of(pane) {
                 taken.push(self.remove_pane_at(i));
             }
         }
@@ -6716,18 +6716,21 @@ impl Workspace {
     }
 
     /// Where pane `id` is in `panes`, by the index (`at`), the pane found
-    /// there checked to be it: the index never answers another pane, even
-    /// one whose place or id changed behind it (two swapped through
-    /// `panes_mut`, an id written), which is then looked for along the
-    /// panes, and a test that did so fails.
+    /// there checked to be it: every lookup by a pane's id goes through
+    /// here (`pane`, `pane_mut`, `close_pane`, `take_panes`), so the index
+    /// never answers another pane, even one whose place or id changed
+    /// behind it (two swapped through `panes_mut`, an id written), which
+    /// is then looked for along the panes, and a test that did so fails.
     fn index_of(&self, id: PaneId) -> Option<usize> {
         let at = *self.at.get(&id)?;
-        if self.panes.get(at).is_some_and(|p| p.id == id) {
+        let found = self.panes.get(at).map(|p| p.id);
+        if found == Some(id) {
             return Some(at);
         }
         debug_assert!(
             false,
-            "{id:?} is no longer where the index of panes has it: panes reordered, or an id written"
+            "{id:?} is no longer where the index of panes has it (at {at}, {found:?} there): \
+             the panes were reordered or an id written since the index was kept"
         );
         self.panes.iter().position(|p| p.id == id)
     }
@@ -6881,6 +6884,53 @@ mod tests {
             assert_eq!(ws.pane(id).map(|p| p.id), Some(id));
             assert_eq!(ws.pane_mut(id).map(|p| p.id), Some(id));
         }
+    }
+
+    /// Closing a pane asks the index as `pane` does (GA-4): two panes
+    /// swapped behind it, the one closed is the one asked for, the other
+    /// left, and a test that does so fails.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "no longer where the index of panes has it")
+    )]
+    fn closing_a_pane_never_closes_another() {
+        let mut ws = Workspace::default();
+        let first = ws.active_id();
+        let second = ws.add_pane();
+        {
+            let mut each: Vec<&mut Pane> = ws.panes_mut().collect();
+            let (one, other) = each.split_at_mut(1);
+            std::mem::swap(&mut *one[0], &mut *other[0]);
+        }
+        assert!(ws.close_pane(first));
+        assert!(ws.pane(first).is_none());
+        assert_eq!(ws.pane(second).map(|p| p.id), Some(second));
+    }
+
+    /// Closing a tab takes its own panes out by the index, as `pane` finds
+    /// them (GA-4), whatever moved behind it, and a test that does so
+    /// fails.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "no longer where the index of panes has it")
+    )]
+    fn closing_a_tab_takes_its_own_panes() {
+        let mut ws = Workspace::default();
+        let first = ws.active_id();
+        let (tab, one) = ws.add_tab(9);
+        let two = ws.add_pane_to(tab);
+        {
+            let mut each: Vec<&mut Pane> = ws.panes_mut().collect();
+            let (before, after) = each.split_at_mut(2);
+            std::mem::swap(&mut *before[1], &mut *after[0]);
+        }
+        let (_, _, taken) = ws.close_tab(tab).expect("not the window's last");
+        let taken: Vec<PaneId> = taken.iter().map(|p| p.id).collect();
+        assert_eq!(taken, [one, two]);
+        assert_eq!(ws.pane(first).map(|p| p.id), Some(first));
+        assert!(ws.pane(one).is_none() && ws.pane(two).is_none());
     }
 
     /// Each pane is found by its id as panes come and go (the index of
