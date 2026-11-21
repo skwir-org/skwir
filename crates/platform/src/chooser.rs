@@ -53,21 +53,39 @@ pub enum Pattern {
     Mime(String),
 }
 
+impl Pattern {
+    /// Whether it takes every file, as a program says All files: a
+    /// name's pattern of stars alone (`*`, GTK's and Qt's), the type of
+    /// every type (`*/*`), or the type every file's descends from
+    /// (`application/octet-stream`, Qt's All files where a program gives
+    /// its filters as types). What `Filter::admits`, `admits_all` and
+    /// `naming` all take it for.
+    fn takes_every(&self) -> bool {
+        match self {
+            Pattern::Glob(glob) => !glob.is_empty() && glob.chars().all(|c| c == '*'),
+            Pattern::Mime(mime) => {
+                mime == "*/*" || mime.eq_ignore_ascii_case("application/octet-stream")
+            }
+        }
+    }
+}
+
 impl Filter {
     /// Whether it admits `entry`, made once for the entries it is asked
     /// about (every file of a listing): a name by the globs, case ignored
     /// (a camera's `.JPG` is the program's `*.jpg`), a type by the types,
     /// its kind (`image/*`) or what it descends from (ADR-141, 6), each
-    /// suffix typed once and each type matched once. The type of every
-    /// type (`*/*`) admits every file, as a name's `*` does. A pattern
-    /// that does not compile admits nothing.
+    /// suffix typed once and each type matched once. A pattern that
+    /// takes every file (`*`, `*/*`, `application/octet-stream`:
+    /// `Pattern::takes_every`) admits every file, a file of a type
+    /// unknown too. A pattern that does not compile admits nothing.
     pub fn admits(&self) -> impl Fn(&skwir_core::Entry) -> bool + Send + Sync + 'static {
         let mut globs = globset::GlobSetBuilder::new();
         let mut types = Vec::new();
         let mut every = false;
         for pattern in &self.patterns {
             match pattern {
-                Pattern::Mime(mime) if mime == "*/*" => every = true,
+                pattern if pattern.takes_every() => every = true,
                 Pattern::Glob(glob) => {
                     if let Ok(glob) = globset::GlobBuilder::new(glob)
                         .case_insensitive(true)
@@ -123,15 +141,12 @@ impl Filter {
 }
 
 impl Filter {
-    /// Whether it admits every file: one of its patterns a name's pattern
-    /// of stars alone (`*`, GTK's and Qt's All files) or the type of
-    /// every type (`*/*`). The program's own All files, which the window
-    /// shows in place of its own, and which tests no file.
+    /// Whether it admits every file: one of its patterns one that takes
+    /// every file (`*`, `*/*`, `application/octet-stream`:
+    /// `Pattern::takes_every`). The program's own All files, which the
+    /// window shows in place of its own, and which tests no file.
     pub fn admits_all(&self) -> bool {
-        self.patterns.iter().any(|pattern| match pattern {
-            Pattern::Glob(glob) => !glob.is_empty() && glob.chars().all(|c| c == '*'),
-            Pattern::Mime(mime) => mime == "*/*",
-        })
+        self.patterns.iter().any(Pattern::takes_every)
     }
 
     /// Whether it asks for pictures or films alone (ADR-144, 5): each of
@@ -181,19 +196,21 @@ impl Filter {
             })
     }
 
-    /// It with only the patterns that name what they take: none of stars
-    /// and dots alone (`*`, the program's All files; `*.*`, every name
-    /// with an extension) nor the type of every type (`*/*`). What takes
-    /// every extension makes none the program's (ADR-144, 6).
+    /// It with only the patterns that name what they take: none that
+    /// takes every file (the program's All files, `*`, `*/*` or
+    /// `application/octet-stream`: `Pattern::takes_every`) nor one of
+    /// stars and dots alone (`*.*`, every name with an extension). What
+    /// takes every extension makes none the program's (ADR-144, 6).
     fn naming(&self) -> Filter {
         Filter {
             name: self.name.clone(),
             patterns: self
                 .patterns
                 .iter()
-                .filter(|pattern| match pattern {
-                    Pattern::Glob(glob) => !glob.chars().all(|c| c == '*' || c == '.'),
-                    Pattern::Mime(mime) => mime != "*/*",
+                .filter(|pattern| {
+                    let dotted = matches!(pattern, Pattern::Glob(glob)
+                        if glob.chars().all(|c| c == '*' || c == '.'));
+                    !pattern.takes_every() && !dotted
                 })
                 .cloned()
                 .collect(),
@@ -220,8 +237,9 @@ impl Filter {
 /// extension the type database knows, or a filter names (`tar.gz`),
 /// swapped whole. `None` where it stays: `to` takes it already or gives no
 /// extension (`*`, `image/*`), none of the program's takes it (an
-/// extension of the user's own: the program's All files, `*` or `*/*`, and
-/// a `*.*` take every extension and name none, `Filter::naming`), it has
+/// extension of the user's own: the program's All files, `*`, `*/*` or
+/// `application/octet-stream`, and a `*.*` take every extension and name
+/// none, `Filter::naming`), it has
 /// none. Its bytes are kept, but the extension's. No I/O once the type
 /// database is loaded.
 pub fn swapped_name(name: &std::ffi::OsStr, filters: &[Filter], to: &Filter) -> Option<OsString> {
@@ -1353,6 +1371,15 @@ mod tests {
             every.admits()(&named(7, "sans suffixe", File)),
             "*/* admits every file, as * does"
         );
+        let qt = Filter {
+            name: "All files".into(),
+            patterns: vec![Pattern::Mime("Application/Octet-Stream".into())],
+        };
+        assert!(
+            qt.admits()(&named(8, "sans suffixe", File)),
+            "Qt's All files admits a file of a type unknown too"
+        );
+        assert!(qt.admits()(&named(9, "notes.txt", File)));
     }
 
     /// A program's All files is the filter that admits every file, found
@@ -1368,6 +1395,7 @@ mod tests {
         let mime = |m: &str| Pattern::Mime(m.into());
         assert!(filter("Tous les fichiers", &[glob("*")]).admits_all());
         assert!(filter("Everything", &[mime("*/*")]).admits_all());
+        assert!(filter("All files (*)", &[mime("application/octet-stream")]).admits_all());
         assert!(filter("Any", &[glob("*.png"), glob("**")]).admits_all());
         assert!(!filter("Dotted", &[glob("*.*")]).admits_all());
         assert!(!filter("Pictures", &[mime("image/*")]).admits_all());
@@ -1473,9 +1501,15 @@ mod tests {
             Some("Été 2024.png")
         );
         assert_eq!(swapped("notes.txt", &both, &png), None, "the user's own");
-        // The program's All files, in either form, and a `*.*`, take every
-        // extension and make none the program's.
-        for every in [glob("*"), mime("*/*"), glob("*.*")] {
+        // The program's All files, in any form (Qt's for a program giving
+        // types included), and a `*.*`, take every extension and make
+        // none the program's.
+        for every in [
+            glob("*"),
+            mime("*/*"),
+            mime("application/octet-stream"),
+            glob("*.*"),
+        ] {
             let with_all = [
                 jpeg.clone(),
                 png.clone(),
@@ -1510,6 +1544,28 @@ mod tests {
             swapped("x.jpg", &both, &filter(&[glob("*")])),
             None,
             "all files"
+        );
+        // A program giving its filters as types, Qt's All files among them.
+        let (text, png_type) = (filter(&[mime("text/plain")]), filter(&[mime("image/png")]));
+        let types = [
+            text.clone(),
+            png_type.clone(),
+            filter(&[mime("application/octet-stream")]),
+        ];
+        assert_eq!(
+            swapped("scan.tiff", &types, &png_type),
+            None,
+            "the user's own"
+        );
+        assert_eq!(
+            swapped("notes.txt", &types, &png_type).as_deref(),
+            Some("notes.png"),
+            "a type's extension"
+        );
+        assert_eq!(
+            swapped("notes.txt", &types, &types[2]),
+            None,
+            "Qt's all files"
         );
         // A compound extension, whole, never doubled.
         let (gzip, tarball) = (filter(&[glob("*.gz")]), filter(&[glob("*.tar.gz")]));
