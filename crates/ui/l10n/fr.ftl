@@ -550,13 +550,19 @@ address_redo_plan = Rétablir : { $plan }
 address_remember_folder = Mémoriser pour ce dossier
 
 # draft
-address_remember_folder_tip = Afficher ce dossier trié et regroupé comme maintenant partout où il apparaît (dans cette vue là où le panneau affiche la liste ou la grille), indépendamment du tri du panneau ; désactivé, il suit celui du panneau
+address_remember_folder_dialog_tip = Afficher ce dossier trié et regroupé comme maintenant partout où une fenêtre qui répond à la boîte de dialogue d’un autre programme l’affiche, quoi que retiennent vos propres fenêtres (dans cette vue là où le panneau affiche la liste ou la grille), indépendamment du tri du panneau ; désactivé, il suit celui du panneau
+
+# draft
+address_remember_folder_tip = Afficher ce dossier trié et regroupé comme maintenant partout où vos fenêtres l’affichent (dans cette vue là où le panneau affiche la liste ou la grille), indépendamment du tri du panneau ; désactivé, il suit celui du panneau
 
 # draft
 address_remember_place = Mémoriser pour cet emplacement
 
 # draft
-address_remember_place_tip = Afficher cet emplacement trié et regroupé comme maintenant partout où il apparaît (dans cette vue là où le panneau affiche la liste ou la grille), indépendamment du tri du panneau ; désactivé, il suit celui du panneau
+address_remember_place_dialog_tip = Afficher cet emplacement trié et regroupé comme maintenant partout où une fenêtre qui répond à la boîte de dialogue d’un autre programme l’affiche, quoi que retiennent vos propres fenêtres (dans cette vue là où le panneau affiche la liste ou la grille), indépendamment du tri du panneau ; désactivé, il suit celui du panneau
+
+# draft
+address_remember_place_tip = Afficher cet emplacement trié et regroupé comme maintenant partout où vos fenêtres l’affichent (dans cette vue là où le panneau affiche la liste ou la grille), indépendamment du tri du panneau ; désactivé, il suit celui du panneau
 
 # draft
 address_remember_search_tip = L’ordre d’une recherche n’est pas mémorisé : une recherche, ce sont ses termes
@@ -5548,6 +5554,9 @@ placeholder_nothing = Rien ici
 
 # draft
 placeholder_program_filtered = Aucun fichier pour { $filter } ici
+
+# draft
+placeholder_program_filtered_all_detail = Le programme demande { $filter }. Choisissez { $all } dans la barre pour voir tous les fichiers.
 
 # draft
 placeholder_program_filtered_detail = Le programme demande { $filter }. Choisissez Tous les fichiers dans la barre pour voir tous les fichiers.

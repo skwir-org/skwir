@@ -531,13 +531,19 @@ address_redo_plan = 重做：{ $plan }
 address_remember_folder = 为此文件夹记住
 
 # draft
-address_remember_folder_tip = 无论在何处显示，此文件夹都按现在的方式排序和分组，窗格显示列表或网格时也使用此视图，不受窗格自身设置影响；关闭时沿用窗格的设置
+address_remember_folder_dialog_tip = 无论在应答其他程序对话框的窗口中何处显示，此文件夹都按现在的方式排序和分组，与您自己的窗口所记住的无关，窗格显示列表或网格时也使用此视图，不受窗格自身设置影响；关闭时沿用窗格的设置
+
+# draft
+address_remember_folder_tip = 无论在您的窗口中何处显示，此文件夹都按现在的方式排序和分组，窗格显示列表或网格时也使用此视图，不受窗格自身设置影响；关闭时沿用窗格的设置
 
 # draft
 address_remember_place = 为此位置记住
 
 # draft
-address_remember_place_tip = 无论在何处显示，此位置都按现在的方式排序和分组，窗格显示列表或网格时也使用此视图，不受窗格自身设置影响；关闭时沿用窗格的设置
+address_remember_place_dialog_tip = 无论在应答其他程序对话框的窗口中何处显示，此位置都按现在的方式排序和分组，与您自己的窗口所记住的无关，窗格显示列表或网格时也使用此视图，不受窗格自身设置影响；关闭时沿用窗格的设置
+
+# draft
+address_remember_place_tip = 无论在您的窗口中何处显示，此位置都按现在的方式排序和分组，窗格显示列表或网格时也使用此视图，不受窗格自身设置影响；关闭时沿用窗格的设置
 
 # draft
 address_remember_search_tip = 不会记住搜索的顺序：搜索由其条件定义
@@ -5346,6 +5352,9 @@ placeholder_nothing = 此处没有内容
 
 # draft
 placeholder_program_filtered = 此处没有{ $filter }的文件
+
+# draft
+placeholder_program_filtered_all_detail = 该程序要求{ $filter }。在栏中选择{ $all }可查看全部文件。
 
 # draft
 placeholder_program_filtered_detail = 该程序要求{ $filter }。在栏中选择“所有文件”可查看全部文件。

@@ -82,8 +82,10 @@ pub fn empty_folder(new_folder_keys: Option<&str>) -> Placeholder {
 /// What is here the program's filter leaves out, in a window answering
 /// its dialog (ADR-141, 6): named by the filter (`filter`, as the program
 /// calls it), with the way to see every file, the bar's All files
-/// (`ui.chooser_filter` given none).
-pub fn program_filtered(filter: &str) -> Placeholder {
+/// (`ui.chooser_filter` given none), named as the bar's list names it:
+/// the program's own filter of every file where it sent one (`all`, as it
+/// calls it), else Skwir's.
+pub fn program_filtered(filter: &str, all: Option<&str>) -> Placeholder {
     Placeholder {
         icon: "search",
         title: words!(
@@ -92,11 +94,19 @@ pub fn program_filtered(filter: &str) -> Placeholder {
             note = "In a window answering another program's Open dialog, where the filter that program asked for (filter: its name, as the program gave it: Pictures, JPEG) leaves out every file of the folder."
         )
         .say(),
-        detail: words!(
-            placeholder_program_filtered_detail = "The program asks for { $filter }. Choose All files in the bar to see every file.",
-            filter = skwir_core::words::Name(filter.to_owned()),
-            note = "Under \"No files for … here\"; All files is the filter dropdown's last choice in the bar at the window's foot."
-        )
+        detail: match all {
+            None => words!(
+                placeholder_program_filtered_detail = "The program asks for { $filter }. Choose All files in the bar to see every file.",
+                filter = skwir_core::words::Name(filter.to_owned()),
+                note = "Under \"No files for … here\"; All files is the filter dropdown's last choice in the bar at the window's foot."
+            ),
+            Some(all) => words!(
+                placeholder_program_filtered_all_detail = "The program asks for { $filter }. Choose { $all } in the bar to see every file.",
+                filter = skwir_core::words::Name(filter.to_owned()),
+                all = skwir_core::words::Name(all.to_owned()),
+                note = "Under \"No files for … here\", where the program gave its own choice of every file (all: its name, as the program gave it: All Files, Any file), which the filter dropdown of the bar at the window's foot lists among its filters."
+            ),
+        }
         .say(),
         action: Some((
             words!(placeholder_show_all_files = "Show all files").say(),
@@ -271,12 +281,13 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     // nothing is left out.
     if state.admits().is_some_and(|admits| !admits.dims)
         && !state.unfiltered_order().is_empty()
-        && let Some(filter) = shell
-            .chooser
-            .as_ref()
-            .and_then(crate::chooser::Chooser::filter_name)
+        && let Some(chooser) = shell.chooser.as_ref()
+        && let Some(filter) = chooser.filter_name()
     {
-        return Some(program_filtered(&filter));
+        return Some(program_filtered(
+            &filter,
+            chooser.own_all_files().as_deref(),
+        ));
     }
     // Nothing shown, nothing filtered out, yet entries there: hidden ones,
     // or only files that keep others' notes (ADR-028), which hidden files
@@ -445,12 +456,17 @@ mod tests {
         assert_eq!(empty_place(None, None).title, "Nothing here");
         // A program's filter that leaves out every file is named, with
         // the way to every file (ADR-141, 6), never "empty".
-        let filtered = program_filtered("Pictures");
+        let filtered = program_filtered("Pictures", None);
         assert!(filtered.title.contains("Pictures"));
         assert!(filtered.detail.contains("All files"));
         assert_eq!(
             filtered.action,
             Some(("Show all files".to_owned(), "ui.chooser_filter"))
         );
+        // The program's own choice of every file stands for All files in
+        // the bar (49426d87): the detail names it as the bar lists it.
+        let its_own = program_filtered("Pictures", Some("Any file"));
+        assert!(its_own.detail.contains("Any file"));
+        assert!(!its_own.detail.contains("All files"));
     }
 }

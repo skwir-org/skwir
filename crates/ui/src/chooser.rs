@@ -527,6 +527,17 @@ impl Chooser {
             .map(|filter| filter.name.clone())
     }
 
+    /// The name of the program's own filter of every file, as it gave it,
+    /// which stands for All files in the bar (`Asked::all_files`): none
+    /// where it sent none.
+    pub(crate) fn own_all_files(&self) -> Option<String> {
+        let asked = self.asked();
+        asked
+            .all_files()
+            .and_then(|at| asked.filters.get(at))
+            .map(|filter| filter.name.clone())
+    }
+
     /// Whether it asks for files to open (not folders, not where to save).
     pub(crate) fn opens_files(&self) -> bool {
         matches!(

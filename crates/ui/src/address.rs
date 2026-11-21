@@ -820,10 +820,13 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     };
     if let Some((at, remembers)) = shown {
         let search = shell.app.is_search(&at);
+        // What a place remembers in a dialog's window is the dialogs'
+        // alone, apart from the user's windows' (ADR-145, 2).
+        let dialog = shell.chooser.is_some();
         let remember_place = || {
             words!(
                 address_remember_place = "Remember for this place",
-                note = "A switch of the View menu: this place (a tag, a search) keeps its order and groups wherever it is shown."
+                note = "A switch of the View menu: this place (a tag, a search) keeps its order and groups wherever the user's windows show it (in a window answering another program's dialog, wherever such a window shows it)."
             )
         };
         let (label, tooltip) = if search {
@@ -838,18 +841,30 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             (
                 words!(
                     address_remember_folder = "Remember for this folder",
-                    note = "A switch of the View menu: this folder keeps its order and groups wherever it is shown."
+                    note = "A switch of the View menu: this folder keeps its order and groups wherever the user's windows show it (in a window answering another program's dialog, wherever such a window shows it)."
                 ),
-                words!(
-                    address_remember_folder_tip = "Show this folder sorted and grouped as now wherever it is shown, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's"
-                ),
+                if dialog {
+                    words!(
+                        address_remember_folder_dialog_tip = "Show this folder sorted and grouped as now wherever a window answering another program's dialog shows it, whatever your own windows remember, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's"
+                    )
+                } else {
+                    words!(
+                        address_remember_folder_tip = "Show this folder sorted and grouped as now wherever your windows show it, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's"
+                    )
+                },
             )
         } else {
             (
                 remember_place(),
-                words!(
-                    address_remember_place_tip = "Show this place sorted and grouped as now wherever it is shown, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's"
-                ),
+                if dialog {
+                    words!(
+                        address_remember_place_dialog_tip = "Show this place sorted and grouped as now wherever a window answering another program's dialog shows it, whatever your own windows remember, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's"
+                    )
+                } else {
+                    words!(
+                        address_remember_place_tip = "Show this place sorted and grouped as now wherever your windows show it, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's"
+                    )
+                },
             )
         };
         let mut args = serde_json::json!({ "on": !remembers, "pane": shell.pane });

@@ -514,15 +514,19 @@ address_redo = Redo
 # An item of the More menu; plan: what it does again (new folder Reports).
 address_redo_plan = Redo { $plan }
 
-# A switch of the View menu: this folder keeps its order and groups wherever it is shown.
+# A switch of the View menu: this folder keeps its order and groups wherever the user's windows show it (in a window answering another program's dialog, wherever such a window shows it).
 address_remember_folder = Remember for this folder
 
-address_remember_folder_tip = Show this folder sorted and grouped as now wherever it is shown, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's
+address_remember_folder_dialog_tip = Show this folder sorted and grouped as now wherever a window answering another program's dialog shows it, whatever your own windows remember, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's
 
-# A switch of the View menu: this place (a tag, a search) keeps its order and groups wherever it is shown.
+address_remember_folder_tip = Show this folder sorted and grouped as now wherever your windows show it, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's
+
+# A switch of the View menu: this place (a tag, a search) keeps its order and groups wherever the user's windows show it (in a window answering another program's dialog, wherever such a window shows it).
 address_remember_place = Remember for this place
 
-address_remember_place_tip = Show this place sorted and grouped as now wherever it is shown, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's
+address_remember_place_dialog_tip = Show this place sorted and grouped as now wherever a window answering another program's dialog shows it, whatever your own windows remember, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's
+
+address_remember_place_tip = Show this place sorted and grouped as now wherever your windows show it, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's
 
 address_remember_search_tip = A search's order is not remembered: its terms are what it is
 
@@ -4825,6 +4829,9 @@ placeholder_nothing = Nothing here
 
 # In a window answering another program's Open dialog, where the filter that program asked for (filter: its name, as the program gave it: Pictures, JPEG) leaves out every file of the folder.
 placeholder_program_filtered = No files for { $filter } here
+
+# Under "No files for … here", where the program gave its own choice of every file (all: its name, as the program gave it: All Files, Any file), which the filter dropdown of the bar at the window's foot lists among its filters.
+placeholder_program_filtered_all_detail = The program asks for { $filter }. Choose { $all } in the bar to see every file.
 
 # Under "No files for … here"; All files is the filter dropdown's last choice in the bar at the window's foot.
 placeholder_program_filtered_detail = The program asks for { $filter }. Choose All files in the bar to see every file.
