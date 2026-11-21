@@ -337,10 +337,15 @@ const WIND_DOWN: Duration = Duration::from_secs(30);
 /// Run by GPUI's quit handler, the one place every system passes through
 /// as the application ends. GPUI gives the future a handler returns
 /// 100 ms; the handler itself it runs to the end, which is why the waiting
-/// is here and not in that future. The windows are gone by then.
+/// is here and not in that future. The windows are gone by then. What must
+/// be written before the end (`finishing::Writing`: the files a dialog
+/// answered with, for the desktop's recently used) is waited for too.
 fn wind_down(app: &App) {
     if !app.executor.wind_down(WIND_DOWN) {
         tracing::warn!("quitting while a plan still runs: what it left stays");
+    }
+    if !finishing::wait_written(finishing::WRITTEN_WITHIN) {
+        tracing::warn!("quitting before what it was writing was written");
     }
 }
 

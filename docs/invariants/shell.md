@@ -2248,7 +2248,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   to the age a setting says; nothing written where one of the desktop's
   switches says to remember none, `recent::remembered`, nor into a list
   GLib's reader would refuse, nor what it would refuse,
-  `recent::glib_reads`). The window chooses until it answers
+  `recent::glib_reads`), the program's end waiting for it, 5 s at most
+  (`finishing::Writing`, `wait_written`): a skwir the bus started for
+  the dialog ends with its window. The window chooses until it answers
   (`Shell::chooser`, `chooser.rs`): a bar at its foot (the name typed,
   its stem selected, its extension swapped for the filter chosen's where
   one of the program's filters takes the name and that one does not, a

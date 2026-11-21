@@ -1462,6 +1462,53 @@ pub(crate) fn stopping(cx: &mut App) {
     cx.global_mut::<Finishing>().stopping = true;
 }
 
+/// How many writes that must land before the program ends are under way
+/// (`Writing`), and what tells the end they all did.
+static WRITING: (Mutex<usize>, parking_lot::Condvar) = (Mutex::new(0), parking_lot::Condvar::new());
+
+/// How long the program's end waits for what must be written (`Writing`):
+/// a drive asleep wakes within it.
+pub(crate) const WRITTEN_WITHIN: Duration = Duration::from_secs(5);
+
+/// A write that must land before the program ends, held while it is under
+/// way, on whatever thread: the files a dialog answered with added to the
+/// desktop's recently used (ADR-144, 7), on a worker in their lane, which a
+/// skwir the bus started for that one dialog would otherwise end before
+/// running, as it ends with the dialog's window. The program's end waits
+/// for every one held (`wait_written`), `WRITTEN_WITHIN` at most; nothing
+/// keeps the program for it before.
+pub(crate) struct Writing(());
+
+impl Writing {
+    pub(crate) fn new() -> Self {
+        *WRITING.0.lock() += 1;
+        Writing(())
+    }
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        let mut under_way = WRITING.0.lock();
+        *under_way -= 1;
+        if *under_way == 0 {
+            WRITING.1.notify_all();
+        }
+    }
+}
+
+/// As the program ends (`lib.rs`, `wind_down`): wait until every write that
+/// must land has (`Writing`), `within` at most. Whether they all did.
+pub(crate) fn wait_written(within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    let mut under_way = WRITING.0.lock();
+    while *under_way > 0 {
+        if WRITING.1.wait_until(&mut under_way, deadline).timed_out() {
+            return *under_way == 0;
+        }
+    }
+    true
+}
+
 /// Whether something runs, waits its turn, or waits for its server to go
 /// on by itself: what Quit asks about. Asked of the executor at once: a
 /// plan handed from waiting for its server to its turn is never missed
@@ -2584,6 +2631,26 @@ mod tests {
             "the bus is told it answered nothing"
         );
         assert!(app.take_front_requests().is_empty(), "nothing left asked");
+    }
+
+    /// The program's end waits for what must be written, whatever thread
+    /// writes it, a bound at most: a skwir the bus started for one dialog
+    /// would otherwise end before the files chosen join the recently used.
+    #[test]
+    fn the_end_waits_for_what_must_be_written() {
+        use super::{Writing, wait_written};
+        assert!(wait_written(Duration::ZERO), "nothing under way");
+        let writing = Writing::new();
+        let written = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(writing);
+        });
+        assert!(wait_written(Duration::from_secs(10)), "waited for");
+        written.join().unwrap();
+        let stuck = Writing::new();
+        assert!(!wait_written(Duration::from_millis(20)), "a bound at most");
+        drop(stuck);
+        assert!(wait_written(Duration::ZERO));
     }
 
     /// A program started without a window never ends while it passes a

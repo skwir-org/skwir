@@ -908,12 +908,16 @@ impl Shell {
             // In the files' lane: each is typed by what it is, read there.
             if !choosing_folders {
                 let paths = paths.clone();
+                // A skwir the bus started for this dialog ends with its
+                // window: its end waits for this (`finishing::Writing`).
+                let writing = crate::finishing::Writing::new();
                 self.app.scheduler.spawn_in(
                     crate::shell::lane_of(&paths),
                     skwir_core::scheduler::Priority::Normal,
                     "ui-chooser-recent",
                     self.app.lifetime().child(),
                     move || {
+                        let _writing = writing;
                         if let Err(error) = skwir_platform::recent::add(&paths) {
                             tracing::warn!("the recently used files were not written: {error:#}");
                         }
