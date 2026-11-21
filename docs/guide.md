@@ -238,7 +238,8 @@ Board, grouped, has a column for each group.
 Where files come from many folders (a search, a tag, the shelf), Folder
 sorts and groups them by the folder each is in, as the Folder column's
 header does. Folders first, on
-unless you turn it off (there or in Settings › Folders and views), lists
+unless you turn it off (there or in Settings › Folders and views; in
+another program's dialog, its View menu turns the dialogs' own), lists
 folders before files; off, they are sorted together, so by date the
 newest comes first whatever it is. A folder's own date changes when
 something directly in it is added, removed or renamed, not when a file
@@ -1091,10 +1092,14 @@ buttons, the palette, F1's list, Properties' links), and their keys do
 there what they would with nothing bound. A place opened in a tab opens
 in place. Enter answers with what is chosen, Shift+Enter on a path
 typed in the address with that file, and nothing opens in another
-program; Ctrl+Q and Ctrl+W cancel the dialog alone. What the dialog's
-own action asks (a server's password, names a paste found taken) is
-asked in the dialog. The Trash is offered nowhere there, and its files
-answer nothing: a trashed file is gone from where it was.
+program. Escape cancels the dialog wherever the keyboard is in it, once
+what is open or typed there has taken its own Escape (a menu, a list of
+the bar, the address being edited, a filter, a name typed to find a
+file); a selection does not hold it. Ctrl+Q and Ctrl+W cancel the dialog
+alone. What the dialog's own action asks (a server's password, names a
+paste found taken) is asked in the dialog. The Trash is offered nowhere
+there, and its files answer nothing: a trashed file is gone from where
+it was.
 
 The dialogs keep a layout of their own, apart from your windows': turn
 the preview off in one and the next opens without it, while your own
@@ -1102,16 +1107,26 @@ windows keep theirs. The first takes how your window shows its files,
 and no panel; a program asking for pictures or films alone gets the
 grid, and what you choose for those is kept apart. They keep the size
 you leave one at, never a maximized or full screen one's, nor, on
-Wayland, that of a tile your compositor puts it in. Opening files, while
-your desktop remembers the files you used and its list names one that is
-there, Recent comes first in its group of places, and a program that
-names no folder and chose in none starts there; otherwise such a dialog
-starts in your home. What you choose is added to the desktop's recently
-used files, as the desktop's own dialog does, unless your desktop is
-told to remember none (GTK's, GNOME's, Cinnamon's or KDE's setting).
-Recent Folders, first in the sidebar, lists the five folders that
-program last chose in; Remove From Sidebar forgets one, and the
-heading's menu clears them all. Two places of a sidebar section that
+Wayland, that of a tile your compositor puts it in. They keep an order
+of their own too: the sort, the groups, hidden files and Folders first
+are those the last dialog was left with (at first, those of the window
+you used last), and what a folder remembers in a dialog (View › Remember
+for this folder) is the dialogs' alone, as what it remembers in your
+windows is theirs. Opening files, while your desktop remembers the files
+you used and its list names one that is there, Recent comes first in its
+group of places, and a program that names no folder and chose in none
+starts there; otherwise such a dialog starts in your home. What you
+choose is added to the desktop's recently used files, as the desktop's
+own dialog does, unless your desktop is told to remember none (GTK's,
+GNOME's, Cinnamon's or KDE's setting).
+A dialog's sidebar starts with Skwir Tabs, what the tabs of your own
+windows show (each window's shown tab first, the window you used last
+first; five at most), then Recent Folders: up to five of the ten folders
+that program last chose in, newest first, none that is gone and none
+another place of the sidebar shows. Remove From Sidebar forgets one, and
+Clear Recent Folders, in the heading's menu, forgets them all, each with
+Undo beside what it says; with none left, the program's next dialog
+starts as if it had chosen nowhere. Two places of a sidebar section that
 share a name (two folders named `src`) say after it the folder above
 that tells them apart, and a folder's place shows its whole path when
 pointed at. Saving, choosing another filter changes the name's extension
