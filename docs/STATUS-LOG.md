@@ -21505,3 +21505,64 @@ dialogs' recent folders in the sidebar rather than the bar.
   restoring the windows left (`core.startup = last`) under a dialog's
   window (covered by core's test), a screen reader on the notes, the
   tooltip on a volume's row (path above its space).
+
+## 2026-11-21: a dialog's own way, Escape, Skwir Tabs, a lighter start (ADR-145)
+
+The user's answers to the ideas offered after the first install through
+Nix, built in the order agreed (bc5eb1cd..7f7bcdcc), each checked in
+windows on Xvfb with a private bus and the portal back end.
+
+- **Escape** (bc5eb1cd): bound where a dialog's window root says
+  `choosing`, the files, the sidebar and the timeline saying it too; a
+  list of the bar takes it first (`chooser lists`), as a menu, the
+  address edited, a filter or a name typed do; a selection does not, as
+  in every system's dialogs. Seen: from the sidebar it cancelled; with
+  the filter's list open it closed the list, the next cancelled; in the
+  address edited it ended the editing, the next cancelled.
+- **Recent Folders** (9064f737): ten kept a program, five shown, none
+  gone and none another shown place leads to (a folded section counts);
+  a request is held as it comes and its window opens once what is gone
+  is read (`chooser::Asking`, half a second at most, a server's folder
+  never asked), the dialog starting in the first there; Remove and Clear
+  said with Undo, then Redo (`restore`). Seen: nine folders (one gone,
+  home, a bookmarked one) showed five, the dialog started in the first
+  there, Remove and Clear each undone, the record back as it was. A first
+  Undo tried twenty seconds late found its message gone: not a fault.
+- **Skwir Tabs** (719fd079, the user's name): what the user's tabs show,
+  each window's shown tab first, then the others by when they were left
+  (`Tab::left`, `Workspace::tabs_by_use`), five at most, listed places
+  (`Place::listed`, `Role::Listed`) none other shows. Seen: five tabs,
+  Maps bookmarked and Home a place left out, `src two`, Pictures, `src
+  one` listed, Recent Folders leaving Pictures out; after the user's
+  window went back four tabs, `src one` first once the dialog drew again.
+- **A dialog lists files its own way** (ADR-145, f0d5c155): GTK, KDE,
+  COSMIC Files and Windows read first (sources in the ADR's research);
+  `App::open_dialog_window`, `core.chooser_order`, `core.chooser_orders`,
+  every lookup by its pane; Folders first runs `sort` with
+  `folders_first`, the user's through `settings.apply`. Seen: Folders
+  first off in a dialog left the user's window and settings as they
+  were, the next dialog started with folders among the files; off in the
+  user's window, it was saved as their setting. A French draft wrote a
+  placeholder for its no-break space; the catalogs' test caught it.
+- **A lighter start** (7f7bcdcc): `finishing::Takers` made before gpui,
+  `finishing::wait_asked`. Measured on a debug build on Xvfb, three runs
+  each, six seconds after a start asking nothing: PSS 194.1-194.5 MB
+  before, 122.4-122.8 MB after; CPU 0.26-0.28 s before, 0.15-0.19 s
+  after; threads 64, then 32; sockets 8, then 1. Seen: a bare launch
+  handed to it opened Home; three dialogs asked of programs the bus
+  started each opened and answered; asking nothing, it ended with status
+  3 after 30 seconds, reaching no display.
+- **Checked per step**: rustfmt; clippy `-D warnings` on the crates
+  touched (core, platform, ui, the binary); every core test at step 4
+  (972), skwir-ui's (816), the binary's grouping, dialogs_offer,
+  plugins_toggle, keymap_titles, places and settings tests; `just
+  words` and `--check` (6,973 messages, every new one drafted in French
+  and Simplified Chinese).
+- **Checked at the end**, in a capped scope: `just lint`; `just
+  check-cross` (Windows and macOS); every test of the default members,
+  4078 run, all passed, 32 skipped. A first `just test` stopped on
+  `remote_folders::a_mount_let_go_of_elsewhere_is_disconnected_all_the_same`
+  (`fusermount3 -u`: the test's WebDAV mount busy under the run's load);
+  it passed alone, and in the full run after, no mount left behind. Not
+  run: the native workers' tests, Wine, a11y-check, bench-check,
+  `release-check`; the lighter start not measured on the user's session.

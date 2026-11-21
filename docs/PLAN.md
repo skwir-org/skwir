@@ -1250,6 +1250,18 @@ handed to a skwir the bus started for a dialog showing the startup
 choice rather than an empty window (the choice is made as the user's
 windows first come up). Checks in `docs/STATUS-LOG.md` (2026-11-20).
 
+## A dialog's own way, Escape, Skwir Tabs, a lighter start (ADR-145, 2026-11-21)
+
+On the user's answers, after the first install through Nix: Escape
+cancels a dialog wherever the keyboard is, what is open or typed first;
+Recent Folders shows none gone (read as the request comes) and none
+another place shows, five of ten kept, with Undo; Skwir Tabs lists what
+the user's tabs show, by use; the dialogs keep their own order, hidden
+files, folders first and per-folder memory, apart from the user's
+windows (ADR-145, after what GTK, KDE, COSMIC Files and Windows do); a
+skwir the bus starts reaches no display until it is asked. Checks in
+`docs/STATUS-LOG.md` (2026-11-21).
+
 ## A new version told where nothing else tells it (ADR-142, 2026-11-19)
 
 Brainstormed and decided with the user the same day (ask once, a static
@@ -1391,6 +1403,14 @@ dbus-daemon does); a real asker (Firefox's downloads, Chromium, the
 portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
 holding the name, seen to keep it until it ends (a test's holder, not
 Dolphin); the startup id on Wayland.
+
+**A dialog lists files its own way** (ADR-145, built 2026-11-21).
+Left: Skwir Tabs follows the user's tabs as the dialog draws again (a
+pointer move, coming back to it), not as the tabs change; a folder that
+remembers its order in a dialog, and the dialogs' Folders first, seen in
+a window only through the View menu's row (a core test covers the
+rest); the bus-started program's lighter start measured on a debug
+build on Xvfb, not on the user's session with its GPU.
 
 **A dialog's window offers what finds and chooses** (ADR-144, built
 2026-11-20): on Linux, each step checked in a window on Xvfb.
