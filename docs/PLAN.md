@@ -31,19 +31,19 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-20)
+## Current status (2026-11-21)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.5.1, released 2026-11-16 on GitHub and the AUR's three
-  bases; 0.5.0 was released 2026-11-14, 0.4.0 2026-11-10, 0.3.1
-  2026-11-05, 0.3.0 2026-11-03, 0.2.0 2026-10-20, 0.1.0
-  [released](#release-01-linux) 2026-10-13. Since 2026-11-20 skwir.org
-  also serves signed apt and dnf repositories (ADR-142), holding 0.5.1.
-  The next release, the words in every language, is being prepared: the
-  review before it and its fixes (2026-11-20), its changelog section
-  written for the user's review. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
-  everywhere are built, their gates not closed, as is much that no phase
-  planned ([Built beyond the plan](#built-beyond-the-plan)).
+  version 0.6.0, the words in every language, its source made ready on
+  2026-11-21 (the reviews before it fixed, its changelog section dated),
+  its tag and release the user's to make; 0.5.1 was released 2026-11-16
+  on GitHub and the AUR's three bases, 0.5.0 2026-11-14, 0.4.0
+  2026-11-10, 0.3.1 2026-11-05, 0.3.0 2026-11-03, 0.2.0 2026-10-20,
+  0.1.0 [released](#release-01-linux) 2026-10-13. Since 2026-11-20
+  skwir.org also serves signed apt and dnf repositories (ADR-142),
+  holding 0.5.1. Phases 0 to 4, 5a and 6 pass their gates. Maps and
+  Notes everywhere are built, their gates not closed, as is much that no
+  phase planned ([Built beyond the plan](#built-beyond-the-plan)).
 - **Next:** that release; the user's review of the French drafts and a
   speaker's of the Simplified Chinese
   ([words in every language](#words-in-every-language-adr-139), step G);

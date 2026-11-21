@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.6.0 (2026-11-21)
 
 Skwir 0.6.0 speaks French and Simplified Chinese, as drafts to review, and
 writes numbers, dates and the order of names as your region does. On Linux it
