@@ -71,6 +71,10 @@ struct Measures {
     /// The generation of the preview the area was last laid out for, and
     /// the side it gives a page.
     measured: Option<(u64, u32)>,
+    /// The room a picture is fitted in there, as last laid out, for any
+    /// preview: a picture's side is worked out from it and its own size
+    /// (ADR-146).
+    room: Option<crate::preview::Room>,
     /// The jobs waiting for the next measure: each a child of its job's
     /// cancel, cancelled by the measure, so one wait ends on either.
     waiting: Vec<skwir_core::cancel::CancelToken>,
@@ -81,9 +85,11 @@ impl Area {
     /// out: a window not drawn (another workspace) never lays it out.
     const WAIT: std::time::Duration = std::time::Duration::from_millis(200);
 
-    /// The area of the preview `generation` was laid out, at `side`.
-    pub(crate) fn measured(&self, generation: u64, side: u32) {
+    /// The area of the preview `generation` was laid out, at `side`, giving
+    /// a picture `room`.
+    pub(crate) fn measured(&self, generation: u64, side: u32, room: crate::preview::Room) {
         let mut state = self.state.lock();
+        state.room = Some(room);
         if state.measured != Some((generation, side)) {
             state.measured = Some((generation, side));
             for waiting in state.waiting.drain(..) {
@@ -119,6 +125,40 @@ impl Area {
         }
         let state = self.state.lock();
         state.measured.map_or(SIDE_STEP as u32, |(_, side)| side)
+    }
+
+    /// The room a picture was last given, as the area was laid out for any
+    /// preview: the area rarely changes from one file to the next, and a
+    /// picture shown larger than its pixels asks again (`Sharpen`). Waits
+    /// `WAIT` at most for the first layout, where the area was never laid
+    /// out; `None` if it still was not. Called on a worker.
+    pub(crate) fn room(
+        &self,
+        cancel: &skwir_core::cancel::CancelToken,
+    ) -> Option<crate::preview::Room> {
+        let deadline = std::time::Instant::now() + Self::WAIT;
+        loop {
+            let woken = {
+                let mut state = self.state.lock();
+                if state.room.is_some() {
+                    return state.room;
+                }
+                let woken = cancel.child();
+                state.waiting.push(woken.clone());
+                woken
+            };
+            let signal = woken.subscribe();
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if signal.receiver().recv_timeout(left).is_err() || cancel.is_cancelled() {
+                return self.state.lock().room;
+            }
+        }
+    }
+
+    /// The room a picture was last given, without waiting: what the
+    /// window's thread reads.
+    pub(crate) fn last_room(&self) -> Option<crate::preview::Room> {
+        self.state.lock().room
     }
 }
 
@@ -1525,6 +1565,42 @@ mod tests {
         assert_eq!(draft_side(skwir_core::document::MAX_SIDE), Some(512));
     }
 
+    /// A room any measure gives: what pages' tests do not read.
+    const ROOM: crate::preview::Room = crate::preview::Room {
+        width: 800.,
+        height: 600.,
+        scale: 1.,
+    };
+
+    /// A picture's room is the area's last, whichever preview it was laid
+    /// out for, read at once; before any layout, waited for until one
+    /// comes, or `WAIT` at most.
+    #[test]
+    fn a_picture_takes_the_room_last_laid_out() {
+        let none = skwir_core::cancel::CancelToken::new();
+        let area = Arc::new(Area::default());
+        assert_eq!(area.last_room(), None);
+        let started = std::time::Instant::now();
+        assert_eq!(area.room(&none), None);
+        assert!(started.elapsed() >= Area::WAIT);
+        let waiting = {
+            let (area, none) = (Arc::clone(&area), none.clone());
+            std::thread::spawn(move || area.room(&none))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        area.measured(1, 1024, ROOM);
+        assert_eq!(waiting.join().unwrap(), Some(ROOM));
+        let wider = crate::preview::Room {
+            width: 1600.,
+            ..ROOM
+        };
+        area.measured(1, 1024, wider);
+        let started = std::time::Instant::now();
+        assert_eq!(area.room(&none), Some(wider), "the last, at once");
+        assert!(started.elapsed() < Area::WAIT);
+        assert_eq!(area.last_room(), Some(wider));
+    }
+
     /// The job rendering a first page takes the side measured for its own
     /// preview, waiting for the frame that lays its area out; a window that
     /// draws nothing leaves it the side last measured, or the smallest.
@@ -1533,7 +1609,7 @@ mod tests {
         let none = skwir_core::cancel::CancelToken::new();
         let area = Arc::new(Area::default());
         assert_eq!(area.side(1, &none), 512);
-        area.measured(1, 2048);
+        area.measured(1, 2048, ROOM);
         let started = std::time::Instant::now();
         assert_eq!(area.side(2, &none), 2048);
         assert!(started.elapsed() >= Area::WAIT);
@@ -1542,7 +1618,7 @@ mod tests {
             let (area, none) = (Arc::clone(&area), none.clone());
             std::thread::spawn(move || area.side(2, &none))
         };
-        area.measured(2, 1024);
+        area.measured(2, 1024, ROOM);
         assert_eq!(waiting.join().unwrap(), 1024);
     }
 
@@ -1553,7 +1629,7 @@ mod tests {
     fn a_first_page_waits_no_longer_than_its_preview_lasts() {
         let none = skwir_core::cancel::CancelToken::new();
         let area = Arc::new(Area::default());
-        area.measured(5, 1536);
+        area.measured(5, 1536, ROOM);
         let started = std::time::Instant::now();
         assert_eq!(area.side(3, &none), 1536);
         assert!(started.elapsed() < Area::WAIT);

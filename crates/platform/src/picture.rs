@@ -115,12 +115,52 @@ pub fn jpeg_fitted<R: BufRead + Seek>(
 }
 
 /// `image` shrunk to at most `side` on its longer side, then turned.
-fn fitted((mut image, orientation): (DynamicImage, Orientation), side: u32) -> DynamicImage {
-    if image.width().max(image.height()) > side {
-        image = image.thumbnail(side, side);
-    }
+fn fitted((image, orientation): (DynamicImage, Orientation), side: u32) -> DynamicImage {
+    let mut image = shrink(image, side);
     image.apply_orientation(orientation);
     image
+}
+
+/// `image` shrunk to at most `side` on its longer side, its proportions
+/// kept, by a Lanczos filter weighted by each pixel's alpha
+/// (`fast_image_resize`, ADR-146): a picture decoded larger than it is
+/// shown (a JPEG at the reduced scale just above, any other whole). One no
+/// larger is given back as it is. `image`'s own filter took 98 ms to shrink
+/// 12 megapixels to 2048 pixels, where this takes 14, and averaged the
+/// colour of transparent pixels into their neighbours.
+pub fn shrink(image: DynamicImage, side: u32) -> DynamicImage {
+    let (width, height) = (image.width(), image.height());
+    let longer = width.max(height);
+    if side == 0 || longer <= side {
+        return image;
+    }
+    let scale = f64::from(side) / f64::from(longer);
+    let fit = |length: u32| ((f64::from(length) * scale).round() as u32).clamp(1, side);
+    let mut shrunk = DynamicImage::new(fit(width), fit(height), image.color());
+    let resized = fast_image_resize::Resizer::new().resize(
+        &image,
+        &mut shrunk,
+        &fast_image_resize::ResizeOptions::new(),
+    );
+    match resized {
+        Ok(()) => shrunk,
+        // A layout it does not take (none `image` decodes to): `image`'s
+        // own filter.
+        Err(_) => image.thumbnail(side, side),
+    }
+}
+
+/// The longer side a picture of `width` × `height` pixels is held at with
+/// at most `pixels` of them, its proportions kept: past its own side where
+/// it has fewer (a drawing, drawn at any size), else as many as allowed. A
+/// side alone bounded what a picture was held at, and a tall or wide one
+/// was held at a fraction of what a square one was (ADR-146).
+pub fn side_within(width: u32, height: u32, pixels: u64) -> u32 {
+    let (width, height) = (f64::from(width.max(1)), f64::from(height.max(1)));
+    let scale = (pixels as f64 / (width * height)).sqrt();
+    (width.max(height) * scale)
+        .floor()
+        .clamp(1., f64::from(u32::MAX)) as u32
 }
 
 /// The picture decoded whole, within `image`'s own limits, and how to turn
@@ -644,9 +684,47 @@ mod tests {
                 } else {
                     DynamicImage::ImageRgb8(image::RgbImage::from_raw(64, 48, whole).unwrap())
                 };
-                assert_eq!(fitted.to_rgb8(), whole.thumbnail(16, 16).to_rgb8());
+                assert_eq!(fitted.to_rgb8(), shrink(whole, 16).to_rgb8());
             }
         }
+    }
+
+    /// A picture is shrunk by its pixels' alpha: a transparent pixel's
+    /// colour bleeds into no visible one (`image`'s own filter made a
+    /// transparent red beside an opaque blue purple).
+    #[test]
+    fn a_picture_shrinks_by_its_alpha() {
+        let pixels = image::RgbaImage::from_fn(8, 2, |x, _| {
+            if x < 4 {
+                image::Rgba([255, 0, 0, 0])
+            } else {
+                image::Rgba([0, 0, 255, 255])
+            }
+        });
+        let shrunk = shrink(DynamicImage::ImageRgba8(pixels), 2).to_rgba8();
+        assert_eq!(shrunk.dimensions(), (2, 1));
+        for pixel in shrunk.pixels() {
+            let [r, _, b, a] = pixel.0;
+            assert!(a == 0 || (r < 10 && b > 240), "{:?}", pixel.0);
+        }
+        // Never enlarged, and its proportions kept.
+        let small = DynamicImage::new_rgb8(30, 20);
+        assert_eq!(shrink(small.clone(), 100).width(), 30);
+        let fitted = shrink(DynamicImage::new_rgb8(1200, 800), 100);
+        assert_eq!((fitted.width(), fitted.height()), (100, 67));
+    }
+
+    /// What may be held of a picture is counted in pixels: a square one at
+    /// the side, a tall or wide one as many pixels, one with fewer whole
+    /// (a drawing, past its own size).
+    #[test]
+    fn a_picture_is_held_by_its_pixels_not_its_side() {
+        const HELD: u64 = 4096 * 4096;
+        assert_eq!(side_within(8192, 8192, HELD), 4096);
+        assert_eq!(side_within(2000, 11_500, HELD), 9821);
+        assert_eq!(side_within(40_000, 400, HELD), 40_960);
+        assert_eq!(side_within(100, 100, HELD), 4096);
+        assert_eq!(side_within(0, 0, HELD), 4096);
     }
 
     #[test]

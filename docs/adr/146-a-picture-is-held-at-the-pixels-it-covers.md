@@ -1,0 +1,116 @@
+# ADR-146: A picture is held at the pixels it covers
+
+Status: accepted, 2026-11-21, on the user's answers (asked why stepping
+through a folder of JPEGs is slower than in Gwenview, and why a picture
+about 2000 × 11 000 stays blurred when zoomed in the preview; chose
+today's memory as the bound, counted in pixels; the region's tiles next;
+two pictures kept; a picture a tenth short shown at once, then
+sharpened; `fast_image_resize`). Decisions 1 to 4 built on Linux the
+same day; 5 to 7 to come, in that order.
+
+## Context
+
+Measured in release on synthetic photos of about three bits a pixel
+(`docs/STATUS-LOG.md`, 2026-11-21), the load 1.4 to 3.6:
+
+- **The panel decoded every picture at 2048 pixels or more** on its
+  longer side (`IMAGE_MAX_SIDE`), whatever its size. A phone's 12
+  megapixels (4000 or 4032 wide) then missed a JPEG's half scale by a
+  few pixels: decoded whole (65 ms) and shrunk from 12 megapixels
+  (99 ms), 176 ms in all; 24 megapixels 195 ms (113 at a half, 71 to
+  shrink). On a 4K screen a 24-megapixel photo took 457 ms (whole 135,
+  shrunk 290, made RGBA 28).
+- **Shrinking cost more than decoding.** `image`'s `thumbnail` took
+  71 to 306 ms; `fast_image_resize` (Lanczos3) 7 to 62 ms for the same,
+  and it weighs each pixel by its alpha, where `thumbnail` averaged a
+  transparent pixel's colour into its neighbours.
+- **Gwenview** reads the file whole, has libjpeg-turbo decode it at a
+  power of two through `QImageReader::setScaledSize` (whole above a zoom
+  of 0.25) and lets Qt scale as it paints; it preloads the next file
+  forward and keeps three decoded documents. libjpeg-turbo is 1.2 to 1.4
+  times as fast as jpeg-decoder at a reduced scale, where decoding the
+  entropy dominates: the gap was not the decoder's.
+- **A side bounded what was held**: 4096 (`limits::PICTURE_SIDE`), for
+  memory and because gpui drew an image as one texture, at most as large
+  as the device allows. A tall picture of 2000 × 11 500 was held at
+  712 × 4096, 36 % of its width, blurred already at Fit width, and a
+  zoom asked no more (`preview::sharper`).
+- **A 2048 picture drawn in a 600 px panel** was shrunk more than three
+  times by the GPU, which has no mipmaps there: fine detail shimmered.
+
+## Decision
+
+1. **One rule wherever a picture is shown** (the panel, peek, the whole
+   screen, zoomed): it is held at the device pixels it covers, in both
+   directions, never more than its own. Fitted, that is what its room
+   gives it (`preview::Room`: the content's area as last laid out,
+   measured with the window's scale; `Room::side`, as Fit lays it out,
+   never past 100 %), worked out on the worker once its header says its
+   size (`Cover::Fit`); zoomed or in a larger room, the side the zoom
+   asks (`Cover::Side`, `Sharpen`, as before). It is decoded at the
+   cheapest decoder scale covering that (a JPEG's eighth, quarter, half
+   or whole, `picture::decode_fitted`), then shrunk to it once. A
+   drawing (SVG) is drawn at that side, past its own pixels when zoomed.
+   `IMAGE_MAX_SIDE` is only what a picture is asked at while no room
+   was ever laid out (`Area::room` waits a frame, 200 ms at most, for
+   the first). What is read ahead is fitted in the same room: the
+   screen's on the whole screen, the panel's in the panel
+   (`screen_side` is gone).
+2. **What is held of a picture is bounded by its pixels, not by a side**
+   (`limits::PICTURE_HELD`, 4096 × 4096, 64 MiB as RGBA: the memory the
+   side allowed a square picture). A tall or wide picture is held at as
+   many pixels as a square one (`picture::side_within`): the
+   2000 × 11 500 picture at 1708 × 9821, 85 % of its own. The user's
+   choice: no more memory than before; past the bound, decision 5.
+3. **A picture is shrunk by `fast_image_resize`** (Lanczos3, weighted by
+   alpha, the processor's vector instructions chosen as it runs):
+   `picture::shrink`, for every picture Skwir decodes (the preview,
+   thumbnails, a comic's pages, contact sheets, what a thumbnailer drew).
+   An RGB picture is made BGRA in one pass (`thumbs::picture_image`).
+4. **An image larger than the GPU's largest texture is drawn in pieces**
+   (vendored gpui 0090): each piece holds the pixel beside its own
+   where another lies, so no seam shows, and only the pieces that show
+   are uploaded. Every image gains, not only pictures.
+5. **Past the bound, only what shows is held at the side asked** (to
+   come): the visible region and a margin, as tiles, over the whole
+   held within the bound, as the map's tiles are; a first version
+   decodes the picture once and keeps the tiles near the view, then a
+   JPEG's region is decoded on its own.
+6. **Something sooner** (to come): a progressive JPEG shows its eighth
+   first (its DC scans, 9 to 17 ms for 24 to 45 megapixels); a picture
+   whose cheaper scale is at most a tenth short of what it covers is
+   shown at that scale at once, and decoded again at its side once the
+   walk stops on it.
+7. **Read ahead and kept** (to come): the next picture is read ahead
+   from the first step, the way it went (forward by default), not after
+   two steps alike; the last two pictures decoded are kept at the size
+   they were shown, let go after a minute unseen, so a step back shows
+   at once.
+
+## Alternatives
+
+- **A larger side** (8192): a square picture would hold four times the
+  memory, and a strip would still be cut.
+- **A larger bound in pixels** (32 megapixels, 128 MiB, held twice with
+  the GPU's copy): the user kept today's memory; decision 5 makes every
+  zoom sharp with less.
+- **libjpeg-turbo**: a C library for 1.2 to 1.4 times, on three systems
+  built from Linux. **zune-jpeg**: as fast as libjpeg-turbo whole, but
+  it decodes no reduced scale (`vendor/jpeg-decoder/README.skwir.md`).
+- **Mipmaps on the GPU**: gpui's atlas has none; a picture held at its
+  covered size needs none.
+
+## Consequences
+
+- A small panel holds and uploads less: a 24-megapixel photo in a room
+  1200 pixels wide is a quarter-scale decode shrunk to 1200, not a half
+  shrunk to 2048.
+- A picture is decoded for the room last laid out: a panel made larger
+  afterwards, or the whole screen entered, asks for more as a zoom does,
+  in place. A room made smaller keeps the larger picture, shrunk by the
+  GPU.
+- A tall picture may need a texture longer than 4096: gpui draws it in
+  pieces where the device's limit is shorter.
+- Comic and PDF pages keep their side (`document::MAX_SIDE`), and HEIC,
+  AVIF, JPEG XL and raw files their thumbnailer's 1024 pixels, until
+  the follow-ups in PLAN's "What is left".

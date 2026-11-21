@@ -59,12 +59,7 @@ pub(crate) fn drawn(output: &Path, pixels: u32) -> anyhow::Result<Image> {
 
 /// Downscale so the longest side is at most `px`, then RGBA8.
 pub(crate) fn fit(img: DynamicImage, px: u32) -> Image {
-    let img = if img.width().max(img.height()) > px {
-        img.thumbnail(px, px)
-    } else {
-        img
-    };
-    let rgba = img.into_rgba8();
+    let rgba = crate::picture::shrink(img, px).into_rgba8();
     Image {
         width: rgba.width(),
         height: rgba.height(),

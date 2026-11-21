@@ -237,12 +237,24 @@ A name that says nothing is not a binary file.
   `EMBEDDED_IMAGES`.
 - Floating-point pictures hold linear light and are encoded as sRGB in
   `picture::decode`, which every shown picture passes.
-- **A picture is decoded at the side it is shown at** (`decode_image`,
-  through `picture::decode_fitted`, as a thumbnail is): a JPEG twice
-  that side and more at its least reduced scale still covering it (a
-  24-megapixel photo computes and holds a quarter of its pixels), any
-  other whole, a lossless JPEG too (it has no reduced scale), then
-  shrunk. A progressive JPEG holds besides the
+- **A picture is held at the pixels it covers** (ADR-146;
+  `decode_image`, through `picture::decode_fitted`, as a thumbnail is):
+  fitted in its room (`preview::Room`: the content's area as last laid
+  out, `watch_area`, with the window's scale; `Room::side`, never past
+  100 %), or at the side a zoom asked (`Cover::Side`), worked out on the
+  worker once the header says its size; never more than its own pixels,
+  nor than `limits::PICTURE_HELD` of them (`picture::side_within`: a
+  count, never a side, so a tall or wide picture is held as a square
+  one is). `IMAGE_MAX_SIDE` only while no room was ever laid out
+  (`Area::room` waits for the first layout, `Area::WAIT` at most). A
+  JPEG twice that side and more is decoded at its least reduced scale
+  still covering it (a 24-megapixel photo computes and holds a quarter
+  of its pixels), any other whole, a lossless JPEG too (it has no
+  reduced scale), then shrunk once by `picture::shrink` (Lanczos,
+  weighted by alpha: `fast_image_resize`), never by `image`'s
+  `thumbnail`, which took longer than the decode. An RGB picture is
+  made BGRA in one pass (`thumbs::picture_image`). An image larger than
+  the GPU's largest texture is drawn in pieces (vendored gpui 0090). A progressive JPEG holds besides the
   coefficients of the whole picture, 64 a block, two bytes a pixel of
   each component, except at an eighth: there it keeps and reads only
   every block's DC coefficient, all an eighth draws, to the first scans
@@ -263,7 +275,8 @@ A name that says nothing is not a binary file.
   screen, the next picture the way the last step went; in the panel and
   in peek, the next entry of a walk (`preview::Walk`): two steps alike
   in the pane's order (Down twice, a grid's row down twice), so a click
-  starts none, at the side the panel asks. Only once the one shown has
+  starts none. Either fitted in the room the content's area was last
+  laid out with (`Area::last_room`): the screen's, the panel's. Only once the one shown has
   arrived: the two never wait for each other's decode, and an arrow held
   down, its steps quicker than a photo's decode, starts none. One at most, `PreviewState::ahead`, kept
   beside the preview since a step replaces the preview. It is keyed as
@@ -1637,7 +1650,8 @@ is still to come are in `docs/preview-frame.md`.
   After layout it compares the device pixels it covers with those it
   has; when short, it is decoded again at the next step
   (`preview::sharper`, `Shell::sharpen_picture`), never past its own
-  pixels, in place: zoom and scroll stay.
+  pixels nor what `limits::PICTURE_HELD` holds of them (ADR-146), in
+  place: zoom and scroll stay.
 - A picture larger than the panel scrolls both ways from its top-left
   corner, a bar on each edge; smaller, it sits in the middle. Its wrapper
   starts at the left rather than stretching across the panel's column: a
@@ -1708,9 +1722,9 @@ is still to come are in `docs/preview-frame.md`.
   skipped, and so is a file whose name several types claim
   (`mime::ambiguous`): the walk reads no bytes, and a `.djvu` may be a
   book, whose pages would then keep the arrows.
-- **The next picture is read ahead** the way the last step went, at the
-  side the screen covers (`screen_side`), as in the panel (Pictures,
-  above).
+- **The next picture is read ahead** the way the last step went, fitted
+  in the screen's room (the content's area there, ADR-146), as in the
+  panel (Pictures, above).
 - A picture shown as text (its source, its bytes) is still one of the
   pane's pictures: the inspection's bar keeps the walk's tools
   (`preview_toolbar::picture_tools`), and the slideshow goes on.

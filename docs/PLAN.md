@@ -1266,6 +1266,18 @@ windows (ADR-145, after what GTK, KDE, COSMIC Files and Windows do); a
 skwir the bus starts reaches no display until it is asked. Checks in
 `docs/STATUS-LOG.md` (2026-11-21).
 
+## A picture held at the pixels it covers (ADR-146, 2026-11-21)
+
+Asked by the user: stepping through JPEGs was slower than in Gwenview,
+and a tall picture stayed blurred when zoomed. Measured first: the panel
+decoded every picture at 2048 pixels or more, `image`'s `thumbnail`
+took longer than the decode, and a side of 4096 bounded what was held.
+Step 1 built: a picture is decoded for the room it is fitted in, at most
+its own pixels and 16.7 megapixels (counted, not a side), shrunk by
+`fast_image_resize`; gpui draws an image larger than a texture in pieces
+(0090). Steps 2 to 4 follow (ADR-146, 5 to 7). Checks in
+`docs/STATUS-LOG.md` (2026-11-21).
+
 ## A new version told where nothing else tells it (ADR-142, 2026-11-19)
 
 Brainstormed and decided with the user the same day (ask once, a static
@@ -1309,6 +1321,30 @@ Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**Pictures at the pixels they cover: the next two** (asked by the user
+on 2026-11-21, to be done right after the preview's pictures, steps 1–4
+of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
+24-megapixel PNG decodes in 165 ms, a WebP in 822 ms through image-webp
+against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
+time).
+- *Comic and PDF pages.* The reader keeps the longer side of a page at
+  most `document::MAX_SIDE` (4096) and asks in 512 px steps
+  (`reader::page_side`, reader.md): a webtoon's tall page, 800 × 12 000,
+  blurs when zoomed as a tall picture did in the preview. A comic's
+  pages decode through `picture::jpeg_fitted`. The same rule should
+  apply to them: the pixels covered, the pixel budget in place of the
+  side, the page drawn as tiles, and the fast resize.
+- *HEIC, HEIF, AVIF, JPEG XL and camera raw files.* Skwir does not
+  decode them: the preview is the desktop thumbnailer's picture at
+  1024 px (`PICTURE_SIZE = XXLarge`, the `thumbnails` plugin), final
+  (`Pixels::Drawn`), so an iPhone photo on a 4K screen or zoomed shows
+  1024 px. They need a decoder that takes a size: the full-size JPEG
+  most raw files carry (then the JPEG path, its reduced scales
+  included), jxl-oxide for JPEG XL (pure Rust; its eighth comes first
+  and it decodes a region), libheif for HEIC and AVIF (LGPL, allowed by
+  ADR-042; an iPhone's HEIC is stored as 512 px tiles). Each one decoded
+  in-process is then read ahead and kept like the rest.
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not

@@ -41,7 +41,85 @@ fn book_size_moved(laid_out_at: Option<f32>, wanted: f32) -> bool {
 /// a narrow panel is shown well under a quarter of its size.
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 4.0;
+/// The side a picture is decoded at while the room it is shown in is not
+/// known (the content's area never laid out within `Area::WAIT`), and what
+/// a provider is asked to draw (`PreviewRequest::max_side`).
 const IMAGE_MAX_SIDE: u32 = 2048;
+
+/// The room a picture is fitted in: the content's area as last laid out
+/// (`watch_area`), its width and height in device pixels, and the window's
+/// scale, the device pixels a picture's own pixel covers at 100 %.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Room {
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+    pub(crate) scale: f32,
+}
+
+impl Room {
+    /// The longer side, in device pixels, a picture of `own` pixels covers
+    /// fitted in the room as Fit lays it (`Lay::scale`): whole, never
+    /// enlarged past 100 %.
+    pub(crate) fn side(&self, (width, height): (u32, u32)) -> u32 {
+        let (width, height) = (f64::from(width.max(1)), f64::from(height.max(1)));
+        let longer = width.max(height);
+        // Its longer side at 100 %, as wide as the room, as tall: the
+        // longer over a side is 1 exactly where they are one, so a picture
+        // as wide as the room is asked at the room's width, not a pixel more.
+        let side = (longer * f64::from(self.scale))
+            .min(f64::from(self.width) * (longer / width))
+            .min(f64::from(self.height) * (longer / height));
+        // A side a rounding above a whole pixel is that pixel.
+        let side = (side - 1e-3).ceil();
+        if side.is_finite() {
+            side.max(1.) as u32
+        } else {
+            1
+        }
+    }
+
+    /// Whether a picture fitted in this room covers what one fitted in
+    /// `other` does, whatever its own size.
+    fn holds(&self, other: &Self) -> bool {
+        self.width >= other.width && self.height >= other.height && self.scale >= other.scale
+    }
+}
+
+/// What a picture is decoded to cover (ADR-146): the room it is fitted in,
+/// its side worked out from its own size once its header is read, or the
+/// side a zoom or a larger room asked for (`Sharpen`). It is decoded at
+/// that side, at most its own, within `limits::PICTURE_HELD`: a JPEG at
+/// the least of its reduced scales covering it, then shrunk to it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Cover {
+    Fit(Room),
+    Side(u32),
+}
+
+impl Cover {
+    /// The longer side a picture of `own` pixels is asked at.
+    fn side(&self, own: (u32, u32)) -> u32 {
+        match self {
+            Self::Fit(room) => room.side(own),
+            Self::Side(side) => *side,
+        }
+    }
+
+    /// Whether a picture decoded for this covers what `other` asks.
+    fn holds(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Fit(room), Self::Fit(other)) => room.holds(other),
+            (Self::Side(side), Self::Side(other)) => side >= other,
+            _ => false,
+        }
+    }
+}
+
+/// What a picture is asked to cover where the room it is shown in is not
+/// known: `IMAGE_MAX_SIDE`, a drawing its own size (`decode_drawing`).
+fn cover_or_default(cover: Option<Cover>) -> Cover {
+    cover.unwrap_or(Cover::Side(IMAGE_MAX_SIDE))
+}
 
 pub enum PreviewContent {
     Inspection(crate::inspector::Display),
@@ -108,11 +186,23 @@ enum Media {
 pub(crate) struct Ahead {
     key: PreviewKey,
     version: Version,
-    /// The side it is decoded at: the screen's (`screen_side`), or the
-    /// panel's, as its request asks (a drawing's own size: 0).
-    side: u32,
+    /// What it is decoded to cover: the room the step will show it in, as
+    /// the content's area was last laid out (none known: as a request
+    /// would decode it).
+    cover: Option<Cover>,
     cancel: CancelToken,
     slot: Arc<parking_lot::Mutex<AheadSlot>>,
+}
+
+impl Ahead {
+    /// The side a zoom had asked, which `Sharpen` asks above: none for a
+    /// picture fitted in its room.
+    fn asked_side(&self) -> u32 {
+        match self.cover {
+            Some(Cover::Side(side)) => side,
+            _ => 0,
+        }
+    }
 }
 
 /// Where the worker reading ahead stands, and where its picture goes.
@@ -1829,20 +1919,17 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
     skwir_platform::picture::size(skwir_platform::picture::open(held).ok()?).ok()
 }
 
-/// An image decoded at most `side` pixels on its longer side (at least the
-/// display side, `IMAGE_MAX_SIDE`; a zoom asks for more), with its own size,
-/// what 100% is, as its width and height, if its pixels are within `bounds`.
+/// An image decoded at the side `cover` asks (`IMAGE_MAX_SIDE` where it
+/// is not known), at most its own and within `limits::PICTURE_HELD`, with
+/// its own size, what 100% is, as its width and height, if its pixels are
+/// within `bounds` (ADR-146).
 fn decode_image(
     held: &Arc<Held>,
-    side: u32,
+    cover: Option<Cover>,
     bounds: Bounds,
     turn: Turn,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
-    let side = side.clamp(
-        IMAGE_MAX_SIDE,
-        skwir_platform::inspection::limits::PICTURE_SIDE,
-    );
     let reader = || skwir_platform::picture::open(held);
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
@@ -1857,10 +1944,21 @@ fn decode_image(
             note = "Why a picture is not previewed: it has more pixels than a preview draws. width, height: its size in pixels (8193 × 8193); megapixels: the most a preview draws."
         )));
     }
+    // The side it covers, no more than what may be held of it: a tall
+    // picture as many pixels as a square one.
+    let side = cover_or_default(cover).side((w, h)).clamp(
+        1,
+        skwir_platform::picture::side_within(
+            w,
+            h,
+            skwir_platform::inspection::limits::PICTURE_HELD,
+        ),
+    );
     let _turn = turn.take();
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
+    let started = std::time::Instant::now();
     // A JPEG at least twice the side is decoded at a reduced scale: a
     // 24-megapixel photo has a quarter of its pixels computed and held.
     // With a thread a component: the picture waited for, in its turn.
@@ -1872,11 +1970,14 @@ fn decode_image(
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    // Its own buffer when it is RGBA already, not a copy of it.
-    let rgba = img.into_rgba8();
-    let ink = crate::backdrop::ink(&rgba);
-    let image = crate::thumbs::owned_render_image(rgba.width(), rgba.height(), rgba.into_raw())
-        .ok_or_else(invalid_image)?;
+    let kept = (img.width(), img.height());
+    let (image, ink) = crate::thumbs::picture_image(img).ok_or_else(invalid_image)?;
+    tracing::debug!(
+        own = ?(w, h),
+        ?kept,
+        ms = started.elapsed().as_secs_f64() * 1000.,
+        "picture decoded"
+    );
     Ok(PreviewContent::Image {
         image,
         width: w,
@@ -1889,18 +1990,19 @@ fn decode_image(
     })
 }
 
-/// A drawing (SVG) rasterized at its own size, or, once the panel asked
-/// for `side` pixels (a zoom, a high-density panel), at that; its own size
-/// is what 100% is. Its file is read within `bounds`.
+/// A drawing (SVG) rasterized at the side `cover` asks (ADR-146): fitted
+/// in its room, never past its own size; at the side a zoom or a larger
+/// room asked for; or, where the room is not known, at its own size. Its
+/// own size is what 100% is. Its file is read within `bounds`.
 fn decode_drawing(
     held: &Arc<Held>,
-    side: u32,
+    cover: Option<Cover>,
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
     use skwir_platform::inspection;
     let bytes = inspection::read_drawing(held, bounds, cancel)?;
-    let decoded = inspection::drawing(&bytes, (side > 0).then_some(side))?;
+    let decoded = inspection::drawing_at(&bytes, |own| cover.map(|cover| cover.side(own)))?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
@@ -2209,7 +2311,7 @@ fn compute(
     is_dir: bool,
     mime: Option<&str>,
     code: &crate::code_preview::CodeTheme,
-    picture_side: u32,
+    cover: &dyn Fn() -> Option<Cover>,
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> PreviewContent {
@@ -2228,9 +2330,9 @@ fn compute(
     };
     match drawn_here(mime, held.head()) {
         Drawn::Drawing => {
-            decode_drawing(&held, picture_side, bounds, cancel).unwrap_or_else(failure_content)
+            decode_drawing(&held, cover(), bounds, cancel).unwrap_or_else(failure_content)
         }
-        Drawn::Picture => decode_image(&held, picture_side, bounds, Turn::Shown, cancel)
+        Drawn::Picture => decode_image(&held, cover(), bounds, Turn::Shown, cancel)
             .unwrap_or_else(failure_content),
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
@@ -3508,27 +3610,26 @@ impl Shell {
 
     /// Read ahead what the next step shows, once the entry shown has
     /// arrived (the two never wait for each other's decode): on the whole
-    /// screen the next picture the way the last step went, at the side the
-    /// screen covers (`screen_side`); in the panel and in peek the next
-    /// entry of a walk (`Walk`), at the side the panel asks. Nothing to
-    /// read ahead, or `reading.read_ahead` off, lets what was read go.
+    /// screen the next picture the way the last step went; in the panel and
+    /// in peek the next entry of a walk (`Walk`). Either fitted in the room
+    /// the content's area was last laid out with, the screen's or the
+    /// panel's (ADR-146). Nothing to read ahead, or `reading.read_ahead`
+    /// off, lets what was read go.
     pub(crate) fn read_ahead_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = if !self.prefs.read_ahead {
             None
         } else if self.preview.fullscreen.is_some() {
-            self.fullscreen_ahead().map(|id| (id, screen_side(window)))
+            self.fullscreen_ahead()
         } else if self.preview.pane() == Some(self.pane) {
-            self.preview
-                .walk
-                .next(self.pane, &self.ui().list.sorted)
-                .map(|id| (id, 0))
+            self.preview.walk.next(self.pane, &self.ui().list.sorted)
         } else {
             None
         };
         match next {
             None => self.let_ahead_go(window, cx),
-            Some((id, side)) if self.preview.phase == PreviewPhase::Idle => {
-                self.read_ahead(id, side, window, cx);
+            Some(id) if self.preview.phase == PreviewPhase::Idle => {
+                let cover = self.preview.area.last_room().map(Cover::Fit);
+                self.read_ahead(id, cover, window, cx);
             }
             Some(_) => {}
         }
@@ -4350,7 +4451,15 @@ impl Shell {
                         is_dir,
                         request.mime.as_deref(),
                         &code,
-                        picture_side,
+                        // The side a zoom asked, else the room the area
+                        // was last laid out with, asked only of a picture.
+                        &|| {
+                            if picture_side > 0 {
+                                Some(Cover::Side(picture_side))
+                            } else {
+                                area.room(&cancel).map(Cover::Fit)
+                            }
+                        },
                         Bounds::of(&inspection),
                         &cancel,
                     ),
@@ -4385,7 +4494,7 @@ impl Shell {
 
     /// Read ahead picture `id` of the pane the panel previews, for the step
     /// taken next (`read_ahead_next`): decoded on a worker as the panel's
-    /// request would decode it, at `side`, and shown at once when stepped
+    /// request would decode it, to `cover`, and shown at once when stepped
     /// to (`take_ahead`). Only a picture skwir decodes itself, whose type
     /// its name settles: a file a provider shows (by another program, as
     /// pages, as a film) is never opened before it is asked for. One at
@@ -4394,7 +4503,7 @@ impl Shell {
     pub(crate) fn read_ahead(
         &mut self,
         id: EntryId,
-        side: u32,
+        cover: Option<Cover>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4415,22 +4524,13 @@ impl Shell {
         // Its type as the panel would take it, settled by the name alone
         // (`sync_preview`): bytes to read first are the request's to read.
         let mime = skwir_platform::mime::of_entry(&entry);
-        // The side it is decoded at: a drawing's own size unless asked, a
-        // photo's never under the display side (`decode_image`), so the
-        // panel's and a screen as large read the same picture.
-        let side = if mime
-            .as_ref()
-            .is_some_and(|mime| skwir_platform::thumb_providers::is_drawing(mime.as_str()))
-        {
-            side
-        } else {
-            side.clamp(
-                IMAGE_MAX_SIDE,
-                skwir_platform::inspection::limits::PICTURE_SIDE,
-            )
-        };
         if self.preview.ahead.as_ref().is_some_and(|ahead| {
-            ahead.key == key && !ahead.version.rewritten(&version) && ahead.side >= side
+            ahead.key == key
+                && !ahead.version.rewritten(&version)
+                && match (&ahead.cover, &cover) {
+                    (Some(read), Some(asked)) => read.holds(asked),
+                    (read, asked) => read == asked,
+                }
         }) {
             return;
         }
@@ -4503,9 +4603,9 @@ impl Shell {
                     .map_err(anyhow::Error::from)
                     .and_then(|held| {
                         if skwir_platform::thumb_providers::is_drawing(&mime) {
-                            decode_drawing(&held, side, Bounds::QUICK, &token)
+                            decode_drawing(&held, cover, Bounds::QUICK, &token)
                         } else {
-                            decode_image(&held, side, Bounds::QUICK, Turn::Ahead, &token)
+                            decode_image(&held, cover, Bounds::QUICK, Turn::Ahead, &token)
                         }
                     })
                     .unwrap_or_else(failure_content);
@@ -4535,11 +4635,11 @@ impl Shell {
                 }
             },
         );
-        tracing::debug!(path = %key.path.display(), side, "picture read ahead");
+        tracing::debug!(path = %key.path.display(), ?cover, "picture read ahead");
         self.preview.ahead = Some(Ahead {
             key,
             version,
-            side,
+            cover,
             cancel,
             slot,
         });
@@ -4575,7 +4675,7 @@ impl Shell {
             AheadSlot::Read(content) => {
                 drop(slot);
                 tracing::debug!("picture read ahead shown");
-                self.preview.picture_side = ahead.side;
+                self.preview.picture_side = ahead.asked_side();
                 let result = PreviewResult {
                     generation,
                     content,
@@ -4598,7 +4698,7 @@ impl Shell {
                 };
                 drop(slot);
                 tracing::debug!("picture read ahead taken while decoding");
-                self.preview.picture_side = ahead.side;
+                self.preview.picture_side = ahead.asked_side();
                 self.preview.cancel = Some(ahead.cancel);
                 self.preview.phase = PreviewPhase::Loading;
                 true
@@ -6848,7 +6948,15 @@ fn watch_area(
         };
         let device = |side: gpui::Pixels| f32::from(side) * window.scale_factor();
         let (width, height) = (device(bounds.size.width), device(bounds.size.height));
-        area.measured(generation, crate::reader_scroll::area_side(width, height));
+        area.measured(
+            generation,
+            crate::reader_scroll::area_side(width, height),
+            Room {
+                width,
+                height,
+                scale: window.scale_factor(),
+            },
+        );
         let area = (step_covering(width), step_covering(height));
         if area != known {
             let shell = shell.clone();
@@ -7109,14 +7217,22 @@ pub(crate) fn content(
                     &p.picture_scroll,
                     "preview-image-scroll",
                     // A picture shown smaller than its own size was decoded
-                    // smaller; one given at its pixels has no more.
+                    // smaller; one given at its pixels has no more; none
+                    // is held with more than `PICTURE_HELD` (ADR-146).
                     Some(Sharpen {
                         shell: cx.entity().downgrade(),
                         asked: p.picture_side,
-                        most: match pixels {
-                            Pixels::Own => (*width).max(*height),
-                            Pixels::Any => skwir_platform::inspection::limits::PICTURE_SIDE,
-                            Pixels::Drawn => 0,
+                        most: {
+                            let held = skwir_platform::picture::side_within(
+                                *width,
+                                *height,
+                                skwir_platform::inspection::limits::PICTURE_HELD,
+                            );
+                            match pixels {
+                                Pixels::Own => (*width).max(*height).min(held),
+                                Pixels::Any => held,
+                                Pixels::Drawn => 0,
+                            }
                         },
                     }),
                     crate::backdrop::behind(*ink, theme.surface, theme),
@@ -8067,7 +8183,7 @@ pub(crate) fn picture(
 
 /// Who a picture asks for more pixels (`picture`), the side it already
 /// asked for, so it asks once per step, and the most it can have: its own
-/// pixels, within `limits::PICTURE_SIDE`.
+/// pixels, as many as `limits::PICTURE_HELD` holds (ADR-146).
 pub(crate) struct Sharpen {
     pub(crate) shell: gpui::WeakEntity<Shell>,
     pub(crate) asked: u32,
@@ -8077,20 +8193,6 @@ pub(crate) struct Sharpen {
 /// Steps a picture is drawn again at: a zoom step of 1.25 crosses at most
 /// one, and a picture a little short of its pixels is left as it is.
 const SHARPEN_STEP: u32 = 512;
-
-/// The side a picture fitted to the whole screen covers at most, in device
-/// pixels, in `sharper`'s steps: what a picture read ahead for the whole
-/// screen is decoded at.
-pub(crate) fn screen_side(window: &Window) -> u32 {
-    use skwir_platform::inspection::limits::PICTURE_SIDE;
-    let size = window.viewport_size();
-    let covered = f32::from(size.width.max(size.height)) * window.scale_factor();
-    if !covered.is_finite() {
-        return IMAGE_MAX_SIDE;
-    }
-    ((covered / SHARPEN_STEP as f32).ceil() as u32 * SHARPEN_STEP)
-        .clamp(IMAGE_MAX_SIDE, PICTURE_SIDE)
-}
 
 impl Sharpen {
     /// A canvas over the picture's box that, once laid out, measures the
@@ -8119,11 +8221,9 @@ impl Sharpen {
 
 /// The side to draw a picture again at, when `covered` device pixels show
 /// one of `raster` pixels: the next step up, within `most` (what the
-/// picture can have) and `limits::PICTURE_SIDE`, and above what was already
-/// `asked`. `None` while its pixels suffice or can be no more.
+/// picture can have, as many pixels as may be held of it), and above what
+/// was already `asked`. `None` while its pixels suffice or can be no more.
 pub(crate) fn sharper(covered: f32, raster: u32, asked: u32, most: u32) -> Option<u32> {
-    use skwir_platform::inspection::limits::PICTURE_SIDE;
-    let most = most.min(PICTURE_SIDE);
     if !covered.is_finite() || covered <= raster as f32 * 1.05 || raster >= most {
         return None;
     }
@@ -8864,19 +8964,50 @@ mod tests {
 
     #[test]
     fn a_picture_is_drawn_sharper_in_steps_up_to_what_it_can_have() {
-        use skwir_platform::inspection::limits::PICTURE_SIDE;
+        use skwir_platform::inspection::limits::PICTURE_HELD;
         // Its pixels suffice, or nearly.
         assert_eq!(sharper(1500., 1600, 0, u32::MAX), None);
         assert_eq!(sharper(1650., 1600, 0, u32::MAX), None);
         // Short: the next step up, once.
         assert_eq!(sharper(2100., 1600, 0, u32::MAX), Some(5 * SHARPEN_STEP));
         assert_eq!(sharper(2100., 1600, 5 * SHARPEN_STEP, u32::MAX), None);
-        // Never past what the picture has, nor the bound.
+        // Never past what the picture has, nor what may be held of it.
         assert_eq!(sharper(2100., 1600, 0, 1800), Some(1800));
         assert_eq!(sharper(2100., 1800, 0, 1800), None);
-        assert_eq!(sharper(20_000., 1600, 0, u32::MAX), Some(PICTURE_SIDE));
-        assert_eq!(sharper(20_000., PICTURE_SIDE, 0, u32::MAX), None);
         assert_eq!(sharper(f32::NAN, 1600, 0, u32::MAX), None);
+        // A tall picture (2000 × 11 500) is held as many pixels as a square
+        // one: past the side that bounded it (4096, 712 across), up to 85 %
+        // of its own.
+        let tall = skwir_platform::picture::side_within(2000, 11_500, PICTURE_HELD);
+        assert_eq!(tall, 9821);
+        assert_eq!(sharper(20_000., 4096, 0, tall), Some(tall));
+        assert_eq!(sharper(20_000., tall, 0, tall), None);
+    }
+
+    /// Fitted in its room, a picture covers as much of it as its shape
+    /// lets it, and never more than its own pixels at 100 %: on a screen of
+    /// two device pixels a pixel, twice its own.
+    #[test]
+    fn a_picture_is_asked_at_the_side_its_room_gives_it() {
+        let room = super::Room {
+            width: 1000.,
+            height: 800.,
+            scale: 2.,
+        };
+        assert_eq!(room.side((6000, 4000)), 1000, "as wide as the room");
+        assert_eq!(room.side((2000, 11_500)), 800, "as tall as the room");
+        assert_eq!(room.side((300, 200)), 600, "its own, at two a pixel");
+        assert_eq!(room.side((0, 0)), 2);
+        let (fit, side) = (super::Cover::Fit(room), super::Cover::Side(4096));
+        assert_eq!(fit.side((6000, 4000)), 1000);
+        assert_eq!(side.side((6000, 4000)), 4096);
+        // What was read ahead for a room holds a smaller one's step.
+        let smaller = super::Cover::Fit(super::Room {
+            width: 900.,
+            ..room
+        });
+        assert!(fit.holds(&smaller) && !smaller.holds(&fit));
+        assert!(!fit.holds(&side));
     }
 
     /// The worker's own step for text no provider presents: the type it
@@ -8893,7 +9024,7 @@ mod tests {
             false,
             mime,
             &crate::code_preview::CodeTheme::own(false),
-            1024,
+            &|| Some(super::Cover::Side(1024)),
             skwir_platform::inspection::limits::Bounds::QUICK,
             &skwir_core::CancelToken::new(),
         ) {
@@ -8924,7 +9055,7 @@ mod tests {
                 false,
                 Some("image/svg+xml"),
                 &crate::code_preview::CodeTheme::own(false),
-                side,
+                &|| (side > 0).then_some(super::Cover::Side(side)),
                 skwir_platform::inspection::limits::Bounds::QUICK,
                 &cancel,
             );
@@ -9007,7 +9138,7 @@ mod tests {
             false,
             mime,
             &crate::code_preview::CodeTheme::own(false),
-            1024,
+            &|| Some(super::Cover::Side(1024)),
             skwir_platform::inspection::limits::Bounds::QUICK,
             &cancel,
         ) {
@@ -9104,7 +9235,7 @@ mod tests {
         std::fs::write(&path, &bmp).unwrap();
         let error = super::decode_image(
             &held(&path),
-            0,
+            None,
             Bounds::QUICK,
             super::Turn::Shown,
             &skwir_core::CancelToken::new(),
@@ -9119,8 +9250,9 @@ mod tests {
     }
 
     /// A photo twice the panel's side and more is decoded reduced, and
-    /// shown as the whole decode shrunk would be: the panel's side, its own
-    /// size what 100% is.
+    /// shown as the whole decode shrunk would be: the side its room gives
+    /// it (`IMAGE_MAX_SIDE` where none was laid out), its own size what
+    /// 100% is.
     #[test]
     fn a_large_photo_is_shown_at_the_panel_side_with_its_own_size() {
         use skwir_platform::inspection::limits::Bounds;
@@ -9132,7 +9264,7 @@ mod tests {
         strip.save(&path).unwrap();
         let content = super::decode_image(
             &held(&path),
-            0,
+            None,
             Bounds::QUICK,
             super::Turn::Ahead,
             &skwir_core::CancelToken::new(),
@@ -9150,6 +9282,26 @@ mod tests {
         assert_eq!((width, height), (4200, 60));
         let size = image.size(0);
         assert_eq!((size.width.0, size.height.0), (2048, 29));
+        // Fitted in a room it covers, at the room's side.
+        let room = super::Room {
+            width: 1000.,
+            height: 800.,
+            scale: 1.,
+        };
+        let content = super::decode_image(
+            &held(&path),
+            Some(super::Cover::Fit(room)),
+            Bounds::QUICK,
+            super::Turn::Ahead,
+            &skwir_core::CancelToken::new(),
+        )
+        .unwrap();
+        let super::PreviewContent::Image { image, width, .. } = content else {
+            panic!("not a picture");
+        };
+        assert_eq!(width, 4200, "its own size is still what 100% is");
+        let size = image.size(0);
+        assert_eq!((size.width.0, size.height.0), (1000, 14));
     }
 
     /// Two steps alike through the pane's order make a walk, whose next

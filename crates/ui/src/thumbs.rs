@@ -94,6 +94,30 @@ pub fn to_render_image(img: &Image) -> Option<Arc<RenderImage>> {
     owned_render_image(img.width, img.height, img.rgba.to_vec())
 }
 
+/// A decoded picture as GPUI draws it, in BGRA, and its ink
+/// (`backdrop::ink`). An RGB one (a JPEG, most photos) is written in one
+/// pass and is opaque, with no ink to read; any other is made RGBA first,
+/// its ink read before its channels are swapped in place.
+pub fn picture_image(image: image::DynamicImage) -> Option<(Arc<RenderImage>, Option<f32>)> {
+    if let image::DynamicImage::ImageRgb8(rgb) = &image {
+        let (width, height) = rgb.dimensions();
+        let mut buf = vec![0; rgb.as_raw().len() / 3 * 4];
+        for (to, from) in buf
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(rgb.as_raw().as_chunks::<3>().0)
+        {
+            *to = [from[2], from[1], from[0], 255];
+        }
+        return Some((bgra_render_image(width, height, buf)?, None));
+    }
+    let rgba = image.into_rgba8();
+    let ink = crate::backdrop::ink(&rgba);
+    let (width, height) = rgba.dimensions();
+    Some((owned_render_image(width, height, rgba.into_raw())?, ink))
+}
+
 /// Document pages have one consumer: swizzle the transferred buffer in place.
 pub fn owned_render_image(width: u32, height: u32, mut buf: Vec<u8>) -> Option<Arc<RenderImage>> {
     for p in buf.as_chunks_mut::<4>().0 {

@@ -83,6 +83,12 @@ pub mod limits {
     /// drawn or decoded at: about 45 MB of pixels for a page of a comic.
     /// Past it, a zoom enlarges these pixels.
     pub const PICTURE_SIDE: u32 = skwir_core::document::MAX_SIDE;
+    /// The most pixels a picture the preview shows is held with, whole (64
+    /// MiB of them, of what may be decoded, `PICTURE_PIXELS`): a tall or
+    /// wide one as many as a square one, which a side alone held at a
+    /// fraction (2000 × 11 500 at 712 × 4096). Past it, a zoom enlarges
+    /// these pixels (ADR-146).
+    pub const PICTURE_HELD: u64 = 4096 * 4096;
     /// Bytes of a picture read to learn its size before it is shown: a
     /// raster header, with room for the metadata a JPEG may put first.
     pub const PICTURE_HEADER: usize = 256 * 1024;
@@ -1127,14 +1133,24 @@ pub fn drawing_size(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
 /// A drawing (`read_drawing`) rasterized for the preview, as inert as a
 /// picture in a document. Without `side` it is drawn at its own size,
 /// within the display side; with one, fitted to it on its longer side, and
-/// enlarged too: a drawing has as many pixels as it is asked for.
+/// enlarged too: a drawing has as many pixels as it is asked for, within
+/// `limits::PICTURE_HELD`.
 pub fn drawing(bytes: &[u8], side: Option<u32>) -> anyhow::Result<Decoded> {
+    drawing_at(bytes, |_| side)
+}
+/// A drawing rasterized as `drawing` does, at the side `side_for` asks
+/// from its own size (what the room it is fitted in gives it, ADR-146).
+pub fn drawing_at(
+    bytes: &[u8],
+    side_for: impl FnOnce((u32, u32)) -> Option<u32>,
+) -> anyhow::Result<Decoded> {
     let tree = svg_tree(bytes)?;
     let own = own_size(&tree);
-    let drawn = match side {
+    let drawn = match side_for(own) {
         None => shown(own.0, own.1, limits::IMAGE_DISPLAY_SIDE),
         Some(side) => {
-            let side = f64::from(side.clamp(64, limits::PICTURE_SIDE));
+            let most = crate::picture::side_within(own.0, own.1, limits::PICTURE_HELD);
+            let side = f64::from(side.max(64).min(most));
             let scale = side / f64::from(own.0.max(own.1));
             let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
             (fit(own.0), fit(own.1))
@@ -1783,11 +1799,11 @@ mod tests {
         };
         assert_eq!(at(None), (40, 20));
         assert_eq!(at(Some(800)), (800, 400), "a drawing is enlarged");
-        assert_eq!(
-            at(Some(u32::MAX)),
-            (limits::PICTURE_SIDE, limits::PICTURE_SIDE / 2),
-            "bounded"
-        );
+        // Bounded by its pixels, not a side (ADR-146): a drawing twice as
+        // wide as tall is held as many as a square one.
+        let (width, height) = at(Some(u32::MAX));
+        assert_eq!((width, height), (5792, 2896), "bounded");
+        assert!(u64::from(width) * u64::from(height) <= limits::PICTURE_HELD);
         assert_eq!(drawing_size(DRAWING.as_bytes()).unwrap(), (40, 20));
     }
 

@@ -21745,3 +21745,84 @@ stopping the build under 5 GB free:
 - **Privacy**: the commit's message and the test name no machine and no
   person. Every check ran on Xvfb or in the packages' roots; the
   session's display was not touched.
+
+## 2026-11-21: a picture held at the pixels it covers (ADR-146, step 1)
+
+The user asked why stepping through a folder of JPEGs is slower than in
+Gwenview, and why a picture about 2000 × 11 000 stays pixelated when
+zoomed in the preview. Measured first, then decided with the user
+(ADR-146), then built.
+
+- **What was measured** (release, synthetic photos made by ImageMagick's
+  plasma with noise, about 3 bits a pixel, a load of 1.4 to 3.6; the
+  bench in `~/.cache/skwir-tests/preview-bench`, outside the repository).
+  The panel's decode (at 2048 pixels or more, `IMAGE_MAX_SIDE`): 12
+  megapixels 176 ms (decoded whole by zune, 65 ms, as 4000 / 2 misses
+  2048, then `image`'s `thumbnail` 99 ms); 24 megapixels 195 ms (113 at a
+  half, 71 to shrink); a progressive 24 megapixels 492 ms; a progressive
+  45 megapixels 778 ms. A 4K screen's 4096: 24 megapixels 457 ms (whole
+  135, shrunk 290, made RGBA 28). libjpeg-turbo's `djpeg -scale`: 61 ms
+  for 12 megapixels whole, 97 ms for 24 at a half, 79 at an eighth.
+  `fast_image_resize` 5.5, Lanczos3: 14 ms where `thumbnail` took 98
+  (12 megapixels to 2048), 62 where it took 306 (24 to 4096). A 24
+  megapixel PNG decodes in 165 ms; a WebP in 822 ms through image-webp,
+  381 through libwebp (whose scaled decode, 371 ms, saves no time).
+  Gwenview's code, read on invent.kde.org (its preloading only in a
+  summary): the file read whole, libjpeg-turbo at a power of two through
+  `QImageReader::setScaledSize`, whole above a zoom of 0.25, Qt scaling
+  as it paints; the next file preloaded forward; three decoded documents
+  kept.
+- **The blur**: `limits::PICTURE_SIDE` (4096) bounded the longer side,
+  and `sharper` asked no more: 2000 × 11 500 started at 356 × 2048 and
+  stopped at 712 × 4096.
+- **Built** (decisions 1 to 4): a picture is decoded for its room
+  (`preview::Room`, measured where the content's area is laid out,
+  `Area::room`; `Cover`), at most its own pixels and `PICTURE_HELD`
+  (4096², counted by `picture::side_within`); shrunk by
+  `picture::shrink` (`fast_image_resize`, alpha weighted, also for
+  thumbnails and what a thumbnailer drew); RGB made BGRA in one pass;
+  read ahead for the same room; a drawing drawn for its room too.
+  Vendored gpui 0090 draws an image larger than the device's largest
+  texture in pieces. `picture decoded` is traced at debug level with
+  the picture's own size, what was kept and the time.
+- **Checked in a window** (Xvfb :93, lavapipe, 1600 × 1000, the window
+  1200 × 800 and its panel 320 device pixels wide, separate XDG folders
+  and no session bus; the release build before, 12:57, and after; the
+  machine loaded by other builds, about 6). The new build decoded for
+  the panel's 320 pixels: 12 megapixels 68–72 ms, 24 megapixels
+  127–135 ms, 45 megapixels read ahead 224–234 ms, the progressive 24
+  megapixels 12–13 ms (its eighth). The scheduler's slow-task log, both
+  builds, the same script: the 12-megapixel preview 198 ms before, under
+  its 100 ms threshold after; 24 megapixels 219 ms before, 144 after; the
+  progressive one read ahead 489 ms before, 13 after. The tall page of
+  text (2000 × 11 500) at 100 %: before 712 × 4096 enlarged, blurred
+  letters; after 1708 × 9821, sharp (screenshots compared side by side).
+  A ruler of 600 × 30 000 at 100 % held at 579 × 28 963, over lavapipe's
+  16 384: drawn in two pieces, scrolled to their seam (row 16 382 of
+  the picture held, near the label y=17000): every line where it belongs,
+  no gap, none twice; before, nothing past 16 384 could be drawn, and
+  the picture was held at 82 × 4096.
+- **Tests**: gpui's `assets::tests::a_frame_larger_than_a_texture_is_cut_in_pieces`
+  and `window::tests::an_image_wider_than_a_texture_is_drawn_in_pieces`
+  (in `just gpui-check`); `picture::tests::a_picture_shrinks_by_its_alpha`,
+  `a_picture_is_held_by_its_pixels_not_its_side`;
+  `preview::tests::a_picture_is_asked_at_the_side_its_room_gives_it`,
+  the strip test fitted in a room, `sharper`'s for a tall picture;
+  `reader_scroll::tests::a_picture_takes_the_room_last_laid_out`; the
+  drawing's bound now in pixels. `just deny` passed with
+  `fast_image_resize` (MIT or Apache-2.0; every dependency it brings was
+  in Cargo.lock already); `just notices` lists it. `just bench-check`,
+  the thumbnails' four budgets (they shrink through `picture::shrink`
+  now; a load of about 4): cold 228 µs an image (250), warm 34 (100), a
+  drawing cold 654 (1000), warm 65 (100). The two crates' tests, 1404
+  passed; `just gpui-check` green.
+- **Not done**: Windows and macOS were linted only (`just check-cross`,
+  green): Windows' whole workspace, gpui's Direct3D backend with it; macOS
+  without skwir-ui and gpui's Metal backend, which its check leaves out,
+  so 0090's one line in Metal's atlas test was not compiled. The pieces
+  are gpui's own, drawn the same everywhere; Metal's and Direct3D's
+  atlases say 16 384. No 4K screen was tried. A panel made
+  larger after a picture was decoded asks again in 512-pixel steps, as a
+  zoom does. Steps 2 to 4 (the region's tiles past the bound, a
+  progressive JPEG's eighth first and the two-stage rule, read ahead from
+  the first step and two pictures kept) follow.
