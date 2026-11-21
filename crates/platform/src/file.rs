@@ -8,8 +8,9 @@
 //! and refuse anything that is not a regular file: a named pipe, socket or
 //! device called `x.png` is not an image.
 //!
-//! Files other programs share with us (GTK bookmarks, `mimeapps.list`) are
-//! changed through [`rewrite`] only.
+//! Files other programs share with us (GTK bookmarks, `mimeapps.list`, the
+//! recently used files) are changed through [`rewrite_words`] or
+//! [`rewrite_words_within`] only.
 
 use std::io;
 use std::path::Path;
@@ -69,8 +70,8 @@ pub fn rewrite_words_within<T>(
     )
 }
 
-/// [`rewrite`], read `limit` bytes at most, refused with what `no_folder`
-/// and `read_only` make.
+/// [`rewrite_words`], read `limit` bytes at most, refused with what
+/// `no_folder` and `read_only` make.
 fn rewrite_with<T>(
     link: &Path,
     limit: u64,

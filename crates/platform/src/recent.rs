@@ -372,8 +372,10 @@ fn date(at: jiff::Timestamp) -> String {
 /// `text` (the list as it is, `None` or blank where there is none) with
 /// `entries` (each file and its type) used at `now`, each file once: one
 /// the list names visited, another added after the others; as GTK keeps
-/// the list, one last modified `before` dropped, then those first in it
-/// past [`KEPT`] (never one used now). `None` where the text does not read
+/// the list, one last modified `before` dropped, then the first past
+/// [`KEPT`]: the list's first, never one visited now, and where more
+/// files are used now than it keeps, the first of those added, as GTK's
+/// clamp drops them. `None` where the text does not read
 /// as `GLib` reads a list, or where what would be written would not. Pure:
 /// what `add` writes.
 fn added(
@@ -621,9 +623,10 @@ fn glib_date(text: &str) -> bool {
 }
 
 /// The prefixes the bookmarks Skwir writes give their applications and
-/// their type (`bookmark:`, `mime:`, as written: empty where the names go
-/// without one), those the list's root declares, a declaration added to it
-/// where it declares none.
+/// their type (`bookmark:`, `mime:`, as written, never empty): those the
+/// list's root declares, else the usual one, its declaration added to the
+/// root (where it declares none, or the namespace as its default alone);
+/// none where the usual one is another namespace's.
 struct Prefixes {
     bookmark: String,
     mime: String,
@@ -633,7 +636,13 @@ impl Prefixes {
     fn of(root: roxmltree::Node, text: &str, edits: &mut Edits) -> Option<Prefixes> {
         let mut declared = String::new();
         let mut prefix = |ns: &str, usual: &str| -> Option<String> {
-            if let Some(prefix) = root.lookup_prefix(ns) {
+            // A prefix the root declares for it, whatever else it declares
+            // it as (`lookup_prefix` answers the first declaration's,
+            // none where that is the default namespace).
+            if let Some(prefix) = root
+                .namespaces()
+                .find_map(|declared| declared.name().filter(|_| declared.uri() == ns))
+            {
                 return Some(format!("{prefix}:"));
             }
             // Its usual name taken by another namespace: written as no
@@ -1085,6 +1094,19 @@ mod tests {
             assert!(written.contains("<bookmark:applications>"), "{written}");
             assert_eq!(bookmarks(&written).len(), 1, "{written}");
         }
+        // Declared as the default namespace, and as a prefix too: the
+        // prefix; as the default alone: the usual one, declared.
+        let both = format!(
+            "<xbel version=\"1.0\" xmlns=\"{BOOKMARK_NS}\" xmlns:bookmark=\"{BOOKMARK_NS}\"></xbel>"
+        );
+        let written = added(Some(&both), &entries, NOW, None).unwrap();
+        assert!(written.contains("<bookmark:applications>"), "{written}");
+        let default = format!("<xbel version=\"1.0\" xmlns=\"{BOOKMARK_NS}\"></xbel>");
+        let written = added(Some(&default), &entries, NOW, None).unwrap();
+        assert!(
+            written.contains(&format!("xmlns:bookmark=\"{BOOKMARK_NS}\"")),
+            "{written}"
+        );
         // A prefix of the usual name taken by another namespace: left
         // alone.
         let taken = "<xbel version=\"1.0\" xmlns:bookmark=\"urn:other\"></xbel>";
