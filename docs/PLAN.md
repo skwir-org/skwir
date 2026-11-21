@@ -87,7 +87,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   added for the names' order (ADR-139, 15; machine loaded); the
   thumbnails' (`thumbs_cold_*`, `thumbs_warm_*`) are not measured since
   the cache is written after showing (2026-11-19).
-- **Since 0.5.1 (2026-11-16 to 11-20):** the words in every language
+- **Since 0.5.1 (2026-11-16 to 11-21):** the words in every language
   (ADR-139, steps A to H): every word a message, French and Simplified
   Chinese drafted and spoken as drafts, sizes by a setting (Decimal by
   default), numbers, dates and the order of names by the locale, text in
@@ -95,13 +95,16 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   printing right to left (ADR-111 revised), plugins from outside on
   protocol 2; shortcuts on other keyboard layouts (gpui 0076); Show in
   folder and the Open and Save dialogs for other programs (ADR-140,
-  ADR-141), a dialog's window offering what finds and chooses, with the
-  dialogs' own layout (ADR-144), every window tagged for the
-  compositor's rules (gpui 0089); new versions told,
-  the apt and dnf repositories published and Fedora's packages signed
-  (ADR-142); a drag that moves what has nothing to select (ADR-143);
-  thumbnails shown before they are kept, a progressive JPEG's read from
-  its DC scans; the reviews since 0.5.1 fixed (2026-11-19, 2026-11-20).
+  ADR-141), a skwir the bus starts reaching no display until asked; a
+  dialog's window offering what finds and chooses, with the dialogs' own
+  layout (ADR-144), Skwir Tabs and Recent Folders in its sidebar, Escape
+  cancelling wherever the keyboard is, and the dialogs' own order and
+  per-folder memory (ADR-145); every window tagged for the compositor's
+  rules (gpui 0089); new versions told, the apt and dnf repositories
+  published and Fedora's packages signed (ADR-142); a drag that moves
+  what has nothing to select (ADR-143); thumbnails shown before they are
+  kept, a progressive JPEG's read from its DC scans; the reviews since
+  0.5.1 fixed (2026-11-19, 2026-11-20).
 - **Work in 0.5.1 (2026-11-14 to 11-16):** the title bar where the user
   wants it (ADR-138, #11), fields that say what they take (ADR-137), the
   player following its file (ADR-136), what changes files worked out
@@ -1233,22 +1236,23 @@ filter swaps the extension; opening files, Recent first and the start
 where nothing names a folder, where it has a file to give
 (`LocationProvider::lists_recent`, `skwir_platform::recent::offered`),
 what is chosen added to `recently-used.xbel` (`skwir_platform::recent`);
-a program's five recent folders the sidebar's Recent Folders (amended
-the same evening: they were a dropdown of the bar); files dimmed while choosing
-folders (`Admits::folders`); a drop gone to, never copied; the answer
-counts what it gives. Reviewed and fixed the same day: one answer every
-way to run a command asks, a window of one tab whose `open` is its
-answer, its questions asked in it and its Undo taking back what it did
-alone, Ctrl+Q its Cancel, the recent list written as GLib reads it and
-each desktop's switch heeded, the extension swapped as the filters take
-it, a size never a tile's, a folder whose files the filter hides said
-so. Then, from the user's first install through Nix: a program's own
-All files no longer doubled by Skwir's in the filter list, places of
-one name in a sidebar group told apart by the folder above that
-differs, a folder's place saying its path when pointed at, and a launch
-handed to a skwir the bus started for a dialog showing the startup
-choice rather than an empty window (the choice is made as the user's
-windows first come up). Checks in `docs/STATUS-LOG.md` (2026-11-20).
+a program's recent folders shown in the sidebar's Recent Folders (five
+of the ten kept; amended the same evening: they were a dropdown of the
+bar); files dimmed while choosing folders (`Admits::folders`); a drop
+gone to, never copied; the answer counts what it gives. Reviewed and
+fixed the same day: one answer every way to run a command asks, a window
+of one tab whose `open` is its answer, its questions asked in it and its
+Undo taking back what it did alone, Ctrl+Q its Cancel, the recent list
+written as GLib reads it and each desktop's switch heeded, the extension
+swapped as the filters take it, a size never a tile's, a folder whose
+files the filter hides said so. Then, from the user's first install
+through Nix: a program's own All files no longer doubled by Skwir's in
+the filter list, places of one name in a sidebar group told apart by the
+folder above that differs, a folder's place saying its path when pointed
+at, and a launch handed to a skwir the bus started for a dialog showing
+the startup choice rather than an empty window (the choice is made as
+the user's windows first come up). Checks in `docs/STATUS-LOG.md`
+(2026-11-20).
 
 ## A dialog's own way, Escape, Skwir Tabs, a lighter start (ADR-145, 2026-11-21)
 
@@ -1416,25 +1420,24 @@ build on Xvfb, not on the user's session with its GPU.
 2026-11-20): on Linux, each step checked in a window on Xvfb.
 Left: a drag from a window of skwir's own onto a dialog (only another
 program's drop was tried); writing `recently-used.xbel` under GNOME with
-its privacy switch off (read through `gsettings`, not run); a folder
-that remembers its view (ADR-132) in a dialog; the size kept apart from
-a tile, never seen on a tiling compositor (a headless sway would show
-it); drops on a dialog's sidebar and what a screen reader hears of a
-dimmed file, tested and read, not tried in a window nor with a screen
-reader; Xfce's (xfconf's `/Gtk/RecentFilesEnabled`) and MATE's switches
-for recent files, not read; a name to save with a compound extension
-selected to its last dot (`backup.tar` of `backup.tar.gz`); `ui.quit`
-from a script while work is under way and no window of the user's own
-is up, not run in a window; a preview's web links do nothing in a
-dialog's window and say nothing of it (each renderer draws its links,
-none told the window's rule); a dialog's stopped plan that goes on by
-itself once its server answers (ADR-080, 9) is the program's in Undo,
-not the dialog's; rclone's forms, asked on threads of their own, are not
-tagged with the dialog and wait for a window of the user's own
-(untested); a server's password and a volume's passphrase asked in a
-dialog, not seen in a window (a test covers a worker's question); a
-plugin from outside cannot yet say one of its commands is fit for dialogs,
-so none is offered there.
+its privacy switch off (read through `gsettings`, not run); the size
+kept apart from a tile, never seen on a tiling compositor (a headless
+sway would show it); drops on a dialog's sidebar and what a screen
+reader hears of a dimmed file, tested and read, not tried in a window
+nor with a screen reader; Xfce's (xfconf's `/Gtk/RecentFilesEnabled`)
+and MATE's switches for recent files, not read; a name to save with a
+compound extension selected to its last dot (`backup.tar` of
+`backup.tar.gz`); `ui.quit` from a script while work is under way and no
+window of the user's own is up, not run in a window; a preview's web
+links do nothing in a dialog's window and say nothing of it (each
+renderer draws its links, none told the window's rule); a dialog's
+stopped plan that goes on by itself once its server answers (ADR-080, 9)
+is the program's in Undo, not the dialog's; rclone's forms, asked on
+threads of their own, are not tagged with the dialog and wait for a
+window of the user's own (untested); a server's password and a volume's
+passphrase asked in a dialog, not seen in a window (a test covers a
+worker's question); a plugin from outside cannot yet say one of its
+commands is fit for dialogs, so none is offered there.
 
 **Other programs' Open and Save dialogs** (ADR-141, 2026-11-19): built
 on Linux; checked on a private dbus-daemon with Xvfb, headless sway and
@@ -1451,8 +1454,6 @@ rule on the tag (read in KWin's strings, not run) and Mutter's; gpui
 0089 compiled for macOS; several files chosen from the shelf were not
 tried (the shelf's selection is read as any pane's); a portal before
 1.22 reading the copied configuration (only 1.22.1's source was read);
-the windows left are not restored when a launch comes to a skwir the bus
-started for a dialog (the start folder opens, as for `--file-manager`);
 a screen reader on the bar (`a11y-check` opens no dialog); a test
 keeping core-answered commands out of `ui.*` (the row's Undo named one
 so first, found in a window). From the review of 2026-11-19: the
