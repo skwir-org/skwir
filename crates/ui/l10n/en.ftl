@@ -959,7 +959,7 @@ commands_chooser_filter_description = In a window answering another program's di
 
 commands_chooser_forget_folders = Forget where the program chose
 
-commands_chooser_forget_folders_description = In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it, its next dialog then starting as one that chose nowhere would; `restore` puts back the folders given, newest first, with when it last chose (`used`), as Undo does
+commands_chooser_forget_folders_description = In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it (with none left, its next dialog starts as one that chose nowhere would); with `restore`, put back the folders given, newest first, and when it last chose (`used`), as the Undo of taking out `folder` (or every one) does, its Redo taking it out again; `undo` says it is an Undo, said with Redo
 
 commands_close_window = Close window
 

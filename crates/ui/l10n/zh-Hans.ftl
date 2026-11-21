@@ -981,7 +981,7 @@ commands_chooser_filter_description = 在应答其他程序对话框的窗口中
 commands_chooser_forget_folders = 忘记程序选择过的位置
 
 # draft
-commands_chooser_forget_folders_description = 在应答其他程序对话框的窗口中：从该程序最近选择过的文件夹中移除 `folder`，不带它则全部移除，其下一个对话框将像从未选择过任何位置的程序一样开始；`restore` 按从新到旧的顺序放回所给的文件夹，以及上次选择的时间（`used`），如同撤销一样
+commands_chooser_forget_folders_description = 在应答其他程序对话框的窗口中：从该程序最近选择过的文件夹中移除 `folder`，不带它则全部移除（一个都不剩时，其下一个对话框将像从未选择过任何位置的程序一样开始）；带 `restore` 时，按从新到旧的顺序放回所给的文件夹，以及上次选择的时间（`used`），如同撤销移除 `folder`（或全部）时那样，重做则再次将其移除；`undo` 表示这是一次撤销，并提供重做
 
 # draft
 commands_close_window = 关闭窗口

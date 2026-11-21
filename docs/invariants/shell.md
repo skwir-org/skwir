@@ -1577,8 +1577,12 @@ asks the direction.
   with that the user's order does not name comes where it ships
   (`Sections::rank`). Each is a place the user keeps: Remove From
   Sidebar forgets it, the heading's Clear Recent Folders forgets them
-  all (`ui.chooser_forget_folders`), each said with its Undo; with none
-  left, the next dialog starts as one that chose nowhere would. It shows
+  all (`ui.chooser_forget_folders`), each said as it was asked (a last
+  folder taken out is that one taken out) with its Undo, whose Redo asks
+  it again; with none left, the next dialog starts as one that chose
+  nowhere would. Every dialog of the program follows what any of them
+  forgets or chooses in (`chooser::Followed`: the record read again once
+  written, `chooser::keep_folders` its one writer). It shows
   five at most of the ten a program keeps (`chooser::FOLDERS_SHOWN`),
   none another shown place leads to (`sidebar::shown_nowhere`, a folded
   section showing its places), none gone: the request waits for that,

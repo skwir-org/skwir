@@ -55,6 +55,79 @@ pub(crate) const FORGET_FOLDERS: &str = "ui.chooser_forget_folders";
 /// The programs whose folders are kept, those that chose last.
 const PROGRAMS_KEPT: usize = 50;
 
+/// Counts the times the record of where programs chose (`FOLDERS_KEY`) was
+/// written in this program (`keep_folders`, its one writer): every dialog
+/// reads its program's folders again once it moved (`Followed::follow`).
+/// The record is what the window keeps, which moves no revision of the
+/// settings.
+static FOLDERS_WRITTEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Keep `kept` as the record of where programs chose (`FOLDERS_KEY`):
+/// every dialog's window follows it (`Followed`), a folder taken out or
+/// chosen in through one dialog so in all of a program's (ADR-144, 8).
+fn keep_folders(app: &skwir_core::App, kept: toml::Table) {
+    app.settings.set(FOLDERS_KEY, toml::Value::Table(kept));
+    FOLDERS_WRITTEN.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+}
+
+/// The folders a dialog shows of those its program last chose in, newest
+/// first (ADR-144, 8): the record's, but those found gone as its request
+/// came (`Asking::gone`), read again whenever the record was written since
+/// (`FOLDERS_WRITTEN`), by this dialog or another: the sidebar's Recent
+/// Folders (`Chooser::folder_places`).
+struct Followed {
+    folders: Vec<PathBuf>,
+    /// Those found gone as the request came: kept in the record, which
+    /// forgets them as the program chooses elsewhere, and never shown.
+    gone: HashSet<PathBuf>,
+    /// `FOLDERS_WRITTEN` as `folders` were read.
+    read: u64,
+    /// Counts the changes of `folders`, which the sidebar's places keep
+    /// up with.
+    revision: u64,
+}
+
+impl Followed {
+    /// Program `program`'s folders as the record has them now.
+    fn new(app: &skwir_core::App, program: &str, gone: HashSet<PathBuf>) -> Self {
+        let mut followed = Followed {
+            folders: Vec::new(),
+            gone,
+            read: 0,
+            revision: 0,
+        };
+        followed.read_again(app, program);
+        followed
+    }
+
+    /// Read program `program`'s folders again where the record was written
+    /// since they were read: whether what is shown changed. Nothing is
+    /// read where nothing was written.
+    fn follow(&mut self, app: &skwir_core::App, program: &str) -> bool {
+        self.read != FOLDERS_WRITTEN.load(std::sync::atomic::Ordering::Acquire)
+            && self.read_again(app, program)
+    }
+
+    fn read_again(&mut self, app: &skwir_core::App, program: &str) -> bool {
+        // Counted before the record is read: a write meanwhile reads again.
+        self.read = FOLDERS_WRITTEN.load(std::sync::atomic::Ordering::Acquire);
+        let folders: Vec<PathBuf> = app
+            .settings
+            .get::<toml::Table>(FOLDERS_KEY)
+            .map(|kept| folders_of(&kept, program))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|folder| !self.gone.contains(folder))
+            .collect();
+        if folders == self.folders {
+            return false;
+        }
+        self.folders = folders;
+        self.revision += 1;
+        true
+    }
+}
+
 /// The folders program `app` last chose in, newest first, as `kept` (the
 /// value of `FOLDERS_KEY`) holds them: only folders' paths (absolute).
 pub(crate) fn folders_of(kept: &toml::Table, app: &str) -> Vec<PathBuf> {
@@ -76,7 +149,8 @@ pub(crate) fn folders_of(kept: &toml::Table, app: &str) -> Vec<PathBuf> {
 }
 
 /// `kept` with `folder` the newest of program `app`'s, chosen at `now`:
-/// five folders a program at most, the fifty programs that chose last.
+/// ten folders a program at most (`FOLDERS_KEPT`), the fifty programs that
+/// chose last.
 fn with_folder(mut kept: toml::Table, app: &str, folder: &Path, now: i64) -> toml::Table {
     let written =
         |folder: &Path| toml::Value::try_from(skwir_core::os_path::PathArg::from(folder)).ok();
@@ -117,10 +191,11 @@ pub(crate) enum FoldersAsked {
     /// One forgotten, or all (`None`).
     Forget(Option<PathBuf>),
     /// Those it had put back, newest first, and when it last chose: what
-    /// its Undo runs.
+    /// the Undo of `Forget(forgot)` runs, whose Redo asks it again.
     PutBack {
         folders: Vec<PathBuf>,
         used: Option<i64>,
+        forgot: Option<PathBuf>,
     },
 }
 
@@ -153,33 +228,35 @@ fn put_back(
     kept
 }
 
-/// What a change of a program's folders from `before` to `after` did, as
-/// its message says it: one taken out, all, one put back, or several.
-fn folders_told(before: &[PathBuf], after: &[PathBuf]) -> Words {
+/// What `asked` did, as its message says it: what was asked, whatever is
+/// left (a program's last folder taken out is that folder taken out), and
+/// the Undo by what it undoes (one taken out, or all).
+fn folders_told(asked: &FoldersAsked) -> Words {
     let named = |folder: &PathBuf| {
         words::Name(folder.file_name().map_or_else(
             || folder.to_string_lossy().into_owned(),
             |name| name.to_string_lossy().into_owned(),
         ))
     };
-    let gone: Vec<&PathBuf> = before.iter().filter(|f| !after.contains(f)).collect();
-    let back: Vec<&PathBuf> = after.iter().filter(|f| !before.contains(f)).collect();
-    match (gone.as_slice(), back.as_slice()) {
-        (_, []) if after.is_empty() => words!(
+    match asked {
+        FoldersAsked::Forget(None) => words!(
             chooser_folders_cleared = "Recent Folders cleared",
             note = "Said in a window answering another program's dialog once the sidebar's Recent Folders are cleared, with Undo beside."
         ),
-        ([folder], []) => words!(
+        FoldersAsked::Forget(Some(folder)) => words!(
             chooser_folder_forgotten = "{ $folder } taken out of Recent Folders",
             folder = named(folder),
             note = "Said in a window answering another program's dialog once a folder is taken out of the sidebar's Recent Folders, with Undo beside; folder: its name."
         ),
-        ([], [folder]) => words!(
+        FoldersAsked::PutBack {
+            forgot: Some(folder),
+            ..
+        } => words!(
             chooser_folder_put_back = "{ $folder } put back in Recent Folders",
             folder = named(folder),
             note = "Said once the Undo of a folder taken out of the sidebar's Recent Folders puts it back; folder: its name."
         ),
-        _ => words!(
+        FoldersAsked::PutBack { forgot: None, .. } => words!(
             chooser_folders_put_back = "Recent Folders put back",
             note = "Said once the Undo of the sidebar's Recent Folders cleared puts them back."
         ),
@@ -415,16 +492,10 @@ pub(crate) struct Chooser {
     /// The dropdown whose list is open.
     open: Option<Dropdown>,
     /// The folders its program last chose in, newest first (ADR-144, 8),
-    /// read as the window opened, but those gone then, and those forgotten
-    /// since taken out: the sidebar's Recent Folders (`folder_places`).
-    folders: Vec<PathBuf>,
-    /// Those found gone as the request came (`Asking::gone`): kept in the
-    /// record, which forgets them as the program chooses elsewhere, and
-    /// never shown.
-    gone: HashSet<PathBuf>,
-    /// Counts the changes of `folders`, which the sidebar's places keep
-    /// up with.
-    folders_revision: u64,
+    /// as the record has them, but those gone as the request came,
+    /// following what any dialog forgets or chooses in: the sidebar's
+    /// Recent Folders (`folder_places`).
+    folders: Followed,
     filter_focus: FocusHandle,
     filter_anchor: PopoverAnchor,
     choice_focus: Vec<FocusHandle>,
@@ -474,14 +545,15 @@ impl Chooser {
     }
 
     /// The folders its program last chose in, as the sidebar's places
-    /// (ADR-144, 8): its group of their own, first as the sidebar ships,
-    /// newest first, each under its name, told apart from another of the
-    /// same name by the sidebar (`sidebar::told_apart`). Each is the
-    /// user's to take out (`ui.chooser_forget_folders`, Remove From
-    /// Sidebar), as the group's menu takes out all. Nothing is read: a
+    /// (ADR-144, 8): its group of their own, under Skwir Tabs as the
+    /// sidebar ships, newest first, each under its name, told apart from
+    /// another of the same name by the sidebar (`sidebar::told_apart`).
+    /// Each is the user's to take out (`ui.chooser_forget_folders`, Remove
+    /// From Sidebar), as the group's menu takes out all. Nothing is read: a
     /// folder gone says so in the pane, as any.
     pub(crate) fn folder_places(&self) -> Vec<skwir_core::registry::Place> {
         self.folders
+            .folders
             .iter()
             .map(|folder| {
                 let name = folder.file_name().map_or_else(
@@ -508,7 +580,7 @@ impl Chooser {
 
     /// Counts the changes of the folders its program chose in.
     pub(crate) fn folders_revision(&self) -> u64 {
-        self.folders_revision
+        self.folders.revision
     }
 
     /// The choices as set, as the answer gives them (id, value).
@@ -752,17 +824,7 @@ impl Shell {
             filter,
             choices,
             open: None,
-            folders: self
-                .app
-                .settings
-                .get::<toml::Table>(FOLDERS_KEY)
-                .map(|kept| folders_of(&kept, &asked.app_id))
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|folder| !gone.contains(folder))
-                .collect(),
-            gone,
-            folders_revision: 0,
+            folders: Followed::new(&self.app, &asked.app_id, gone),
             filter_focus: cx.focus_handle(),
             filter_anchor: PopoverAnchor::default(),
             choice_focus: (0..count).map(|_| cx.focus_handle()).collect(),
@@ -789,10 +851,11 @@ impl Shell {
     }
 
     /// What the window keeps of its request as it syncs: the filter in use
-    /// on the pane shown (another tab's too, once shown), and the window
-    /// gone once the program gave up.
+    /// on the pane shown (another tab's too, once shown), the folders its
+    /// program chose in as the record has them (`Followed`), and the
+    /// window gone once the program gave up.
     pub(crate) fn chooser_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(chooser) = &self.chooser else {
+        let Some(chooser) = &mut self.chooser else {
             return;
         };
         if chooser.choosing.is_closed() {
@@ -800,6 +863,8 @@ impl Shell {
             self.chooser_end(Answer::Cancelled, window, cx);
             return;
         }
+        let program = chooser.choosing.asked().app_id.clone();
+        chooser.folders.follow(&self.app, &program);
         let admits = chooser.admits.clone();
         let (pane, window_id) = (self.pane, self.window_id);
         let mut ws = self.app.workspace.write();
@@ -919,8 +984,15 @@ impl Shell {
                 i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
             });
         let kept = with_folder(kept, &asked.app_id, &folder, now);
-        self.app.settings.set(FOLDERS_KEY, toml::Value::Table(kept));
+        self.chooser_keep_folders(kept);
+    }
+
+    /// `keep_folders`, saved later, and every window woken: the other
+    /// dialogs of a program show its folders as kept now (`Followed`).
+    fn chooser_keep_folders(&self, kept: toml::Table) {
+        keep_folders(&self.app, kept);
         self.save_settings_later();
+        self.app.wake();
     }
 
     /// Files dropped on a dialog's window, from a window of the user's own
@@ -1552,9 +1624,12 @@ impl Shell {
 
     /// Forget that its program chose in a folder, or anywhere, or put
     /// back what was forgotten (`FoldersAsked`): taken out of the sidebar's
-    /// Recent Folders, and of where its next dialog may start (ADR-144, 8).
-    /// Said with its Undo (`undo`: this is one, said with its Redo), as an
-    /// edit of bookmarks is; nothing said where nothing changed.
+    /// Recent Folders, and of where its next dialog may start (ADR-144, 8),
+    /// in every dialog of the program (`Followed`). Said as it was asked,
+    /// with its Undo (`undo`: this is one, said with its Redo, which asks
+    /// again what it undid), as an edit of bookmarks is; nothing said where
+    /// nothing changed (another dialog of the program forgot it first: this
+    /// one shows the record as it is).
     pub(crate) fn chooser_forget_folders(
         &mut self,
         asked: FoldersAsked,
@@ -1575,32 +1650,47 @@ impl Shell {
             .get(&app_id)
             .and_then(|program| program.get("used"))
             .and_then(toml::Value::as_integer);
-        let kept = match asked {
-            FoldersAsked::Forget(folder) => without_folder(kept, &app_id, folder.as_deref()),
-            FoldersAsked::PutBack { folders, used } => put_back(kept, &app_id, &folders, used),
+        let (kept, inverse) = match &asked {
+            FoldersAsked::Forget(folder) => {
+                let restore: Vec<skwir_core::os_path::PathArg> = before
+                    .iter()
+                    .map(|folder| skwir_core::os_path::PathArg::from(folder.as_path()))
+                    .collect();
+                let forgot = folder.as_deref().map(skwir_core::os_path::PathArg::from);
+                (
+                    without_folder(kept, &app_id, folder.as_deref()),
+                    serde_json::json!({
+                        "restore": restore, "used": used, "folder": forgot, "undo": !undo,
+                    }),
+                )
+            }
+            FoldersAsked::PutBack {
+                folders,
+                used,
+                forgot,
+            } => {
+                let forgot = forgot.as_deref().map(skwir_core::os_path::PathArg::from);
+                (
+                    put_back(kept, &app_id, folders, *used),
+                    serde_json::json!({ "folder": forgot, "undo": !undo }),
+                )
+            }
         };
         let after = folders_of(&kept, &app_id);
         if after == before {
+            chooser.folders.follow(&self.app, &app_id);
+            cx.notify();
             return;
         }
-        chooser.folders = after
-            .iter()
-            .filter(|folder| !chooser.gone.contains(*folder))
-            .cloned()
-            .collect();
-        chooser.folders_revision += 1;
-        self.app.settings.set(FOLDERS_KEY, toml::Value::Table(kept));
-        self.save_settings_later();
-        let restore: Vec<skwir_core::os_path::PathArg> = before
-            .iter()
-            .map(|folder| skwir_core::os_path::PathArg::from(folder.as_path()))
-            .collect();
-        let inverse = skwir_core::command::Invocation::with_args(
-            FORGET_FOLDERS,
-            &serde_json::json!({ "restore": restore, "used": used, "undo": !undo }),
+        self.chooser_keep_folders(kept);
+        if let Some(chooser) = &mut self.chooser {
+            chooser.folders.follow(&self.app, &app_id);
+        }
+        self.app.notify_undoable(
+            folders_told(&asked),
+            undo,
+            skwir_core::command::Invocation::with_args(FORGET_FOLDERS, &inverse),
         );
-        self.app
-            .notify_undoable(folders_told(&before, &after), undo, inverse);
         cx.notify();
     }
 
@@ -1635,16 +1725,17 @@ impl Shell {
                         .ok()
                         .map(skwir_core::os_path::PathArg::into_inner)
                 };
+                let folder = args
+                    .get("folder")
+                    .filter(|folder| !folder.is_null())
+                    .and_then(path);
                 let asked = match args.get("restore").and_then(|r| r.as_array()) {
                     Some(folders) => FoldersAsked::PutBack {
                         folders: folders.iter().filter_map(path).collect(),
                         used: args["used"].as_i64(),
+                        forgot: folder,
                     },
-                    None => FoldersAsked::Forget(
-                        args.get("folder")
-                            .filter(|folder| !folder.is_null())
-                            .and_then(path),
-                    ),
+                    None => FoldersAsked::Forget(folder),
                 };
                 let undo = args["undo"].as_bool().unwrap_or(false);
                 self.chooser_forget_folders(asked, undo, cx);
@@ -1989,7 +2080,7 @@ mod tests {
         assert_eq!(stem_len("Untitled"), "Untitled".len());
     }
 
-    /// A program keeps its five last folders, newest first, the one
+    /// A program keeps its ten last folders, newest first, the one
     /// before read as its list; the fifty programs that chose last are
     /// kept (ADR-144, 8).
     #[test]
@@ -2071,8 +2162,8 @@ mod tests {
     }
 
     /// An Undo puts a program's folders back as they were, with when it
-    /// last chose; and what each change did is said as one taken out, all,
-    /// one put back, or several.
+    /// last chose; and what each change did is said as it was asked: one
+    /// taken out (its last too), all, and the Undo of either (RD-8).
     #[test]
     fn forgotten_folders_are_put_back_and_said() {
         let (one, two) = (PathBuf::from("/home/a/one"), PathBuf::from("/home/a/two"));
@@ -2092,12 +2183,59 @@ mod tests {
         );
         let none = put_back(kept, "org.example.App", &[], None);
         assert!(!none.contains_key("org.example.App"));
-        let both = [one.clone(), two.clone()];
-        let said = |before: &[PathBuf], after: &[PathBuf]| folders_told(before, after).english();
-        assert_eq!(said(&both, &[]), "Recent Folders cleared");
-        assert!(said(&both, std::slice::from_ref(&two)).ends_with("taken out of Recent Folders"));
-        assert!(said(std::slice::from_ref(&two), &both).ends_with("put back in Recent Folders"));
-        assert_eq!(said(&[], &both), "Recent Folders put back");
+        let said = |asked: FoldersAsked| folders_told(&asked).english();
+        assert_eq!(said(FoldersAsked::Forget(None)), "Recent Folders cleared");
+        // Its last folder taken out is that folder taken out, not a clear.
+        assert_eq!(
+            said(FoldersAsked::Forget(Some(one.clone()))),
+            "“one” taken out of Recent Folders"
+        );
+        let undone = |forgot: Option<PathBuf>| FoldersAsked::PutBack {
+            folders: vec![one.clone(), two.clone()],
+            used: None,
+            forgot,
+        };
+        assert_eq!(
+            said(undone(Some(two.clone()))),
+            "“two” put back in Recent Folders"
+        );
+        assert_eq!(said(undone(None)), "Recent Folders put back");
+    }
+
+    /// Every dialog of a program follows where it chose as the record
+    /// has it (RS-4): a folder taken out through one dialog is gone from
+    /// another's Recent Folders, which reads the record again only once it
+    /// was written; a folder found gone as its request came stays out.
+    #[test]
+    fn every_dialog_of_a_program_follows_its_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let program = "org.example.App";
+        let (one, two, gone) = (
+            PathBuf::from("/home/a/one"),
+            PathBuf::from("/home/a/two"),
+            PathBuf::from("/home/a/gone"),
+        );
+        let kept = put_back(
+            toml::Table::new(),
+            program,
+            &[one.clone(), two.clone(), gone.clone()],
+            None,
+        );
+        keep_folders(&app, kept.clone());
+        let mut first = Followed::new(&app, program, HashSet::new());
+        let mut second = Followed::new(&app, program, HashSet::from([gone.clone()]));
+        assert_eq!(first.folders, [one.clone(), two.clone(), gone.clone()]);
+        assert_eq!(second.folders, [one.clone(), two.clone()]);
+        assert!(!second.follow(&app, program), "nothing written since");
+        keep_folders(&app, without_folder(kept, program, Some(&one)));
+        let revision = second.revision;
+        assert!(second.follow(&app, program));
+        assert_eq!(second.folders, std::slice::from_ref(&two));
+        assert!(second.revision > revision, "the sidebar arranges again");
+        assert!(first.follow(&app, program));
+        assert_eq!(first.folders, [two, gone]);
+        assert!(!first.follow(&app, program));
     }
 
     /// A folder gone is told from one there, a server's never asked; the

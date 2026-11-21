@@ -53,7 +53,8 @@ mod args {
 
     /// A folder the program whose dialog a window answers chose in, or
     /// every one (none); or those to put back, newest first, with when it
-    /// last chose (what an Undo runs, `undo` saying it is one).
+    /// last chose (what the Undo of taking out `folder`, or every one,
+    /// runs, `undo` saying it is one, its Redo taking it out again).
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct ChooserFolders {
         #[serde(default)]
@@ -2425,7 +2426,7 @@ pub fn declare_all(app: &App) {
         crate::chooser::FORGET_FOLDERS,
         words!(commands_chooser_forget_folders = "Forget where the program chose"),
         words!(
-            commands_chooser_forget_folders_description = "In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it, its next dialog then starting as one that chose nowhere would; `restore` puts back the folders given, newest first, with when it last chose (`used`), as Undo does"
+            commands_chooser_forget_folders_description = "In a window answering another program's dialog: take `folder` out of the folders that program last chose in, or every one without it (with none left, its next dialog starts as one that chose nowhere would); with `restore`, put back the folders given, newest first, and when it last chose (`used`), as the Undo of taking out `folder` (or every one) does, its Redo taking it out again; `undo` says it is an Undo, said with Redo"
         ),
     );
     // The sidebar's Recent Folders, emptied from its heading's menu, beside
