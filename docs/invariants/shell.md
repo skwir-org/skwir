@@ -1658,8 +1658,11 @@ asks the direction.
   arrangement; the names the user gave them are one set, the program's
   (`sidebar::Names`, `ui.place_names`), which every window says, a
   dialog's included, whatever window is up: read into the core at the
-  start (`Registry::user_title`), changed by a rename alone, never written
-  back from a window's arrangement. A place moves only among those the
+  start (`Registry::user_title`), changed by a rename or by a group's
+  Reset, which gives its places their own names in every window and
+  puts back their order and what shows in the window where it is asked
+  (offered there while either differs, `Sections::resets`), never
+  written back from a window's arrangement. A place moves only among those the
   same command moves (`sidebar::mover`); `arrange` is the one reading of
   all this. Within a group, what is no folder comes after the folders (a
   server the tools know after the mounts) unless it moves: what moves

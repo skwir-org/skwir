@@ -133,8 +133,8 @@ impl Arrangement {
 /// says (the user's own and dialogs' alike, whatever is up) as do tab
 /// titles, the history, messages and searches (`Registry::user_title`).
 /// Read into the core as the program starts (`take_names`), changed only
-/// where the user renames a place (`ui.sidebar_place`), never written back
-/// from a window's arrangement.
+/// where the user renames a place or resets its group (`ui.sidebar_place`),
+/// never written back from a window's arrangement.
 pub const NAMES_KEY: &str = "ui.place_names";
 
 /// The names the user gave places, by group, then by `Place::key`.
@@ -144,7 +144,7 @@ pub type Names = BTreeMap<String, BTreeMap<String, String>>;
 /// as the program starts: a skwir the bus started for another program's
 /// dialog, no window of the user's up, says them as the user's windows do.
 /// Each window kept them with its sidebar's arrangement until 2026-11-21:
-/// then the window used last (`ui.session`) gives them, once.
+/// then what each window kept is taken, once (`former_names`).
 pub fn take_names(app: &skwir_core::App) {
     let names = app.settings.stored::<Names>(NAMES_KEY).unwrap_or_else(|| {
         let former = former_names(app);
@@ -156,26 +156,53 @@ pub fn take_names(app: &skwir_core::App) {
     app.registry.set_place_titles(flat(&names));
 }
 
-/// The names the window used last kept with its sidebar's arrangement
-/// (`Arrangement`'s `titles`, before 2026-11-21).
+/// The names each window kept with its sidebar's arrangement
+/// (`Arrangement`'s `titles`, before 2026-11-21): the window used last's
+/// (`ui.session`), then those of the windows left open
+/// (`core.last_windows`), the one in use first, then the others in their
+/// order. A place two windows named differently takes the name of the
+/// first of them.
 fn former_names(app: &skwir_core::App) -> Names {
-    let session = app.settings.get::<toml::Value>(crate::session::SESSION_KEY);
-    let groups = session
+    let last = app.settings.get::<toml::Value>(crate::session::SESSION_KEY);
+    let windows = app
+        .settings
+        .get::<toml::Value>(skwir_core::tabs::LAST_WINDOWS);
+    let shapes: Vec<&toml::Value> = windows
         .as_ref()
-        .and_then(|s| s.get("sidebar_sections")?.get("places")?.as_table());
-    groups
+        .and_then(|w| w.get("windows")?.as_array())
         .into_iter()
         .flatten()
-        .filter_map(|(group, arrangement)| {
-            let titles: BTreeMap<String, String> = arrangement
-                .get("titles")?
-                .as_table()?
-                .iter()
-                .filter_map(|(key, title)| Some((key.clone(), title.as_str()?.to_owned())))
-                .collect();
-            (!titles.is_empty()).then(|| (group.clone(), titles))
-        })
-        .collect()
+        .filter_map(|window| window.get("shape"))
+        .collect();
+    let active = windows
+        .as_ref()
+        .and_then(|w| usize::try_from(w.get("active")?.as_integer()?).ok())
+        .filter(|&active| active < shapes.len());
+    let in_use = active.map(|active| shapes[active]);
+    let others = shapes
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| Some(i) != active)
+        .map(|(_, shape)| *shape);
+    let mut names = Names::new();
+    for shape in last.iter().chain(in_use).chain(others) {
+        let groups = shape
+            .get("sidebar_sections")
+            .and_then(|s| s.get("places")?.as_table());
+        for (group, arrangement) in groups.into_iter().flatten() {
+            let titles = arrangement.get("titles").and_then(toml::Value::as_table);
+            for (key, title) in titles.into_iter().flatten() {
+                if let Some(title) = title.as_str() {
+                    names
+                        .entry(group.clone())
+                        .or_default()
+                        .entry(key.clone())
+                        .or_insert_with(|| title.to_owned());
+                }
+            }
+        }
+    }
+    names
 }
 
 /// Give the place `key` of `group` the name `name` in every window, or
@@ -972,6 +999,13 @@ impl Sections {
     /// Whether anything differs from the sidebar as it ships.
     pub fn arranged_by_user(&self) -> bool {
         !self.order.is_empty() || !self.hidden.is_empty()
+    }
+
+    /// Whether `group` shows other than as its owners offer it: arranged
+    /// in this window, or a place of it named in every window (`Names`).
+    /// What its Reset puts back, both (`ui.sidebar_place`'s `reset`).
+    pub fn resets(&self, group: &str, registry: &skwir_core::registry::Registry) -> bool {
+        self.places.get(group).is_some_and(|a| !a.is_empty()) || registry.names_in(group)
     }
 
     /// Put `group`'s offered place `key` before `before`, or last.
@@ -2808,7 +2842,7 @@ impl Shell {
                     item.color = Some(color.clone());
                 }
             }
-            if sections.places.get(group).is_some_and(|a| !a.is_empty()) {
+            if sections.resets(group, &self.app.registry) {
                 items.push(place_item(
                     words!(
                         sidebar_reset_section = "Reset { $section }",
@@ -3313,9 +3347,10 @@ mod tests {
     /// The names the user gave places are one set, the program's (FC-1,
     /// FC-2): read into the core as the program starts, whatever window
     /// comes up (a skwir the bus started for a dialog says them too),
-    /// taken once from the window used last where each window kept its
-    /// own, changed by a rename alone, and kept across a start even once
-    /// none is left.
+    /// taken once from every window where each kept its own (the window
+    /// used last first), changed by a rename or the group's Reset (offered
+    /// for a rename alone), and kept across a start even once none is
+    /// left.
     #[test]
     fn the_names_given_places_are_every_window_s() {
         use super::{NAMES_KEY, Names, name_places, take_names};
@@ -3340,10 +3375,30 @@ mod tests {
         ))
         .unwrap();
         app.settings.set(crate::session::SESSION_KEY, former);
+        // And so did the windows left open: a name only another window
+        // gave is kept, the window used last first where two differ, then
+        // the one in use as they were left (GB-2).
+        let mut stick = place("devices", "/run/media/a/STICK");
+        stick.key = Some("volume:1234".into());
+        let left: toml::Value = toml::from_str(&format!(
+            "active = 1\n\
+             [[windows]]\n\
+             [windows.shape.sidebar_sections.places.places]\n\
+             titles = {{ {key:?} = \"Elsewhere\" }}\n\
+             [windows.shape.sidebar_sections.places.devices]\n\
+             titles = {{ \"volume:1234\" = \"Old stick\" }}\n\
+             [[windows]]\n\
+             [windows.shape.sidebar_sections.places.devices]\n\
+             titles = {{ \"volume:1234\" = \"Backup\" }}\n"
+        ))
+        .unwrap();
+        app.settings.set(skwir_core::tabs::LAST_WINDOWS, left);
         take_names(&app);
         assert_eq!(app.registry.user_title(&downloads).as_deref(), Some("DL"));
+        assert_eq!(app.registry.user_title(&stick).as_deref(), Some("Backup"));
         let kept: Names = app.settings.stored(NAMES_KEY).expect("kept apart");
         assert_eq!(kept["places"][&key], "DL");
+        assert_eq!(kept["devices"]["volume:1234"], "Backup");
         // The window's arrangement still reads, and holds no name now.
         let session = crate::session::restore(&app).expect("the window's shape");
         assert_eq!(
@@ -3375,9 +3430,17 @@ mod tests {
             None,
             "its own name again, the former arrangement still on disk"
         );
+        // A rename alone is what a group's Reset takes back, in a window
+        // that arranged nothing (GB-1).
+        let unarranged = super::Sections::default();
+        assert!(!unarranged.resets("places", &app.registry));
         name_places(&app, "places", Some(&key), Some("Fetched"));
+        assert!(unarranged.resets("places", &app.registry));
+        assert!(unarranged.resets("devices", &app.registry), "Backup");
+        assert!(!unarranged.resets("network", &app.registry));
         name_places(&app, "places", None, None);
         assert_eq!(app.registry.user_title(&downloads), None, "the group reset");
+        assert!(!unarranged.resets("places", &app.registry));
     }
 
     /// The places offered are the user's to put in order, rename and hide;

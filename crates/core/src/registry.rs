@@ -1335,6 +1335,12 @@ impl Registry {
             .cloned()
     }
 
+    /// Whether the user named a place of `group`, mounted or not: what
+    /// resetting the group takes back.
+    pub fn names_in(&self, group: &str) -> bool {
+        self.titles.read().keys().any(|(named, _)| named == group)
+    }
+
     pub fn remove_owner(&self, owner: &str) {
         self.views.remove_owner(owner);
         self.panels.remove_owner(owner);
