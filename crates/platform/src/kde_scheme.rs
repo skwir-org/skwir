@@ -1,13 +1,14 @@
 //! Plasma's color scheme (ADR-071, point 4), as Plasma's applications read
 //! it: `kdeglobals`, the user's before the system's (`XDG_CONFIG_DIRS`),
-//! and for what they leave out the scheme they name (`[General]
+//! a system's lock (Kiosk's `[$i]`) over the user's word, as `KConfig`
+//! reads them, and for what they leave out the scheme they name (`[General]
 //! ColorScheme`, a `color-schemes/<name>.colors` of the data folders),
 //! Breeze's when they name none. Read on the desktop style's thread, and
 //! again each time Plasma replaces the user's `kdeglobals`.
 
 use std::path::{Path, PathBuf};
 
-use crate::desktop_settings::keyfile_value;
+use crate::desktop_settings::{kconfig_value, keyfile_value};
 use crate::desktop_style::{Scheme, over};
 
 /// The scheme names Plasma takes when `kdeglobals` names none: Plasma 6's,
@@ -34,14 +35,11 @@ pub(crate) fn read() -> Option<Scheme> {
     scheme_of(&files, &crate::xdg::data_search())
 }
 
-/// The scheme `kdeglobals` (each file's text, the first winning) says, the
-/// scheme file it names in `data` filling in what it leaves out.
+/// The scheme `kdeglobals` (each file's text, the user's first, read as
+/// `KConfig` reads them: `kconfig_value`) says, the scheme file it names
+/// in `data` filling in what it leaves out.
 pub(crate) fn scheme_of(kdeglobals: &[String], data: &[PathBuf]) -> Option<Scheme> {
-    let said = |group: &str, key: &str| {
-        kdeglobals
-            .iter()
-            .find_map(|text| keyfile_value(text, group, key))
-    };
+    let said = |group: &str, key: &str| kconfig_value(kdeglobals, group, key);
     let named = said("General", "ColorScheme");
     let candidates: Vec<&str> = match &named {
         Some(name) => vec![name.as_str()],

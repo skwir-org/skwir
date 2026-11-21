@@ -1524,32 +1524,34 @@ mod imp {
     pub(super) fn qt_named(
         text: Option<&str>,
         group: &str,
-        keys: (&str, &str),
+        (interface, fixed): (&str, &str),
         from: super::Read,
     ) -> Named {
-        qt_named_in(text.as_slice(), group, keys, from)
+        let value = |key| text.and_then(|text| desktop::keyfile_value(text, group, key));
+        qt_font_names(value(interface).as_deref(), value(fixed).as_deref(), from)
     }
 
-    /// `qt_named` over a cascade of files (`texts`, the first saying a key
-    /// winning), as `KConfig` reads `kdeglobals`: the user's, then the
-    /// system's and the look's defaults.
+    /// `qt_named` over a cascade of files (`texts`, the user's first), as
+    /// `KConfig` reads `kdeglobals` (`kconfig_value`): the user's, then
+    /// the system's and the look's defaults, a system's lock over the
+    /// user's word.
     pub(super) fn qt_named_in(
         texts: &[&str],
         group: &str,
         (interface, fixed): (&str, &str),
         from: super::Read,
     ) -> Named {
-        let value = |key| {
-            texts
-                .iter()
-                .find_map(|text| desktop::keyfile_value(text, group, key))
-        };
-        let (interface, fixed) = (value(interface), value(fixed));
+        let value = |key| desktop::kconfig_value(texts, group, key);
+        qt_font_names(value(interface).as_deref(), value(fixed).as_deref(), from)
+    }
+
+    /// The fonts of a Qt interface font and a fixed one, as Qt writes them.
+    fn qt_font_names(interface: Option<&str>, fixed: Option<&str>, from: super::Read) -> Named {
         Named {
-            interface: interface.as_deref().and_then(super::qt_family),
-            interface_px: interface.as_deref().and_then(super::qt_size),
-            monospace: fixed.as_deref().and_then(super::qt_family),
-            monospace_px: fixed.as_deref().and_then(super::qt_size),
+            interface: interface.and_then(super::qt_family),
+            interface_px: interface.and_then(super::qt_size),
+            monospace: fixed.and_then(super::qt_family),
+            monospace_px: fixed.and_then(super::qt_size),
             from: Some(from),
             ..Named::default()
         }

@@ -165,8 +165,10 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    or `gtk-recent-files-max-age` 0 in GTK's settings (the user's, then
    the system's), GNOME's privacy `remember-recent-files` off (which GTK
    4 reads through the settings portal on any desktop), Cinnamon's on
-   Cinnamon, KDE's `[RecentDocuments]` `UseRecent` false or `MaxEntries` 0
-   in `kdeglobals`; one of them is enough. A bookmark the list holds is
+   Cinnamon, KDE's `[RecentDocuments]` `UseRecent` false (or `no`, `off`,
+   `0`) or `MaxEntries` 0 in `kdeglobals`, read as KConfig reads them (an
+   administrator's lock, `[$i]`, over the user's word); one of them is
+   enough. A bookmark the list holds is
    visited and Skwir's count of it goes up, another is added, typed by
    what the file is, each file once, the rest kept byte for byte, the
    list kept as GTK keeps it (a file older than an age a setting says

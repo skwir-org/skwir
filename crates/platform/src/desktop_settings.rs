@@ -291,6 +291,110 @@ pub(crate) fn keyfile_value(text: &str, group: &str, key: &str) -> Option<String
         .filter(|value| !value.is_empty())
 }
 
+/// `key` of `group` in a cascade of `KConfig` files (each file's text,
+/// the user's first, then the system's in `XDG_CONFIG_DIRS`' order:
+/// `kdeglobals_cascade`), as `KConfig` reads them: from the least
+/// specific to the user's, each saying it replacing what one before said,
+/// but where a file locks it (Kiosk's `[$i]`: after the key, after its
+/// group's name, or alone before the file's first group, locking all of
+/// it), whereupon no file after it changes it: an administrator's word
+/// over the user's. Options after a name (`[$i]`, `[$e]`) are not part of
+/// it; one deleted (`[$d]`) says nothing again. A value said empty says
+/// nothing, as with `keyfile_value`.
+pub(crate) fn kconfig_value(cascade: &[impl AsRef<str>], group: &str, key: &str) -> Option<String> {
+    let mut value = None;
+    for text in cascade.iter().rev() {
+        let (said, locked) = kconfig_said(text.as_ref(), group, key);
+        match said {
+            Said::Nothing => {}
+            Said::Deleted => value = None,
+            Said::Value(said) => value = Some(said),
+        }
+        if locked {
+            break;
+        }
+    }
+    value
+}
+
+/// What one `KConfig` file says of a key.
+enum Said {
+    Nothing,
+    Deleted,
+    Value(String),
+}
+
+/// What one `KConfig` file says of `key` in `group`, and whether it
+/// locks it.
+fn kconfig_said(text: &str, group: &str, key: &str) -> (Said, bool) {
+    let (mut said, mut locked) = (Said::Nothing, false);
+    let (mut grouped, mut in_group) = (false, false);
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            let (name, options) = kconfig_options(header.split("]["));
+            let name = name.join("][");
+            if !grouped && name.is_empty() {
+                // `[$i]` before any group: the whole file.
+                locked |= options.contains('i');
+                continue;
+            }
+            grouped = true;
+            in_group = name == group;
+            locked |= in_group && options.contains('i');
+            continue;
+        }
+        if !in_group {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        let name = name.trim_end();
+        let (parts, options) = kconfig_options(name.split('[').enumerate().map(|(at, part)| {
+            if at == 0 {
+                part
+            } else {
+                part.strip_suffix(']').unwrap_or(part)
+            }
+        }));
+        let mut parts = parts.into_iter();
+        let base = parts.next().unwrap_or_default();
+        let locale: Vec<&str> = parts.collect();
+        if base != key || !locale.is_empty() {
+            continue;
+        }
+        if locked && !matches!(said, Said::Nothing) {
+            // Locked in this file already: what follows changes nothing.
+            continue;
+        }
+        let value = value.trim();
+        if options.contains('d') {
+            said = Said::Deleted;
+        } else if !value.is_empty() {
+            said = Said::Value(value.to_owned());
+        }
+        locked |= options.contains('i');
+    }
+    (said, locked)
+}
+
+/// A name's parts and its options: the letters of those of its parts
+/// that start with `$` (`[$i]`, `[$ie]`), together.
+fn kconfig_options<'a>(parts: impl Iterator<Item = &'a str>) -> (Vec<&'a str>, String) {
+    let (mut names, mut options) = (Vec::new(), String::new());
+    for part in parts {
+        match part.strip_prefix('$') {
+            Some(letters) => options.push_str(letters),
+            None => names.push(part),
+        }
+    }
+    (names, options)
+}
+
 /// `key` of GTK's `settings.ini`s, GTK 4's first, then GTK 3's.
 pub(crate) fn gtk_settings(key: &str) -> Vec<String> {
     ["gtk-4.0/settings.ini", "gtk-3.0/settings.ini"]
@@ -424,6 +528,57 @@ mod tests {
         assert_eq!(hyprlang_value(text, "general:gaps").as_deref(), Some("4"));
         assert_eq!(hyprlang_value(text, "gaps"), None);
         assert_eq!(hyprlang_value("theme {\n  font =\n}\n", "theme:font"), None);
+    }
+
+    /// A cascade of `KConfig` files is read from the system's to the
+    /// user's, a later one's word over an earlier's, but where an earlier
+    /// one locks it: the key, its group or the whole file.
+    #[test]
+    fn kconfig_files_are_read_as_kconfig_cascades_them() {
+        let value = |cascade: &[&str]| kconfig_value(cascade, "Recent", "Use");
+        let user = "[Recent]\nUse=true\n";
+        assert_eq!(
+            value(&[user, "[Recent]\nUse=false\n"]).as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            value(&["", "[Recent]\nUse=false\n"]).as_deref(),
+            Some("false")
+        );
+        for lock in [
+            "[Recent][$i]\nUse=false\n",
+            "[Recent]\nUse[$i]=false\n",
+            "[Recent]\nUse[$ie]=false\n",
+            "[$i]\n[Recent]\nUse=false\n",
+        ] {
+            assert_eq!(value(&[user, lock]).as_deref(), Some("false"), "{lock}");
+        }
+        // The lock nearest the system's wins; what it locks it need not say.
+        let system = "[Recent][$i]\nUse=false\n";
+        let look = "[Recent][$i]\nUse=true\n";
+        assert_eq!(value(&[user, system, look]).as_deref(), Some("true"));
+        assert_eq!(value(&[user, "[Recent][$i]\nOther=1\n"]), None);
+        // Another group's lock, a locale's value and an empty value say
+        // nothing of it; one deleted takes back what a file before said.
+        assert_eq!(
+            value(&[user, "[Other][$i]\nUse=false\n"]).as_deref(),
+            Some("true")
+        );
+        assert_eq!(value(&["[Recent]\nUse[fr]=non\n"]), None);
+        assert_eq!(
+            value(&["[Recent]\nUse=\n", "[Recent]\nUse=false\n"]).as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            value(&["[Recent]\nUse[$d]=\n", "[Recent]\nUse=false\n"]),
+            None
+        );
+        // Within a file, the last said, unless a lock came first.
+        assert_eq!(value(&["[Recent]\nUse=1\nUse=2\n"]).as_deref(), Some("2"));
+        assert_eq!(
+            value(&["[Recent]\nUse[$i]=1\nUse=2\n"]).as_deref(),
+            Some("1")
+        );
     }
 
     #[cfg(unix)]

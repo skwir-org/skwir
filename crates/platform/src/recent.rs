@@ -73,7 +73,8 @@ pub struct Remembered {
 /// reads through the settings portal (`remember-recent-files`,
 /// `recent-files-max-age`), Cinnamon's on Cinnamon, and KDE's
 /// `kdeglobals`, which its own programs read before they add a file
-/// (`[RecentDocuments]` `UseRecent`, `MaxEntries`). One that says none
+/// (`[RecentDocuments]` `UseRecent`, `MaxEntries`), as `KConfig` reads
+/// them (an administrator's lock over the user's word). One that says none
 /// is enough; the shortest age is kept. Runs `gsettings`: on a worker.
 /// Elsewhere than Linux, never: no program there keeps this list, and no
 /// dialog of another program is Skwir's (ADR-141, 11).
@@ -145,6 +146,22 @@ fn names_one(text: &str) -> bool {
         .any(|path| skwir_core::fs::reach::of(&path).is_some() || path.exists())
 }
 
+/// Off as a `GLib` key file's boolean (GTK's `settings.ini`) and
+/// `gsettings` say it: `false` or `0`, as written.
+#[cfg(target_os = "linux")]
+fn glib_off(value: &str) -> bool {
+    matches!(value, "false" | "0")
+}
+
+/// Off as `KConfig`'s boolean says it (`kdeglobals`): `false`, `no`,
+/// `off` or `0`, case ignored.
+#[cfg(target_os = "linux")]
+fn kconfig_off(value: &str) -> bool {
+    ["false", "no", "off", "0"]
+        .iter()
+        .any(|word| value.eq_ignore_ascii_case(word))
+}
+
 /// What the desktop's switches say of remembering the files used (read
 /// on Linux alone, `remembered`).
 #[cfg(target_os = "linux")]
@@ -169,12 +186,11 @@ impl Said {
         }
     }
 
-    /// A switch: off where it says so (a key file's `false` or `0`).
-    fn switch(value: Option<&str>) -> Said {
+    /// A switch: off where it says so as its reader reads off
+    /// ([`glib_off`], [`kconfig_off`]).
+    fn switch(value: Option<&str>, off: fn(&str) -> bool) -> Said {
         Said {
-            off: value.is_some_and(|value| {
-                matches!(value.trim().to_ascii_lowercase().as_str(), "false" | "0")
-            }),
+            off: value.is_some_and(|value| off(value.trim())),
             days: None,
         }
     }
@@ -208,6 +224,7 @@ fn gtk_said(versions: &[Vec<String>]) -> Said {
     versions.iter().fold(Said::default(), |said, texts| {
         said.and(Said::switch(
             value(texts, "gtk-recent-files-enabled").as_deref(),
+            glib_off,
         ))
         .and(Said::age(
             value(texts, "gtk-recent-files-max-age").as_deref(),
@@ -226,19 +243,18 @@ fn gsettings_said(printed: &str) -> Said {
             (said == key).then_some(value)
         })
     };
-    Said::switch(value("remember-recent-files")).and(Said::age(value("recent-files-max-age")))
+    Said::switch(value("remember-recent-files"), glib_off)
+        .and(Said::age(value("recent-files-max-age")))
 }
 
-/// What KDE's `kdeglobals` say, the user's first (`cascade`).
+/// What KDE's `kdeglobals` say (`cascade`, the user's first), as
+/// `KConfig` reads them: a system's lock (Kiosk's `[$i]`) over the user's
+/// word, and its words for off.
 #[cfg(target_os = "linux")]
 fn kde_said(cascade: &[String]) -> Said {
-    let value = |key: &str| {
-        cascade
-            .iter()
-            .find_map(|text| crate::desktop_settings::keyfile_value(text, "RecentDocuments", key))
-    };
+    let value = |key: &str| crate::desktop_settings::kconfig_value(cascade, "RecentDocuments", key);
     let none = value("MaxEntries").is_some_and(|entries| entries.trim() == "0");
-    Said::switch(value("UseRecent").as_deref()).and(Said {
+    Said::switch(value("UseRecent").as_deref(), kconfig_off).and(Said {
         off: none,
         days: None,
     })
@@ -1195,6 +1211,27 @@ mod tests {
         );
         assert_eq!(kde_said(&[kde(""), kde("MaxEntries=0")]), off);
         assert_eq!(kde_said(&[kde("MaxEntries=300")]), on);
+        // KConfig's words for off, case ignored.
+        for word in ["off", "No", "0", "FALSE"] {
+            assert_eq!(
+                kde_said(&[kde(&format!("UseRecent={word}"))]),
+                off,
+                "{word}"
+            );
+        }
+        assert_eq!(kde_said(&[kde("UseRecent=yes")]), on);
+        assert_eq!(
+            gtk_said(&[vec![ini("gtk-recent-files-enabled=no")], vec![]]),
+            on,
+            "GLib's booleans are true, false, 1 and 0 alone"
+        );
+        // An administrator's lock, on the group or the key, over the user's.
+        let locked = "[RecentDocuments][$i]\nUseRecent=false\n".to_owned();
+        assert_eq!(kde_said(&[kde("UseRecent=true"), locked]), off);
+        let key_locked = "[RecentDocuments]\nUseRecent[$i]=off\n".to_owned();
+        assert_eq!(kde_said(&[kde("UseRecent=true"), key_locked]), off);
+        let unlocked = "[RecentDocuments]\nUseRecent=false\n".to_owned();
+        assert_eq!(kde_said(&[kde("UseRecent=true"), unlocked]), on);
         assert_eq!(
             days(7).and(off),
             Said {
