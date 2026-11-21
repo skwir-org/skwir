@@ -21675,3 +21675,73 @@ release without the user's key or a push.
   AUR, `just repositories`, the site and winget.
 - **Privacy**: test paths synthetic (`/home/a/…`); no screenshot kept;
   the session's display untouched by every check on Xvfb.
+
+## Release 0.6.0 (2026-11-21)
+
+Built on the user's go-ahead after their review of the release page;
+pushed and published by the user on GitHub (13:21 UTC, 41 assets).
+The annotated tag `v0.6.0` on 3cb515d2, after the
+Release commit 82176d90 and the checks recorded above (5a6783b2). Four
+runs of `just release-build v0.6.0` in a capped scope, a watchdog
+stopping the build under 5 GB free:
+
+- **Run 1** (11:23–12:10) passed every check of `release-check` and
+  stopped at Fedora's packages: the signing key's passphrase was asked
+  at 12:09:33, and the prompt gave up after its 60 s, unanswered. A
+  build that stops starts again from its checks. Nothing was
+  changed in gpg's configuration. The user watched for the prompt in
+  the next runs.
+- **Run 2** (12:16–12:25) stopped in test-all at
+  `remote_folders::a_mount_let_go_of_elsewhere_is_disconnected_all_the_same`.
+  The test lets go of an rclone mount outside Skwir, and `fusermount3
+  -u` refused it: "Device or resource busy". A plain unmount is refused
+  while any program is in the middle of a call on the mount, and a test
+  beside it, or a program of the session, can be. Which program held
+  the mount was not found. The test now lets go lazily (`-uz`), as
+  rclone does and a user may, since how the mount went is not what it
+  tests. So does `remote_login`'s ignored test, which was not run
+  (3cb515d2: rustfmt, clippy, the test five times). The tag moved onto
+  3cb515d2; `just release-metadata v0.6.0` agrees.
+- **Run 3** (12:36–12:37) was stopped by the watchdog at 4 GB free.
+  The fix's checks had been run with `-p skwir`, which unifies the
+  crates' features differently from the workspace's run, so cargo had
+  built 17.8 GB of units under new hashes beside test-all's. Those
+  files alone were deleted (6,525, all written in those ten minutes,
+  none that another build names), and 16 GB were free again. A release
+  build's own fixes are checked with `--workspace` and a test filter.
+- **Run 4** (12:41–14:08) green: lint-all, deny, notices-check,
+  test-all (4142 run, all passed, 32 skipped), smoke, a11y-check, the
+  Poppler, MuPDF, DjVuLibre and djvu-rs checks, bench-check (every
+  budget met; `images10k.stream_complete_us` 5.4 ms of 12,
+  `flat100k.stream_complete_us` 35 ms of 100), release-tools-check.
+  Then the packages:
+  - the AppImage and the tarball, with the French and Chinese desktop
+    entry and metainfo, 280 ELFs resolved, the update information and
+    its zsync, every helper's probe, the fonts, the film through the
+    bundle's pulsesink;
+  - Debian and Ubuntu, alone and with the others;
+  - Fedora, its seven packages signed with the repositories' key and
+    read back as signed by Fedora's rpm;
+  - Arch;
+  - Windows, tried under Wine: the zip and the installer, every probe,
+    the archive and media helpers;
+  - macOS, looked over (not run: that needs a Mac).
+  `just release-verify v0.6.0` passed: 41 files, 1.1 GB (AppImage
+  204 MB, tarball 220 MB).
+- **After publishing**: `just aur-prepare v0.6.0` for the three bases
+  (skwir and skwir-bin 0.6.0, their checksums those of the tag's archive
+  and the bundle's tarball; skwir-git 0.6.0.r0.g3cb515d), through the
+  user's AUR key. `just winget v0.6.0`: the three manifests, the
+  installer's checksum the bundle's, for the user to submit. The site
+  (its commits 79ab455 and 8e4d891): the guide's and features' 0.6.0
+  changes; the manifest, so `/updates/1.json` says 0.6.0; the docs and
+  languages synced from the tag, so French and Simplified Chinese go
+  live at /fr and /zh-hans as drafts, as the user decided; the front
+  page's notice on 0.6. `just repositories v0.6.0` (the site's 2695519):
+  the apt indexes for trixie and noble and the dnf index list 0.6.0's
+  packages at `pool/v0.6.0/`, and `skwir-repository` goes from 1 to 2.
+  Left for the user: `just aur-publish v0.6.0`, pushing the site (which
+  deploys it and the repositories with it) and the winget pull request.
+- **Privacy**: the commit's message and the test name no machine and no
+  person. Every check ran on Xvfb or in the packages' roots; the
+  session's display was not touched.
