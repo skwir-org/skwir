@@ -150,34 +150,47 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.1.
   desktop portal for one. Each dialog is a Skwir window of its own, attached
   to the asking program's, opening where it asks, else where that program
   last chose, with the name, the program's filters and choices, Cancel and
-  its answer; only you answer it, never an agent or a script. The row writes
-  your portal configuration, applied once the portal starts again (the next
-  login), and leaves one a link keeps (Home Manager's, a dotfiles folder's)
-  to its keeper. Home Manager's `programs.skwir.fileChooser.enable` sets it.
-- **A dialog's window kept to finding and choosing** (ADR-144): it offers
-  places, the address, search, tags, views, the preview and Properties, the
-  shelf; of what changes files, New Folder, Rename, Move to Trash, the
-  clipboard and Paste, a file's tags, rating and comment, and Undo, Redo
-  and Retry of what that dialog did alone. Tabs, the split, the terminal,
-  the pinned player, Activity, Settings, Usage, Open With, printing, the
-  commands of plugins from outside and the Trash place are gone from its
-  menus, buttons, palette, F1 and links, their keys doing there what they
-  would unbound; a place opened in a tab opens in place; Enter and
-  Shift+Enter answer with what they name, never opening another program;
-  what the dialog's own action asks (a password, names taken) is asked in
-  it; Ctrl+Q cancels the dialog alone. The dialogs keep a layout of their
-  own (the first takes your window's view and no panel) and the size you
-  leave them at, a grid for a program asking for pictures or films;
-  opening files, Recent comes first and is where a program with no folder
-  starts while the desktop's list has a file to give, and what you choose
-  is added to the desktop's recently used files; Recent folders in the bar
-  lists the five folders the program last chose in; the filter changes a
-  saved name's extension; choosing a folder, its files show dimmed; a file
-  dropped is gone to, never copied; the answer counts ("Open 3 files"). Every
-  Skwir window says what it is for, `main window` or `file chooser` (Wayland's
-  toplevel tag, X11's window role), so a compositor rule can float a dialog
-  where nothing else does ([the guide](docs/guide.md#skwir-for-other-programs)
-  gives Hyprland's, sway's, i3's and KDE Plasma's).
+  its answer; only you answer it, never an agent or a script. Where none
+  runs, the bus starts Skwir for it (`skwir --portal`; the portal has it
+  started at login too, asking nothing), and it reaches no display until a
+  program asks. The row writes your portal configuration, applied once the
+  portal starts again (the next login), and leaves one a link keeps (Home
+  Manager's, a dotfiles folder's) to its keeper. Home Manager's
+  `programs.skwir.fileChooser.enable` sets it.
+- **A dialog's window kept to finding and choosing** (ADR-144, ADR-145): it
+  offers places, the address, search, tags, views, the preview and
+  Properties, the shelf; of what changes files, New Folder, Rename, Move to
+  Trash, the clipboard and Paste, a file's tags, rating and comment, and
+  Undo, Redo and Retry of what that dialog did alone. Tabs, the split, the
+  terminal, the pinned player, Activity, Settings, Usage, Open With,
+  printing, the commands of plugins from outside and the Trash place are
+  gone from its menus, buttons, palette, F1 and links, their keys doing
+  there what they would unbound; a place opened in a tab opens in place;
+  Enter and Shift+Enter answer with what they name, never opening another
+  program; what the dialog's own action asks (a password, names taken) is
+  asked in it; Escape cancels the dialog wherever the keyboard is (a menu,
+  a list or what you type there taking it first), and Ctrl+Q cancels it
+  alone. Its sidebar starts with **Skwir Tabs**, what your windows' tabs
+  show (five at most, the last used first), then **Recent Folders**, up to
+  five of the folders the program last chose in, none gone and none another
+  place shows (Remove From Sidebar and Clear Recent Folders, each with
+  Undo). The dialogs keep a layout of their own (the first takes your
+  window's view and no panel), the size you leave them at, a grid for a
+  program asking for pictures or films, and an order of their own: the
+  sort, the groups, hidden files and Folders first the last dialog was
+  left with (at first your window's), and what a folder remembers there is
+  theirs, apart from your windows'. Opening files, Recent comes first and
+  is where a program with no folder starts while the desktop's list has a
+  file to give, and what you choose is added to the desktop's recently
+  used files; a program's own All files is listed once; the filter changes
+  a saved name's extension; choosing a folder, its files show dimmed; a
+  file dropped is gone to, never copied; the answer counts ("Open 3
+  files").
+  Every Skwir window says what it is for, `main window` or `file chooser`
+  (Wayland's toplevel tag, X11's window role), so a compositor rule can
+  float a dialog where nothing else does
+  ([the guide](docs/guide.md#skwir-for-other-programs) gives Hyprland's,
+  sway's, i3's and KDE Plasma's).
 - **General's essentials** (ADR-072 amended): the language, Open at startup,
   the startup folder (dimmed unless Open at startup is A chosen folder), the
   default file manager and, on Linux, Open and save dialogs; Ask what dropped
