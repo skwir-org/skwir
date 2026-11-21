@@ -6758,6 +6758,9 @@ sequence_then = 然后
 session_chooser_setting = 应答其他程序“打开”和“保存”对话框的窗口的视图、预览和大小，以及要求图片或影片的对话框的视图
 
 # draft
+session_place_names_setting = 在侧边栏中为其所列位置起的名称，每个窗口都显示这些名称
+
+# draft
 session_setting = 上一个窗口的视图、分屏、预览和时间线
 
 # draft

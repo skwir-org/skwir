@@ -7022,6 +7022,9 @@ sequence_then = puis
 session_chooser_setting = La vue, l’aperçu et la taille des fenêtres qui répondent aux boîtes de dialogue Ouvrir et Enregistrer des autres programmes, et la vue de celles qui demandent des images ou des films
 
 # draft
+session_place_names_setting = Les noms donnés dans la barre latérale aux emplacements qu’elle propose, que toutes les fenêtres affichent
+
+# draft
 session_setting = La vue, la vue divisée, l’aperçu et la chronologie de la dernière fenêtre
 
 # draft

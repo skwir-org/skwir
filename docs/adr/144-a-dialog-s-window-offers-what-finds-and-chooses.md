@@ -137,7 +137,9 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    that remembers its view (ADR-132) shows it in a dialog too. (Amended
    by ADR-145, 2026-11-21: the dialogs keep their own order, hidden
    files and folders first, and what a folder remembers there is theirs;
-   text sizes stay one.)
+   text sizes stay one.) The names the user gave the sidebar's places
+   are the program's, one set every window says, a dialog's as the
+   user's (`ui.place_names`; amended as reviewed, 2026-11-21).
 5. **What is asked chooses the view.** A request whose filter in use
    asks only for pictures or films starts in the view the dialogs used
    last for such a request (the grid at first, its thumbnails what the

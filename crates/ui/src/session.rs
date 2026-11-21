@@ -680,6 +680,18 @@ pub fn declare(app: &skwir_core::App) {
             ),
             toml::Value::Table(toml::map::Map::new()),
         ));
+    app.settings
+        .declare(skwir_core::settings::SettingSpec::state(
+            crate::sidebar::NAMES_KEY,
+            skwir_core::words!(
+                session_place_names_setting = "The names given in the sidebar to the places it offers, which every window says",
+                note = "What a kept setting holds: the names the user gave the places the sidebar offers (Home, the Trash, a drive), which every window says."
+            ),
+            toml::Value::Table(toml::map::Map::new()),
+        ));
+    // Then every window says them, and a script's search names a folder
+    // as the sidebar does, whatever window is up or none.
+    crate::sidebar::take_names(app);
 }
 
 #[cfg(test)]

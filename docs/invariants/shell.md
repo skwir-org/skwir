@@ -483,8 +483,7 @@ draws none, Compact; below).
   `address::crumbs`): `Papers › 2026`, `stick › Photos`, else Home. With
   `ui.full_path`, every trail starts at `/` under real names.
 - Tabs and history use the sidebar's name (`App::location_title`: the
-  names the user gave places in their own windows, which a dialog's
-  window never writes, its arrangement being the dialogs', ADR-144, 4);
+  names the user gave places, one set every window says, `sidebar::Names`);
   listings, toasts and Properties use the folder's own. Up goes to the real
   parent; Ctrl+L edits the real path. Whatever goes up (Up, a place of the
   trail, of the sidebar or of the columns view, a path typed), the way
@@ -1651,7 +1650,12 @@ asks the direction.
   take out; suggested ones can be hidden; offered ones (Home, Recent, the
   Trash, volumes) are moved, renamed and hidden in the sidebar only
   (`ui.sidebar_place`, `Sections::places` by `Place::key`), never in the
-  owner's files. A place moves only among those the same command moves
+  owner's files. Their order and whether they show are the window's
+  arrangement; the names the user gave them are one set, the program's
+  (`sidebar::Names`, `ui.place_names`), which every window says, a
+  dialog's included, whatever window is up: read into the core at the
+  start (`Registry::user_title`), changed by a rename alone, never
+  written back from a window's arrangement. A place moves only among those the same command moves
   (`sidebar::mover`); `arrange` is the one reading of all this. Within a
   group, what is no folder comes after the folders (a server the tools
   know after the mounts) unless it moves: what moves keeps its owner's

@@ -6283,6 +6283,9 @@ sequence_then = then
 # What a kept setting holds: the layout of the last dialog, so the next one looks the same.
 session_chooser_setting = The view, preview and size of the windows answering other programs' Open and Save dialogs, and the view of those asking for pictures or films
 
+# What a kept setting holds: the names the user gave the places the sidebar offers (Home, the Trash, a drive), which every window says.
+session_place_names_setting = The names given in the sidebar to the places it offers, which every window says
+
 # What a kept setting holds: the shape of the last window, so the next one looks the same.
 session_setting = The last window's view, split, preview and timeline
 

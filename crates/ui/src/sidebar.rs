@@ -104,10 +104,10 @@ pub struct Sections {
 
 /// How the user arranged one group's places in the sidebar itself: those
 /// their owners offer (`Role::Offered`: Home, the Trash, a volume), which
-/// the user moves, renames and hides, and those suggested, which the user
-/// hides. A place the user keeps (a bookmark) is its owner's to order,
-/// rename and take out. Keyed by `Place::key`, so that a volume is the
-/// same place mounted or not.
+/// the user moves and hides (and renames, for every window: `Names`), and
+/// those suggested, which the user hides. A place the user keeps (a
+/// bookmark) is its owner's to order, rename and take out. Keyed by
+/// `Place::key`, so that a volume is the same place mounted or not.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Arrangement {
@@ -119,15 +119,111 @@ pub struct Arrangement {
     /// Whether each place the user showed or hid is shown. One it does
     /// not name is, unless its owner offers it hidden (`Place::hidden`).
     pub shown: BTreeMap<String, bool>,
-    /// The names the user gave offered places.
-    pub titles: BTreeMap<String, String>,
 }
 
 impl Arrangement {
     /// Whether the user changed anything in the group.
     pub fn is_empty(&self) -> bool {
-        self.order.is_empty() && self.shown.is_empty() && self.titles.is_empty()
+        self.order.is_empty() && self.shown.is_empty()
     }
+}
+
+/// Where the names the user gave the places the sidebar offers (Home, the
+/// Trash, a volume) are kept: one set, the program's, which every window
+/// says (the user's own and dialogs' alike, whatever is up) as do tab
+/// titles, the history, messages and searches (`Registry::user_title`).
+/// Read into the core as the program starts (`take_names`), changed only
+/// where the user renames a place (`ui.sidebar_place`), never written back
+/// from a window's arrangement.
+pub const NAMES_KEY: &str = "ui.place_names";
+
+/// The names the user gave places, by group, then by `Place::key`.
+pub type Names = BTreeMap<String, BTreeMap<String, String>>;
+
+/// Read the names the user gave places (`NAMES_KEY`) into the core, once
+/// as the program starts: a skwir the bus started for another program's
+/// dialog, no window of the user's up, says them as the user's windows do.
+/// Each window kept them with its sidebar's arrangement until 2026-11-21:
+/// then the window used last (`ui.session`) gives them, once.
+pub fn take_names(app: &skwir_core::App) {
+    let names = app.settings.stored::<Names>(NAMES_KEY).unwrap_or_else(|| {
+        let former = former_names(app);
+        if !former.is_empty() {
+            keep_names(app, &former);
+        }
+        former
+    });
+    app.registry.set_place_titles(flat(&names));
+}
+
+/// The names the window used last kept with its sidebar's arrangement
+/// (`Arrangement`'s `titles`, before 2026-11-21).
+fn former_names(app: &skwir_core::App) -> Names {
+    let session = app.settings.get::<toml::Value>(crate::session::SESSION_KEY);
+    let groups = session
+        .as_ref()
+        .and_then(|s| s.get("sidebar_sections")?.get("places")?.as_table());
+    groups
+        .into_iter()
+        .flatten()
+        .filter_map(|(group, arrangement)| {
+            let titles: BTreeMap<String, String> = arrangement
+                .get("titles")?
+                .as_table()?
+                .iter()
+                .filter_map(|(key, title)| Some((key.clone(), title.as_str()?.to_owned())))
+                .collect();
+            (!titles.is_empty()).then(|| (group.clone(), titles))
+        })
+        .collect()
+}
+
+/// Give the place `key` of `group` the name `name` in every window, or
+/// its own (`None`); `key` `None`, every place of the group its own.
+fn name_places(app: &skwir_core::App, group: &str, key: Option<&str>, name: Option<&str>) {
+    let mut names = app.settings.stored::<Names>(NAMES_KEY).unwrap_or_default();
+    match (key, name) {
+        (None, _) => {
+            names.remove(group);
+        }
+        (Some(key), Some(name)) => {
+            names
+                .entry(group.to_owned())
+                .or_default()
+                .insert(key.to_owned(), name.to_owned());
+        }
+        (Some(key), None) => {
+            if let Some(given) = names.get_mut(group) {
+                given.remove(key);
+                if given.is_empty() {
+                    names.remove(group);
+                }
+            }
+        }
+    }
+    keep_names(app, &names);
+    app.registry.set_place_titles(flat(&names));
+    // Every window says it: each draws again.
+    app.wake();
+}
+
+fn keep_names(app: &skwir_core::App, names: &Names) {
+    match toml::Value::try_from(names) {
+        Ok(value) => app.settings.set(NAMES_KEY, value),
+        Err(error) => tracing::warn!("cannot keep the names given places: {error:#}"),
+    }
+}
+
+/// The names as the core keys them: by group and `Place::key`.
+fn flat(names: &Names) -> HashMap<(String, String), String> {
+    names
+        .iter()
+        .flat_map(|(group, given)| {
+            given
+                .iter()
+                .map(move |(key, name)| ((group.clone(), key.clone()), name.clone()))
+        })
+        .collect()
 }
 
 /// Who arranges a place in the sidebar.
@@ -283,8 +379,14 @@ pub struct Arranged {
 /// their order; within a group, folders before virtual places (Shelf,
 /// Recent) whatever order their plugins published them in, then the
 /// offered places in the user's order among the slots they hold. A place
-/// listed (`Place::listed`) keeps the order it was listed in.
-pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
+/// listed (`Place::listed`) keeps the order it was listed in. An offered
+/// place is under the name the user gave it (`named`: `Registry::user_title`,
+/// the one set every window says, `Names`), else its owner's.
+pub fn arrange(
+    mut places: Vec<Place>,
+    sections: &Sections,
+    named: &dyn Fn(&Place) -> Option<String>,
+) -> Vec<Arranged> {
     // By name too, so that two groups the sidebar does not know never mix.
     // What is no folder comes after the folders (the servers the tools
     // know, after the mounts), unless it moves: what the user orders keeps
@@ -330,13 +432,12 @@ pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
         .map(|mut place| {
             let role = Role::of(&place);
             let key = place.key();
-            let arrangement = sections.places.get(&place.group);
             let shown = shown_in_group(&place, sections);
             let mut moves = place.reorder.clone();
             if role == Role::Offered {
                 // The name the user gave it is as they wrote it.
-                if let Some(title) = arrangement.and_then(|a| a.titles.get(&key)) {
-                    place.title = Words::as_written(title.clone());
+                if let Some(title) = named(&place) {
+                    place.title = Words::as_written(title);
                 }
                 moves = Some(Reorder {
                     command: Invocation::with_args(
@@ -584,10 +685,11 @@ pub(crate) fn shown_nowhere(
 }
 
 /// The places arranged (`arrange`) for a revision of the places, of the
-/// folders a dialog's program chose in, of what words say, of what a
-/// dialog's Skwir Tabs read (`TabsRead`), and an arrangement of them.
+/// folders a dialog's program chose in, of what words say, of the names the
+/// user gave places, of what a dialog's Skwir Tabs read (`TabsRead`), and
+/// an arrangement of them.
 pub(crate) type ArrangedAt = (
-    (u64, u64, u64, Option<TabsRead>),
+    (u64, u64, u64, u64, Option<TabsRead>),
     Sections,
     Arranging,
     std::sync::Arc<[Arranged]>,
@@ -595,9 +697,9 @@ pub(crate) type ArrangedAt = (
 
 /// What a dialog's Skwir Tabs are read from, each by what counts its
 /// changes: what the tabs show (`Workspace::tabs_shown`), and what names
-/// them (`App::location_title`: the remotes mounted, the names the user
-/// gave places).
-pub(crate) type TabsRead = ((u64, u64), u64, u64);
+/// them (`App::location_title`: the remotes mounted, and the names the
+/// user gave places, which every window's places read too).
+pub(crate) type TabsRead = ((u64, u64), u64);
 
 /// For whom the places are arranged (ADR-144, 3 and 7): a window of the
 /// user's own, a dialog's, or a dialog's opening files where the files
@@ -655,13 +757,13 @@ impl Shell {
                 .as_ref()
                 .map_or(0, crate::chooser::Chooser::folders_revision),
             skwir_core::words::revision(),
+            self.app.registry.place_titles_revision(),
             // What a dialog lists of the user's tabs, read again only once
             // what they show or what names them changed.
             self.chooser.is_some().then(|| {
                 (
                     self.app.workspace.read().tabs_shown(),
                     self.app.registry.remotes.revision(),
-                    self.app.registry.place_titles_revision(),
                 )
             }),
         );
@@ -679,7 +781,9 @@ impl Shell {
             return std::sync::Arc::clone(arranged);
         }
         // Read after the revision: a change meanwhile arranges again.
-        let mut arranged = arrange(self.places_here(), &self.sidebar_sections);
+        let mut arranged = arrange(self.places_here(), &self.sidebar_sections, &|place| {
+            self.app.registry.user_title(place)
+        });
         if arranging == Arranging::DialogOpening {
             recent_first(&mut arranged, |place| {
                 self.app.lists_recent(&place.location)
@@ -735,9 +839,10 @@ pub fn roots(
     places: Vec<Place>,
     remotes: Vec<skwir_core::fs::reach::Known>,
     sections: &Sections,
+    named: &dyn Fn(&Place) -> Option<String>,
     home: Option<&std::path::Path>,
 ) -> Vec<Root> {
-    let mut roots: Vec<Root> = arrange(places, sections)
+    let mut roots: Vec<Root> = arrange(places, sections, named)
         .into_iter()
         .filter(|a| {
             a.shown
@@ -777,25 +882,26 @@ pub fn roots(
     roots
 }
 
-/// `roots`, read again only when the places, the remotes mounted, their
-/// arrangement, what their words say (`words::revision`) or
-/// `ui.full_path` change, and how many times they were. With the full
-/// path there are none: every folder's trail starts at the root, each
-/// folder under its own name.
+/// `roots`, read again only when the places, the remotes mounted, the
+/// names the user gave places, their arrangement, what their words say
+/// (`words::revision`) or `ui.full_path` change, and how many times they
+/// were. With the full path there are none: every folder's trail starts
+/// at the root, each folder under its own name.
 #[derive(Default)]
 pub struct Roots {
-    key: Option<((u64, u64), u64, Sections, bool)>,
+    key: Option<((u64, u64, u64), u64, Sections, bool)>,
     pub roots: Vec<Root>,
     pub generation: u64,
 }
 
 impl Shell {
-    /// Read the trails' roots again if the places, the remotes mounted or
-    /// their arrangement changed since.
+    /// Read the trails' roots again if the places, the remotes mounted,
+    /// their names or their arrangement changed since.
     pub fn sync_roots(&mut self) {
         let revision = (
             self.app.registry.places.revision(),
             self.app.registry.remotes.revision(),
+            self.app.registry.place_titles_revision(),
         );
         let said = skwir_core::words::revision();
         let full = self.prefs.full_path;
@@ -803,26 +909,6 @@ impl Shell {
             *r == revision && *w == said && *s == self.sidebar_sections && *f == full
         }) {
             return;
-        }
-        // The names the user gave places, for everything that names a
-        // location (`App::location_title`): their own windows', which every
-        // window shares. A dialog's arrangement is the dialogs' (ADR-144,
-        // 4), and taken from the user's at the first: written there, it
-        // would give back names the user changed since, and a dialog's
-        // Skwir Tabs name the tabs as the user's windows do.
-        if self.chooser.is_none() {
-            let titles = self
-                .sidebar_sections
-                .places
-                .iter()
-                .flat_map(|(group, arrangement)| {
-                    arrangement
-                        .titles
-                        .iter()
-                        .map(move |(key, title)| ((group.clone(), key.clone()), title.clone()))
-                })
-                .collect();
-            self.app.registry.set_place_titles(titles);
         }
         let home = skwir_core::os_path::home();
         self.roots = Roots {
@@ -833,6 +919,7 @@ impl Shell {
                     self.app.registry.places.all(),
                     self.app.registry.remotes.all(),
                     &self.sidebar_sections,
+                    &|place| self.app.registry.user_title(place),
                     home.as_deref(),
                 )
             },
@@ -2147,13 +2234,7 @@ impl Shell {
                 // The field holds the name the user gave it, if any: left
                 // empty, the place takes back its own (never told by
                 // comparing words, ADR-139).
-                let given = self
-                    .sidebar_sections
-                    .places
-                    .get(&place.group)
-                    .and_then(|a| a.titles.get(&place.key()))
-                    .cloned()
-                    .unwrap_or_default();
+                let given = self.app.registry.user_title(place).unwrap_or_default();
                 Some(Invocation::with_args(
                     "ui.ask",
                     &serde_json::json!({
@@ -2233,7 +2314,10 @@ impl Shell {
         };
         if args.get("reset").and_then(serde_json::Value::as_bool) == Some(true) {
             self.sidebar_sections.places.remove(&group);
+            // Under their own names again, in every window.
+            name_places(&self.app, &group, None, None);
             self.remember_session();
+            self.save_settings_later();
             cx.notify();
             return;
         }
@@ -2314,18 +2398,16 @@ impl Shell {
             }
             let title = title.as_str().map(str::trim).unwrap_or_default();
             // Left empty, it takes back its own name (the question says
-            // so): what was typed is never compared with its words.
-            let titles = &mut self
-                .sidebar_sections
-                .places
-                .entry(group.clone())
-                .or_default()
-                .titles;
-            if title.is_empty() {
-                titles.remove(&key);
-            } else {
-                titles.insert(key, title.to_owned());
-            }
+            // so): what was typed is never compared with its words. The
+            // name is the user's, every window's (`Names`): no window's
+            // arrangement holds it.
+            name_places(
+                &self.app,
+                &group,
+                Some(&key),
+                (!title.is_empty()).then_some(title),
+            );
+            self.save_settings_later();
         } else {
             return;
         }
@@ -2698,7 +2780,9 @@ impl Shell {
                     ..item(title, serde_json::Value::Null, order, icon)
                 }
             };
-            let places = arrange(self.places_here(), sections);
+            let places = arrange(self.places_here(), sections, &|place| {
+                self.app.registry.user_title(place)
+            });
             for (i, arranged) in places
                 .iter()
                 .filter(|a| a.place.group == group && a.role.hides())
@@ -2830,6 +2914,11 @@ mod tests {
     use skwir_core::words::Words;
     use std::path::PathBuf;
 
+    /// No place renamed by the user.
+    fn unnamed(_: &skwir_core::registry::Place) -> Option<String> {
+        None
+    }
+
     #[test]
     fn the_sidebar_may_take_what_the_panes_and_the_preview_do_not_need() {
         // One pane keeps 240 px; the rest of a 1280 px window may go.
@@ -2915,6 +3004,7 @@ mod tests {
                 known("/run/m/other", "other host"),
             ],
             &sections,
+            &unnamed,
             None,
         );
         let named: Vec<(String, String)> = roots
@@ -3072,6 +3162,7 @@ mod tests {
                 place("bookmarks", "/elsewhere"),
             ],
             &Sections::default(),
+            &unnamed,
         );
         let notes: Vec<Option<&str>> = arranged.iter().map(|a| a.note.as_deref()).collect();
         assert_eq!(notes, [None, Some("one"), Some("two"), None]);
@@ -3137,7 +3228,7 @@ mod tests {
             .or_default()
             .shown
             .insert(tab.key(), false);
-        let arranged = arrange(vec![tab], &sections);
+        let arranged = arrange(vec![tab], &sections, &unnamed);
         assert_eq!(arranged[0].role, Role::Listed);
         assert!(arranged[0].shown, "no hiding it");
         assert!(arranged[0].moves.is_none());
@@ -3162,6 +3253,7 @@ mod tests {
                 listed("/home/a/docs"),
             ],
             &Sections::default(),
+            &unnamed,
         );
         let order = ["tags:/work", "home/a/src", "recent:", "home/a/docs"];
         assert_eq!(titles(&arranged), order);
@@ -3207,7 +3299,7 @@ mod tests {
             place("network", "/run/user/1000/gvfs/sftp:host=nas"),
         ];
         assert_eq!(
-            titles(&arrange(all, &Sections::default())),
+            titles(&arrange(all, &Sections::default(), &unnamed)),
             [
                 "a",
                 "sftp://me@example.com/docs",
@@ -3216,6 +3308,73 @@ mod tests {
                 "sftp://server.example.com",
             ]
         );
+    }
+
+    /// The names the user gave places are one set, the program's (FC-1,
+    /// FC-2): read into the core as the program starts, whatever window
+    /// comes up (a skwir the bus started for a dialog says them too),
+    /// taken once from the window used last where each window kept its
+    /// own, changed by a rename alone, and kept across a start even once
+    /// none is left.
+    #[test]
+    fn the_names_given_places_are_every_window_s() {
+        use super::{NAMES_KEY, Names, name_places, take_names};
+        let tmp = tempfile::tempdir().unwrap();
+        let config = || skwir_core::app::AppConfig {
+            settings_path: Some(tmp.path().join("settings.toml")),
+            state_path: Some(tmp.path().join("state.toml")),
+            ..skwir_core::app::AppConfig::ephemeral(tmp.path())
+        };
+        let downloads = place("places", "/home/a/Downloads");
+        let key = downloads.key();
+        let start = || {
+            let app = skwir_core::App::new(config()).unwrap();
+            crate::session::declare(&app);
+            app
+        };
+        let app = start();
+        assert_eq!(app.registry.user_title(&downloads), None);
+        // A window of before kept the names with its arrangement.
+        let former: toml::Value = toml::from_str(&format!(
+            "[sidebar_sections.places.places]\norder = [{key:?}]\ntitles = {{ {key:?} = \"DL\" }}\n"
+        ))
+        .unwrap();
+        app.settings.set(crate::session::SESSION_KEY, former);
+        take_names(&app);
+        assert_eq!(app.registry.user_title(&downloads).as_deref(), Some("DL"));
+        let kept: Names = app.settings.stored(NAMES_KEY).expect("kept apart");
+        assert_eq!(kept["places"][&key], "DL");
+        // The window's arrangement still reads, and holds no name now.
+        let session = crate::session::restore(&app).expect("the window's shape");
+        assert_eq!(session.sidebar_sections.places["places"].order, [key.as_str()]);
+        let written = toml::Value::try_from(&session).unwrap().to_string();
+        assert!(!written.contains("DL"), "{written}");
+
+        // A rename is every window's, and what a window kept before never
+        // comes back.
+        name_places(&app, "places", Some(&key), Some("Fetched"));
+        assert_eq!(
+            app.registry.user_title(&downloads).as_deref(),
+            Some("Fetched")
+        );
+        take_names(&app);
+        assert_eq!(
+            app.registry.user_title(&downloads).as_deref(),
+            Some("Fetched")
+        );
+        name_places(&app, "places", Some(&key), None);
+        assert_eq!(app.registry.user_title(&downloads), None);
+        app.settings.save().unwrap();
+        drop(app);
+        let app = start();
+        assert_eq!(
+            app.registry.user_title(&downloads),
+            None,
+            "its own name again, the former arrangement still on disk"
+        );
+        name_places(&app, "places", Some(&key), Some("Fetched"));
+        name_places(&app, "places", None, None);
+        assert_eq!(app.registry.user_title(&downloads), None, "the group reset");
     }
 
     /// The places offered are the user's to put in order, rename and hide;
@@ -3239,11 +3398,11 @@ mod tests {
         ];
         let mut sections = Sections::default();
         assert_eq!(
-            titles(&arrange(all.clone(), &sections)),
+            titles(&arrange(all.clone(), &sections, &unnamed)),
             ["home", "bookmarked", "docs", "recent:"],
             "folders first, the EFI partition offered hidden"
         );
-        let roles: Vec<Role> = arrange(all.clone(), &sections)
+        let roles: Vec<Role> = arrange(all.clone(), &sections, &unnamed)
             .iter()
             .map(|a| a.role)
             .collect();
@@ -3253,7 +3412,7 @@ mod tests {
         let present = ["/home", "/docs", "recent:"].map(str::to_owned);
         sections.move_place("places", "recent:", Some("/home"), &present);
         assert_eq!(
-            titles(&arrange(all.clone(), &sections)),
+            titles(&arrange(all.clone(), &sections, &unnamed)),
             ["recent:", "bookmarked", "home", "docs"]
         );
         // Last, and a place the order does not name goes after it.
@@ -3261,13 +3420,13 @@ mod tests {
         let mut later = all.clone();
         later.push(place("places", "/new"));
         assert_eq!(
-            titles(&arrange(later, &sections)),
+            titles(&arrange(later, &sections, &unnamed)),
             ["recent:", "bookmarked", "docs", "home", "new"]
         );
         // Renamed and hidden by key: the volume mounted elsewhere is the
-        // same place; shown, it stays shown.
+        // same place; shown, it stays shown. The name is the user's, every
+        // window's (`Names`), none of the arrangement's.
         let arrangement = sections.places.entry("places".into()).or_default();
-        arrangement.titles.insert("/docs".into(), "Papers".into());
         arrangement.shown.insert("/home".into(), false);
         sections
             .places
@@ -3279,7 +3438,10 @@ mod tests {
         let mut mounted = all;
         mounted.pop();
         mounted.push(efi);
-        let arranged = arrange(mounted, &sections);
+        let papers = |place: &skwir_core::registry::Place| {
+            (place.group == "places" && place.key() == "/docs").then(|| "Papers".to_owned())
+        };
+        let arranged = arrange(mounted, &sections, &papers);
         assert_eq!(
             titles(&arranged),
             ["recent:", "bookmarked", "Papers", "EFI"]
@@ -3348,6 +3510,7 @@ mod tests {
         let arranged = arrange(
             vec![place("places", "/home"), place("devices", "/dev/sda1")],
             &Sections::default(),
+            &unnamed,
         );
         let places: Vec<&super::Arranged> = arranged.iter().collect();
         let tabs = [TabId(1), TabId(2)];
