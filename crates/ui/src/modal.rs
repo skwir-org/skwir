@@ -8,8 +8,8 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, FocusHandle, Focusable, KeyContext, KeyDownEvent, MouseButton,
-    ScrollHandle, SharedString, Stateful, UniformListScrollHandle, Window, deferred, div, point,
+    AnyElement, App, Context, Div, FocusHandle, Focusable, KeyContext, MouseButton, ScrollHandle,
+    SharedString, Stateful, UniformListScrollHandle, Window, deferred, div, point,
 };
 use gpui::{prelude::*, px};
 
@@ -195,8 +195,12 @@ impl Shell {
 /// A modal dialog: `panel` on a scrim, `top` px from the top of the window.
 /// A press outside the panel runs `dismiss`, and so does Escape that
 /// nothing in the dialog answered (its field's, its context's): with one
-/// of its buttons focused, Escape still cancels. The panel keeps its
-/// presses. `priority` orders deferred overlays (menus above dialogs).
+/// of its buttons or switches focused, Escape still cancels. Escape is
+/// bound there, the scrim's key context (`keymap::MODAL`, `ui.dismiss`),
+/// so that the dialog takes it before what the window behind binds it to
+/// (a plan's Cancel, another program's dialog's): gpui runs the deepest
+/// binding before any key's listener. The panel keeps its presses.
+/// `priority` orders deferred overlays (menus above dialogs).
 pub fn modal(
     panel: Stateful<Div>,
     top: f32,
@@ -209,6 +213,7 @@ pub fn modal(
     let escape = Rc::clone(&dismiss);
     deferred(
         div()
+            .key_context(crate::keymap::MODAL)
             .absolute()
             .inset_0()
             .flex()
@@ -221,11 +226,11 @@ pub fn modal(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| dismiss(this, window, cx)),
             )
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                let key = &event.keystroke;
-                if key.key == "escape" && !key.modifiers.modified() {
-                    cx.stop_propagation();
+            .on_action(cx.listener(move |this, action: &RunCommand, window, cx| {
+                if action.name == "ui.dismiss" {
                     escape(this, window, cx);
+                } else {
+                    cx.propagate();
                 }
             }))
             .child(panel.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())),

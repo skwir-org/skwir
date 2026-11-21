@@ -1127,7 +1127,7 @@ pub fn render(
         .track_focus(&shell.sidebar_keys.focus)
         .key_context(crate::keymap::placed(
             crate::keymap::SIDEBAR,
-            shell.chooser.is_some(),
+            shell.dialog_keys(),
         ))
         .on_any_mouse_down(|_, window, _| window.prevent_default())
         .when(theme.lines(), |d| d.border_end(px(1.)).border_color(theme.border))

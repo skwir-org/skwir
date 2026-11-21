@@ -4076,6 +4076,9 @@ keymap_place_members = Fichiers d’une archive ou d’un message
 keymap_place_menu = Menu contextuel
 
 # draft
+keymap_place_modal = Dialogues
+
+# draft
 keymap_place_model = Aperçu de modèle 3D
 
 # draft

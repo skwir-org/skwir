@@ -1401,10 +1401,9 @@ impl Shell {
             kc.add("sweep");
         }
         // Escape cancels another program's dialog (ADR-141), once what is
-        // typed to reach a name has gone (`typing`, while its label shows).
-        if self.chooser.is_some() {
-            kc.add("choosing");
-        }
+        // typed to reach a name has gone (`typing`, while its label shows)
+        // and a plan being made has let go (`keymap::Dialog`).
+        self.dialog_keys().say(&mut kc);
         if self.ui().list.typed.as_ref().is_some_and(|typed| {
             self.ui().list.listing == Some(typed.listing)
                 && typed.goes_on(typed.listing, Instant::now())

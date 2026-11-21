@@ -65,6 +65,10 @@ pub const PANE: &str = "Pane";
 pub const ADDRESS: &str = "AddressBar";
 pub const PALETTE: &str = "Palette";
 pub const CONFIRM: &str = "Confirm";
+/// A modal dialog's frame, about every dialog that asks (`modal::modal`):
+/// Escape that nothing in it took answers no (`ui.dismiss`), deeper than
+/// what Escape does in the window behind it.
+pub const MODAL: &str = "Modal";
 pub const PEEK: &str = "Peek";
 pub const READER: &str = "DocumentReader";
 /// A preview with something to find in and copy from (a document, a
@@ -288,6 +292,13 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("secondary-enter", "tab.open", Some("pane selection")),
     ("enter", "ui.accept", Some("confirm")),
     ("escape", "ui.dismiss", Some("confirm")),
+    // A modal dialog (a question, a prompt, a form, a picker): Escape
+    // that nothing in it takes (its field's, its context's) answers no, as
+    // a press outside it does (`modal::modal`), wherever its keyboard is, a
+    // button or a switch of it included. Bound there, deeper than what
+    // Escape does in the window behind it (a plan's, another program's
+    // dialog's Cancel), so the dialog goes first.
+    ("escape", "ui.dismiss", Some("modal")),
     // A plan being worked out for what was asked (`shell/planning.rs`):
     // Escape lets it go, where nothing nearer takes Escape.
     ("escape", "ui.plan_cancel", Some("planning")),
@@ -649,30 +660,56 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("down", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
     // Answering another program's dialog, Escape cancels it, as a
     // dialog's does, wherever the keyboard is in its window, whose root
-    // says `choosing` (a plan being made lets go first). What is open or
-    // typed there takes it first: a menu, a popup, a list of the bar, the
-    // address edited (the field's own), a filter and a name typed (below);
-    // a selection does not. In the files, before the pane's own Escape;
-    // in the sidebar and the timeline, before theirs, which only give the
-    // keyboard back to the files.
+    // says `choosing`. What is open or typed there takes it first: a
+    // modal dialog (`modal`, above), a menu, a popup, a list of the bar,
+    // the address edited (the field's own), a filter and a name typed
+    // (below), and a plan being made, which lets go; a selection does not.
+    // In the files, before the pane's own Escape; in the sidebar and the
+    // timeline, before theirs, which only give the keyboard back to the
+    // files. Each of these says `choosing` and `planning` itself
+    // (`placed`, `Dialog`): gpui runs the deepest binding, so the plan's
+    // there is its own, not the root's.
     (
         "escape",
         "ui.chooser_cancel",
         "{}",
         Some("choosing !planning"),
     ),
-    ("escape", "ui.chooser_cancel", "{}", Some("pane choosing")),
     (
         "escape",
         "ui.chooser_cancel",
         "{}",
-        Some("sidebar choosing"),
+        Some("pane choosing !planning"),
     ),
     (
         "escape",
         "ui.chooser_cancel",
         "{}",
-        Some("timeline choosing"),
+        Some("sidebar choosing !planning"),
+    ),
+    (
+        "escape",
+        "ui.chooser_cancel",
+        "{}",
+        Some("timeline choosing !planning"),
+    ),
+    (
+        "escape",
+        "ui.plan_cancel",
+        "{}",
+        Some("pane choosing planning"),
+    ),
+    (
+        "escape",
+        "ui.plan_cancel",
+        "{}",
+        Some("sidebar choosing planning"),
+    ),
+    (
+        "escape",
+        "ui.plan_cancel",
+        "{}",
+        Some("timeline choosing planning"),
     ),
     // A list of the bar open (a filter's, a choice's), Escape closes it.
     ("escape", "ui.toolbar_close", "{}", Some("chooser lists")),
@@ -1627,6 +1664,10 @@ fn group_words(group: &str) -> Option<Words> {
                 "A place in the window: the dialog listing what a plan will do before it does it."
         ),
         "confirm" => words!(keymap_place_confirm = "Confirmation dialogs"),
+        "modal" => words!(
+            keymap_place_modal = "Dialogs",
+            note = "A place in the window: any dialog that asks something (a question, a name, a form), wherever in it the keyboard is."
+        ),
         "menu" => words!(keymap_place_menu = "Context menu"),
         "toolbars" => words!(keymap_place_toolbars = "Toolbars"),
         "shortcuts" => words!(
@@ -1678,6 +1719,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("bulk_case", BULK_CASE),
     inside("review", REVIEW),
     inside("confirm", CONFIRM),
+    inside("modal", MODAL),
     inside("menu", MENU),
     inside("toolbar_button", "ToolbarButton").of("toolbars"),
     inside("toolbar_popup", "ToolbarPopup").of("toolbars"),
@@ -1696,15 +1738,43 @@ pub(crate) const PLACES: &[Place] = &[
     inside("setting_exclusions", "SettingExclusions").of("settings"),
 ];
 
-/// The key context of place `name` (`SIDEBAR`, `TIMELINE`), saying
-/// `choosing` in a window answering another program's dialog: Escape there
-/// cancels the dialog before what the place does with it (ADR-144).
-pub fn placed(name: &str, choosing: bool) -> gpui::KeyContext {
+/// What a window answering another program's dialog says at each place
+/// that binds the dialog's Escape (the files, the sidebar, the timeline),
+/// as its root says it: `choosing`, and `planning` while a plan is made
+/// for it (`Shell::dialog_keys`). gpui runs the deepest binding, and a
+/// condition holds only in the context that says it: a place's own
+/// `choosing` binding would win over the root's `planning`, so the place
+/// says `planning` too, and a plan being made lets go there before the
+/// dialog does (ADR-144). A window of the user's own says neither at its
+/// places, whose own Escape comes before the plan's, at its root.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Dialog {
+    /// The window answers another program's dialog.
+    pub choosing: bool,
+    /// A plan is being made for the window (`shell/planning.rs`).
+    pub planning: bool,
+}
+
+impl Dialog {
+    /// Say it in a place's `context`.
+    pub fn say(self, context: &mut gpui::KeyContext) {
+        if self.choosing {
+            context.add("choosing");
+            if self.planning {
+                context.add("planning");
+            }
+        }
+    }
+}
+
+/// The key context of place `name` (`SIDEBAR`, `TIMELINE`), saying what
+/// the window answering another program's dialog says there (`Dialog`):
+/// Escape there cancels the dialog before what the place does with it, a
+/// plan being made going first (ADR-144).
+pub fn placed(name: &str, dialog: Dialog) -> gpui::KeyContext {
     let mut context = gpui::KeyContext::default();
     context.add(name);
-    if choosing {
-        context.add("choosing");
-    }
+    dialog.say(&mut context);
     context
 }
 
@@ -3539,6 +3609,118 @@ mod tests {
         assert_ne!(
             run(root, super::VIEW_BUTTONS).as_deref(),
             Some("ui.chooser_cancel")
+        );
+    }
+
+    /// In a dialog's window, what is open or being made takes Escape
+    /// before the dialog's Cancel, as gpui reads the bindings `install`
+    /// makes, its contexts said as the window says them: a modal dialog,
+    /// wherever its keyboard is (a button, a switch of a form, a field's
+    /// own Escape first), and a plan being made, from the files, the
+    /// sidebar and the timeline alike (RS-2, RC-2). In a window of the
+    /// user's own, a modal's Escape is still its own while a plan is made,
+    /// and the sidebar's gives the keyboard back.
+    #[test]
+    fn a_modal_and_a_plan_take_escape_before_a_dialog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        // As `install` binds them: a field's own keys, then the window's.
+        let mut bindings = crate::input::key_bindings();
+        bindings.extend(super::gpui_bindings(&super::bindings(&app, &[])));
+        let keymap = gpui::Keymap::new(bindings);
+        let run = |stack: &[gpui::KeyContext]| -> Option<String> {
+            let stroke = super::parse_keystroke("escape").unwrap();
+            let (found, _) = keymap.bindings_for_input(&[stroke], stack);
+            found.first().map(|binding| {
+                binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<super::RunCommand>()
+                    .map_or_else(
+                        || binding.action().name().to_owned(),
+                        |run| run.name.clone(),
+                    )
+            })
+        };
+        let root = |dialog: super::Dialog| {
+            let mut context = gpui::KeyContext::parse(super::ROOT).unwrap();
+            if dialog.planning {
+                context.add("planning");
+            }
+            if dialog.choosing {
+                context.add("choosing");
+            }
+            context
+        };
+        let parse = |context: &str| gpui::KeyContext::parse(context).unwrap();
+        let (choosing, planning) = (
+            super::Dialog {
+                choosing: true,
+                planning: false,
+            },
+            super::Dialog {
+                choosing: true,
+                planning: true,
+            },
+        );
+        let own = super::Dialog {
+            choosing: false,
+            planning: true,
+        };
+        // A modal, its button, a form's switch, a prompt's field.
+        for dialog in [choosing, planning, own] {
+            for inside in [
+                vec![parse(crate::modal::BUTTON)],
+                vec![parse(super::FORM), parse(crate::modal::BUTTON)],
+                vec![parse(super::CONFIRM)],
+            ] {
+                let mut stack = vec![root(dialog), parse(super::MODAL)];
+                stack.extend(inside);
+                assert_eq!(
+                    run(&stack).as_deref(),
+                    Some("ui.dismiss"),
+                    "{dialog:?} {stack:?}"
+                );
+            }
+            let field = [
+                root(dialog),
+                parse(super::MODAL),
+                parse(crate::input::KEY_CONTEXT),
+            ];
+            assert_ne!(run(&field).as_deref(), Some("ui.dismiss"), "the field's");
+            assert_ne!(run(&field).as_deref(), Some("ui.chooser_cancel"));
+            assert_eq!(
+                run(&[root(dialog), parse(super::MODAL), parse(super::REVIEW)]).as_deref(),
+                Some("ui.review_cancel")
+            );
+        }
+        // A plan being made lets go before the dialog does, wherever the
+        // keyboard is; once made, the dialog's Cancel again.
+        for place in [super::PANE, super::SIDEBAR, super::TIMELINE] {
+            let at = |dialog| vec![root(dialog), super::placed(place, dialog)];
+            assert_eq!(
+                run(&at(planning)).as_deref(),
+                Some("ui.plan_cancel"),
+                "{place}"
+            );
+            assert_eq!(
+                run(&at(choosing)).as_deref(),
+                Some("ui.chooser_cancel"),
+                "{place}"
+            );
+        }
+        // What is typed or filtered in the files still goes first.
+        let mut typing = super::placed(super::PANE, planning);
+        typing.add("typing");
+        assert_eq!(
+            run(&[root(planning), typing]).as_deref(),
+            Some("ui.type_end")
+        );
+        // A window of the user's own: the sidebar's Escape, not the plan's.
+        assert_eq!(
+            run(&[root(own), super::placed(super::SIDEBAR, own)]).as_deref(),
+            Some("ui.focus_pane")
         );
     }
 

@@ -95,7 +95,10 @@ ADR-144 (what a dialog's window offers, its own layout, Recent).
    boolean), Cancel and the accept button (`accept_label`, else Open,
    Save, Select). Its title is the request's. Enter accepts, Escape
    cancels (once a name typed to find a file has gone: the first Escape
-   lets go of it, the user's choice of 2026-11-19), and closing the
+   lets go of it, the user's choice of 2026-11-19; a dialog of Skwir's
+   open in the window, a question, a prompt or a form, its buttons and
+   switches included, and a plan being made take it before, wherever the
+   keyboard is: amended after review, 2026-11-21), and closing the
    window cancels. As built: a dialog's size at first (1000 × 680 at
    100 %), then the size the dialogs were left at, never a tile's, never
    maximized, its shape kept for the next dialog alone (ADR-144, 4); a

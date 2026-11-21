@@ -175,6 +175,16 @@ pub(super) fn turn(
 }
 
 impl Shell {
+    /// What the window says of another program's dialog at the places
+    /// that bind its Escape (`keymap::Dialog`): whether it answers one, and
+    /// whether a plan is being made for it, which lets go there first.
+    pub(crate) fn dialog_keys(&self) -> crate::keymap::Dialog {
+        crate::keymap::Dialog {
+            choosing: self.chooser.is_some(),
+            planning: self.plans.making(),
+        }
+    }
+
     /// What a command with `args` is asked about, now: its `pane`, else
     /// the active one, as `App::pane_or_active` reads it.
     pub(super) fn asked_now(&self, args: &serde_json::Value) -> Asked {

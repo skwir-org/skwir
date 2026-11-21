@@ -3918,6 +3918,9 @@ keymap_place_members = 压缩文件或邮件中的文件
 keymap_place_menu = 右键菜单
 
 # draft
+keymap_place_modal = 对话框
+
+# draft
 keymap_place_model = 3D 模型预览
 
 # draft

@@ -3515,6 +3515,9 @@ keymap_place_members = Files of an archive or a message
 
 keymap_place_menu = Context menu
 
+# A place in the window: any dialog that asks something (a question, a name, a form), wherever in it the keyboard is.
+keymap_place_modal = Dialogs
+
 keymap_place_model = 3D model preview
 
 keymap_place_palette = Command palette

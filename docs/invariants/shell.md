@@ -1765,7 +1765,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   the dialog's own Enter (a focused Cancel cancels): a footer holds only
   `modal::Pressed` controls; a press on one
   leaves the keyboard in the field; Escape that nothing in the dialog
-  answered cancels it (`modal::modal`).
+  answered cancels it (`modal::modal`), wherever its keyboard is, a
+  button or a switch included: it is bound in the dialog's frame
+  (`keymap::MODAL`, `ui.dismiss`), deeper than what the window behind
+  binds Escape to (a plan's Cancel, another program's dialog's), as gpui
+  runs the deepest binding before any key's listener.
 - **A few choices are in sight side by side**, in every dialog:
   segments (`controls::segmented`), one stop for Tab and a radio group
   to a screen reader, as a form's `Kind::Row`, a setting's choice and
@@ -2277,10 +2281,13 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   cancel: Escape wherever the keyboard is in the window (bound where its
   root says `choosing`, as Ctrl+Q is; the files, the sidebar and the
   timeline say `choosing` too, `keymap::placed`, so their own Escape gives
-  way), what is open or typed there taking it first: a menu, a popup, a
-  list of the bar (`chooser lists`), the address edited, a filter, a name
-  typed to find a file (`pane choosing typing`, `ui.type_end`), a plan
-  being made; a selection does not. A name taken is asked Replace? in skwir
+  way), what is open or typed there taking it first: a modal dialog (a
+  question, a prompt, a form, its buttons and switches included), a
+  menu, a popup, a list of the bar (`chooser lists`), the address edited,
+  a filter, a name typed to find a file (`pane choosing typing`,
+  `ui.type_end`), a plan being made (which the files, the sidebar and the
+  timeline say too, `keymap::Dialog`, so it lets go there before the
+  dialog does); a selection does not. A name taken is asked Replace? in skwir
   (`Confirmed::Replace`, read on a worker in the folder's lane), and a
   request its program closes takes its window away at the next wake.
   Only the user answers: `ui.chooser_*` are the user's alone, and no

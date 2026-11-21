@@ -1441,7 +1441,7 @@ pub fn render(
         .w_full()
         .key_context(crate::keymap::placed(
             crate::keymap::TIMELINE,
-            shell.chooser.is_some(),
+            shell.dialog_keys(),
         ));
     if let Some(focus) = &focus {
         chart_area = chart_area.track_focus(focus);
