@@ -23,16 +23,10 @@ pub(crate) fn user_file() -> Option<PathBuf> {
 
 /// The scheme Plasma's settings name now.
 pub(crate) fn read() -> Option<Scheme> {
-    let files: Vec<String> = user_file()
-        .into_iter()
-        .chain(
-            crate::xdg::config_dirs()
-                .into_iter()
-                .map(|config| config.join("kdeglobals")),
-        )
-        .filter_map(|path| crate::file::read_regular_text(&path, crate::file::DESKTOP_FILE).ok())
-        .collect();
-    scheme_of(&files, &crate::xdg::data_search())
+    scheme_of(
+        &crate::desktop_settings::kdeglobals_cascade(),
+        &crate::xdg::data_search(),
+    )
 }
 
 /// The scheme `kdeglobals` (each file's text, the user's first, read as

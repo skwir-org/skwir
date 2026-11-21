@@ -254,15 +254,6 @@ pub(crate) fn kdeglobals_cascade() -> Vec<String> {
         .collect()
 }
 
-/// Plasma's `kdeglobals`, as text.
-pub(crate) fn kdeglobals() -> Option<String> {
-    crate::file::read_regular_text(
-        &crate::xdg::config_home()?.join("kdeglobals"),
-        crate::file::DESKTOP_FILE,
-    )
-    .ok()
-}
-
 /// The GTK3 theme `GTK_THEME` forces on GTK's applications (`Name`, or
 /// `Name:dark`), whatever their settings say.
 pub(crate) fn forced_gtk_theme() -> Option<String> {

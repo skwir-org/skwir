@@ -198,11 +198,13 @@ mod imp {
 
     use crate::desktop_settings::{self as desktop, Chosen};
 
-    /// The theme in `kdeglobals`; Plasma's own, Breeze, when it names none.
-    pub(super) fn kde_theme(kdeglobals: Option<&str>) -> String {
-        kdeglobals
-            .and_then(|text| desktop::keyfile_value(text, "Icons", "Theme"))
-            .unwrap_or_else(|| "breeze".to_owned())
+    /// The theme `kdeglobals` names (each file's text, the user's first:
+    /// `desktop::kdeglobals_cascade`), read as `KConfig` cascades them
+    /// (`desktop::kconfig_value`: the global theme's defaults and an
+    /// administrator's lock included); Plasma's own, Breeze, when they
+    /// name none.
+    pub(super) fn kde_theme(kdeglobals: &[impl AsRef<str>]) -> String {
+        desktop::kconfig_value(kdeglobals, "Icons", "Theme").unwrap_or_else(|| "breeze".to_owned())
     }
 
     /// Where icon themes are installed, as the icon theme specification
@@ -294,7 +296,7 @@ mod imp {
     fn desktop_setting() -> Option<String> {
         match desktop::chosen()? {
             Chosen::GSettings(schema) => desktop::gsettings(schema, "icon-theme"),
-            Chosen::Kde => Some(kde_theme(desktop::kdeglobals().as_deref())),
+            Chosen::Kde => Some(kde_theme(&desktop::kdeglobals_cascade())),
             Chosen::Xfce => desktop::xfconf("/Net/IconThemeName"),
             Chosen::Lxqt => desktop::lxqt_conf()
                 .as_deref()
@@ -454,16 +456,36 @@ mod tests {
         );
     }
 
+    /// Plasma's theme is what `kdeglobals` names as `KConfig` cascades
+    /// them: the user's, else the global theme's defaults or the
+    /// system's, an administrator's lock over the user's; else Breeze.
     #[test]
     fn plasma_s_theme_is_breeze_unless_kdeglobals_names_another() {
         use imp::kde_theme;
-        let kdeglobals = "[General]\nColorScheme=BreezeDark\n\n[Icons]\nTheme=Papirus\n";
-        assert_eq!(kde_theme(Some(kdeglobals)), "Papirus");
+        let user = "[General]\nColorScheme=BreezeDark\n\n[Icons]\nTheme=Papirus\n";
+        let none: [&str; 0] = [];
+        assert_eq!(kde_theme(&[user]), "Papirus");
         assert_eq!(
-            kde_theme(Some("[General]\nColorScheme=BreezeDark\n")),
+            kde_theme(&["[General]\nColorScheme=BreezeDark\n"]),
             "breeze"
         );
-        assert_eq!(kde_theme(None), "breeze");
+        assert_eq!(kde_theme(&none), "breeze");
+        let defaults = "[Icons]\nTheme=breeze-dark\n";
+        assert_eq!(
+            kde_theme(&["[General]\nColorScheme=BreezeDark\n", defaults]),
+            "breeze-dark",
+            "the global theme's, in kdedefaults"
+        );
+        assert_eq!(
+            kde_theme(&[user, defaults]),
+            "Papirus",
+            "the user's over it"
+        );
+        assert_eq!(
+            kde_theme(&[user, defaults, "[Icons][$i]\nTheme=Adwaita\n"]),
+            "Adwaita",
+            "an administrator's lock over both"
+        );
     }
 
     #[test]
