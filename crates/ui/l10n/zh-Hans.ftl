@@ -765,7 +765,7 @@ chooser_no_folder = 文件夹 { $folder } 不存在
 chooser_not_given = 无法选择 { $place } 中的文件
 
 # draft
-chooser_replace = 替换 { $name }？{ $folder } 中已有同名文件。
+chooser_replace = 替换{ $name }？{ $folder } 中已有同名文件。
 
 # draft
 chooser_replace_several = 替换 { $folder } 中已有的 { $count } 个同名文件？

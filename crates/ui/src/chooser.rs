@@ -276,6 +276,18 @@ fn undo_forget(
     put_back(kept, app, &folders, now_used.max(used))
 }
 
+/// The question before another program saves over the file at `path`:
+/// its name quoted and its folder isolated, as every name said is, their
+/// direction controls shown (ADR-139).
+fn replace_asked(path: &Path) -> Words {
+    words!(
+        chooser_replace = "Replace { $name }? A file of that name is already in { $folder }.",
+        name = skwir_core::words::Name::of(path),
+        folder = path.parent().unwrap_or(path),
+        note = "Asked before another program saves over a file: name: the file's name; folder: where it is."
+    )
+}
+
 /// What `asked` did, as its message says it: what was asked, whatever is
 /// left (a program's last folder taken out is that folder taken out), and
 /// the Undo by what it undoes (one taken out, or all).
@@ -1368,21 +1380,8 @@ impl Shell {
                         }
                     }
                     Some(false) => {
-                        let name = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        let folder = path
-                            .parent()
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_default();
                         this.open_confirm(
-                            words!(
-                                chooser_replace = "Replace { $name }? A file of that name is already in { $folder }.",
-                                name = name,
-                                folder = folder,
-                                note = "Asked before another program saves over a file: name: the file's name; folder: where it is."
-                            ),
+                            replace_asked(&path),
                             crate::prompts::Confirmed::Replace(vec![path]),
                             window,
                             cx,
@@ -1391,10 +1390,7 @@ impl Shell {
                     None if !parent => this.set_status(
                         words!(
                             chooser_no_folder = "There is no folder { $folder }",
-                            folder = path
-                                .parent()
-                                .map(|p| p.display().to_string())
-                                .unwrap_or_default(),
+                            folder = path.parent().unwrap_or(&path),
                             note = "Said where a name typed in another program's Save dialog names a folder that does not exist."
                         ),
                         true,
@@ -1473,7 +1469,7 @@ impl Shell {
                            *[other] Replace the { $count } files of the same names already in { $folder }?
                         }",
                         count = taken,
-                        folder = folder.display().to_string(),
+                        folder = folder.as_path(),
                         note = "Asked before another program saves several files over files already there: count: how many are there; folder: where."
                     ),
                     crate::prompts::Confirmed::Replace(paths),
@@ -2288,6 +2284,19 @@ mod tests {
             "“two” put back in Recent Folders"
         );
         assert_eq!(said(undone(None)), "Recent Folders put back");
+    }
+
+    /// The file a dialog would save over is named as a name, quoted, its
+    /// folder as a path, each with its direction controls shown: a name
+    /// holding U+202E never reads reversed in the question.
+    #[test]
+    fn replace_names_the_file_and_its_folder_as_names() {
+        let asked = replace_asked(Path::new("/home/a/\u{202e}cod/report_\u{202e}fdp.exe"));
+        assert_eq!(
+            asked.english(),
+            "Replace “report_⟨RLO⟩fdp.exe”? A file of that name is already in /home/a/⟨RLO⟩cod."
+        );
+        assert!(asked.say().contains("\u{2068}/home/a/⟨RLO⟩cod\u{2069}"));
     }
 
     /// The Undo of Remove From Sidebar or Clear puts back what it took out
