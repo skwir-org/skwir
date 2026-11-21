@@ -453,3 +453,34 @@ fn a_folder_moved_elsewhere_takes_along_what_the_dialogs_remember() {
     assert_eq!(dialogs.of(&at).map(|o| o.key), Some(SortKey::Size));
     assert_eq!(dialogs.of(&Location::from_path(&sorted)), None);
 }
+
+/// A dialog's button showing companions shows its hidden files as the
+/// next dialog's too, as Show hidden files there does (ADR-145); the
+/// companions' setting is the user's one, every window's.
+#[test]
+fn a_dialog_showing_companions_keeps_its_hidden_files_for_the_next() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    let (_, _, dialog) = app
+        .open_dialog_window(Location::from_path(dir.path()))
+        .unwrap();
+    assert!(!sort_of(&app, dialog).show_hidden);
+    run(
+        &app,
+        "show_companions",
+        serde_json::json!({ "pane": dialog }),
+    );
+    assert!(sort_of(&app, dialog).show_hidden);
+    assert!(
+        app.settings
+            .get::<SortSpec>(skwir_core::orders::DIALOG_ORDER)
+            .is_some_and(|kept| kept.show_hidden),
+        "kept for the next dialog"
+    );
+    assert!(app.companions.shown(), "the user's setting, on");
+    let (_, _, next) = app
+        .open_dialog_window(Location::from_path(dir.path()))
+        .unwrap();
+    assert!(sort_of(&app, next).show_hidden);
+}

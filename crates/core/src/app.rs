@@ -5397,10 +5397,19 @@ mod builtin {
             ),
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                if let Some(p) = app.workspace.write().pane_mut(pane)
+                let mut ws = app.workspace.write();
+                if let Some(p) = ws.pane_mut(pane)
                     && !p.sort.show_hidden
                 {
                     p.set_show_hidden(true);
+                }
+                // In a dialog, its hidden files the next dialog's, as
+                // `toggle_hidden` keeps them (ADR-145); the companions'
+                // setting stays the user's one, in every window.
+                let dialogs = dialog_order_anew(&mut ws, pane);
+                drop(ws);
+                if dialogs {
+                    crate::orders::save_dialog_order(app);
                 }
                 if !app.companions.shown() {
                     app.dispatch(&Invocation::with_args(

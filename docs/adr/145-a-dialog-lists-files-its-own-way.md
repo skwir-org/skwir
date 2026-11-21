@@ -58,7 +58,9 @@ after the research below). Amends ADR-144 (decision 4) and ADR-132.
   (`Workspace::order_of(pane, at)`, `view_of`, `orders_for`), the kind of
   its window choosing the list.
 - A dialog's order is kept as it changes (`sort`, `group`,
-  `toggle_hidden`), from the pane's own order, never a folder's.
+  `toggle_hidden`, `show_companions`: a folder of companions only), from
+  the pane's own order, never a folder's. Show companion files stays the
+  user's one setting, every window's, a dialog's too (ADR-028).
 - The Settings page's Folders first is the user's windows': dialogs have
   no Settings (ADR-144), and change theirs from their View menu.
 
