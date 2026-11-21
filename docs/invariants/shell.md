@@ -2062,8 +2062,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   window that ran each one (`finishing::ran`, recorded by `Shell::run`),
   else to the active window; a window's command asked from elsewhere
   (`request_front`) to the window of the pane it names, else the active;
-  notifications, reviews, questions, clashes, secrets and forms to the
-  active window; then each window syncs (`Shell::sync`, which takes its
+  notifications, questions, clashes, secrets and forms to the window
+  whose action said or asked them (`app::asking_in`), else, with reviews,
+  to the active window; then each window syncs (`Shell::sync`, which takes its
   `inbox`). The desktop is told once for the program (looked at while one
   window has the focus), and what it asks (a notice clicked, Pause all)
   is answered there. A shell never takes a program-wide queue of the
@@ -2293,10 +2294,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   as it opens) ask there, a dialog's window too, the user's answer to
   what the user did there (a server's password, a volume's passphrase,
   names a paste found taken: ADR-144, 1), and `App::can_ask` holds there
-  in a skwir the bus started for a dialog alone. What no window asked
+  in a skwir the bus started for a dialog alone. What it says is said
+  there the same way (`App::take_notifications_to`): Recent Folders'
+  Remove and Clear, a tag set there, with their Undo, which runs there
+  (ADR-144, 2); what no window said, or a window gone, goes to the
+  front window. What no window asked
   (an agent's call, a script's, a plugin's work of its own), what a
   window gone asked, proposals, a notice that stays
-  (`App::take_notifications_for`) and what is asked from elsewhere
+  (`App::take_notifications_to`) and what is asked from elsewhere
   (`ui.*` requests) go to a window of the user's own (`own_windows`),
   never to a dialog's: while dialogs' windows alone are up, they wait in
   the core as with no window at all, and what the user's last own window

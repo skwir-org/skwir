@@ -530,8 +530,9 @@ pub struct App {
     /// The forms plugins ask the user to fill (ADR-086), until the window
     /// takes them, and who waits for each answer.
     pub(crate) forms: crate::form::Forms,
-    /// Messages from background work for the UI to show.
-    notifications: parking_lot::Mutex<Vec<Notification>>,
+    /// Messages from background work for the UI to show, each with the
+    /// pane whose window's action said it (`asking_pane`).
+    notifications: parking_lot::Mutex<AskedIn<Notification>>,
     /// The question that stays each plugin asked last (`ask_quietly`),
     /// while it stands: taken after the queue's lock where both are.
     asked_quietly: parking_lot::Mutex<AskedQuietly>,
@@ -1076,7 +1077,7 @@ impl App {
         // What it asked and no window took yet goes unasked.
         {
             let mut queued = self.notifications.lock();
-            queued.retain(|n| n.owner.as_deref() != Some(owner));
+            queued.retain(|(_, n)| n.owner.as_deref() != Some(owner));
             self.asked_quietly.lock().standing.remove(owner);
         }
         self.commands.unregister_owner(owner);
@@ -3400,8 +3401,9 @@ impl App {
     }
 
     /// Queue a notice that is timed, `owner`'s where one says it, and wake
-    /// the UI. An owner's gate is read under the queue's lock, which the
-    /// withdrawal takes after closing it.
+    /// the UI. It is said in the window whose action said it
+    /// (`asking_pane`, `take_notifications_to`). An owner's gate is read
+    /// under the queue's lock, which the withdrawal takes after closing it.
     fn queue_notice(
         &self,
         level: NotifyLevel,
@@ -3414,15 +3416,18 @@ impl App {
             if owner.is_some_and(|owner| !self.registry.gate().is_open(owner)) {
                 return;
             }
-            queued.push(Notification {
-                level,
-                text,
-                setting: None,
-                actions,
-                stays: false,
-                owner: owner.map(str::to_owned),
-                question: None,
-            });
+            queued.push((
+                asking_pane(),
+                Notification {
+                    level,
+                    text,
+                    setting: None,
+                    actions,
+                    stays: false,
+                    owner: owner.map(str::to_owned),
+                    question: None,
+                },
+            ));
         }
         self.wake();
     }
@@ -3458,16 +3463,19 @@ impl App {
             asked.standing.insert(owner.to_owned(), question);
             // The one it asked before, not yet taken by a window, goes; one
             // a window shows goes at its next sync (`question_stands`).
-            queued.retain(|n| !(n.stays && n.owner.as_deref() == Some(owner)));
-            queued.push(Notification {
-                level: NotifyLevel::Info,
-                text: text.into(),
-                setting: None,
-                actions: buttons,
-                stays: true,
-                owner: Some(owner.to_owned()),
-                question: Some(question),
-            });
+            queued.retain(|(_, n)| !(n.stays && n.owner.as_deref() == Some(owner)));
+            queued.push((
+                asking_pane(),
+                Notification {
+                    level: NotifyLevel::Info,
+                    text: text.into(),
+                    setting: None,
+                    actions: buttons,
+                    stays: true,
+                    owner: Some(owner.to_owned()),
+                    question: Some(question),
+                },
+            ));
         }
         self.wake();
     }
@@ -3480,7 +3488,7 @@ impl App {
     pub fn take_back_question(&self, owner: &str) {
         {
             let mut queued = self.notifications.lock();
-            queued.retain(|n| !(n.stays && n.owner.as_deref() == Some(owner)));
+            queued.retain(|(_, n)| !(n.stays && n.owner.as_deref() == Some(owner)));
             if self.asked_quietly.lock().standing.remove(owner).is_none() {
                 return;
             }
@@ -3526,38 +3534,50 @@ impl App {
 
     /// Like [`App::notify`], pointing at the setting that fixes the problem.
     pub fn notify_about_setting(&self, level: NotifyLevel, text: impl Into<Words>, key: &str) {
-        self.notifications.lock().push(Notification {
-            level,
-            text: text.into(),
-            setting: Some(key.into()),
-            actions: Vec::new(),
-            stays: false,
-            owner: None,
-            question: None,
-        });
+        self.notifications.lock().push((
+            asking_pane(),
+            Notification {
+                level,
+                text: text.into(),
+                setting: Some(key.into()),
+                actions: Vec::new(),
+                stays: false,
+                owner: None,
+                question: None,
+            },
+        ));
         self.wake();
     }
 
     /// Messages queued since the last call, oldest first.
     pub fn take_notifications(&self) -> Vec<Notification> {
-        std::mem::take(&mut *self.notifications.lock())
+        untagged(std::mem::take(&mut *self.notifications.lock()))
     }
 
-    /// Messages queued since the last call, oldest first, for a window:
-    /// for one of the user's own (`own`), all of them; for one answering
-    /// another program's dialog, all but the questions that stay
-    /// (`Notification::stays`), which wait queued, in their order, for a
-    /// window of the user's own, as the questions do (ADR-141, 8).
-    pub fn take_notifications_for(&self, own: bool) -> Vec<Notification> {
+    /// The messages queued since the last call that `to` finds a window
+    /// for, oldest first, each with it: `to` is handed the pane whose
+    /// window's action said each (`asking_in`), `None` for what no window
+    /// said (an agent's call, a script's, work of its own), and whether it
+    /// stays (`Notification::stays`). What the user did in a window is said
+    /// there, another program's dialog's too, where its Undo runs (ADR-144,
+    /// 2); a question that stays waits for a window of the user's own
+    /// (ADR-141, 8). One it finds none for waits for the next call, in its
+    /// order.
+    pub fn take_notifications_to<W>(
+        &self,
+        to: impl Fn(Option<PaneId>, bool) -> Option<W>,
+    ) -> Vec<(W, Notification)> {
         let mut queued = self.notifications.lock();
-        if own {
-            return std::mem::take(&mut *queued);
+        let mut taken = Vec::new();
+        let mut left = Vec::new();
+        for (pane, said) in queued.drain(..) {
+            match to(pane, said.stays) {
+                Some(window) => taken.push((window, said)),
+                None => left.push((pane, said)),
+            }
         }
-        let (stay, said) = std::mem::take(&mut *queued)
-            .into_iter()
-            .partition(|n| n.stays);
-        *queued = stay;
-        said
+        *queued = left;
+        taken
     }
 
     /// What a command acts on: the entries it names (a surface acting on
@@ -6527,14 +6547,74 @@ mod tests {
             Vec::new(),
         );
         app.notify(NotifyLevel::Info, Words::as_written("Said then".to_owned()));
-        assert_eq!(
-            texts(app.take_notifications_for(false)),
-            ["Said first", "Said then"]
+        // Only another program's dialog is up: a question that stays has no
+        // window yet.
+        let dialog_alone =
+            |_: Option<crate::workspace::PaneId>, stays: bool| (!stays).then_some(());
+        let taken = |to: &dyn Fn(Option<crate::workspace::PaneId>, bool) -> Option<()>| {
+            texts(
+                app.take_notifications_to(to)
+                    .into_iter()
+                    .map(|((), n)| n)
+                    .collect(),
+            )
+        };
+        assert_eq!(taken(&dialog_alone), ["Said first", "Said then"]);
+        assert!(taken(&dialog_alone).is_empty());
+        assert_eq!(taken(&|_, _| Some(())), ["Asked?", "Asked too?"]);
+    }
+
+    /// What a window's action says is said in that window, another program's
+    /// dialog's too, where its Undo runs (ADR-144, 2): said by the command
+    /// itself or by the work it started on a worker; what no window asked
+    /// names none.
+    #[test]
+    fn what_a_window_s_action_says_is_said_there() {
+        use super::NotifyLevel;
+        use crate::words::Words;
+        use crate::workspace::PaneId;
+        let tmp = tempfile::tempdir().unwrap();
+        let app =
+            std::sync::Arc::new(super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap());
+        let dialog = PaneId(7);
+        app.notify(
+            NotifyLevel::Info,
+            Words::as_written("No window's".to_owned()),
         );
-        assert!(app.take_notifications_for(false).is_empty());
+        let (done, finished) = std::sync::mpsc::channel();
+        {
+            let _asking = super::asking_in(Some(dialog));
+            app.notify_undoable(
+                Words::as_written("Recent Folders cleared".to_owned()),
+                false,
+                crate::command::Invocation::new("ui.chooser_forget_folders"),
+            );
+            let worker = std::sync::Arc::clone(&app);
+            app.scheduler.spawn(
+                crate::scheduler::Priority::Normal,
+                "said-from-a-worker",
+                app.lifetime().child(),
+                move || {
+                    worker.notify(NotifyLevel::Done, Words::as_written("Tagged".to_owned()));
+                    let _ = done.send(());
+                },
+            );
+        }
+        finished
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the worker said it");
+        let said: Vec<(Option<PaneId>, String)> = app
+            .take_notifications_to(|pane, _| Some(pane))
+            .into_iter()
+            .map(|(pane, n)| (pane, n.text.english()))
+            .collect();
         assert_eq!(
-            texts(app.take_notifications_for(true)),
-            ["Asked?", "Asked too?"]
+            said,
+            [
+                (None, "No window's".to_owned()),
+                (Some(dialog), "Recent Folders cleared".to_owned()),
+                (Some(dialog), "Tagged".to_owned()),
+            ]
         );
     }
 

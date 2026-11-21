@@ -864,8 +864,9 @@ pub(crate) struct Inbox {
 
 /// Take in what the core sent and asked, once for the program, and hand
 /// each window its part: what a plan did to the window that ran it (else
-/// the active one), a window's command to the window of the pane it names,
-/// the rest to the active window. "The active window" is one that is up
+/// the active one), what a window's action said or asked to that window
+/// (`app::asking_in`), a window's command to the window of the pane it
+/// names, the rest to the active window. "The active window" is one that is up
 /// (`front_of`): what is taken from the core's queues is never left in the
 /// inbox of a window that is not. Then tell the desktop, and do what it
 /// asked.
@@ -947,11 +948,11 @@ fn deliver(cx: &mut App) {
     if let Some(at) = wake {
         crate::work::wake_after(&shared, &app, at, cx);
     }
-    // What is said goes to the front window, whichever it is; a question
-    // that stays waits for one of the user's own (ADR-141, 8), which the
-    // front is whenever one is up.
-    let inbox = inboxes.entry(front).or_default();
-    inbox.notifications = app.take_notifications_for(own_front.is_some());
+    // What is said goes to the window whose action said it (`said_in`).
+    let said_to = |pane, stays| said_in(pane, stays, &in_window, own_front, front);
+    for (window, said) in app.take_notifications_to(said_to) {
+        inboxes.entry(window).or_default().notifications.push(said);
+    }
     // What asks the user an answer goes to the window whose action asked
     // it while it is up, another program's dialog's too: the user's answer
     // to what the user did there (ADR-144, 1; `app::asking_in`). What no
@@ -1007,6 +1008,27 @@ fn deliver(cx: &mut App) {
     if quit_asked {
         quit_as_asked(cx);
     }
+}
+
+/// The window a message goes to (`deliver`), said by the action of `pane`'s
+/// window (`app::asking_in`), `None` for no window's: that window while it
+/// is up (`in_window`), another program's dialog's too, where what the user
+/// did there is said and its Undo runs (ADR-144, 2); else the front window,
+/// whichever it is. A question that stays (`stays`) goes only to the front
+/// window of the user's own (`own_front`), and waits in the core while none
+/// is up (ADR-141, 8).
+fn said_in(
+    pane: Option<PaneId>,
+    stays: bool,
+    in_window: &HashMap<PaneId, WindowId>,
+    own_front: Option<WindowId>,
+    front: WindowId,
+) -> Option<WindowId> {
+    if stays {
+        return own_front;
+    }
+    pane.and_then(|pane| in_window.get(&pane).copied())
+        .or(Some(front))
 }
 
 /// What scripts and agents asked of the window (`App::take_front_requests`)
@@ -2389,7 +2411,7 @@ mod tests {
     use skwir_core::workspace::WindowId;
     use skwir_platform::desktop::Standing;
 
-    use super::{front_of, presence, sort_asked_meanwhile};
+    use super::{front_of, presence, said_in, sort_asked_meanwhile};
     use crate::activity::{Stopped, Under};
     use crate::toast::Running;
     use crate::work::Work;
@@ -2419,6 +2441,35 @@ mod tests {
             "the active one is not up"
         );
         assert_eq!(front_of::<&str>(&[], WindowId(1)), None);
+    }
+
+    /// What a window's action says is said there, a dialog's window too,
+    /// though a window of the user's own is in front: Recent Folders' Clear
+    /// and its Undo, which runs only where the dialog is (ADR-144, 2). What
+    /// no window said, or one gone, goes to the front; a question that stays
+    /// only to the user's own, waiting while none is up.
+    #[test]
+    fn what_a_window_says_goes_to_that_window() {
+        use skwir_core::workspace::PaneId;
+        let (own, dialog) = (WindowId(1), WindowId(2));
+        let in_window = std::collections::HashMap::from([(PaneId(10), own), (PaneId(20), dialog)]);
+        let said =
+            |pane, stays, own_front, front| said_in(pane, stays, &in_window, own_front, front);
+        assert_eq!(said(Some(PaneId(20)), false, Some(own), own), Some(dialog));
+        assert_eq!(said(Some(PaneId(10)), false, Some(own), dialog), Some(own));
+        assert_eq!(said(None, false, Some(own), own), Some(own), "no window's");
+        assert_eq!(
+            said(Some(PaneId(30)), false, Some(own), own),
+            Some(own),
+            "gone"
+        );
+        assert_eq!(
+            said(None, false, None, dialog),
+            Some(dialog),
+            "dialogs alone"
+        );
+        assert_eq!(said(Some(PaneId(20)), true, Some(own), own), Some(own));
+        assert_eq!(said(Some(PaneId(20)), true, None, dialog), None, "waits");
     }
 
     /// The tags are an interface people's window rules name (ADR-141, 9):
