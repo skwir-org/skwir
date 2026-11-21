@@ -5431,9 +5431,28 @@ impl Window {
             return Ok(());
         }
 
+        // SKWIR: a frame larger than a texture may be is drawn in pieces.
+        let pieces = crate::assets::image_pieces(
+            data.size(frame_index),
+            self.sprite_atlas.max_texture_side(),
+        );
+        if pieces.len() > 1 {
+            self.paint_image_pieces(
+                bounds,
+                image_bounds,
+                corner_radii,
+                &data,
+                frame_index,
+                grayscale,
+                &pieces,
+            );
+            return Ok(());
+        }
+
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
+            piece: 0,
         };
 
         let tile = self
@@ -5589,16 +5608,123 @@ impl Window {
 
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+        let max = self.sprite_atlas.max_texture_side();
         for frame_index in 0..data.frame_count() {
-            let params = RenderImageParams {
-                image_id: data.id,
-                frame_index,
-            };
+            // SKWIR: every piece of a frame drawn in pieces.
+            for piece in crate::assets::image_pieces(data.size(frame_index), max) {
+                let params = RenderImageParams {
+                    image_id: data.id,
+                    frame_index,
+                    piece: piece.index,
+                };
 
-            self.sprite_atlas.remove(&params.clone().into());
+                self.sprite_atlas.remove(&params.clone().into());
+            }
         }
 
         Ok(())
+    }
+
+    /// SKWIR: a frame larger than the atlas's largest texture, drawn as
+    /// `pieces` (0090). Each piece holds the pixels beside its own, which
+    /// its edge is filtered with, and is drawn over its own pixels alone,
+    /// their edges on whole device pixels: two pieces meet without a gap
+    /// or a pixel drawn twice, and a magnified seam is filtered as the
+    /// whole would be. Only a piece that shows is uploaded. The frame's
+    /// corners are rounded on the pieces that hold them.
+    fn paint_image_pieces(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        image_bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        data: &Arc<RenderImage>,
+        frame_index: usize,
+        grayscale: bool,
+        pieces: &[crate::assets::ImagePiece],
+    ) {
+        let size = data.size(frame_index);
+        let Some(bytes) = data.as_bytes(frame_index) else {
+            return;
+        };
+        let image = self.snap_bounds(image_bounds);
+        let content_mask = self.snapped_content_mask();
+        let clip = content_mask.bounds.intersect(&self.snap_bounds(bounds));
+        // Where a column's or a row's edge falls on the screen.
+        let across =
+            |x: i32| image.origin.x.0 + image.size.width.0 * x as f32 / size.width.0.max(1) as f32;
+        let down = |y: i32| {
+            image.origin.y.0 + image.size.height.0 * y as f32 / size.height.0.max(1) as f32
+        };
+        let on_screen = |pixels: Bounds<DevicePixels>, round: bool| {
+            let at = |value: f32| if round { value.round() } else { value };
+            Bounds::from_corners(
+                point(
+                    ScaledPixels(at(across(pixels.left().0))),
+                    ScaledPixels(at(down(pixels.top().0))),
+                ),
+                point(
+                    ScaledPixels(at(across(pixels.right().0))),
+                    ScaledPixels(at(down(pixels.bottom().0))),
+                ),
+            )
+        };
+        let radii = corner_radii
+            .clamp_radii_for_quad_size(image_bounds.size)
+            .scale(self.scale_factor());
+        let opacity = self.element_opacity();
+        let stride = size.width.0.max(0) as usize * 4;
+        for piece in pieces {
+            let shown = on_screen(piece.own, true).intersect(&clip);
+            if shown.size.width.0 <= 0. || shown.size.height.0 <= 0. {
+                continue;
+            }
+            let held = piece.held;
+            let params = RenderImageParams {
+                image_id: data.id,
+                frame_index,
+                piece: piece.index,
+            };
+            let tile = self
+                .sprite_atlas
+                .get_or_insert_with(params.into(), &mut || {
+                    let (left, width) =
+                        (held.left().0 as usize * 4, held.size.width.0 as usize * 4);
+                    let mut pixels = Vec::with_capacity(width * held.size.height.0 as usize);
+                    for row in held.top().0..held.bottom().0 {
+                        let start = row as usize * stride + left;
+                        pixels.extend_from_slice(&bytes[start..start + width]);
+                    }
+                    Ok(Some((held.size, Cow::Owned(pixels))))
+                });
+            let Ok(Some(tile)) = tile else {
+                log::error!("an image's piece could not be put in the atlas");
+                continue;
+            };
+            // The frame's own corners, on the pieces that hold them.
+            let (left, top) = (held.left().0 == 0, held.top().0 == 0);
+            let (right, bottom) = (held.right() == size.width, held.bottom() == size.height);
+            let corner = |holds: bool, radius: ScaledPixels| {
+                if holds { radius } else { ScaledPixels(0.) }
+            };
+            self.next_frame.scene.insert_primitive(PolychromeSprite {
+                order: 0,
+                pad: 0,
+                grayscale: grayscale.into(),
+                bounds: on_screen(held, false),
+                content_mask: ContentMask {
+                    bounds: shown,
+                    ..content_mask.clone()
+                },
+                corner_radii: Corners {
+                    top_left: corner(left && top, radii.top_left),
+                    top_right: corner(right && top, radii.top_right),
+                    bottom_right: corner(right && bottom, radii.bottom_right),
+                    bottom_left: corner(left && bottom, radii.bottom_left),
+                },
+                tile,
+                opacity,
+            });
+        }
     }
 
     /// Removes from the sprite atlas, at every size it was drawn at, the SVG
@@ -5634,15 +5760,22 @@ impl Window {
     /// Returns whether every frame of an image is present in the sprite atlas.
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_image_atlas_entry(&self, data: &RenderImage) -> bool {
+        let max = self.sprite_atlas.max_texture_side();
+        // SKWIR: a frame drawn in pieces is there with any of them.
         data.frame_count() > 0
             && (0..data.frame_count()).all(|frame_index| {
-                self.sprite_atlas.contains(
-                    &RenderImageParams {
-                        image_id: data.id,
-                        frame_index,
-                    }
-                    .into(),
-                )
+                crate::assets::image_pieces(data.size(frame_index), max)
+                    .iter()
+                    .any(|piece| {
+                        self.sprite_atlas.contains(
+                            &RenderImageParams {
+                                image_id: data.id,
+                                frame_index,
+                                piece: piece.index,
+                            }
+                            .into(),
+                        )
+                    })
             })
     }
 
@@ -8373,6 +8506,72 @@ fn with_element_arena_erased(callback: &mut dyn FnMut(&mut Arena)) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    /// SKWIR: a frame wider than the atlas's largest texture (the headless
+    /// atlas's 16 384) is drawn in pieces that meet on a device pixel, each
+    /// holding the column beside its own, and is dropped with all of them
+    /// (0090).
+    #[crate::test]
+    fn an_image_wider_than_a_texture_is_drawn_in_pieces(cx: &mut crate::TestAppContext) {
+        use crate::{AvailableSpace, RenderImage, canvas, point, px, size};
+
+        let cx = cx.add_empty_window();
+        let frame = image::RgbaImage::from_pixel(20_000, 2, image::Rgba([0, 0, 0, 255]));
+        let image = Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(
+            frame
+        )]));
+        let drawn = image.clone();
+        // What the paint put in the scene, read as it painted: the frame is
+        // drawn again before the next update.
+        let painted = Rc::new(RefCell::new(Vec::new()));
+        let seen = painted.clone();
+        cx.draw(
+            point(px(0.), px(0.)),
+            AvailableSpace::max_size(),
+            move |_, _| {
+                canvas(
+                    |_, _, _| {},
+                    move |_, (), window, _| {
+                        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(10.)));
+                        window
+                            .paint_image(
+                                bounds,
+                                bounds,
+                                crate::Corners::default(),
+                                drawn.clone(),
+                                0,
+                                false,
+                            )
+                            .unwrap();
+                        seen.replace(window.next_frame.scene.polychrome_sprites.clone());
+                    },
+                )
+            },
+        );
+        cx.update(|window, _| {
+            let sprites = painted.borrow();
+            assert_eq!(sprites.len(), 2, "two pieces");
+            let (first, second) = (&sprites[0], &sprites[1]);
+            // 16 382 columns of their own, then the rest; each holds one more.
+            assert_eq!(first.tile.bounds.size.width.0, 16_383);
+            assert_eq!(second.tile.bounds.size.width.0, 20_000 - 16_381);
+            // They meet on the device pixel nearest 16 382 / 20 000 of the
+            // 100 pixels the frame is drawn across.
+            let scale = window.scale_factor();
+            let seam = ScaledPixels((16_382. / 20_000. * 100. * scale).round());
+            assert_eq!(first.content_mask.bounds.right(), seam);
+            assert_eq!(second.content_mask.bounds.left(), seam);
+            assert_eq!(first.bounds.left(), ScaledPixels(0.));
+            assert_eq!(second.bounds.right(), ScaledPixels(100. * scale));
+            assert!(first.bounds.right() > first.content_mask.bounds.right() - ScaledPixels(0.5));
+            assert!(window.has_image_atlas_entry(&image));
+            window.drop_image(image.clone()).unwrap();
+            assert!(
+                !window.has_image_atlas_entry(&image),
+                "dropped with its pieces"
+            );
+        });
+    }
+
     /// An SVG given as bytes stays in the atlas, at the size it was drawn
     /// at, until its caller drops it; an SVG it never drew is no matter.
     #[crate::test]

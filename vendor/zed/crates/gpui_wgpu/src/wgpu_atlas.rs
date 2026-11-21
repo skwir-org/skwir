@@ -122,6 +122,10 @@ impl PlatformAtlas for WgpuAtlas {
     fn remove(&self, key: &AtlasKey) {
         self.0.lock().remove(key);
     }
+
+    fn max_texture_side(&self) -> u32 {
+        self.0.lock().backend.max_texture_size
+    }
 }
 
 impl AtlasBackend for WgpuAtlasTextures {
@@ -442,6 +446,7 @@ mod tests {
         let key = AtlasKey::Image(RenderImageParams {
             image_id: ImageId(1),
             frame_index: 0,
+            piece: 0,
         });
         let size = Size {
             width: DevicePixels(1),
@@ -476,6 +481,7 @@ mod tests {
             AtlasKey::Image(RenderImageParams {
                 image_id: ImageId(image_id),
                 frame_index: 0,
+                piece: 0,
             })
         };
         let insert = |key: AtlasKey, size: Size<DevicePixels>| {
@@ -514,6 +520,7 @@ mod tests {
             AtlasKey::Image(RenderImageParams {
                 image_id: ImageId(image_id),
                 frame_index: 0,
+                piece: 0,
             })
         };
         let insert = |key: AtlasKey| {

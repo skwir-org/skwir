@@ -1942,6 +1942,14 @@ pub trait PlatformAtlas {
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
 
+    /// SKWIR: the longest side of a texture the atlas makes. A larger image
+    /// is drawn in pieces ([`crate::Window::paint_image`]). Metal's and Direct3D
+    /// 11's atlases make them up to 16 384 a side; wgpu's as large as the
+    /// device does.
+    fn max_texture_side(&self) -> u32 {
+        16_384
+    }
+
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn contains(&self, _key: &AtlasKey) -> bool {
         false
@@ -3847,6 +3855,7 @@ mod atlas_tests {
         AtlasKey::Image(RenderImageParams {
             image_id: crate::ImageId(image_id),
             frame_index: 0,
+            piece: 0,
         })
     }
 

@@ -557,6 +557,7 @@ mod tests {
         AtlasKey::Image(gpui::RenderImageParams {
             image_id: gpui::ImageId(image_id),
             frame_index,
+            piece: 0,
         })
     }
 

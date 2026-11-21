@@ -98,6 +98,9 @@ RUNS = [
         "window::tests::what_is_laid_out_on_its_own",
         # A length that fits its content within a limit (0079).
         "taffy::fit_content_tests",
+        # A frame larger than a texture, cut and drawn in pieces (0090).
+        "assets::tests::a_frame_larger_than_a_texture",
+        "window::tests::an_image_wider_than_a_texture",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

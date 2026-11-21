@@ -122,6 +122,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0087-right-to-left-answers-kept` | A line holding right-to-left text works out its carets, hit tests and selections at the first question and keeps them with it (`LineLayout::bidi_row`, a wrapped line's rows), each answer after that a search; its carets' edges sorted once, so a long right-to-left line costs a sort, never a move of every edge for each | — |
 | `0088-scroll-handle-direction` | `ScrollHandle::direction`: the direction the element a handle tracks was last laid out in, its own or inherited, which way its offset runs sideways (what `clamp_scroll_position` holds it to) | — |
 | `0089-window-tag` | `WindowOptions::tag` (`WindowTag`): what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and its translated description, part of the first commit where the compositor offers the protocol; X11's `WM_WINDOW_ROLE`, for an ASCII tag (another takes the role back); said again by `Window::set_tag` (the description in another language), the platform told only what changed | — |
+| `0090-image-pieces` | An image larger than the atlas's largest texture is drawn in pieces (`PlatformAtlas::max_texture_side`), each filtered with the pixels beside it, so no seam shows; only the pieces that show are uploaded | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -2264,3 +2265,41 @@ says the description again in the language chosen
 Checked in a window, as recorded in Skwir's STATUS-LOG; no test, as
 gpui's tests have no display server to answer.
 
+### 0090: An image in pieces
+
+The atlas makes a texture for an image at most as large as the device
+allows (wgpu's `max_texture_dimension_2d`, 16 384 on Metal's and Direct3D
+11's atlases); `paint_image` failed for a larger one, and nothing was
+drawn. Skwir kept every picture under 4096 a side for it, so a tall
+picture (2000 × 11 500) was held at 712 × 4096 and blurred when zoomed.
+Now a larger frame is drawn in pieces (`assets::image_pieces`), each a
+key of its own (`RenderImageParams::piece`, 0 for a frame drawn whole):
+
+- **No seam.** A piece holds the row or column beside its own on each
+  side another piece lies, and is drawn over its own pixels alone: its
+  sprite covers what it holds, its content mask what it owns. A
+  magnified edge is then filtered with its true neighbour, as the whole
+  frame would be (0008 clamps sampling to what the piece holds, half a
+  texel in).
+- **No gap, nothing twice.** The edges of what each piece owns are
+  rounded to whole device pixels from one map of the frame onto the
+  screen, so two pieces meet on the same edge and every pixel's centre
+  lies in one mask.
+- **Corners.** The frame's corner radii round only the pieces that hold
+  its corners.
+- **Uploaded as seen.** A piece outside the clip is neither copied nor
+  uploaded; `drop_image` removes every piece, `has_image_atlas_entry`
+  finds a frame by any of them.
+
+`PlatformAtlas::max_texture_side` says the atlas's limit: wgpu's the
+device's, 16 384 by default (Metal, Direct3D 11, the headless atlas). A
+frame within it is drawn as before, as one sprite.
+
+The tests are `assets::tests::a_frame_larger_than_a_texture_is_cut_in_pieces`
+(a frame that fits is one piece; one of 10 × 7 in textures of 5 is twelve,
+each holding at most 5 a side, their own pixels tiling the frame once)
+and `window::tests::an_image_wider_than_a_texture_is_drawn_in_pieces` (a
+20 000 × 2 frame in the headless atlas drawn as two sprites, the first
+holding 16 383 columns and the second the rest and one, meeting on the
+device pixel nearest the seam, dropped with both). Metal's and Direct3D
+11's draws are compiled only.

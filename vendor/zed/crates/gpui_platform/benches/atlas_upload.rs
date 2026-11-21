@@ -189,6 +189,7 @@ fn make_entry(kind: AtlasTextureKind, dimensions: Size<DevicePixels>, index: usi
         AtlasTextureKind::Polychrome => AtlasKey::Image(RenderImageParams {
             image_id: ImageId(index),
             frame_index: 0,
+            piece: 0,
         }),
         AtlasTextureKind::Subpixel => unreachable!(),
     };
