@@ -3346,7 +3346,10 @@ mod tests {
         assert_eq!(kept["places"][&key], "DL");
         // The window's arrangement still reads, and holds no name now.
         let session = crate::session::restore(&app).expect("the window's shape");
-        assert_eq!(session.sidebar_sections.places["places"].order, [key.as_str()]);
+        assert_eq!(
+            session.sidebar_sections.places["places"].order,
+            [key.as_str()]
+        );
         let written = toml::Value::try_from(&session).unwrap().to_string();
         assert!(!written.contains("DL"), "{written}");
 
