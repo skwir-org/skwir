@@ -1034,7 +1034,7 @@ commands_chooser_filter_description = Dans une fenêtre qui répond à la boîte
 commands_chooser_forget_folders = Oublier où le programme a choisi
 
 # draft
-commands_chooser_forget_folders_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : retirer `folder` des dossiers où ce programme a choisi en dernier, ou tous sans lui (s’il n’en reste aucun, sa prochaine boîte de dialogue s’ouvre comme celle d’un programme qui n’a choisi nulle part) ; avec `restore`, remettre les dossiers donnés, du plus récent au plus ancien, et le moment où il a choisi pour la dernière fois (`used`), comme le fait l’annulation du retrait de `folder` (ou de tous), que Rétablir retire de nouveau ; `undo` indique qu’il s’agit d’une annulation, proposée avec Rétablir
+commands_chooser_forget_folders_description = Dans une fenêtre qui répond à la boîte de dialogue d’un autre programme : retirer `folder` des dossiers où ce programme a choisi en dernier, ou tous sans lui (s’il n’en reste aucun, sa prochaine boîte de dialogue s’ouvre comme celle d’un programme qui n’a choisi nulle part) ; avec `restore`, remettre les dossiers donnés, du plus récent au plus ancien, et le moment où il a choisi pour la dernière fois (`used`), comme le fait l’annulation du retrait de `folder` (ou de tous), Rétablir les retirant de nouveau ; `undo` indique qu’il s’agit d’une annulation, dont le message offre Rétablir
 
 # draft
 commands_close_window = Fermer la fenêtre
