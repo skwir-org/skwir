@@ -6,6 +6,9 @@ their own sorting and grouping, a folder's remembered view included,
 "we might want a different view from the Download folder from the file
 chooser and the main window"; chose them all apart, folders first too,
 after the research below). Amends ADR-144 (decision 4) and ADR-132.
+Built on Linux the same day; decision 3 amended after review, the same
+day: an agent's call that sets the user's Folders first asks the user
+first, by what its arguments make it do (ADR-044 amended).
 
 ## Context
 

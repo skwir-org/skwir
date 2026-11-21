@@ -9,8 +9,11 @@ step, before an autonomous night). Built on Linux; Linux's by nature
 the Settings row (eaac889f), the packages; amended as built (decisions
 4, 6 and 10, and the Context's reading of the configuration), on
 2026-11-20 (decision 9: the windows' tags) and on 2026-11-21 (decision
-3: no display reached until asked); decisions 4 and 7 amended by
-ADR-144 (what a dialog's window offers, its own layout, Recent).
+3: no display reached until asked; decision 4, after review: a
+question, a prompt or a form open in the window and a plan being made
+take Escape before the dialog's Cancel, wherever the keyboard is, the
+name field included); decisions 4 and 7 amended by ADR-144 (what a
+dialog's window offers, its own layout, Recent).
 
 ## Context
 

@@ -14,7 +14,13 @@ one tab). Decision 8 amended 2026-11-20, on the user's asking: the
 folders are a group of the sidebar, not a dropdown of the bar; and
 2026-11-21, on the user's choices: none gone, ten kept and five shown,
 said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
-(the dialogs' own order and per-folder memory).
+(the dialogs' own order and per-folder memory). Amended after review,
+2026-11-21: decision 1 (an action going on by itself once its server
+answers again is still its window's), 2 (a desktop's notice of a
+dialog's work brings the dialog forward), 4 (the names given the
+sidebar's places one set, every window's), 6 (All files in each of its
+forms makes no extension the program's), 7 (KConfig's locks read) and
+10 (saving several files, a dropped file's name is not taken).
 
 ## Context
 
@@ -104,16 +110,17 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    third), checks beside features (the terminal, the split) stood
    beside it, and a command about notes or places that rewrote
    pictures or opened a program was offered by its topic.
-2. **What it does not offer is not drawn either**: no tab bar, no split,
-   no terminal panel, no pinned player (a film or a song still plays in
-   the preview), no Activity panel (what the user does there is said
-   as anywhere else; a desktop's notice of its work clicked brings the
-   dialog forward, amended as reviewed, 2026-11-21), no Settings, and the palette offers no setting.
-   It holds one tab (`WindowTabs::holds_tabs`): a place asked in a tab
-   there (a middle click, Ctrl+Enter, a volume mounted for a tab) opens
-   in place (`App::new_tab`), a step Back returns from, its menu offers
-   no tab, and no tab moves into it, so Ctrl+W, its last tab's Close,
-   still cancels the dialog (amended after review, 2026-11-20). F1 there
+2. **What it does not offer is not drawn either**: no tab bar, no
+   split, no terminal panel, no pinned player (a film or a song still
+   plays in the preview), no Activity panel (what the user does there
+   is said as anywhere else; a desktop's notice of its work clicked
+   brings the dialog forward, amended as reviewed, 2026-11-21), no
+   Settings, and the palette offers no setting. It holds one tab
+   (`WindowTabs::holds_tabs`): a place asked in a tab there (a middle
+   click, Ctrl+Enter, a volume mounted for a tab) opens in place
+   (`App::new_tab`), a step Back returns from, its menu offers no tab,
+   and no tab moves into it, so Ctrl+W, its last tab's Close, still
+   cancels the dialog (amended after review, 2026-11-20). F1 there
    lists the sidebar's Ctrl+Enter nowhere: it does what Enter does.
 3. **A place whose files are not files to give** (the Trash: a trashed
    file is gone from where it was) says so
@@ -156,11 +163,12 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    extension of its own and of what descends from it), a name the new
    filter takes already is left as it is, a compound extension the type
    database knows (`.tar.gz`) is replaced whole, and the name's bytes are
-   kept but its extension's (`chooser::swapped_name`). What takes every
-   extension names none: the program's own All files (`*`, `*/*`, or
-   `application/octet-stream`, Qt's for a program giving types) and a
-   `*.*` beside its real filters make no extension the program's; each
-   form is the program's All files wherever the window asks.
+   kept but its extension's (`chooser::swapped_name`). What takes
+   every extension names none: the program's own All files (`*`,
+   `*/*`, or `application/octet-stream`, Qt's for a program giving
+   types) and a `*.*` beside its real filters make no extension the
+   program's; each form is the program's All files wherever the window
+   asks (amended after review, 2026-11-21).
 7. **Recent files.** Opening, Recent comes first in its group of the
    places, the program's filter applied there as in any folder; a
    request naming no folder from a program that chose in none starts
@@ -173,17 +181,18 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
    4 reads through the settings portal on any desktop), Cinnamon's on
    Cinnamon, KDE's `[RecentDocuments]` `UseRecent` false (or `no`, `off`,
    `0`) or `MaxEntries` 0 in `kdeglobals`, read as KConfig reads them
-   (an administrator's lock, `[$i]`, over the user's word); one of
-   them is enough. A bookmark the list holds is visited and Skwir's
-   count of it goes up, another is added, typed by what the file is,
-   each file once, the rest kept byte for byte, the list kept as GTK
-   keeps it (a file older than an age a setting says dropped, then the
-   thousand bookmarks it keeps); a list GLib's reader would refuse is
-   left for its programs to mend, and Skwir never writes one it would
-   refuse. Where the desktop remembers none, or its list names no file
-   that is there (read as the request comes, half a second at most),
-   Recent is neither first nor where the window starts, which is home
-   (amended as reviewed, 2026-11-20).
+   (an administrator's lock, `[$i]`, over the user's word; amended
+   after review, 2026-11-21); one of them is enough. A bookmark the
+   list holds is visited and Skwir's count of it goes up, another is
+   added, typed by what the file is, each file once, the rest kept
+   byte for byte, the list kept as GTK keeps it (a file older than an
+   age a setting says dropped, then the thousand bookmarks it keeps);
+   a list GLib's reader would refuse is left for its programs to mend,
+   and Skwir never writes one it would refuse. Where the desktop
+   remembers none, or its list names no file that is there (read as
+   the request comes, half a second at most), Recent is neither first
+   nor where the window starts, which is home (amended as reviewed,
+   2026-11-20).
 8. **A program's recent folders**: the folders each program last chose
    in, newest first (`ui.chooser_folders`, ten a program, for the 50
    programs that chose last, its one folder a program before read as its
@@ -218,8 +227,9 @@ said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
     selected, with the others dropped from that folder where the request
     takes several; saving, a folder dropped is gone into, a file's
     folder shown and, saving one file, its name taken (saving several,
-    the files keep the names the program gave them). A drop never
-    answers by itself, nor copies or moves anything.
+    the files keep the names the program gave them; amended after
+    review, 2026-11-21). A drop never answers by itself, nor copies or
+    moves anything.
 11. **The answer says how many**: "Open 3 files", "Select 2 folders",
     where the label is Skwir's; a program's own label (`accept_label`)
     is said as it gave it.

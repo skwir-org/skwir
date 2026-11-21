@@ -1,7 +1,11 @@
 # ADR-044: The permission layer: what a plugin may do, what an agent may run, what never leaves
 
 Status: accepted, 2026-10-07 (Phase 6, second step); point 5 added the
-same day. Amends ADR-043: agent calls go through it. Built.
+same day. Amends ADR-043: agent calls go through it. Built. Amended
+2026-10-25 (no host reached unasked), 2026-11-08 (ADR-125: the private
+folders are exclusions) and 2026-11-21, after review (decisions 3 and
+4: what a command's arguments make it do, ADR-145, 3; what keeps the
+user's preference asks an agent first): see Amendments.
 
 ## Context
 
@@ -48,12 +52,19 @@ Each kind of code can be held to a different degree:
    `user_only` (answers what the window asked the user, or presses for
    them: a review's Apply, a menu item, the focused button). Undeclared
    means `acts`. `ui.*` commands are user only unless `commands.rs`
-   lists them as showing, keeping or acting.
-4. **An agent's call** (`permissions::for_agent`, enforced by the
-   control plugin): reads, shows and plans run (plans go to review);
-   keeps and acts run once the user allows it in the review queue ("An
-   agent asks to run …", Allow or Refuse: `App::ask`); user only is
-   refused and not listed. A script (`skwir cmd`) is the user's own and exempt.
+   lists them as showing, keeping or acting. A command whose arguments
+   make it do more says so by them (`Declared::effect_by`: `sort` given
+   `folders_first` keeps), which only raises what it declares
+   (`CommandSpec::effect_with`, the stricter of the two; amended
+   2026-11-21).
+4. **An agent's call** is let do what the command does with the
+   arguments given (`permissions::for_agent_call`, enforced by the
+   control plugin; its tool is listed by what it declares, `for_agent`,
+   and never as read-only where its arguments may make it do more):
+   reads, shows and plans run (plans go to review); keeps and acts run
+   once the user allows it in the review queue ("An agent asks to run
+   …", Allow or Refuse: `App::ask`); user only is refused and not
+   listed. A script (`skwir cmd`) is the user's own and exempt.
 5. **What an agent counts** (2026-10-07, after the first MCP trial).
    Redaction removed names, not counts: a content search answered
    `total: 1` with the private match removed, so an agent could probe a
@@ -134,4 +145,8 @@ Each kind of code can be held to a different degree:
   one way to keep one), so a command its list forgot fails safe.
   `remote.keep_as_server`, declared `shows`, keeps a server in the
   Network section and takes a bookmark out: it acts, as making a
-  bookmark does.
+  bookmark does. The rule by the arguments came with ADR-145, 3 (the
+  same day): an agent's call is gated by what it does with the
+  arguments given (`permissions::for_agent_call`), where it was gated by
+  the declaration alone (`for_agent`, which now only lists the tool), and
+  a tool whose arguments may make it do more is not listed read-only.
