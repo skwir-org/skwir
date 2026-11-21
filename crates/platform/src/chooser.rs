@@ -58,13 +58,16 @@ impl Filter {
     /// about (every file of a listing): a name by the globs, case ignored
     /// (a camera's `.JPG` is the program's `*.jpg`), a type by the types,
     /// its kind (`image/*`) or what it descends from (ADR-141, 6), each
-    /// suffix typed once and each type matched once. A pattern that does
-    /// not compile admits nothing.
+    /// suffix typed once and each type matched once. The type of every
+    /// type (`*/*`) admits every file, as a name's `*` does. A pattern
+    /// that does not compile admits nothing.
     pub fn admits(&self) -> impl Fn(&skwir_core::Entry) -> bool + Send + Sync + 'static {
         let mut globs = globset::GlobSetBuilder::new();
         let mut types = Vec::new();
+        let mut every = false;
         for pattern in &self.patterns {
             match pattern {
+                Pattern::Mime(mime) if mime == "*/*" => every = true,
                 Pattern::Glob(glob) => {
                     if let Ok(glob) = globset::GlobBuilder::new(glob)
                         .case_insensitive(true)
@@ -81,6 +84,9 @@ impl Filter {
         let by_suffix = crate::mime::BySuffix::default();
         let matched = parking_lot::Mutex::new(std::collections::HashMap::<String, bool>::new());
         move |entry| {
+            if every {
+                return true;
+            }
             if !globs.is_empty() && globs.is_match(std::path::Path::new(&entry.name)) {
                 return true;
             }
@@ -175,6 +181,25 @@ impl Filter {
             })
     }
 
+    /// It with only the patterns that name what they take: none of stars
+    /// and dots alone (`*`, the program's All files; `*.*`, every name
+    /// with an extension) nor the type of every type (`*/*`). What takes
+    /// every extension makes none the program's (ADR-144, 6).
+    fn naming(&self) -> Filter {
+        Filter {
+            name: self.name.clone(),
+            patterns: self
+                .patterns
+                .iter()
+                .filter(|pattern| match pattern {
+                    Pattern::Glob(glob) => !glob.chars().all(|c| c == '*' || c == '.'),
+                    Pattern::Mime(mime) => mime != "*/*",
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+
     /// The extensions its suffix patterns name, lowercase: what a name
     /// saved through it ends with.
     pub fn suffixes(&self) -> Vec<String> {
@@ -195,8 +220,10 @@ impl Filter {
 /// extension the type database knows, or a filter names (`tar.gz`),
 /// swapped whole. `None` where it stays: `to` takes it already or gives no
 /// extension (`*`, `image/*`), none of the program's takes it (an
-/// extension of the user's own), it has none. Its bytes are kept, but the
-/// extension's. No I/O once the type database is loaded.
+/// extension of the user's own: the program's All files, `*` or `*/*`, and
+/// a `*.*` take every extension and name none, `Filter::naming`), it has
+/// none. Its bytes are kept, but the extension's. No I/O once the type
+/// database is loaded.
 pub fn swapped_name(name: &std::ffi::OsStr, filters: &[Filter], to: &Filter) -> Option<OsString> {
     let new = to.extension()?;
     let file = skwir_core::Entry::new(
@@ -204,7 +231,7 @@ pub fn swapped_name(name: &std::ffi::OsStr, filters: &[Filter], to: &Filter) -> 
         name,
         skwir_core::entry::EntryKind::File,
     );
-    if to.admits()(&file) || !filters.iter().any(|filter| filter.admits()(&file)) {
+    if to.admits()(&file) || !filters.iter().any(|filter| filter.naming().admits()(&file)) {
         return None;
     }
     let bytes = name.as_encoded_bytes();
@@ -1318,6 +1345,14 @@ mod tests {
             patterns: Vec::new(),
         };
         assert!(!none.admits()(&named(1, "a.png", File)));
+        let every = Filter {
+            name: "Every type".into(),
+            patterns: vec![Pattern::Mime("*/*".into())],
+        };
+        assert!(
+            every.admits()(&named(7, "sans suffixe", File)),
+            "*/* admits every file, as * does"
+        );
     }
 
     /// A program's All files is the filter that admits every file, found
@@ -1438,6 +1473,31 @@ mod tests {
             Some("Été 2024.png")
         );
         assert_eq!(swapped("notes.txt", &both, &png), None, "the user's own");
+        // The program's All files, in either form, and a `*.*`, take every
+        // extension and make none the program's.
+        for every in [glob("*"), mime("*/*"), glob("*.*")] {
+            let with_all = [
+                jpeg.clone(),
+                png.clone(),
+                filter(std::slice::from_ref(&every)),
+            ];
+            assert_eq!(
+                swapped("notes.md", &with_all, &png),
+                None,
+                "the user's own beside {every:?}"
+            );
+            assert_eq!(
+                swapped("photo.jpg", &with_all, &png).as_deref(),
+                Some("photo.png"),
+                "a real filter's beside {every:?}"
+            );
+        }
+        let text = filter(&[glob("*.txt"), glob("*")]);
+        assert_eq!(
+            swapped("notes.txt", &[text, png.clone()], &png).as_deref(),
+            Some("notes.png"),
+            "a pattern that names it, beside an All files of its own filter"
+        );
         assert_eq!(swapped("photo", &both, &png), None);
         assert_eq!(swapped(".jpg", &both, &png), None, "only an extension");
         let pictures = filter(&[glob("*.png"), glob("*.jpg")]);

@@ -149,7 +149,9 @@ folders are a group of the sidebar, not a dropdown of the bar.
    extension of its own and of what descends from it), a name the new
    filter takes already is left as it is, a compound extension the type
    database knows (`.tar.gz`) is replaced whole, and the name's bytes are
-   kept but its extension's (`chooser::swapped_name`).
+   kept but its extension's (`chooser::swapped_name`). What takes every
+   extension names none: the program's own All files (`*` or `*/*`) and
+   a `*.*` beside its real filters make no extension the program's.
 7. **Recent files.** Opening, Recent comes first in its group of the
    places, the program's filter applied there as in any folder; a
    request naming no folder from a program that chose in none starts
