@@ -1572,25 +1572,25 @@ asks the direction.
 - **A dialog's Recent Folders** (ADR-144, 8): the folders the program
   whose dialog the window answers last chose in are the sidebar's group
   of the shell's own (`groups::RECENT_FOLDERS`, `Shell::places_here`,
-  `Chooser::folder_places`), first as the sidebar ships, folded, moved
-  and put away as any; a group the sidebar ships with that the user's
-  order does not name comes where it ships (`Sections::rank`). Each is
-  a place the user keeps: Remove From Sidebar forgets it, the heading's
-  Clear Recent Folders forgets them all (`ui.chooser_forget_folders`),
-  and the next dialog starts as one that chose nowhere would, each said
-  with its Undo. It shows five at most of the ten a program keeps
-  (`chooser::FOLDERS_SHOWN`), none another shown place leads to
-  (`sidebar::shown_nowhere`, a folded section showing its places), none
-  gone: the request waits for that, half a second at most, before its
-  window opens (`chooser::Asking`, read on a thread of its own, a
-  server's folder never asked), and the dialog starts in the first there.
-  Above it, **Skwir Tabs** (`groups::SKWIR_TABS`, `Shell::tab_places`):
-  what the tabs of the user's own windows show, as they were used
-  (`Workspace::tabs_by_use`, each tab knowing when it was last left,
-  `Tab::left`), five at most, none another place shows; its places are
-  listed (`Place::listed`, `Role::Listed`): opened, never arranged,
-  hidden or taken out. Read at each frame, so they follow the tabs as
-  the window is drawn again.
+  `Chooser::folder_places`), second as the sidebar ships, under Skwir
+  Tabs, folded, moved and put away as any; a group the sidebar ships
+  with that the user's order does not name comes where it ships
+  (`Sections::rank`). Each is a place the user keeps: Remove From
+  Sidebar forgets it, the heading's Clear Recent Folders forgets them
+  all (`ui.chooser_forget_folders`), each said with its Undo; with none
+  left, the next dialog starts as one that chose nowhere would. It shows
+  five at most of the ten a program keeps (`chooser::FOLDERS_SHOWN`),
+  none another shown place leads to (`sidebar::shown_nowhere`, a folded
+  section showing its places), none gone: the request waits for that,
+  half a second at most, before its window opens (`chooser::Asking`,
+  read on a thread of its own, a server's folder never asked), and the
+  dialog starts in the first there. Above it, **Skwir Tabs**
+  (`groups::SKWIR_TABS`, `Shell::tab_places`): what the tabs of the
+  user's own windows show, as they were used (`Workspace::tabs_by_use`,
+  each tab knowing when it was last left, `Tab::left`), five at most,
+  none another place shows; its places are listed (`Place::listed`,
+  `Role::Listed`): opened, never arranged, hidden or taken out. Read at
+  each frame, so they follow the tabs as the window is drawn again.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
   command, which keeps what the pane shows as it shows it (ADR-109): the
   location and the pane's filter go to the `Keeper` that keeps them, the
@@ -2037,10 +2037,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   as it was (`SavedTab::filters`, read again by the filter's reader,
   ADR-109) and sorted as it was (`SavedTab::sorts`: its criterion and
   direction, its groups and theirs, hidden files; folders first stays
-  the user's, `Workspace::push_pane`, ADR-145); its history is not kept, nor its
-  groups folded. A sort written only where a pane's differs from a new
-  one's; one that cannot be read (a later Skwir's criterion) is a new
-  pane's, never a session lost.
+  the user's, `Workspace::push_pane`, ADR-145); its history is not kept,
+  nor its groups folded. A sort written only where a pane's differs from
+  a new one's; one that cannot be read (a later Skwir's criterion) is a
+  new pane's, never a session lost.
 
 ## Windows (ADR-122)
 
@@ -2192,35 +2192,36 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   while skwir is the desktop's default for folders
   (`file_manager::follow`, asked at start, as the user's lists change,
   and as a window comes to the front for the system's,
-  `finishing::looked_at`; no setting of skwir's own), its requests handed in through the
-  same gate (`handover::Answering`), each folder a launch whose
-  `Opening::select` is selected once listed (`Pane::reveal_names`) and
-  whose `properties` shows Properties (`Shell::show_properties`). It
-  keeps the bus's service file in step (`$XDG_DATA_HOME/dbus-1/services`,
-  only skwir's own, naming the program the desktop entry runs, never the
-  running build's path). Started by the bus (`--file-manager`, and
-  `--portal`), the program opens no window until asked, nor reaches the
-  display or starts the window system (`finishing::wait_asked`, before
-  `run_from` makes gpui's application: what takes requests over, the
-  `Takers`, is made there and kept by the program), restores nothing, hands the
-  request to a skwir of its instance that runs, and one that ends asked
-  nothing ends with a status that is not 0 (`ended_unasked`), which
-  dbus-daemon would wait for. Nothing here names another program's
-  service, nor takes a name its holder does not let go.
+  `finishing::looked_at`; no setting of skwir's own), its requests
+  handed in through the same gate (`handover::Answering`), each folder a
+  launch whose `Opening::select` is selected once listed
+  (`Pane::reveal_names`) and whose `properties` shows Properties
+  (`Shell::show_properties`). It keeps the bus's service file in step
+  (`$XDG_DATA_HOME/dbus-1/services`, only skwir's own, naming the
+  program the desktop entry runs, never the running build's path).
+  Started by the bus (`--file-manager`, and `--portal`), the program
+  opens no window until asked, nor reaches the display or starts the
+  window system (`finishing::wait_asked`, before `run_from` makes gpui's
+  application: what takes requests over, the `Takers`, is made there and
+  kept by the program), restores nothing, hands the request to a skwir
+  of its instance that runs, and one that ends asked nothing ends with a
+  status that is not 0 (`ended_unasked`), which dbus-daemon would wait
+  for. Nothing here names another program's service, nor takes a name
+  its holder does not let go.
 - **Other programs' Open and Save dialogs are windows of skwir's own**
   (ADR-141, Linux): the program that takes launches over answers the
   portal's FileChooser back end, its requests (`chooser::Choosing`)
   handed in through the same gate (`handover::take_over_choosing`), a
   window each (`finishing::open_chooser`), started where the request
   asks, else where its program last chose (`ui.chooser_folders`, by app
-  id: its five last folders, newest first, the fifty programs that chose
-  last; the sidebar's Recent Folders offers them, ADR-144, 8 amended),
-  else, opening
-  files, in what lists the files used lately (`App::lists_recent`:
-  Recent, first in its group of places there, `sidebar::recent_first`)
-  where it has one to give and the desktop remembers them
-  (`Asked::recent`, read by the portal's back end as the request comes,
-  on a thread of its own, half a second at most, `recent::offered`),
+  id: its ten last folders, newest first, five shown and none gone, the
+  fifty programs that chose last; the sidebar's Recent Folders offers
+  them, ADR-144, 8 amended), else, opening files, in what lists the
+  files used lately (`App::lists_recent`: Recent, first in its group of
+  places there, `sidebar::recent_first`) where it has one to give and
+  the desktop remembers them (`Asked::recent`, read by the portal's back
+  end as the request comes, on a thread of its own, half a second at
+  most, `recent::offered`),
   else home (`chooser::start_location`). The files it answers with (not
   folders) are added to the desktop's recently used files on a worker
   (`skwir_platform::recent::add`, ADR-144, 7: edited into

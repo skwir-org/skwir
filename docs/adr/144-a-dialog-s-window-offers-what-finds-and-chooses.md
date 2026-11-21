@@ -11,7 +11,10 @@ amended as built (decisions 1, 4, 6, 7 and 10), and after review
 (decision 1: one answer every way to run a command asks, questions
 asked where the dialog's action asked them, Undo of its own; decision 2:
 one tab). Decision 8 amended 2026-11-20, on the user's asking: the
-folders are a group of the sidebar, not a dropdown of the bar.
+folders are a group of the sidebar, not a dropdown of the bar; and
+2026-11-21, on the user's choices: none gone, ten kept and five shown,
+said with Undo, Skwir Tabs above them. Decision 4 amended by ADR-145
+(the dialogs' own order and per-folder memory).
 
 ## Context
 
@@ -176,26 +179,29 @@ folders are a group of the sidebar, not a dropdown of the bar.
 8. **A program's recent folders**: the folders each program last chose
    in, newest first (`ui.chooser_folders`, ten a program, for the 50
    programs that chose last, its one folder a program before read as its
-   list), are the sidebar's Recent Folders, a group first as the sidebar
-   ships, folded, moved and put away as any other: five at most, none
-   gone (looked for as the request comes, half a second at most, kept in
-   the record, where the program's next choices replace it), none that
-   another place the sidebar shows leads to (in a section folded too).
-   The dialog starts in the first of them there. Each is taken out alone
-   (Remove From Sidebar) and the heading's menu empties the group (Clear
-   Recent Folders), each with its Undo, which forgets where the program
-   chose: its next dialog starts as one that chose nowhere would. Above
+   list), are the sidebar's Recent Folders, a group second as the
+   sidebar ships, under Skwir Tabs, folded, moved and put away as any
+   other: five at most, none gone (looked for as the request comes, half
+   a second at most, kept in the record, where the program's next
+   choices replace it), none that another place the sidebar shows leads
+   to (in a section folded too). The dialog starts in the first of them
+   there. Each is taken out alone (Remove From Sidebar) and the
+   heading's menu empties the group (Clear Recent Folders), which forget
+   where the program chose, each said with its Undo; with none left, the
+   program's next dialog starts as one that chose nowhere would. Above
    them, Skwir Tabs lists what the tabs of the user's own windows show
    (the user's name: in another program's dialog, it says whose tabs),
    each window's shown tab first, the window used last first, then the
    others, the one left last first, five at most, none another place
    shows, Recent Folders leaving out what it lists; nothing of it is
    arranged or taken out (`Place::listed`), and it follows the tabs as
-   the window is drawn again. Two folders of one name are told apart after it by the first
-   folder above that differs (`skwir/…`), as any two places of a group
-   shown under one name are, and a folder's place says its whole path
-   in its tooltip (amended 2026-11-20: they were a dropdown of the bar,
-   a second way to go places beside the sidebar's, two clicks away).
+   the window is drawn again. Two folders of one name are told apart
+   after it by the first folder above that differs (`skwir/…`), as any
+   two places of a group shown under one name are, and a folder's place
+   says its whole path in its tooltip (amended 2026-11-20: they were a
+   dropdown of the bar, a second way to go places beside the sidebar's,
+   two clicks away; amended 2026-11-21, on the user's choices: none
+   gone, ten kept and five shown, said with Undo, Skwir Tabs above).
 9. **Choosing folders, files are shown dimmed**: they say where one is,
    and none can be chosen.
 10. **A file dropped on a dialog's window is gone to**, from a window of

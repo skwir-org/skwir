@@ -7,10 +7,10 @@ step, before an autonomous night). Built on Linux; Linux's by nature
 (decision 11). Built 2026-11-19: the back end (1ae5a3bb), the window
 (e85e415e), attached to the asking window (a4299e63, gpui patch 0085),
 the Settings row (eaac889f), the packages; amended as built (decisions
-4, 6 and 10, and the Context's reading of the configuration), and on
-2026-11-20 (decision 9: the windows' tags); decisions 4 and 7
-amended by ADR-144 (what a dialog's window offers, its own layout,
-Recent).
+4, 6 and 10, and the Context's reading of the configuration), on
+2026-11-20 (decision 9: the windows' tags) and on 2026-11-21 (decision
+3: no display reached until asked); decisions 4 and 7 amended by
+ADR-144 (what a dialog's window offers, its own layout, Recent).
 
 ## Context
 
@@ -79,12 +79,13 @@ Recent).
    reaches the display nor starts the window system,
    `finishing::wait_asked`; the portal starts its back ends as the
    session comes up, asking nothing, and one started then reached a
-   display that was being replaced, and ended with it.) One that finds another skwir of its instance taking
-   launches over takes the request and asks that one
-   (`org.skwir.skwir.Finishing.Choose`, the request as the portal gave
-   it), waiting for its answer, which it gives the portal, then ends:
-   the name first, so that what is asked after goes to the skwir queued
-   behind, then once all that reached it is answered.
+   display that was being replaced, and ended with it.) One that finds
+   another skwir of its instance taking launches over takes the request
+   and asks that one (`org.skwir.skwir.Finishing.Choose`, the request as
+   the portal gave it), waiting for its answer, which it gives the
+   portal, then ends: the name first, so that what is asked after goes
+   to the skwir queued behind, then once all that reached it is
+   answered.
 4. **A request is a whole skwir window in a choosing mode** (the user's
    choice over a compact dialog): sidebar, address, search, tags,
    views, preview, the shelf, as any window (what else it offers:

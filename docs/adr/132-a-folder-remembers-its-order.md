@@ -3,7 +3,9 @@
 Status: accepted, 2026-11-12, on the user's answers (asked in the session
 that built it). Built the same day and run on Linux. Settles what
 ADR-130 left "for an ADR of its own" (decision 11). Amended the same day
-(see Amendments: the view too, each column its own order).
+(see Amendments: the view too, each column its own order), and by
+ADR-145 (2026-11-21: what a folder remembers in a dialog's window is the
+dialogs', apart from the user's windows').
 
 ## Context
 
@@ -32,10 +34,12 @@ ADR-130 left "for an ADR of its own" (decision 11). Amended the same day
    direction (`orders::Order`); hidden files stay the pane's, and
    folders first is never a folder's own (the user's in their windows,
    the dialogs' own in theirs, ADR-145).
-2. **Shown so wherever it is shown**: every pane that shows it, and
-   every window. A change of its sort or groups made there (a header, Sort
-   by, Group by) changes what it remembers, and every pane showing it
-   follows. Folders opened in place take the order the pane shows.
+2. **Shown so wherever it is shown**: every pane that shows it, in
+   every window of the user's own (a dialog's window shows the dialogs'
+   own, ADR-145, 2). A change of its sort or groups made there (a
+   header, Sort by, Group by) changes what it remembers, and every pane
+   showing it follows. Folders opened in place take the order the pane
+   shows.
    (Amended: each column is in its own folder's order, 9.)
 3. **The pane's own order is set aside, never overwritten**
    (`Pane::own`): leaving the folder for one that remembers none shows
