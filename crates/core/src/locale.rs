@@ -77,6 +77,44 @@ static LANGUAGES: RwLock<Languages> = RwLock::new(Languages {
     zone: None,
 });
 
+/// In core's own tests, what changes what is process-wide (the languages,
+/// their formats, the time zone, the size units, the catalogs) asks first
+/// that its test have the process to itself, and refuses before changing
+/// anything where it shares one: tests sharing a process change it under
+/// each other, and fail by turns for what another did. nextest gives each
+/// test a process of its own (`just test`); `cargo test` runs one alone
+/// asked by its exact name. Nothing in a build that is no test of core's.
+#[cfg(test)]
+pub(crate) fn alone_in_process(what: &str) {
+    let mode = std::env::var_os("NEXTEST_EXECUTION_MODE");
+    if !alone(mode.as_deref(), std::env::args_os()) {
+        let current = std::thread::current();
+        let test = current.name().unwrap_or("this test");
+        panic!(
+            "{test} changes {what}, which is process-wide, in a process other tests share: \
+             run the tests through nextest (`just test` or `cargo nextest run`), which gives \
+             each test a process of its own, or this one alone (`cargo test -- --exact {test}`)"
+        );
+    }
+}
+
+/// Outside core's tests, what is process-wide is the program's to change.
+#[cfg(not(test))]
+#[inline]
+pub(crate) fn alone_in_process(_what: &str) {}
+
+/// Whether a test has its process to itself: nextest runs each in one of
+/// its own (`NEXTEST_EXECUTION_MODE=process-per-test`), and a test binary
+/// asked for a test by its exact name (`--exact`, as an editor's Run button
+/// asks) runs that one alone.
+#[cfg(test)]
+fn alone(
+    mode: Option<&std::ffi::OsStr>,
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+) -> bool {
+    mode.is_some_and(|mode| mode == "process-per-test") || args.any(|arg| arg == "--exact")
+}
+
 /// How a time's hours are written, where the desktop says so apart from
 /// its locale: GNOME's clock format, macOS's and Windows' own switch
 /// (`skwir_platform::desktop_style`).
@@ -93,6 +131,7 @@ pub enum Hours {
 pub fn set_hours(hours: Option<Hours>) {
     let mut kept = LANGUAGES.write();
     if kept.hours != hours {
+        alone_in_process("the hours");
         kept.hours = hours;
         moved();
     }
@@ -103,6 +142,7 @@ pub fn set_hours(hours: Option<Hours>) {
 pub fn set_iso_dates(iso: bool) {
     let mut kept = LANGUAGES.write();
     if kept.iso_dates != iso {
+        alone_in_process("whether dates are ISO 8601's");
         kept.iso_dates = iso;
         moved();
     }
@@ -116,6 +156,7 @@ pub fn set_iso_dates(iso: bool) {
 pub fn set_zone(zone: Option<jiff::tz::TimeZone>) {
     let mut kept = LANGUAGES.write();
     if kept.zone != zone {
+        alone_in_process("the time zone");
         kept.zone = zone;
         moved();
     }
@@ -151,6 +192,7 @@ pub fn iso_dates() -> bool {
 pub fn set_formats(numbers: Option<String>, dates: Option<String>) {
     let mut kept = LANGUAGES.write();
     if kept.numbers != numbers || kept.dates != dates {
+        alone_in_process("the formats' locales");
         kept.numbers = numbers;
         kept.dates = dates;
         moved();
@@ -244,6 +286,7 @@ pub fn is_pseudo(tag: &str) -> bool {
 pub fn set_system(languages: Vec<String>) {
     let mut kept = LANGUAGES.write();
     if kept.system != languages {
+        alone_in_process("the system's languages");
         kept.system = languages;
         moved();
     }
@@ -253,6 +296,7 @@ pub fn set_system(languages: Vec<String>) {
 pub fn set_chosen(language: Option<String>) {
     let mut kept = LANGUAGES.write();
     if kept.chosen != language {
+        alone_in_process("the language chosen");
         kept.chosen = language;
         moved();
     }
@@ -667,6 +711,36 @@ mod tests {
         matching, preferred, set_chosen, set_system,
     };
     use crate::words::{Offer, Share, Shipped};
+
+    /// A test has its process to itself under nextest, or asked alone by
+    /// its exact name; any other run of a test binary may run others
+    /// beside it.
+    #[test]
+    fn a_test_is_alone_under_nextest_or_asked_by_its_exact_name() {
+        use std::ffi::OsStr;
+        let args = |list: &[&str]| {
+            list.iter()
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        let nextest = Some(OsStr::new("process-per-test"));
+        assert!(super::alone(
+            nextest,
+            args(&["skwir_core-1", "--exact", "a"])
+        ));
+        assert!(super::alone(nextest, args(&["skwir_core-1"])));
+        assert!(super::alone(
+            None,
+            args(&["skwir_core-1", "words::tests::a", "--exact"])
+        ));
+        assert!(!super::alone(None, args(&["skwir_core-1", "words::"])));
+        assert!(!super::alone(None, args(&["skwir_core-1"])));
+        assert!(!super::alone(
+            Some(OsStr::new("")),
+            args(&["skwir_core-1", "--test-threads=1"])
+        ));
+    }
 
     // French drafted and not offered, German reviewed and offered, Spanish
     // shipped uncounted, Traditional Chinese offered.

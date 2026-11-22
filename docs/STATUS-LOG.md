@@ -21933,5 +21933,44 @@ Italian system (ADR-139, 13).
   earlier test read the machine's. With cargo's threads, 5 to 8 of them
   fail at random, in a French locale as in an Italian one: core's tests
   change process-wide languages, formats and hours and pass only in a
-  process each. CI runs on UTC. A fix is proposed in PLAN's "What is
-  left", for the user to say.
+  process each. CI runs on UTC. The fix the user chose was built the
+  same day (below).
+
+## 2026-11-22: the zone held by core, and tests that refuse to share a process
+
+The fix of the two tests the Italian draft's contributor saw fail (above),
+in two parts, each the user's choice.
+
+- **The zone, held by core** (972814b2). `locale::zone()` is the zone a
+  test set (`locale::set_zone`), else the system's, which the program
+  never changes; every reader of the user's zone asks it (words' moments,
+  the Trash's dates, platform's `Calendar::system`, the window's dates and
+  the list view's, bulk rename's), and clippy refuses
+  `jiff::tz::TimeZone::system` elsewhere. The eight tests that set `TZ`
+  (core's words and Trash dates, ui's status and format, the git plugin)
+  set the zone there, no `unsafe` left. Checked alone in a worktree:
+  core's lib tests through nextest, 721 passed; `cargo test -p skwir-core
+  --lib words:: --test-threads=1` in an Italian locale, 50 passed, where
+  two failed an hour off before.
+- **Setters that refuse to share a process.** In core's own tests, what
+  changes what is process-wide (`locale`'s setters, the zone included,
+  the size units, the catalogs registered and shipped, the languages'
+  shares) first asks `locale::alone_in_process`, only where it would
+  change something (settings applied as they are pass), and panics before
+  changing anything where its test shares its process: nextest's
+  `NEXTEST_EXECUTION_MODE=process-per-test`, or `--exact` among the
+  arguments (an editor's Run button), say it does not. Nothing outside
+  core's tests.
+- **Checked** with both: clippy on core, platform, ui, git and
+  rename-bulk; through nextest, core's lib tests 722 passed, platform's,
+  the git plugin's and bulk rename's 595, ui's date tests 12. Under
+  `cargo test -p skwir-core --lib words::`, in an Italian locale, one
+  thread or many, three runs: the same 16 tests refused each time, each
+  saying to run nextest or the test alone, the other 34 passed; nothing
+  failed at random any more (5 to 8 different ones before). Asked alone
+  (`--exact`), a refused test passes.
+- **Left, by the design:** a one-thread `cargo test` refuses those 16
+  (14 of them passed one after another before), as the check cannot tell
+  one thread from many; `--exact` with two names runs both in one process
+  unrefused; other crates' tests that change core's state are not covered
+  (`cfg(test)` is core's alone).

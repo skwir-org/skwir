@@ -317,6 +317,7 @@ static CATALOGS: RwLock<Registry> = RwLock::new((Vec::new(), 0));
 /// Say `domain`'s messages in `catalog`'s language, as `owner`'s: a
 /// contribution like its commands, withdrawn on disable (`withdraw`).
 pub fn register(owner: &str, domain: &str, catalog: Catalog) {
+    crate::locale::alone_in_process("the catalogs registered");
     let mut catalogs = CATALOGS.write();
     catalogs
         .0
@@ -346,11 +347,19 @@ static SHIPPED: RwLock<&'static [Shipped]> = RwLock::new(&[]);
 /// the program's own at once (`register_shipped_of_program`), a plugin's
 /// when it is enabled (`register_shipped`).
 pub fn ship(catalogs: &'static [Shipped]) {
+    if !same(*SHIPPED.read(), catalogs) {
+        crate::locale::alone_in_process("the catalogs shipped");
+    }
     *SHIPPED.write() = catalogs;
     // What describes a plugin is read from the catalogs shipped now.
     if let Some(described) = DESCRIBED.lock().as_mut() {
         described.retain(|_, one| !one.shipped);
     }
+}
+
+/// Whether `now` is `given` already: the same list, or both empty.
+fn same<T>(now: &[T], given: &[T]) -> bool {
+    std::ptr::eq(now, given) || (now.is_empty() && given.is_empty())
 }
 
 /// The languages the program ships catalogs in, once each, in the order
@@ -440,6 +449,9 @@ static SHARES: RwLock<&'static [Share]> = RwLock::new(&[]);
 /// `just words` counted it: what the Language setting lists, and which
 /// languages Automatic may speak (`locale::automatic`).
 pub fn ship_shares(shares: &'static [Share]) {
+    if !same(*SHARES.read(), shares) {
+        crate::locale::alone_in_process("the languages' shares");
+    }
     *SHARES.write() = shares;
     // What is said in the system's languages may change with it.
     moved(&mut CATALOGS.write());

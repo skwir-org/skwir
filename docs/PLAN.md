@@ -1618,19 +1618,6 @@ ICU4X data export keeping only the kinds of data Skwir uses if it ever
 weighs; Orca by ear, and Weblate's editing of attributes the English
 lacks, not tried. macOS and Windows: `docs/PORTING.md`'s ADR-139 lines.
 
-**Core's tests outside nextest** (found 2026-11-22, from #14): many of
-core's unit tests change what is process-wide (the languages, the
-formats, the hours, ISO dates, the `TZ` variable) and pass only in a
-process of their own, as nextest gives each. Under `cargo test`, 5 to 8
-fail at random; with one thread, two fail an hour off on a machine not
-on UTC (`moments_are_written_as_the_locale_writes_dates`,
-`the_desktop_s_hours_outweigh_the_locale_s`), as jiff keeps the system's
-zone five minutes and an earlier test read it before `TZ=UTC` was set.
-Proposed, the user to say: the zone held in core's `locale` as the date
-locale is (tests setting UTC there, no `set_var`), and core's
-process-wide setters refusing, in a test sharing its process, with a
-word to run nextest.
-
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as
 GNOME's Mutter, draws no title bar) and headless sway. Left: Mutter itself

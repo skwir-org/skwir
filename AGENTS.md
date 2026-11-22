@@ -735,6 +735,10 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
   was trashed there more than a day ago is pruned at each run. On
   macOS and Windows skwir's folders and the trash are the system's, which
   these variables do not move (`docs/HELP-WANTED.md` says so to testers).
+  Each test has a process of its own there: in core's own tests, what
+  changes what is process-wide (`locale`'s setters, the size units, the
+  catalogs) refuses in a test sharing its process, as `cargo test` runs
+  them, unless asked alone by its exact name (`locale::alone_in_process`).
 - Tests that need a real filesystem feature (trash, xattrs) use a temp
   dir under `~/.cache/skwir-tests/`, never `/tmp` (tmpfs) and never real
   user files.

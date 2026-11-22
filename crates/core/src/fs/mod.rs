@@ -93,6 +93,9 @@ pub fn size_units() -> SizeUnits {
 /// words already said says its sizes again (`words::revision` moves).
 pub fn set_size_units(units: SizeUnits) {
     let binary = units == SizeUnits::Binary;
+    if BINARY.load(std::sync::atomic::Ordering::Relaxed) != binary {
+        crate::locale::alone_in_process("the size units");
+    }
     if BINARY.swap(binary, std::sync::atomic::Ordering::Relaxed) != binary {
         crate::locale::said_moved();
     }
