@@ -1374,12 +1374,13 @@ of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
 against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
 time).
 - *HEIC, HEIF, AVIF, JPEG XL and camera raw files* (built as ADR-148,
-  2026-11-22; JPEG XL in bands and its regions alone, a HEIC's regions
-  from its tiles, its thumbnail first and for the grid, amended the same
-  day). Left: a JPEG XL decoded at full size for every view (its eighth,
-  which the format stores first, could stand in as a JPEG's does; shrunk
-  band by band, it would not hold its eight bits whole); a HEIC's tiles
-  never decoded by a libheif older than 1.19 here (none on this machine:
+  2026-11-22; JPEG XL in bands, its regions and its eighth alone, a
+  HEIC's regions from its tiles, its thumbnail first, for the grid and as
+  a preview no larger, amended the same day; seven HEICs from phones
+  tried). Left: a JPEG XL asked larger than its eighth decoded whole, in
+  bands (shrunk band by band, it would not hold its eight bits whole),
+  and a lossless one at every size (it stores no LF to read alone); a
+  HEIC's tiles never decoded by a libheif older than 1.19 here (none on this machine:
   the lookup's failing path is the one a picture of one tile takes,
   which the tests take), nor a picture its file crops (`clap`, decoded
   whole: no fixture writes one); the helper in the AppImage (Ubuntu
@@ -1388,9 +1389,7 @@ time).
   ImageIO for HEIC and AVIF; a raw file whose JPEG hides in its maker
   note (Olympus's ORF), Canon's CRW, Sigma's X3F; a raw file never tried
   from a real camera (synthetic containers laid out as each maker's
-  are), nor a HEIC from a real phone (made by `heif-enc` in 512 px
-  tiles, as an iPhone's), the AVIF decoder never tried on Debian's split
-  plugins.
+  are); the AVIF decoder never tried on Debian's split plugins.
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not

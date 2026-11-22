@@ -364,8 +364,10 @@ The player, in the panel or pinned at its foot:
   libheif where its helper is installed (the `skwir-heif` package on
   Debian, Ubuntu and Fedora; `libheif` on Arch; HEIC on Fedora needs RPM
   Fusion's `libheif-freeworld`): the small picture a HEIC carries makes
-  its thumbnails and shows at once while the whole decodes, and zoomed
-  in, only the part shown is decoded (libheif 1.19 or later). SVG drawings (`.svg`, `.svgz`) are
+  its thumbnails and its preview where the preview is no larger, and
+  shows at once while the whole decodes; zoomed in, only the part shown
+  is decoded (libheif 1.19 or later). A JPEG XL's eighth, which a lossy
+  one stores first, serves the same way. SVG drawings (`.svg`, `.svgz`) are
   drawn, thumbnails included, and sharper as the preview is zoomed.
   Zoomed past the panel, a picture moves with a drag.
 - Other kinds (HEIC and AVIF without libheif's helper, as in the

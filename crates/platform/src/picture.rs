@@ -145,60 +145,46 @@ pub fn decode_fitted_within<R: BufRead + Seek>(
     Ok(fitted(whole(reader)?, side))
 }
 
-/// What stands for a picture while it is decoded at `side`, where it is
-/// smaller: a progressive JPEG's eighth (`progressive_eighth`, ADR-146,
-/// 6), a HEIF's or an AVIF's thumbnail, turned as it is shown, decoded by
-/// the helper (ADR-148 amended: 21 to 29 ms, where the whole of 45
-/// megapixels took 855). `None` for any other picture.
-pub fn stand_in<R: BufRead + Seek>(
+/// What a picture carries smaller than itself, turned as it is shown,
+/// where `wanted` takes its longer side: a progressive JPEG's eighth (its
+/// DC scans, ADR-146, 6), a JPEG XL's (its LF image, `jxl::eighth`), a
+/// HEIF's or an AVIF's thumbnail, decoded by the helper (ADR-148 amended).
+/// Decoded in a tenth of the whole's time (a JPEG XL's) to a hundredth (the
+/// others'), it stands for the picture while it is decoded, where it is
+/// smaller than asked, and is the picture, shrunk, where it covers what is
+/// asked (a grid's thumbnail, a small preview). `None` for any other
+/// picture, or where `wanted` refuses what it carries (a HEIF's thumbnail
+/// is asked once decoded: its size is known no sooner). A JPEG XL whose
+/// eighth fails to decode has none: its whole says why.
+pub fn carried<R: BufRead + Seek>(
     reader: ImageReader<R>,
-    side: u32,
+    wanted: impl Fn(u32) -> bool,
     threads: Threads,
 ) -> ImageResult<Option<DynamicImage>> {
     if reader.format() == Some(ImageFormat::Jpeg) {
-        return progressive_eighth(reader, side, threads);
+        return progressive_eighth(reader, wanted, threads);
     }
-    Ok(
-        heif_thumbnail(reader)?
-            .filter(|thumbnail| thumbnail.width().max(thumbnail.height()) < side),
-    )
-}
-
-/// The picture a file carries beside its own, where it is at least `side`
-/// on its longer side, turned as the picture is shown: a HEIF's or an
-/// AVIF's thumbnail, decoded by the helper (ADR-148 amended), what a
-/// thumbnail of that side is made from in some 15 ms where the whole took
-/// most of a second. `None` for any other picture, or where it carries
-/// none so large.
-pub fn carried<R: BufRead + Seek>(
-    reader: ImageReader<R>,
-    side: u32,
-) -> ImageResult<Option<DynamicImage>> {
-    Ok(heif_thumbnail(reader)?
-        .filter(|thumbnail| thumbnail.width().max(thumbnail.height()) >= side))
-}
-
-/// The thumbnail a HEIF or an AVIF carries (`heif::thumbnail`); `None`
-/// for any other picture.
-fn heif_thumbnail<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<Option<DynamicImage>> {
     if reader.format().is_some() {
         return Ok(None);
     }
     let mut inner = reader.into_inner();
-    if !crate::heif::starts(inner.fill_buf()?) {
-        return Ok(None);
+    if crate::jxl::starts(inner.fill_buf()?) {
+        return Ok(crate::jxl::eighth(&mut inner, wanted, threads).unwrap_or(None));
     }
-    crate::heif::thumbnail(inner)
+    if crate::heif::starts(inner.fill_buf()?) {
+        return Ok(crate::heif::thumbnail(inner)?
+            .filter(|thumbnail| wanted(thumbnail.width().max(thumbnail.height()))));
+    }
+    Ok(None)
 }
 
 /// A progressive JPEG's eighth, turned (ADR-146, 6): its DC scans alone,
 /// about a tenth of the file, decoded in a few milliseconds where the
-/// whole picture's AC scans take hundreds at a quarter or a half; what
-/// stands for it while it is decoded at `side`. `None` for any other
-/// picture, or where its eighth covers `side` already.
-pub fn progressive_eighth<R: BufRead + Seek>(
+/// whole picture's AC scans take hundreds at a quarter or a half. `None`
+/// for any other picture, or where `wanted` refuses its longer side.
+fn progressive_eighth<R: BufRead + Seek>(
     reader: ImageReader<R>,
-    side: u32,
+    wanted: impl Fn(u32) -> bool,
     threads: Threads,
 ) -> ImageResult<Option<DynamicImage>> {
     if reader.format() != Some(ImageFormat::Jpeg) {
@@ -227,7 +213,7 @@ pub fn progressive_eighth<R: BufRead + Seek>(
         return Ok(None);
     };
     let eighth = u32::from(longer).div_ceil(8);
-    if side <= eighth {
+    if !wanted(eighth) {
         return Ok(None);
     }
     jpeg_fitted(&mut inner, eighth, threads, REDUCED_BYTES)
@@ -1082,12 +1068,12 @@ mod tests {
         assert_eq!(other.width(), 640);
     }
 
-    /// A progressive JPEG asked larger than its eighth has its eighth to
-    /// stand for it, read to its DC scans; a sequential one, or one asked
-    /// no larger, has none.
+    /// A progressive JPEG carries its eighth, read to its DC scans, where
+    /// it is wanted; a sequential one carries none.
     #[test]
     fn a_progressive_jpeg_has_its_eighth_first() {
-        let eighth = progressive_eighth(reader(PLASMA_PROGRESSIVE), 400, Threads::Caller)
+        let below = |side: u32| move |longer: u32| longer < side;
+        let eighth = carried(reader(PLASMA_PROGRESSIVE), below(400), Threads::Caller)
             .unwrap()
             .expect("an eighth");
         assert_eq!((eighth.width(), eighth.height()), (100, 75));
@@ -1095,13 +1081,13 @@ mod tests {
         let fitted = decode_fitted(reader(PLASMA_PROGRESSIVE), 100, Threads::Caller).unwrap();
         assert_eq!(eighth.to_rgb8(), fitted.to_rgb8());
         assert!(
-            progressive_eighth(reader(PLASMA_PROGRESSIVE), 100, Threads::Caller)
+            carried(reader(PLASMA_PROGRESSIVE), below(100), Threads::Caller)
                 .unwrap()
                 .is_none(),
-            "its eighth covers what is asked"
+            "not wanted"
         );
         assert!(
-            progressive_eighth(reader(PLASMA), 400, Threads::Caller)
+            carried(reader(PLASMA), |_| true, Threads::Caller)
                 .unwrap()
                 .is_none(),
             "sequential"
@@ -1114,7 +1100,7 @@ mod tests {
             bytes
         };
         assert!(
-            progressive_eighth(reader(&png), 400, Threads::Caller)
+            carried(reader(&png), |_| true, Threads::Caller)
                 .unwrap()
                 .is_none()
         );
@@ -1421,6 +1407,33 @@ mod tests {
             let expected = image::imageops::crop_imm(&whole, x, y, width, height).to_image();
             assert!(cut == expected, "{region:?} differs");
         }
+    }
+
+    /// A JPEG XL carries its eighth, which stands for it while a larger
+    /// picture is decoded and is shown, shrunk, where it covers what is
+    /// asked; a lossless one, which has none, is read whole from its start.
+    #[test]
+    fn a_jpeg_xl_carries_its_eighth() {
+        const PLASMA: &[u8] = include_bytes!("../testdata/synthetic-plasma.jxl");
+        const LOSSLESS: &[u8] = include_bytes!("../testdata/synthetic-lossless.jxl");
+        formats();
+        let reader = |bytes| {
+            ImageReader::new(Cursor::new(bytes))
+                .with_guessed_format()
+                .unwrap()
+        };
+        let eighth = crate::jxl::eighth(&mut Cursor::new(PLASMA), |_| true, Threads::Caller)
+            .unwrap()
+            .unwrap();
+        // 640 × 1300: an eighth of 80 × 163.
+        let below = |bytes, side: u32| {
+            carried(reader(bytes), |longer| longer < side, Threads::Caller).unwrap()
+        };
+        assert!(below(PLASMA, 400).unwrap() == eighth, "its eighth");
+        assert!(below(PLASMA, 163).is_none(), "not wanted");
+        assert!(below(LOSSLESS, 400).is_none(), "lossless");
+        let whole = decode_fitted(reader(LOSSLESS), 30, Threads::Caller).unwrap();
+        assert_eq!((whole.width(), whole.height()), (30, 20));
     }
 
     /// What may be held of a picture is counted in pixels: a square one at

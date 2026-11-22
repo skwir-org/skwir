@@ -285,10 +285,16 @@ impl ThumbnailProvider for ImageDecoder {
             crate::picture::open_typed(path, mime.as_deref())
                 .with_context(|| format!("open {}", path.display()))
         };
-        // A HEIF's or an AVIF's own thumbnail, where it is as large as
-        // asked (ADR-148 amended): its whole is never decoded then. One
-        // that fails to decode leaves it to the whole.
-        if let Ok(Some(carried)) = crate::picture::carried(open()?, req.size.pixels()) {
+        // What it carries as large as asked (ADR-148 amended): a JPEG XL's
+        // eighth, a HEIF's or an AVIF's own thumbnail; its whole is never
+        // decoded then. One that fails to decode leaves it to the whole.
+        let side = req.size.pixels();
+        let carried = crate::picture::carried(
+            open()?,
+            |longer| longer >= side,
+            crate::picture::Threads::Caller,
+        );
+        if let Ok(Some(carried)) = carried {
             if cancel.is_cancelled() {
                 return Ok(None);
             }

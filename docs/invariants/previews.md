@@ -226,10 +226,12 @@ A name that says nothing is not a binary file.
   pictures would lose the thumbnailer's. A region of a picture in tiles
   is decoded from the tiles it covers, found as stored and turned by the
   helper (`picture::Regional`), never by libheif's tiling as shown, which
-  misplaces a turned picture's; what stands for a picture while it
-  decodes is asked of `picture::stand_in` (a progressive JPEG's eighth,
-  a HEIF's thumbnail), and what a file carries that is as large as a
-  thumbnail asked of `picture::carried`, never of one format's code. A drawing
+  misplaces a turned picture's; what a picture carries smaller than
+  itself (a progressive JPEG's eighth, a JPEG XL's, a HEIF's thumbnail)
+  is asked of `picture::carried`, which the preview and the thumbnails
+  ask with the sides they take, never of one format's code: it is the
+  picture where it covers what is asked, and stands for it while it
+  decodes where it is smaller. A drawing
   (`thumb_providers::is_drawing`: SVG, plain or compressed) is drawn to
   the thumbnail's side, enlarged too, by the preview's inert path.
   Other `image/*` types and 3D models (`model/*`, and types the MIME
@@ -294,9 +296,13 @@ A name that says nothing is not a binary file.
   zoom's side, `Cover::Side`, and its region) decodes in a turn of its
   own (`Turn::Zoomed`, ADR-146 amended, 8): never the one the next
   step's picture waits for.
-- **Something sooner** (ADR-146, 6). A progressive JPEG asked larger than
-  its eighth has its eighth decoded first (`picture::progressive_eighth`:
-  its DC scans, a few milliseconds) and sent as the stand-in a thumbnail
+- **Something sooner** (ADR-146, 6; ADR-148 amended). What a picture
+  carries smaller than itself is asked once (`picture::carried`): a
+  progressive JPEG's eighth (its DC scans, a few milliseconds), a lossy
+  JPEG XL's (its LF image, `jxl::eighth`, the file's first tenth), a
+  HEIF's or an AVIF's thumbnail. Where it covers the side asked (at
+  least `Cover::least`) it is the picture, shrunk to it, and nothing else
+  is decoded; where it is smaller it is sent as the stand-in a thumbnail
   is (`PreviewResult::placeholder`, shown once the wait lasts). While
   stepping, a picture fitted in its room is asked `Cover::Quick`: a JPEG
   at the smaller scale at most a tenth short of the room's side

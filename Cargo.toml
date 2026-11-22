@@ -173,6 +173,14 @@ fast_image_resize = { version = "5.5", default-features = false, features = ["im
 # JPEG XL, decoded in process (ADR-148): pure Rust, through `image`'s
 # decoding hook, so every path a picture takes reads it.
 jxl-oxide = { version = "0.12", features = ["image"] }
+# What jxl-oxide reads a frame with, asked directly for the LF image
+# alone (`platform::jxl::eighth`), which jxl-oxide does not expose: the
+# versions it pins.
+jxl-bitstream = "1.1.0"
+jxl-color = "0.11.0"
+jxl-frame = "0.13.3"
+jxl-oxide-common = "1.0.0"
+jxl-vardct = "0.11.1"
 png = "0.18"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"

@@ -207,9 +207,9 @@ fn a_heic_in_one_piece_has_its_region_cut_from_the_whole() {
 fn a_heic_s_thumbnail_stands_in_for_it() {
     taught();
     let stand_in = |name: &str, side: u32| {
-        picture::stand_in(
+        picture::carried(
             picture::open(&fixture(name)).unwrap(),
-            side,
+            |longer| longer < side,
             Threads::Caller,
         )
         .unwrap()
@@ -303,7 +303,12 @@ fn a_heic_s_grid_thumbnail_is_made_from_the_one_it_carries() {
     use skwir_core::thumbs::ThumbnailProvider;
     taught();
     let carried = |name: &str, side: u32| {
-        picture::carried(picture::open(&fixture(name)).unwrap(), side).unwrap()
+        picture::carried(
+            picture::open(&fixture(name)).unwrap(),
+            |longer| longer >= side,
+            Threads::Caller,
+        )
+        .unwrap()
     };
     // 384 × 256, carrying 128 × 84.
     let thumbnail = carried("synthetic-tiles.heic", 128).unwrap();

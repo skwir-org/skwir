@@ -181,7 +181,8 @@ impl Work {
 
 /// The thumbnail a HEIF or an AVIF carries (ADR-148 amended), turned as
 /// the picture is shown, decoded by the helper: what stands for it while
-/// it decodes (`picture::stand_in`). `None` where it carries none.
+/// it decodes, or is it where it covers what is asked
+/// (`picture::carried`). `None` where it carries none.
 pub(crate) fn thumbnail<R: Read + Seek>(reader: R) -> ImageResult<Option<DynamicImage>> {
     let work = Work::new(reader)?;
     let Some((width, height, alpha)) = work

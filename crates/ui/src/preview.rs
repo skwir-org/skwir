@@ -2012,8 +2012,10 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
 /// An image decoded at the side `cover` asks (`IMAGE_MAX_SIDE` where it
 /// is not known), at most its own and within `limits::PICTURE_HELD`, with
 /// its own size, what 100% is, as its width and height, if its pixels are
-/// within `bounds` (ADR-146). A progressive JPEG's eighth, or a HEIF's
-/// thumbnail, goes to `first` before, to stand for it meanwhile.
+/// within `bounds` (ADR-146). What the picture carries smaller than
+/// itself (`picture::carried`: a progressive JPEG's eighth, a JPEG XL's,
+/// a HEIF's thumbnail) is the picture where it covers that side, and
+/// goes to `first` where it is smaller, to stand for it meanwhile.
 fn decode_image(
     held: &Arc<Held>,
     mime: Option<&str>,
@@ -2053,38 +2055,67 @@ fn decode_image(
         anyhow::bail!("cancelled");
     }
     let started = std::time::Instant::now();
-    // A progressive JPEG's eighth stands for it while the rest is decoded
-    // (ADR-146, 6): its DC scans, a few milliseconds where its AC scans
-    // take hundreds; so does the thumbnail a HEIF carries (ADR-148
-    // amended), in some 25 ms where its whole takes most of a second.
-    if let Some(first) = first
-        && let Ok(Some(stand_in)) = skwir_platform::picture::stand_in(
-            reader()?,
-            side,
-            skwir_platform::picture::Threads::Components,
-        )
-        && let Some((image, ink)) = crate::thumbs::picture_image(stand_in)
-        && !cancel.is_cancelled()
-    {
+    let least = cover.map_or(side, |cover| cover.least(side));
+    let covers = |longer: u32| longer >= least.min(side);
+    // The picture shown, as `how` made it.
+    let shown = |img: image::DynamicImage, how: &str| -> anyhow::Result<PreviewContent> {
+        let kept = (img.width(), img.height());
+        let (image, ink) = crate::thumbs::picture_image(img).ok_or_else(invalid_image)?;
         tracing::debug!(
+            own = ?(w, h),
+            ?kept,
             ms = started.elapsed().as_secs_f64() * 1000.,
-            "picture's stand-in first"
+            "picture {how}"
         );
-        first(PreviewContent::Image {
+        Ok(PreviewContent::Image {
             image,
             width: w,
             height: h,
             detail: None,
             document: None,
-            facts: Vec::new(),
+            facts: skwir_platform::exif::details(held),
             pixels: Pixels::Own,
             ink,
-        });
+        })
+    };
+    // What the picture carries smaller than itself, decoded in a few
+    // milliseconds where its whole takes hundreds or more (ADR-146, 6;
+    // ADR-148 amended): the picture where it covers the side asked (a
+    // HEIF's thumbnail of 320 in a preview as wide), else what stands for
+    // it while the rest is decoded.
+    if let Ok(Some(carried)) = skwir_platform::picture::carried(
+        reader()?,
+        |longer| covers(longer) || (first.is_some() && longer < side),
+        skwir_platform::picture::Threads::Components,
+    ) {
+        if cancel.is_cancelled() {
+            anyhow::bail!("cancelled");
+        }
+        if covers(carried.width().max(carried.height())) {
+            return shown(skwir_platform::picture::shrink(carried, side), "carried");
+        }
+        if let Some(first) = first
+            && let Some((image, ink)) = crate::thumbs::picture_image(carried)
+        {
+            tracing::debug!(
+                ms = started.elapsed().as_secs_f64() * 1000.,
+                "picture's stand-in first"
+            );
+            first(PreviewContent::Image {
+                image,
+                width: w,
+                height: h,
+                detail: None,
+                document: None,
+                facts: Vec::new(),
+                pixels: Pixels::Own,
+                ink,
+            });
+        }
     }
     // A JPEG at least twice the side is decoded at a reduced scale: a
     // 24-megapixel photo has a quarter of its pixels computed and held.
     // With a thread a component: the picture waited for, in its turn.
-    let least = cover.map_or(side, |cover| cover.least(side));
     let img = skwir_platform::picture::decode_fitted_within(
         reader()?,
         least,
@@ -2094,24 +2125,7 @@ fn decode_image(
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    let kept = (img.width(), img.height());
-    let (image, ink) = crate::thumbs::picture_image(img).ok_or_else(invalid_image)?;
-    tracing::debug!(
-        own = ?(w, h),
-        ?kept,
-        ms = started.elapsed().as_secs_f64() * 1000.,
-        "picture decoded"
-    );
-    Ok(PreviewContent::Image {
-        image,
-        width: w,
-        height: h,
-        detail: None,
-        document: None,
-        facts: skwir_platform::exif::details(held),
-        pixels: Pixels::Own,
-        ink,
-    })
+    shown(img, "decoded")
 }
 
 /// The `region` of a picture of `own` pixels (as shown) at the scale where

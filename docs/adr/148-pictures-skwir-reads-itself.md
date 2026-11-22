@@ -11,7 +11,10 @@ region alone, by a decoder of Skwir's own around jxl-oxide (decision 1);
 a photo of 24 megapixels or more had not been shown at all. Then, as the
 user chose once HEIC was measured: a HEIC's or an AVIF's region decoded
 from its tiles, and its thumbnail shown while it decodes and made into
-the grid's thumbnails (decision 3).
+the grid's thumbnails (decision 3). Then, as the user asked the same
+day: a JPEG XL's eighth read alone (decision 1), and what a picture
+carries smaller than itself made the picture wherever it covers what is
+asked, in the preview as in the grid (decision 3).
 
 ## Context
 
@@ -50,6 +53,29 @@ the grid's thumbnails (decision 3).
    - **Turned once**: jxl-oxide turns the pixels as the codestream says,
      and the EXIF Orientation a JPEG converted keeps beside it is not
      read again (`image` read it and turned such a picture twice).
+   - **Its eighth is read alone** (`jxl::eighth`, through
+     `picture::carried`): the LF image a lossy picture stores before its
+     details, each sample the mean of 8 × 8 pixels, read from the file's
+     first part (4 to 12 % of the photos measured) and decoded in the
+     colours its whole decodes to (XYB to the colours it names, a
+     recompressed JPEG's YCbCr, its subsampled chroma spread as a JPEG
+     decoder spreads it). jxl-oxide reads it only to enlarge it into a
+     frame of full size, so Skwir reads it with jxl-oxide's own crates
+     (`jxl-frame`, `jxl-vardct`, `jxl-bitstream`, `jxl-color`,
+     `jxl-oxide-common`, at the versions it pins): the LF global and
+     each LF group's coefficients, nothing of the details beside them
+     (which `try_parse_lf_group` reads too, a third of the time). Its
+     adaptive smoothing is left out: it smooths what is enlarged, and at
+     its own scale a sample is its block's mean already. Its light is
+     the whole's means within a level; a recompressed JPEG's colour a few
+     levels off in 4:2:0, where a chroma sample covers 16 × 16 pixels.
+     None is read where the LF is not all the picture is: a lossless
+     picture (Modular), one with alpha or other extra channels, an
+     animation, a frame with an LF frame, patches or splines of its own,
+     or not the picture's size. 24 and 45 megapixels: 31 to 137 ms on
+     the preview's threads (an LF group of 2048 × 2048 pixels each), 61
+     to 315 ms on one, at 11 to 22 MiB, where the whole took 0.74 to
+     1.9 s at 366 to 500 MiB (release, a machine under load).
 2. **A camera's raw file is shown by the largest JPEG it carries**
    (`raw::embedded_jpeg`): the camera's own picture of its sensor, full
    size in most raw files, as file managers and image viewers show it.
@@ -98,17 +124,18 @@ the grid's thumbnails (decision 3).
      (its default, 4). A part of 2000 × 1600 of 45 megapixels: about
      0.2 to 0.4 s at 25 to 35 MiB, where the whole took 0.9 to 1.6 s at
      279 MiB in the helper, and as much again in Skwir.
-   - **Its thumbnail stands for it** while it decodes
-     (`picture::stand_in`, as a progressive JPEG's eighth does, ADR-146,
-     6): the one the file carries (320 px in the files measured), turned
-     as the picture, decoded by the helper in 10 to 25 ms; none where it
-     carries none, or where it is no smaller than what is asked.
-   - **It makes the grid's thumbnails** of a side it covers
-     (`picture::carried`, asked first by the image decoder's provider),
-     as the desktop's HEIF thumbnailers do: the whole is not decoded for
-     them. The helper gives none whose proportions are not the
-     picture's, within a pixel of rounding (another picture's, or the
-     picture's before it was cropped): the whole is decoded then.
+   - **Its thumbnail is the picture where it covers what is asked**,
+     and stands for it while it decodes where it is smaller
+     (`picture::carried`, as a progressive JPEG's eighth and a JPEG XL's
+     are): the one the file carries (320 px in an iPhone's), turned as
+     the picture, decoded by the helper in 10 to 25 ms. The grid's
+     thumbnails of a side it covers are made from it, as the desktop's
+     HEIF thumbnailers do, and so is a preview no larger (an iPhone's
+     photo in a pane 320 pixels wide: 16 ms, where its whole took 1.6
+     s in a debug build): the whole is not decoded for them. The helper
+     gives none whose proportions are not the picture's, within a pixel
+     of rounding (another picture's, or the picture's before it was
+     cropped): the whole is decoded then.
 
 ## Alternatives
 
@@ -128,13 +155,19 @@ the grid's thumbnails (decision 3).
 - A raw file without a JPEG of its own (rare: a DNG written without a
   preview) shows nothing of Skwir's; its type is listed only where its
   container carries one.
-- A large JPEG XL decodes all its bands each time it is asked smaller
-  (no reduced scale in jxl-oxide's decoder through `image`, its eighth
-  not asked apart), holding the picture's eight bits whole; a HEIC or an
-  AVIF decodes whole (HEVC and AV1 have no smaller scale), in a helper
-  started for its size and again for its pixels, its thumbnail shown
-  meanwhile: an iPhone's photo of 12 megapixels is some 50 MB written and
-  read in memory.
+- A lossy JPEG XL asked at its eighth or less is shown from its eighth;
+  asked larger, it decodes all its bands (no other reduced scale in
+  jxl-oxide), holding the picture's eight bits whole, its eighth shown
+  meanwhile. A lossless one, or one with alpha, has no eighth to read
+  alone: it decodes whole however small it is asked. A HEIC or an AVIF
+  asked larger than its thumbnail decodes whole (HEVC and AV1 have no
+  smaller scale), in a helper started for its size and again for its
+  pixels, its thumbnail shown meanwhile: an iPhone's photo of 12
+  megapixels is some 50 MB written and read in memory.
+- Skwir reads parts of a JPEG XL frame with jxl-oxide's own crates,
+  which jxl-oxide moves with it: an update of jxl-oxide moves them by
+  hand, and the test of the eighth against the whole's means
+  (`jxl::tests`) says whether their reading still holds.
 - Past the preview's bound, a JPEG XL decodes its region alone (2000 ×
   1600 of 45 megapixels in 150 to 320 ms, where the whole took 1.8 s or
   more), a HEIC or an AVIF the tiles its region covers; an AVIF is

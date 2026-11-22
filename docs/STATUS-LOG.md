@@ -22269,3 +22269,68 @@ pixel of rounding (no fixture carries such a one).
   128 px thumbnail equal to the carried one to the pixel); the tiled
   fixture made again carrying 128 × 84. Clippy for Linux, Windows and
   macOS; the helper's (11) and the platform's (587) tests.
+
+## 2026-11-22: a JPEG XL's eighth alone, and what a picture carries as the picture (ADR-148 amended)
+
+Asked by the user after the entry above, with seven HEICs from phones to
+try (sample photos from a public site, kept out of the repository).
+
+- **A JPEG XL's eighth** (`jxl::eighth`): the LF image of a lossy
+  picture's first frame, read from the file's first part and decoded
+  alone with jxl-oxide's own crates (its LF global and each LF group's
+  coefficients, through `jxl-frame`, `jxl-vardct`, `jxl-bitstream`,
+  `jxl-oxide-common`, `jxl-color`, at the versions jxl-oxide pins: it
+  reads the LF only to enlarge it), dequantized, chroma from luma,
+  turned to the colours its whole decodes to, a recompressed JPEG's
+  subsampled chroma spread as a JPEG decoder spreads it, then turned as
+  shown. None where the LF is not all the picture is (lossless, extra
+  channels, an animation, an LF frame, patches, splines, a frame not the
+  picture's size, one TOC entry). Its LF groups decode on up to four
+  threads for the preview, on the caller's alone for thumbnails.
+- **What a picture carries, asked once** (`picture::carried`, replacing
+  `stand_in` and the HEIF-only `carried`): a progressive JPEG's eighth,
+  a JPEG XL's, a HEIF's thumbnail, where `wanted` takes its longer side.
+  The preview takes it as the picture where it covers the side asked
+  (at least `Cover::least`), else as the stand-in; the grid's provider
+  where it covers the thumbnail's side. Found with the phones' photos:
+  an iPhone's carries 320 px, and the preview pane on Xvfb is 320 px
+  wide, where the thumbnail had been refused as a stand-in (no smaller)
+  and the whole decoded (1.6–1.7 s in a debug build).
+- **The phones' HEICs** (4032 × 3024 and 4000 × 3000 grids of 512 px
+  tiles overhanging the picture, `irot` 90 and 270 on four of them,
+  thumbnails of 320 × 240 and 512 × 384 on six, one with none; the
+  helper in release): each whole decoded in 236–771 ms; six regions of
+  each (the middle and a corner 2000 × 1600, the bottom right corner
+  where tiles overhang, its last pixel, 30 × 30 and 1100 × 300 across
+  tile seams) the whole's cut to the pixel, 1–20 tiles in 14–721 ms; the
+  thumbnails turned as the pictures (6.2–14.3 levels from the whole
+  sampled at their size, where a wrong turn differs by far more), 12–135
+  ms. In the window, every thumbnail drawn and upright.
+- **Measured, the eighth** (release, a scratch crate including
+  `jxl.rs`; a machine under another build's load, about 8): 24 and 45
+  megapixels, lossy and recompressed from JPEG, 31–137 ms on the
+  preview's threads, 61–315 ms on one, 11–22 MiB, reading 0.33–1.3 MB of
+  5.9–14.7 MB files; the whole in bands 0.74–1.9 s at 366–500 MiB.
+  Parsing the LF coefficients alone instead of `try_parse_lf_group`
+  (which reads each group's HF metadata too): 72–84 ms against 113–120
+  for the 24-megapixel one, alternated.
+- **In the window** (debug build, Xvfb, the seven HEICs and two JPEG
+  XLs of 24 and 45 megapixels): in the 320 px pane, the JPEG XLs carried
+  (`picture carried`) in 0.56–0.72 s, where the 24-megapixel one's
+  whole had taken 14 s read ahead and its grid thumbnail 24.7 s
+  (unoptimized, the entries above); a HEIC with a 320 px thumbnail in 16
+  ms, where it had taken 1.6 s; the portraits' 240 × 320 thumbnails standing in within
+  14–17 ms for a side of 427. On the whole screen, the JPEG XLs' eighths
+  stood in after 0.57 and 1.07 s, their wholes 31 and 42 s later
+  (unoptimized), the stand-in and the whole alike in colour and place.
+- **Tests**: the eighth against the whole's 8 × 8 means (`jxl::tests`:
+  XYB, light within 1 level; a 4:2:0 JPEG recompressed and turned,
+  colour within 3.5 where a chroma sample covers 16 × 16 pixels; the
+  same JPEG in 4:4:4 measured at 0.13); none for a lossless picture, one
+  refused, a file cut short; `picture::tests` the eighth carried, the
+  lossless one read whole after; the progressive JPEG's and the HEIC's
+  tests through `carried`. Fixtures `synthetic-plasma-420-turned.jxl`
+  (16 KB) and `synthetic-lossless.jxl` (678 B).
+- **Not done**: a lossless JPEG XL's preview stays a whole decode; a
+  JPEG XL's eighth not kept for a region (zoomed, the regions decode at
+  full size).
