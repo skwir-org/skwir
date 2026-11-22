@@ -2676,7 +2676,18 @@ impl App {
         };
         self.open_in(pane, to, redirected, |p, shown| {
             p.replace_here(shown.clone());
-        })
+        })?;
+        // What redirected is spent: never kept, nor taken again by a step
+        // that names it (an address connected again finds it done).
+        let spent = self
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .and_then(|p| p.take_left(from));
+        if let Some(spent) = spent {
+            spent.close();
+        }
+        Ok(())
     }
 
     /// What keeps `location` shown filtered by `filter` (`keep`, ADR-109),

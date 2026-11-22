@@ -3556,18 +3556,40 @@ impl Pane {
         }
     }
 
-    /// The kept location `location`, taken out to be shown.
+    /// The location just left, when it is `location`, taken out: one that
+    /// redirected to the one shown (`App::follow_redirect`), spent.
+    pub(crate) fn take_left(&mut self, location: &Location) -> Option<Arc<dyn OpenLocation>> {
+        if self.left.as_ref().is_some_and(|k| &k.location == location) {
+            return self.left.take().map(|k| k.into_shown().0);
+        }
+        None
+    }
+
+    /// The kept location `location`, taken out to be shown. One whose
+    /// listing failed (its folder gone, its volume let go of: ADR-149) is
+    /// taken out and closed, never shown as it is: what shows it opens it
+    /// anew.
     pub(crate) fn take_kept(
         &mut self,
         location: &Location,
     ) -> Option<(Arc<dyn OpenLocation>, Listing)> {
-        if self.left.as_ref().is_some_and(|k| &k.location == location) {
-            return self.left.take().map(Kept::into_shown);
+        let kept = if self.left.as_ref().is_some_and(|k| &k.location == location) {
+            self.left.take()?
+        } else {
+            let i = self.kept.iter().position(|k| &k.location == location)?;
+            let kept = self.kept.remove(i);
+            self.opened_moved();
+            kept
+        };
+        let (open, mut listing) = kept.into_shown();
+        // What it was told since it was last pumped (the folder left is
+        // not): a failure it was told is seen.
+        listing.drain(open.events(), PUMP_BUDGET);
+        if listing.failure().is_some() {
+            open.close();
+            return None;
         }
-        let i = self.kept.iter().position(|k| &k.location == location)?;
-        let kept = self.kept.remove(i);
-        self.opened_moved();
-        Some(kept.into_shown())
+        Some((open, listing))
     }
 
     /// Keep exactly the locations of `wanted` (the one shown aside): the

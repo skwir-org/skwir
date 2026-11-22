@@ -1804,6 +1804,35 @@ fn a_folder_deleted_while_shown_is_listed_anew_once_made_again() {
     assert!(listing.find_by_name("old.txt".as_ref()).is_none());
 }
 
+/// A folder left whose listing failed meanwhile (deleted, its volume let
+/// go of) is never shown again as it was: going back to it opens it anew,
+/// what is at its path now (ADR-149).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_folder_left_that_was_lost_is_opened_anew_going_back() {
+    let tmp = home_tempdir();
+    let first = tmp.path().join("it's first");
+    let second = tmp.path().join("second");
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    std::fs::write(first.join("old.txt"), "1").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &first);
+    navigate(&app, &second);
+    // Kept as the folder left (no window lets it go), it is lost: its
+    // listing lets go of the folder once it said so.
+    std::fs::remove_dir_all(&first).unwrap();
+    assert!(skwir_core::fs::wait_let_go(&first, Duration::from_secs(10)));
+    std::fs::create_dir(&first).unwrap();
+    std::fs::write(first.join("new.txt"), "2").unwrap();
+    app.dispatch(&skwir_core::command::Invocation::new("back"))
+        .unwrap();
+    wait_pane(&app, pane, |p| {
+        p.listing.failure().is_none() && p.listing.find_by_name("new.txt".as_ref()).is_some()
+    });
+}
+
 /// A folder opened again from its path (a mount made over it, ADR-149)
 /// shows what its path leads to now: here a link turned to another
 /// folder. What it listed before goes as the new is listed.
