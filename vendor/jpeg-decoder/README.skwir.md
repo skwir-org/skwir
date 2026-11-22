@@ -7,7 +7,9 @@ in through `[patch.crates-io]` in the root `Cargo.toml`.
 Skwir decodes a JPEG with it only where it asks for a smaller scale:
 whatever `picture::decode_fitted` decodes smaller than it is
 (`crates/platform/src/picture.rs`): thumbnails, the preview, a comic's
-pages, print's contact sheets. Every other JPEG is `image`'s, through
+pages, print's contact sheets; and a region of a picture zoomed past what
+is held of it whole, whose rows alone it decodes (`picture::decode_region`,
+`0006`), at its full size too. Every other JPEG is `image`'s, through
 zune-jpeg.
 
 The crate is in maintenance mode: image-rs moves to zune-jpeg, and takes
@@ -139,3 +141,28 @@ same changes.
     (`crates/platform/testdata/synthetic-lossless-*.jpg`): neither is
     decoded reduced, and Skwir takes no pixels of another size than
     asked.
+- `0006-rows-decoded-alone.patch`: `Decoder::set_rows` decodes only the
+  rows of the output asked, at the scale set, and `rows_decoded` says
+  which rows `decode` returned: those of the MCUs covering them.
+  - **How:** the rows of MCUs covering those asked, and one more each way
+    for what upsampling reads beside a row, are a band; each component is
+    cut to it (its rows of blocks and of samples), so the workers hold and
+    transform the band alone. Rows above it are entropy-decoded (the
+    stream allows nothing else) and never transformed, a sequential row's
+    coefficients cleared for the next; past it, the rest of the scan is
+    passed over to the next marker, never decoded, in a progressive file
+    too. The rows beside those asked are drawn missing their own
+    neighbour and are dropped. A lossless picture, or a progressive one
+    at an eighth, is decoded whole.
+  - **The gain** (release, a busy machine, the least of three rounds): a
+    band of 1000 rows of a synthetic 8192×5464 baseline photo at the top,
+    in the middle, at the bottom took 54, 128 and 194 ms at a peak of
+    71–79 MiB, where zune-jpeg's whole decode took 281 ms at 148 MiB and
+    this crate's 291 ms at 253 MiB; of a 6000×4000 progressive one, 122,
+    281 and 421 ms at 60–111 MiB (its coefficients are still the whole
+    picture's), where zune-jpeg took 438 ms at 148 MiB.
+  - **Tests:** `crates/platform/src/picture.rs` decodes rows at the top,
+    within and at the bottom of every plasma fixture (sequential and
+    progressive, 4:2:0, 4:2:2, 4:4:4, grey, restart intervals), at full
+    size, a half and a quarter, and finds them the whole decode's to the
+    bit; and cuts a region from its rows as from the whole.

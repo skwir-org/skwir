@@ -1349,15 +1349,16 @@ may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
 **Pictures at the pixels they cover** (ADR-146, built 2026-11-21 and
-22). Left: a JPEG's region decoded without decoding the whole (a patch
-to the vendored jpeg-decoder: the entropy decoded to the region's last
-row, the IDCT only within it, and the decoder's state at each row of
-blocks kept from the first pass so the next region starts at its own
-row); the eighth of a progressive JPEG read ahead and taken while it
-decodes (only a request decoded in its own turn sends one); the region's
-decode takes the preview's turn, so a step taken meanwhile waits for it;
-no screen of two device pixels a pixel, nor 4K, tried in a window; the
-memory held while browsing (two kept pictures, a region) not measured.
+22). The leftovers built 2026-11-22 (ADR-146 amended): a JPEG's region
+decoded from its rows alone (`vendor/jpeg-decoder`'s 0006), what a zoom
+asks in a turn of its own, the eighth of a picture read ahead shown when
+a step takes it; checked at two device pixels a pixel and memory
+measured while browsing. Left: a JPEG region's columns (a band is the
+picture's whole width), a progressive JPEG's coefficients for the whole
+picture while its band decodes, any other format's region (decoded
+whole), a zoom's first step (the whole again at the held bound, decoded
+whole for a JPEG at no reduced scale); no 4K screen of its own size
+tried (Xvfb's 1600 × 1000 at twice the scale).
 
 **Pictures at the pixels they cover: the next one** (comic and PDF pages done as ADR-147, the formats below as ADR-148, 2026-11-22; asked by the user
 on 2026-11-21, to be done right after the preview's pictures, steps 1–4

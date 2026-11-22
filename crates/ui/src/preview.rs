@@ -266,7 +266,9 @@ enum AheadSlot {
     Asking,
     /// One does: nothing is read ahead.
     Claimed,
-    Decoding,
+    /// Decoding, with what stands for it once there is one (a progressive
+    /// JPEG's eighth), for a step that takes it meanwhile.
+    Decoding(Option<PreviewContent>),
     /// Decoded, waiting for the step.
     Read(PreviewContent),
     /// The step came while it decoded: it is the preview's request now,
@@ -1912,21 +1914,29 @@ impl Drop for PreviewState {
 /// and a request that waited for its turn gives it up if the panel moved
 /// on meanwhile, so passed-over files are never decoded. A picture read
 /// ahead (`Shell::read_ahead`) has a turn of its own: a guess the next
-/// step proves wrong never keeps the step waiting for its decode, and at
-/// most two pictures decode at once.
+/// step proves wrong never keeps the step waiting for its decode. So has
+/// what a zoom asks (`Turn::Zoomed`): the picture again at the zoom's side
+/// (`Cover::Side`), the region of one zoomed past its bound
+/// (`decode_region`), either a whole picture at up to its full size; a
+/// step taken meanwhile decodes the next picture beside it, and what the
+/// zoom asked, let go, is dropped as it ends. At most three pictures
+/// decode at once.
 #[derive(Clone, Copy)]
 enum Turn {
     Shown,
     Ahead,
+    Zoomed,
 }
 
 impl Turn {
     fn take(self) -> std::sync::MutexGuard<'static, ()> {
         static SHOWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
         static AHEAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static ZOOMED: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let turn = match self {
             Self::Shown => &SHOWN,
             Self::Ahead => &AHEAD,
+            Self::Zoomed => &ZOOMED,
         };
         // A decode that panicked held nothing worth protecting: take it.
         turn.lock()
@@ -2104,8 +2114,9 @@ fn decode_image(
 }
 
 /// The `region` of a picture of `own` pixels (as shown) at the scale where
-/// its longer side is `side`, as GPUI draws it (ADR-146, 5). In the turn of
-/// the preview's own decodes: the whole may be decoded at its full size.
+/// its longer side is `side`, as GPUI draws it (ADR-146, 5). In a turn of
+/// a zoom's (`Turn::Zoomed`): the whole may be decoded at its full size,
+/// and the next step's picture does not wait for it.
 fn decode_region(
     held: &Arc<Held>,
     mime: Option<&str>,
@@ -2114,7 +2125,7 @@ fn decode_region(
     side: u32,
     cancel: &CancelToken,
 ) -> anyhow::Result<Arc<RenderImage>> {
-    let _turn = Turn::Shown.take();
+    let _turn = Turn::Zoomed.take();
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
@@ -2484,16 +2495,17 @@ fn compute(
         Drawn::Drawing => {
             decode_drawing(&held, cover(), bounds, cancel).unwrap_or_else(failure_content)
         }
-        Drawn::Picture => decode_image(
-            &held,
-            mime,
-            cover(),
-            bounds,
-            Turn::Shown,
-            Some(first),
-            cancel,
-        )
-        .unwrap_or_else(failure_content),
+        Drawn::Picture => {
+            let cover = cover();
+            // Asked again at a zoom's side: not in the turn a step waits for.
+            let turn = if matches!(cover, Some(Cover::Side(_))) {
+                Turn::Zoomed
+            } else {
+                Turn::Shown
+            };
+            decode_image(&held, mime, cover, bounds, turn, Some(first), cancel)
+                .unwrap_or_else(failure_content)
+        }
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
         Drawn::Text => match skwir_platform::inspection::plain(&held, mime, cancel) {
@@ -4786,12 +4798,37 @@ impl Shell {
                     *slot = if claimed {
                         AheadSlot::Claimed
                     } else {
-                        AheadSlot::Decoding
+                        AheadSlot::Decoding(None)
                     };
                 }
                 if claimed {
                     return;
                 }
+                // What stands for it while it decodes, kept for a step
+                // that takes it meanwhile, or sent to the one that took it.
+                let stand_in = |content: PreviewContent| {
+                    let mut slot = job.lock();
+                    match &mut *slot {
+                        AheadSlot::Decoding(stand) => *stand = Some(content),
+                        AheadSlot::Adopted { generation, tx } => {
+                            let _ = tx.send(PreviewResult {
+                                generation: *generation,
+                                content,
+                                complete: false,
+                                session: None,
+                                media: None,
+                                sniffed: None,
+                                placeholder: true,
+                                closed_links: None,
+                                picture_source: None,
+                                page_side: None,
+                            });
+                            drop(slot);
+                            wake();
+                        }
+                        _ => {}
+                    }
+                };
                 // As `compute` decodes it, in the turn of what is read ahead.
                 let content = request
                     .held()
@@ -4806,7 +4843,7 @@ impl Shell {
                                 cover,
                                 Bounds::QUICK,
                                 Turn::Ahead,
-                                None,
+                                Some(&stand_in),
                                 &token,
                             )
                         }
@@ -4817,7 +4854,7 @@ impl Shell {
                 }
                 let mut slot = job.lock();
                 match std::mem::replace(&mut *slot, AheadSlot::Done) {
-                    AheadSlot::Decoding => *slot = AheadSlot::Read(content),
+                    AheadSlot::Decoding(_) => *slot = AheadSlot::Read(content),
                     AheadSlot::Adopted { generation, tx } => {
                         drop(slot);
                         let _ = tx.send(PreviewResult {
@@ -4981,16 +5018,35 @@ impl Shell {
                 self.preview_arrived(result, window, cx);
                 true
             }
-            AheadSlot::Decoding => {
+            AheadSlot::Decoding(stand) => {
                 *slot = AheadSlot::Adopted {
                     generation,
                     tx: self.preview.tx.clone(),
                 };
                 drop(slot);
-                tracing::debug!("picture read ahead taken while decoding");
+                tracing::debug!(
+                    stand_in = stand.is_some(),
+                    "picture read ahead taken while decoding"
+                );
                 self.preview.picture_side = ahead.asked_side();
                 self.preview.cancel = Some(ahead.cancel);
                 self.preview.phase = PreviewPhase::Loading;
+                // Its eighth, decoded already, stands for it at once.
+                if let Some(content) = stand {
+                    let result = PreviewResult {
+                        generation,
+                        content,
+                        complete: false,
+                        session: None,
+                        media: None,
+                        sniffed: None,
+                        placeholder: true,
+                        closed_links: None,
+                        picture_source: None,
+                        page_side: None,
+                    };
+                    self.preview_arrived(result, window, cx);
+                }
                 true
             }
             _ => {

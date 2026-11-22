@@ -7,7 +7,10 @@ today's memory as the bound, counted in pixels; the region's tiles next;
 two pictures kept; a picture a tenth short shown at once, then
 sharpened; `fast_image_resize`). Decisions 1 to 4 built on Linux the
 same day, 5 to 7 that night (2026-11-22); each checked in a window on
-Xvfb.
+Xvfb. Amended the next night (2026-11-22), as the user chose for its
+leftovers: a JPEG's region decoded from its rows alone (5), what a zoom
+asks in a turn of its own (8), a picture read ahead keeping its eighth
+(6).
 
 ## Context
 
@@ -78,20 +81,33 @@ Measured in release on synthetic photos of about three bits a pixel
    over the whole held within the bound (`preview::Detail`,
    `region_past_held`, `picture::decode_region`). One region at a time;
    one within it at no larger side is not asked again. Its decode reads
-   the whole at the least reduced scale covering the side, then cuts,
-   turns and shrinks the region alone. A JPEG's region decoded without
-   decoding the whole is left (PLAN's "What is left").
+   the picture at the least reduced scale covering the side, then cuts,
+   turns and shrinks the region alone. A JPEG reads only the rows the
+   region covers as stored (`picture::jpeg_band`, `vendor/jpeg-decoder`'s
+   0006): those above are entropy-decoded and never transformed, those
+   below never read, so a region at the top of a 45-megapixel photo holds
+   its rows, never the 134 MB of the whole. Any other picture is decoded
+   whole for it.
 6. **Something sooner**: a progressive JPEG shows its eighth first (its
    DC scans, 9 to 17 ms for 24 to 45 megapixels), as the stand-in a
    thumbnail is; while stepping, a picture whose cheaper scale is at most
    a tenth short of its room's side is decoded at that scale
    (`Cover::Quick`), and at its side once the walk has rested on it
-   600 ms (`settle_picture`).
+   600 ms (`settle_picture`). A picture read ahead keeps its eighth too
+   (`AheadSlot::Decoding`): a step that takes it while it decodes shows
+   the eighth at once, or as it comes.
 7. **Read ahead and kept**: the next picture is read ahead from the first
    picture shown, the way the last step went (forward before any), not
    after two steps alike; the last two pictures shown fitted in their
    room are kept as shown, let go after a minute unseen, so a step back
    shows at once.
+8. **A zoom never holds a step back**: what a zoom asks, the picture
+   again at the zoom's side and a region past the bound, decodes in a
+   turn of its own (`preview::Turn::Zoomed`), beside the turn the
+   preview's next picture waits for and the one read ahead: a decode
+   started cannot be stopped, and a step taken while a large picture
+   decodes for a zoom drew the next picture only once it ended (2.5 s
+   in a debug build). At most three pictures decode at once.
 
 ## Alternatives
 

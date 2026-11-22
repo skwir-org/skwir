@@ -272,13 +272,18 @@ A name that says nothing is not a binary file.
   covers, fewer pixels than its own) has the part in view, and a margin
   of half as much each way where the bound leaves room, decoded at the
   side it covers (`preview::region_past_held`, asked from `Sharpen`'s
-  prepaint; `Shell::sharpen_region`, `picture::decode_region`: the whole
-  decoded at the least reduced scale covering it, the region alone cut,
-  turned and shrunk) and drawn over the whole in its place
-  (`preview::Detail`, `picture`). One at a time, a `Latest`; a region
-  within what was asked, at no larger side, is not asked again; its
-  pixels go with the content (`replace_preview_content`). Its decode
-  takes the preview's turn (`Turn::Shown`).
+  prepaint; `Shell::sharpen_region`, `picture::decode_region`: the
+  picture decoded at the least reduced scale covering it, a JPEG's rows
+  the region covers as stored alone (`picture::jpeg_band`,
+  `jpeg_decoder::Decoder::set_rows`, which returns exactly the rows a
+  whole decode draws), any other whole; the region alone cut, turned and
+  shrunk) and drawn over the whole in its place (`preview::Detail`,
+  `picture`). One at a time, a `Latest`; a region within what was asked,
+  at no larger side, is not asked again; its pixels go with the content
+  (`replace_preview_content`). What a zoom asks (the picture again at a
+  zoom's side, `Cover::Side`, and its region) decodes in a turn of its
+  own (`Turn::Zoomed`, ADR-146 amended, 8): never the one the next
+  step's picture waits for.
 - **Something sooner** (ADR-146, 6). A progressive JPEG asked larger than
   its eighth has its eighth decoded first (`picture::progressive_eighth`:
   its DC scans, a few milliseconds) and sent as the stand-in a thumbnail
@@ -320,9 +325,13 @@ A name that says nothing is not a binary file.
   the step's preview will be (`shown_entry`); the step takes it in the
   sync that makes the step (`take_ahead`), so the picture is drawn in
   the frame the step is, and one still decoding is adopted as the step's
-  request (`AheadSlot::Adopted`), never decoded twice. Its decode has a
-  turn of its own (`Turn::Ahead`): a guess the step proves wrong never
-  keeps the step waiting, and at most two pictures decode at once.
+  request (`AheadSlot::Adopted`), never decoded twice. A progressive
+  JPEG's eighth decoded meanwhile is kept in its slot
+  (`AheadSlot::Decoding`) and shown as the stand-in at once when the step
+  takes it, or sent the adopter's way as it comes. Its decode has a turn
+  of its own (`Turn::Ahead`): a guess the step proves wrong never keeps
+  the step waiting, and at most three pictures decode at once (the
+  preview's, the one read ahead, a zoom's).
 - Only what skwir decodes itself is read ahead: a type the name
   settles, which no provider accepts (asked on the worker, as `accepts`
   may read), and not written as text (an SVG may open on its source,

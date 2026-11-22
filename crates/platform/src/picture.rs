@@ -224,34 +224,39 @@ pub fn decode_region<R: BufRead + Seek>(
     side: u32,
     threads: Threads,
 ) -> ImageResult<DynamicImage> {
-    let (decoded, orientation) = if reader.format() == Some(ImageFormat::Jpeg) {
+    // A JPEG's rows around the region alone; any other picture whole.
+    let band = if reader.format() == Some(ImageFormat::Jpeg) {
         let mut inner = reader.into_inner();
-        match jpeg_reduced(&mut inner, side, threads, REDUCED_BYTES)? {
-            Some(reduced) => reduced,
-            None => whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?,
+        match jpeg_band(&mut inner, own, region, side, threads, REDUCED_BYTES)? {
+            Some(band) => band,
+            None => Band::whole(whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?),
         }
     } else {
-        whole(reader)?
+        Band::whole(whole(reader)?)
     };
+    let (decoded, orientation) = (band.image, band.orientation);
     let longer = own.0.max(own.1).max(1);
-    // Where the region lies in the pixels as stored, then in those decoded.
+    // Where the region lies in the pixels as stored, then in those decoded
+    // (the whole picture at the scale decoded, `band.size`), then in the
+    // band of its rows held.
     let [left, top, width, height] = stored_region(region, own, orientation);
     let stored = turned(own.0, own.1, orientation);
     let (across, down) = (
-        f64::from(decoded.width()) / f64::from(stored.0.max(1)),
-        f64::from(decoded.height()) / f64::from(stored.1.max(1)),
+        f64::from(band.size.0) / f64::from(stored.0.max(1)),
+        f64::from(band.size.1) / f64::from(stored.1.max(1)),
     );
     let from = |at: u32, scale: f64, most: u32| ((f64::from(at) * scale).floor() as u32).min(most);
     let to = |at: u32, scale: f64, most: u32| ((f64::from(at) * scale).ceil() as u32).min(most);
+    let rows = band.top..band.top + decoded.height();
     let (x0, y0) = (
         from(left, across, decoded.width()),
-        from(top, down, decoded.height()),
+        from(top, down, rows.end).clamp(rows.start, rows.end.saturating_sub(1)),
     );
     let (x1, y1) = (
         to(left + width, across, decoded.width()).max(x0 + 1),
-        to(top + height, down, decoded.height()).max(y0 + 1),
+        to(top + height, down, rows.end).max(y0 + 1),
     );
-    let mut cut = decoded.crop_imm(x0, y0, x1 - x0, y1 - y0);
+    let mut cut = decoded.crop_imm(x0, y0 - rows.start, x1 - x0, y1 - y0);
     cut.apply_orientation(orientation);
     // Its size where the whole's longer side is `side`, never larger than
     // what was cut.
@@ -393,6 +398,118 @@ fn reduced<R: std::io::Read>(jpeg: &mut jpeg_decoder::Decoder<R>, side: u32) -> 
         channels,
         holds: pixels + coefficients,
     })
+}
+
+/// What a region is cut from (`decode_region`): rows of the picture
+/// decoded at a scale, from `top`, of the whole's `size` at that scale,
+/// and how to turn it.
+struct Band {
+    image: DynamicImage,
+    top: u32,
+    size: (u32, u32),
+    orientation: Orientation,
+}
+
+impl Band {
+    /// A picture decoded whole.
+    fn whole((image, orientation): (DynamicImage, Orientation)) -> Band {
+        Band {
+            size: (image.width(), image.height()),
+            image,
+            top: 0,
+            orientation,
+        }
+    }
+}
+
+/// The rows of a JPEG a region of it shows, decoded alone (ADR-146
+/// amended, `vendor/jpeg-decoder`'s 0006): at the least reduced scale
+/// whose longer side is at least `side` (its full size where none is
+/// smaller), the band of rows of blocks around the region's rows as
+/// stored. Those above are read and never transformed, those below not
+/// read: a region at the top of a photo of 45 megapixels holds its rows
+/// alone, where the whole was 134 MB. `None`, `reader` back where it was,
+/// for a JPEG this decoder reads otherwise than `image` (CMYK, 16 bits),
+/// or one whose band holds more than `bytes` (a progressive JPEG keeps its
+/// coefficients for the whole picture).
+fn jpeg_band<R: BufRead + Seek>(
+    reader: &mut R,
+    own: (u32, u32),
+    region: [u32; 4],
+    side: u32,
+    threads: Threads,
+    bytes: u64,
+) -> ImageResult<Option<Band>> {
+    let start = reader
+        .stream_position()
+        .map_err(image::ImageError::IoError)?;
+    let band = (|| {
+        let mut jpeg = jpeg_decoder::Decoder::new(&mut *reader);
+        jpeg.set_max_decoding_buffer_size(usize::try_from(bytes).ok()?);
+        jpeg.set_worker_threads(threads == Threads::Components);
+        jpeg.read_info().ok()?;
+        let full = jpeg.info()?;
+        let channels: u64 = match full.pixel_format {
+            jpeg_decoder::PixelFormat::L8 => 1,
+            jpeg_decoder::PixelFormat::RGB24 => 3,
+            _ => return None,
+        };
+        let asked = u16::try_from(side).unwrap_or(u16::MAX);
+        let (width, height) = jpeg.scale(asked, asked).ok()?;
+        let orientation = jpeg
+            .exif_data()
+            .and_then(Orientation::from_exif_chunk)
+            .unwrap_or(Orientation::NoTransforms);
+        // The region's rows as stored, at the scale decoded.
+        let [_, top, _, rows] = stored_region(region, own, orientation);
+        let stored = turned(own.0, own.1, orientation).1.max(1);
+        let down = f64::from(height) / f64::from(stored);
+        let first = (f64::from(top) * down).floor() as u32;
+        let end = (f64::from(top + rows) * down).ceil() as u32;
+        jpeg.set_rows(
+            u16::try_from(first).ok()?,
+            u16::try_from(end.min(u32::from(height))).ok()?,
+        );
+        let (band_top, band_rows) = jpeg.rows_decoded()?;
+        // What it holds: the band's pixels, as planes and as the picture,
+        // and a progressive JPEG's coefficients for the whole picture.
+        let pixels = u64::from(width) * u64::from(band_rows) * channels * 2;
+        let coefficients = match full.coding_process {
+            jpeg_decoder::CodingProcess::DctProgressive => {
+                u64::from(u32::from(full.width).next_multiple_of(16))
+                    * u64::from(u32::from(full.height).next_multiple_of(16))
+                    * channels
+                    * 2
+            }
+            _ => 0,
+        };
+        if pixels + coefficients > bytes {
+            return None;
+        }
+        let pixels = jpeg.decode().ok()?;
+        let (width, band_rows) = (u32::from(width), u32::from(band_rows));
+        // The pixels of the size it said, or none: see `jpeg_reduced`.
+        if pixels.len() as u64 != u64::from(width) * u64::from(band_rows) * channels {
+            return None;
+        }
+        let image = if channels == 1 {
+            DynamicImage::ImageLuma8(image::GrayImage::from_raw(width, band_rows, pixels)?)
+        } else {
+            DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, band_rows, pixels)?)
+        };
+        Some(Band {
+            image,
+            top: u32::from(band_top),
+            size: (width, u32::from(height)),
+            orientation,
+        })
+    })();
+    if band.is_none() {
+        reader
+            .seek(std::io::SeekFrom::Start(start))
+            .map_err(image::ImageError::IoError)?;
+    }
+    Ok(band)
 }
 
 /// A JPEG decoded as [`reduced`] says, and how to turn it: a photo eight
@@ -1010,6 +1127,98 @@ mod tests {
         )
         .unwrap();
         assert_eq!((whole.width(), whole.height()), (800, 1200));
+    }
+
+    /// A JPEG's rows decoded alone (`vendor/jpeg-decoder`'s 0006) are the
+    /// rows the whole decode draws, to the bit: sequential and progressive,
+    /// every sampling, grey, restart intervals, at full and reduced scales,
+    /// rows at the top, within and at the bottom.
+    #[test]
+    fn a_jpeg_s_rows_decoded_alone_are_the_whole_s() {
+        let decode = |bytes: &[u8], side: u16, rows: Option<(u16, u16)>| {
+            let mut jpeg = jpeg_decoder::Decoder::new(Cursor::new(bytes));
+            jpeg.set_worker_threads(false);
+            jpeg.scale(side, side).unwrap();
+            if let Some((top, bottom)) = rows {
+                jpeg.set_rows(top, bottom);
+            }
+            let pixels = jpeg.decode().unwrap();
+            let info = jpeg.info().unwrap();
+            let channels = if info.pixel_format == jpeg_decoder::PixelFormat::L8 {
+                1
+            } else {
+                3
+            };
+            (pixels, info.width, jpeg.rows_decoded().unwrap(), channels)
+        };
+        for name in [
+            "synthetic-plasma-sequential.jpg",
+            "synthetic-plasma-progressive.jpg",
+            "synthetic-plasma-dc-apart.jpg",
+            "synthetic-plasma-422.jpg",
+            "synthetic-plasma-422-restart.jpg",
+            "synthetic-plasma-444.jpg",
+            "synthetic-plasma-444-restart.jpg",
+            "synthetic-plasma-grey.jpg",
+            "synthetic-plasma-grey-restart.jpg",
+        ] {
+            let bytes = std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("testdata")
+                    .join(name),
+            )
+            .unwrap();
+            // Full size, a half and a quarter.
+            for side in [800, 400, 200] {
+                let (whole, width, (_, height), channels) = decode(&bytes, side, None);
+                let row = usize::from(width) * channels;
+                for (top, bottom) in [(0, 9), (height / 3, height / 2), (height - 5, height)] {
+                    let (band, _, (first, count), _) = decode(&bytes, side, Some((top, bottom)));
+                    assert!(
+                        first <= top && first + count >= bottom && count < height,
+                        "{name} at {side}: rows {top}..{bottom} in {first}+{count} of {height}"
+                    );
+                    let start = usize::from(first) * row;
+                    assert!(
+                        band == whole[start..start + usize::from(count) * row],
+                        "{name} at {side}: rows {first}+{count} differ"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A region of a JPEG past its bound is cut from the rows it needs: as
+    /// the whole decoded and cut, and so wherever it lies, turned or not.
+    #[test]
+    fn a_jpeg_region_is_cut_from_its_rows_alone() {
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata/synthetic-plasma-sequential.jpg"),
+        )
+        .unwrap();
+        let whole = decode(reader(&bytes), image::Limits::default())
+            .unwrap()
+            .to_rgb8();
+        for region in [[0, 0, 100, 40], [300, 250, 200, 90], [700, 560, 100, 40]] {
+            let cut = decode_region(reader(&bytes), (800, 600), region, 800, Threads::Caller)
+                .unwrap()
+                .to_rgb8();
+            let [x, y, width, height] = region;
+            let expected = image::imageops::crop_imm(&whole, x, y, width, height).to_image();
+            assert_eq!(cut.dimensions(), expected.dimensions());
+            // `image` decodes the whole through zune-jpeg, the region
+            // through jpeg-decoder: within rounding of each other.
+            let differs = cut
+                .pixels()
+                .zip(expected.pixels())
+                .filter(|(a, b)| a.0.iter().zip(b.0).any(|(a, b)| a.abs_diff(b) > 3))
+                .count();
+            assert!(
+                differs * 200 < cut.pixels().len(),
+                "{region:?}: {differs} pixels differ"
+            );
+        }
     }
 
     /// A JPEG XL picture is read where any picture is (ADR-148): its size

@@ -137,6 +137,9 @@ pub struct Decoder<R> {
 
     // Whether a decode may run its components on threads of their own.
     worker_threads: bool,
+
+    // The rows of the output asked alone (`set_rows`): first and end.
+    rows: Option<(u16, u16)>,
 }
 
 impl<R: Read> Decoder<R> {
@@ -163,6 +166,7 @@ impl<R: Read> Decoder<R> {
             dc_bits_left: [0; MAX_COMPONENTS],
             decoding_buffer_size_limit: usize::MAX,
             worker_threads: true,
+            rows: None,
         }
     }
 
@@ -184,6 +188,50 @@ impl<R: Read> Decoder<R> {
     /// waits for one decode alone has it sooner with them.
     pub fn set_worker_threads(&mut self, threads: bool) {
         self.worker_threads = threads;
+    }
+
+    /// Decode only the rows `top..bottom` of the output, at the scale set:
+    /// the rows of MCUs covering them, and one more each way for what
+    /// upsampling reads beside a row; those above are read and never
+    /// transformed, those below are not read. `decode` then returns the
+    /// rows of the MCUs covering those asked, which `rows_decoded` says,
+    /// exactly as a whole decode draws them. A lossless picture, or a
+    /// progressive one at an eighth (drawn from its DC), is decoded
+    /// whole.
+    pub fn set_rows(&mut self, top: u16, bottom: u16) {
+        self.rows = Some((top, bottom.max(top.saturating_add(1))));
+    }
+
+    /// The rows of the output `decode` returns, the first and how many: the
+    /// band around those `set_rows` asked, else the whole output. Known
+    /// once the header is read.
+    pub fn rows_decoded(&self) -> Option<(u16, u16)> {
+        let frame = self.frame.as_ref()?;
+        Some(match self.band(frame) {
+            Some(band) => band.rows(frame),
+            None => (0, frame.output_size.height),
+        })
+    }
+
+    /// The band of rows of blocks `set_rows` asks of `frame`, if any.
+    fn band(&self, frame: &FrameInfo) -> Option<Band> {
+        let (top, bottom) = self.rows?;
+        if frame.coding_process == CodingProcess::Lossless
+            || (frame.coding_process == CodingProcess::DctProgressive
+                && frame.components.iter().all(|c| c.dct_scale == 1))
+        {
+            return None;
+        }
+        let height = Band::mcu_height(frame);
+        let total = u32::from(frame.mcu_size.height);
+        let shown_first = (u32::from(top) / height).min(total.saturating_sub(1));
+        let shown_last = u32::from(bottom).div_ceil(height).clamp(shown_first + 1, total);
+        Some(Band {
+            first: shown_first.saturating_sub(1) as u16,
+            last: (shown_last + 1).min(total) as u16,
+            shown_first: shown_first as u16,
+            shown_last: shown_last as u16,
+        })
     }
 
     /// The worker the caller allows: threads, or its own thread alone.
@@ -701,12 +749,14 @@ impl<R: Read> Decoder<R> {
         }
 
         let frame = self.frame.as_ref().unwrap();
+        let band = self.band(frame);
+        let band_height = band.map_or(frame.output_size.height, |band| band.decoded_rows(frame).1);
 
         if frame
             .components
             .len()
             .checked_mul(frame.output_size.width.into())
-            .and_then(|m| m.checked_mul(frame.output_size.height.into()))
+            .and_then(|m| m.checked_mul(band_height.into()))
             .map_or(true, |m| self.decoding_buffer_size_limit < m)
         {
             return Err(Error::Format(
@@ -743,7 +793,7 @@ impl<R: Read> Decoder<R> {
                 // Get the worker prepared
                 let row_data = RowData {
                     index: i,
-                    component: component.clone(),
+                    component: band.map_or_else(|| component.clone(), |band| band.component(component)),
                     quantization_table,
                 };
                 worker.start(row_data)?;
@@ -753,7 +803,8 @@ impl<R: Read> Decoder<R> {
                     * usize::from(component.vertical_sampling_factor)
                     * 64;
 
-                let mut tasks = (0..frame.mcu_size.height).map(|mcu_y| {
+                let mcu_rows = band.map_or(0..frame.mcu_size.height, |band| band.first..band.last);
+                let mut tasks = mcu_rows.map(|mcu_y| {
                     let offset = usize::from(mcu_y) * coefficients_per_mcu_row;
                     let row_coefficients =
                         self.coefficients[i][offset..offset + coefficients_per_mcu_row].to_vec();
@@ -770,12 +821,39 @@ impl<R: Read> Decoder<R> {
         if frame.coding_process == CodingProcess::Lossless {
             compute_image_lossless(frame, planes_u16)
         } else {
-            compute_image(
-                &frame.components,
-                planes,
-                frame.output_size,
-                self.determine_color_transform(),
-            )
+            match band {
+                Some(band) => {
+                    let mut pixels = compute_image(
+                        &frame
+                            .components
+                            .iter()
+                            .map(|component| band.component(component))
+                            .collect::<Vec<_>>(),
+                        planes,
+                        Dimensions {
+                            width: frame.output_size.width,
+                            height: band_height,
+                        },
+                        self.determine_color_transform(),
+                    )?;
+                    // The rows beside those shown were drawn for what
+                    // upsampling reads around them, each missing its
+                    // own neighbour: they are not the whole's, and go.
+                    let line = usize::from(frame.output_size.width) * frame.components.len();
+                    let (decoded_first, _) = band.decoded_rows(frame);
+                    let (first, count) = band.rows(frame);
+                    let skip = usize::from(first - decoded_first) * line;
+                    pixels.truncate(skip + usize::from(count) * line);
+                    pixels.drain(..skip);
+                    Ok(pixels)
+                }
+                None => compute_image(
+                    &frame.components,
+                    planes,
+                    frame.output_size,
+                    self.determine_color_transform(),
+                ),
+            }
         }
     }
 
@@ -939,12 +1017,16 @@ impl<R: Read> Decoder<R> {
             ));
         }
 
+        // Rows asked alone (`set_rows`): those of the band transformed, the
+        // scan left once past it.
+        let band = self.band(frame);
+
         // Prepare the worker thread for the work to come.
         for (i, component) in components.iter().enumerate() {
             if finished[i] {
                 let row_data = RowData {
                     index: i,
-                    component: component.clone(),
+                    component: band.map_or_else(|| component.clone(), |band| band.component(component)),
                     quantization_table: self.quantization_tables
                         [component.quantization_table_index]
                         .clone()
@@ -1002,8 +1084,20 @@ impl<R: Read> Decoder<R> {
             )
         };
 
+        let mut past_band = false;
         for mcu_y in 0..max_mcu_y {
             if mcu_y * 8 >= frame.image_size.height {
+                break;
+            }
+            // The row of MCUs this is in (a non-interleaved scan's MCU is a
+            // block): past the band, nothing more of the scan is wanted.
+            let mcu_row = if is_interleaved {
+                mcu_y
+            } else {
+                mcu_y / components[0].vertical_sampling_factor as u16
+            };
+            if band.is_some_and(|band| mcu_row >= band.last) {
+                past_band = true;
                 break;
             }
 
@@ -1136,6 +1230,21 @@ impl<R: Read> Decoder<R> {
                         continue;
                     }
 
+                    // Above the band: read, never transformed. A sequential
+                    // block writes only its coefficients that are not zero:
+                    // the row's are cleared for the next.
+                    let mcu_row = if is_interleaved {
+                        mcu_y
+                    } else {
+                        mcu_y / component.vertical_sampling_factor as u16
+                    };
+                    if band.is_some_and(|band| mcu_row < band.first) {
+                        if !is_progressive {
+                            mcu_row_coefficients[i].fill(0);
+                        }
+                        continue;
+                    }
+
                     let coefficients_per_mcu_row = component.block_size.width as usize
                         * component.vertical_sampling_factor as usize
                         * 64;
@@ -1169,6 +1278,11 @@ impl<R: Read> Decoder<R> {
         }
 
         let mut marker = huffman.take_marker(&mut self.reader)?;
+        // Left past the band: the rest of the scan is passed over to the
+        // next marker, never decoded.
+        if past_band && matches!(marker, None | Some(Marker::RST(_))) {
+            marker = Some(self.skip_scan()?);
+        }
         while let Some(Marker::RST(_)) = marker {
             marker = self.read_marker().ok();
         }
@@ -1187,6 +1301,64 @@ impl<R: Read> Decoder<R> {
         } else {
             Ok((marker, None))
         }
+    }
+}
+
+/// The rows of MCUs a decode of rows alone holds (`Decoder::set_rows`):
+/// those `shown_first..shown_last` covering the rows asked, which it
+/// returns, within `first..last`, a row more each way where the picture
+/// has one, decoded for what upsampling reads beside a row.
+#[derive(Clone, Copy)]
+struct Band {
+    first: u16,
+    last: u16,
+    shown_first: u16,
+    shown_last: u16,
+}
+
+impl Band {
+    /// The output's rows a row of MCUs holds.
+    fn mcu_height(frame: &FrameInfo) -> u32 {
+        let v_max = frame
+            .components
+            .iter()
+            .map(|c| c.vertical_sampling_factor)
+            .max()
+            .unwrap_or(1);
+        u32::from(v_max) * frame.components[0].dct_scale as u32
+    }
+
+    /// The output's rows it returns: the first and how many.
+    fn rows(self, frame: &FrameInfo) -> (u16, u16) {
+        Self::output_rows(frame, self.shown_first, self.shown_last)
+    }
+
+    /// The output's rows it decodes: the first and how many.
+    fn decoded_rows(self, frame: &FrameInfo) -> (u16, u16) {
+        Self::output_rows(frame, self.first, self.last)
+    }
+
+    /// The output's rows of the rows of MCUs `first..last`.
+    fn output_rows(frame: &FrameInfo, first: u16, last: u16) -> (u16, u16) {
+        let height = Self::mcu_height(frame);
+        let first = u32::from(first) * height;
+        let end = (u32::from(last) * height).min(u32::from(frame.output_size.height));
+        (first as u16, (end - first) as u16)
+    }
+
+    /// `component` cut to the band: its rows of blocks, and its rows of
+    /// samples within them.
+    fn component(self, component: &Component) -> Component {
+        let mut cut = component.clone();
+        let vertical = u32::from(component.vertical_sampling_factor);
+        let block_rows = u32::from(self.last - self.first) * vertical;
+        let scale = component.dct_scale as u32;
+        let first_sample = u32::from(self.first) * vertical * scale;
+        cut.block_size.height = block_rows as u16;
+        cut.size.height = (u32::from(component.size.height).saturating_sub(first_sample))
+            .min(block_rows * scale)
+            .max(1) as u16;
+        cut
     }
 }
 

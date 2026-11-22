@@ -22086,3 +22086,55 @@ jxl-oxide for JPEG XL).
   whole each time; no real camera's file, no Debian or Fedora package
   built or installed (`just package-try`); Windows and macOS compiled
   only, where the helper is not shipped.
+
+## 2026-11-22: ADR-146's leftovers (ADR-146 amended)
+
+The third track of the night, as the user chose.
+
+- **A JPEG's region from its rows alone**: `vendor/jpeg-decoder`'s 0006
+  (`Decoder::set_rows`, `rows_decoded`): the rows of MCUs covering those
+  asked, one more each way for upsampling, are a band; components cut to
+  it; rows above entropy-decoded and never transformed (a sequential
+  row's coefficients cleared for the next: a block writes only those
+  that are not zero), the rest of a scan passed over to the next marker
+  once past it, in a progressive file too; the margin rows dropped, as
+  each misses its own neighbour (found by the test: rows 0 to 32 of the
+  first band differed until then). `picture::jpeg_band` asks it for the
+  region's rows as stored, at the least reduced scale covering the side,
+  its full size included. Measured in release (a scratch program against
+  the vendored crate, a busy machine, the least of three rounds): bands
+  of 1000 rows at the top, the middle and the bottom of a synthetic
+  8192 × 5464 baseline photo 54, 128 and 194 ms at a peak of 71–79 MiB,
+  where zune-jpeg's whole decode took 281 ms at 148 MiB; of a 6000 × 4000
+  progressive one 122, 281 and 421 ms at 60–111 MiB, zune-jpeg 438 ms at
+  148 MiB. In the window (debug build), a region of 480 × 985 at 100 % of
+  the 45-megapixel photo: 1.1 s, where the zoom's first step (the whole at
+  the held bound, through zune-jpeg unoptimized) took 19.9 s.
+- **A zoom's decodes in a turn of their own** (`Turn::Zoomed`): the
+  picture again at a zoom's side and its region. Found in the window: a
+  step to the folder's end while a tall picture decoded at 100 % drew
+  only once that decode ended, 2.5 s later; since, 0.58 s (its own
+  decode).
+- **A picture read ahead keeps its eighth** (`AheadSlot::Decoding`): a
+  step that took a progressive JPEG while it decoded showed nothing until
+  the whole came; now its eighth, checked full screen on a picture unlike
+  the one before (its frame, taken before the decode ended, differs from
+  the final one by an RMSE of 0.008).
+- **Two device pixels a pixel** (Xvfb, `Xft.dpi: 192`): rooms counted in
+  device pixels (`Room { scale: 2.0 }`): the panel holds 640 × 480, the
+  whole screen 1500 × 1000; the 45-megapixel step 1.56 s in the debug
+  build, as at one (a first run's 6.6 s was the machine's load).
+- **Memory while browsing** (PSS of the debug build on lavapipe, its
+  anonymous part): 104 MiB at the start, 108 stepping through the
+  pictures, 186 while the 45-megapixel photo decoded for 100 %, 358 at
+  its peak while that decode, let go by the steps, ran on in its turn;
+  121 once settled full screen at twice the scale, unchanged 15 s later.
+- **Tests**: `picture::tests::a_jpeg_s_rows_decoded_alone_are_the_whole_s`
+  (nine plasma fixtures: sequential and progressive, 4:2:0, 4:2:2, 4:4:4,
+  grey, restart intervals; full size, a half, a quarter; rows at the top,
+  within and at the bottom; equal to the whole decode's to the bit),
+  `a_jpeg_region_is_cut_from_its_rows_alone`; the patch applies to the
+  copy before it and makes this one.
+- **Not done**: a band's columns (it is the picture's width); a
+  progressive JPEG's coefficients still the whole picture's; a 4K screen
+  of its own size.
