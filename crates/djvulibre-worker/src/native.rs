@@ -457,22 +457,36 @@ impl<'a> Document<'a> {
         })
     }
 
-    /// Page `number` drawn whole at `width` × `height`, four bytes a pixel
-    /// in the window's order (BGRA).
-    pub fn render(&self, number: u32, width: u32, height: u32) -> anyhow::Result<Vec<u8>> {
+    /// Page `number` laid at `width` × `height`, its part `[left, top,
+    /// part width, part height]` drawn (the whole, or what shows of it,
+    /// ADR-147), four bytes a pixel in the window's order (BGRA).
+    pub fn render(
+        &self,
+        number: u32,
+        (width, height): (u32, u32),
+        [left, top, part_width, part_height]: [u32; 4],
+    ) -> anyhow::Result<Vec<u8>> {
         let page = self.page(number)?;
-        let rect = RenderRect {
+        let whole = RenderRect {
             w: width,
             h: height,
             ..RenderRect::default()
         };
-        let row = width as usize * 4;
-        let mut pixels = vec![0u8; row * height as usize];
+        // In the same coordinates, from the top left: the format's rows run
+        // down (`ddjvu_format_set_y_direction`).
+        let rect = RenderRect {
+            x: i32::try_from(left)?,
+            y: i32::try_from(top)?,
+            w: part_width,
+            h: part_height,
+        };
+        let row = part_width as usize * 4;
+        let mut pixels = vec![0u8; row * part_height as usize];
         // Red, green and blue in a 32-bit word, opaque: on a little-endian
         // machine, the bytes BGRA.
         let mut masks: [c_uint; 4] = [0xff_0000, 0xff00, 0xff, 0xff00_0000];
-        // SAFETY: the format is released below; the buffer holds `height`
-        // rows of `row` bytes, what the library is told.
+        // SAFETY: the format is released below; the buffer holds
+        // `part_height` rows of `row` bytes, what the library is told.
         let drawn = unsafe {
             let format = ddjvu_format_create(FORMAT_RGBMASK32, 4, masks.as_mut_ptr());
             anyhow::ensure!(!format.is_null(), "no pixel format");
@@ -481,7 +495,7 @@ impl<'a> Document<'a> {
             let drawn = ddjvu_page_render(
                 page,
                 RENDER_COLOR,
-                &raw const rect,
+                &raw const whole,
                 &raw const rect,
                 format,
                 c_ulong::try_from(row)?,

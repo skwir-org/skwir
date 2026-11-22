@@ -7,9 +7,9 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use skwir_core::document::{
-    Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_SIZE, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, page_labels,
-    words, worker,
+    Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_SIZE, MAX_PART_SIDE, Outline,
+    PAGE_PIXELS, PIXELS_FILE, PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply,
+    WorkerRequest, held_side, page_labels, words, worker,
 };
 
 mod native;
@@ -72,7 +72,7 @@ fn run() -> anyhow::Result<()> {
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
-        WorkerRequest::Render { page, side } => document.render(page, side, scratch),
+        WorkerRequest::Render { page, side, part } => document.render(page, side, part, scratch),
         WorkerRequest::Search { query } => document
             .search(&query, superseded)
             .map(WorkerReply::Matches),
@@ -180,31 +180,61 @@ impl<'a> Document<'a> {
         (1..=self.pages).contains(&page).then_some(page)
     }
 
-    /// Page `number` drawn with at most `side` pixels on its longer side.
-    fn render(&self, number: u32, side: u32, scratch: &Path) -> anyhow::Result<WorkerReply> {
+    /// Page `number` drawn with at most `side` pixels on its longer side,
+    /// whole within what a page may hold, or its `part` alone at `side`
+    /// however large (ADR-147).
+    fn render(
+        &self,
+        number: u32,
+        side: u32,
+        part: Option<Part>,
+        scratch: &Path,
+    ) -> anyhow::Result<WorkerReply> {
         let number = number.clamp(1, self.pages);
         let shown = self.native.shown(number)?;
-        let limit = f64::from(side.clamp(64, MAX_SIDE));
+        let side = match part {
+            None => held_side(shown.width as f32, shown.height as f32, side),
+            Some(_) => side.clamp(64, MAX_PART_SIDE),
+        };
+        let limit = f64::from(side);
         let scale = limit / f64::from(shown.width.max(shown.height));
         // Rounding must not push a side above the protocol's limit.
         let width = (f64::from(shown.width) * scale).round().clamp(1., limit) as u32;
         let height = (f64::from(shown.height) * scale).round().clamp(1., limit) as u32;
-        let pixels = self.native.render(number, width, height)?;
+        let drawn = match part {
+            None => [0, 0, width, height],
+            Some(part) => part.pixels(width, height),
+        };
+        anyhow::ensure!(
+            part.is_none() || u64::from(drawn[2]) * u64::from(drawn[3]) <= PAGE_PIXELS,
+            "the part asked is larger than a page may be"
+        );
+        let pixels = self.native.render(number, (width, height), drawn)?;
         let mut output = BufWriter::new(std::fs::File::create(scratch.join(PIXELS_FILE))?);
         output.write_all(&pixels)?;
         output.flush()?;
+        // A part's page carried its text whole: none again.
+        let (chars, links) = if part.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                words::chars(&self.runs(number, &shown)),
+                self.links(number, &shown),
+            )
+        };
         let content = PageContent {
             page: number,
             width: css(&shown, shown.width),
             height: css(&shown, shown.height),
-            chars: words::chars(&self.runs(number, &shown)),
-            links: self.links(number, &shown),
+            chars,
+            links,
         };
         Ok(WorkerReply::Page {
             content,
-            width,
-            height,
+            width: drawn[2],
+            height: drawn[3],
             order: PixelOrder::Bgra,
+            part: part.map(|_| Part::of_pixels(drawn, width, height)),
         })
     }
 

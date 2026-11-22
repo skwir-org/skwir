@@ -21,20 +21,25 @@ pub(crate) struct CachedPage {
     /// The side it was asked at: drawn again only when pages are shown
     /// larger than that, whatever pixels the engine could give.
     side: u32,
+    /// The part of the page it is (ADR-147); `None` for the whole.
+    part: Option<skwir_core::document::Part>,
 }
 
 /// Steps pages are rendered at: a zoom step of 1.25 crosses at most one.
 const SIDE_STEP: f32 = 512.;
 
 /// The side to render a page at that covers `covered` device pixels on its
-/// longer side: the next step, a little short allowed, up to `MAX_SIDE`.
+/// longer side: the next step, a little short allowed, up to
+/// `MAX_PART_SIDE`. Drawn whole, a page is held within what a page may
+/// hold (`document::held_side`); past it, what shows of it is drawn at
+/// this side (`Shell::document_parts`, ADR-147).
 pub(crate) fn page_side(covered: f32) -> u32 {
     let steps = if covered.is_finite() {
         (covered / 1.05 / SIDE_STEP).ceil().max(1.)
     } else {
         1.
     };
-    ((steps * SIDE_STEP) as u32).min(skwir_core::document::MAX_SIDE)
+    ((steps * SIDE_STEP).min(skwir_core::document::MAX_PART_SIDE as f32)) as u32
 }
 
 /// The side to render a page at that is fitted in an area `width` by
@@ -162,6 +167,80 @@ impl Area {
     }
 }
 
+/// Hand what of the pages showed this frame to the shell
+/// (`Shell::document_parts`), when it differs from what it last had
+/// (`last`): what shows of a page past what is held of it whole is drawn
+/// apart (ADR-147).
+pub(crate) fn report_seen(
+    visible: &crate::elements::document::Visible,
+    last: &Rc<Vec<crate::elements::document::Seen>>,
+    entity: gpui::WeakEntity<Shell>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    let seen = std::mem::take(&mut *visible.borrow_mut());
+    if seen.as_slice() == last.as_slice() {
+        return;
+    }
+    window.defer(cx, move |window, cx| {
+        if let Some(shell) = entity.upgrade() {
+            shell.update(cx, |shell, cx| shell.document_parts(seen, window, cx));
+        }
+    });
+}
+
+/// What of page `seen` to draw apart, at what side (ADR-147): where it
+/// covers more device pixels than its pixels drawn whole hold, the part
+/// that shows and a margin round it of half as much each way, as many
+/// pixels as a page may hold (`document::PAGE_PIXELS`), at the side it
+/// covers. `None` while what is drawn whole suffices, or `held` (a part
+/// drawn or asked, and its side) holds what shows at that side.
+pub(crate) fn part_wanted(
+    seen: &crate::elements::document::Seen,
+    held: Option<(skwir_core::document::Part, u32)>,
+) -> Option<(skwir_core::document::Part, u32)> {
+    use skwir_core::document::{PAGE_PIXELS, Part};
+    if !seen.covered.is_finite() || seen.covered <= seen.held as f32 * 1.05 {
+        return None;
+    }
+    let mut side = page_side(seen.covered);
+    // The page drawn whole at that side holds it (`whole_side`): it is
+    // drawn whole again, no part.
+    if skwir_core::document::held_side(seen.own.0, seen.own.1, side) as f32 * 1.05 >= seen.covered {
+        return None;
+    }
+    if let Some((part, held_side)) = held
+        && held_side as f32 * 1.05 >= side as f32
+        && part.holds(&seen.shown)
+    {
+        return None;
+    }
+    let (width, height) = (seen.own.0.max(1.), seen.own.1.max(1.));
+    let longer = width.max(height);
+    let pixels = |part: &Part, side: u32| {
+        let scale = side as f32 / longer;
+        f64::from((part.right - part.left) * width * scale)
+            * f64::from((part.bottom - part.top) * height * scale)
+    };
+    let shown = pixels(&seen.shown, side);
+    let room = PAGE_PIXELS as f64 / shown.max(1.);
+    if room < 1. {
+        side = ((f64::from(side) * room.sqrt()).floor() as u32).max(64);
+    }
+    let margin = ((room.sqrt() - 1.) / 2.).clamp(0., 0.5) as f32;
+    let (across, down) = (
+        (seen.shown.right - seen.shown.left) * margin,
+        (seen.shown.bottom - seen.shown.top) * margin,
+    );
+    let part = Part {
+        left: (seen.shown.left - across).max(0.),
+        top: (seen.shown.top - down).max(0.),
+        right: (seen.shown.right + across).min(1.),
+        bottom: (seen.shown.bottom + down).min(1.),
+    };
+    Some((part, side))
+}
+
 /// Hand what the pages covered this frame to the shell, when it changes the
 /// side they are rendered at or the scale a zoom step starts from.
 pub(crate) fn report_shown(
@@ -190,6 +269,8 @@ struct PageResult {
     generation: u64,
     number: u32,
     result: Result<CachedPage, Words>,
+    /// What shows of the page (ADR-147), not the page whole.
+    part: bool,
 }
 pub struct DocumentScroll {
     pub continuous: bool,
@@ -205,6 +286,13 @@ pub struct DocumentScroll {
     /// The widest page seen, in page units, for the sideways scroll at a zoom.
     widest: f32,
     errors: Rc<BTreeMap<u32, Words>>,
+    /// What shows of pages past what is held of them whole, drawn sharper
+    /// (ADR-147): one part a page, kept while the page is wanted.
+    pub(crate) parts: Rc<BTreeMap<u32, CachedPage>>,
+    /// What of the pages showed last (`report_seen`), and the part being
+    /// drawn.
+    pub(crate) seen: Rc<Vec<crate::elements::document::Seen>>,
+    part_pending: Option<(u32, CancelToken)>,
     wanted: Vec<u32>,
     pending: Option<(u32, CancelToken)>,
     generation: u64,
@@ -235,6 +323,9 @@ impl DocumentScroll {
             sizes: Rc::default(),
             widest: 0.,
             errors: Rc::default(),
+            parts: Rc::default(),
+            seen: Rc::default(),
+            part_pending: None,
             wanted: Vec::new(),
             pending: None,
             generation: 0,
@@ -265,6 +356,19 @@ impl DocumentScroll {
             .collect();
         candidates.sort_by_key(|p| std::cmp::Reverse(p.abs_diff(current)));
         let mut evicted = Vec::new();
+        // What showed of a page goes as soon as it is not wanted.
+        let wanted: std::collections::BTreeSet<u32> = self.wanted.iter().copied().collect();
+        let gone: Vec<u32> = self
+            .parts
+            .keys()
+            .copied()
+            .filter(|page| !wanted.contains(page))
+            .collect();
+        for page in gone {
+            if let Some(part) = Rc::make_mut(&mut self.parts).remove(&page) {
+                evicted.push(part);
+            }
+        }
         for number in candidates {
             if bytes <= CACHE_BYTES {
                 break;
@@ -309,11 +413,37 @@ impl DocumentScroll {
         if let Some((_, token)) = self.pending.take() {
             token.cancel();
         }
+        if let Some((_, token)) = self.part_pending.take() {
+            token.cancel();
+        }
         self.generation = self.generation.wrapping_add(1);
     }
-    /// Page `page`, kept rendered at `side` or larger: shown at once.
+    /// What shows of page `page` drawn sharper, and where it lies on it.
+    pub(crate) fn part_of(
+        &self,
+        page: u32,
+    ) -> Option<(Arc<RenderImage>, skwir_core::document::Part)> {
+        let cached = self.parts.get(&page)?;
+        Some((cached.image.clone(), cached.part?))
+    }
+    /// Page `page`, kept rendered at `side` or larger, or at as much as it
+    /// may hold whole there: shown at once.
     fn kept(&self, page: u32, side: u32) -> Option<&CachedPage> {
-        self.pages.get(&page).filter(|kept| kept.side >= side)
+        let whole = self.whole_side(page, side);
+        self.pages.get(&page).filter(|kept| kept.side >= whole)
+    }
+    /// The side page `page` is drawn whole at when pages are drawn at
+    /// `side`: as much as a page of its shape may hold
+    /// (`document::held_side`), what shows of it past that drawn apart
+    /// (ADR-147). Its shape as the engine said it, else an upright page of
+    /// ISO's shape until it is known.
+    pub(crate) fn whole_side(&self, page: u32, side: u32) -> u32 {
+        let (width, height) = self
+            .sizes
+            .get(&page)
+            .copied()
+            .unwrap_or((1., std::f32::consts::SQRT_2));
+        skwir_core::document::held_side(width, height, side)
     }
     /// Whether `image` is a page kept here: what shows it lets go of it
     /// without dropping it from the atlas, which the cache does as the page
@@ -867,6 +997,10 @@ impl Shell {
         for page in std::mem::take(&mut scroll.pages).values() {
             cx.drop_image(page.image.clone(), Some(window));
         }
+        for part in std::mem::take(&mut scroll.parts).values() {
+            cx.drop_image(part.image.clone(), Some(window));
+        }
+        scroll.seen = Rc::default();
     }
 
     /// Let the reader go, with its pages and the page the panel shows of
@@ -960,13 +1094,116 @@ impl Shell {
         }
         if self.preview.reader.scroll.continuous {
             self.request_document_page();
-        } else if self.preview.reader.shown_side < side {
+        } else if self.preview.reader.shown_side
+            < self
+                .preview
+                .reader
+                .scroll
+                .whole_side(self.preview.page, side)
+        {
             // The page shown is drawn again, where it is.
             self.cancel_pending_preview();
             self.preview.refresh = true;
             self.preview.phase = crate::preview::PreviewPhase::Queued;
             cx.notify();
         }
+    }
+
+    /// What of the pages showed (`report_seen`): parts of pages no longer
+    /// in view go, and the page that most needs one has what shows of it
+    /// drawn apart (`part_wanted`, ADR-147), one at a time.
+    pub(crate) fn document_parts(
+        &mut self,
+        seen: Vec<crate::elements::document::Seen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let scroll = &mut self.preview.reader.scroll;
+        let shown: std::collections::BTreeSet<u32> = seen.iter().map(|seen| seen.page).collect();
+        let gone: Vec<u32> = scroll
+            .parts
+            .keys()
+            .copied()
+            .filter(|page| !shown.contains(page))
+            .collect();
+        for page in gone {
+            if let Some(part) = Rc::make_mut(&mut scroll.parts).remove(&page) {
+                cx.drop_image(part.image, Some(window));
+            }
+        }
+        scroll.seen = Rc::new(seen);
+        if scroll.part_pending.is_some() {
+            return;
+        }
+        // The page shown most first.
+        let mut wanted: Vec<_> = scroll
+            .seen
+            .iter()
+            .filter_map(|seen| {
+                let held = scroll
+                    .parts
+                    .get(&seen.page)
+                    .and_then(|cached| Some((cached.part?, cached.side)));
+                let (part, side) = part_wanted(seen, held)?;
+                let area =
+                    (seen.shown.right - seen.shown.left) * (seen.shown.bottom - seen.shown.top);
+                Some((area, seen.page, part, side))
+            })
+            .collect();
+        wanted.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let Some(&(_, number, part, side)) = wanted.first() else {
+            return;
+        };
+        self.request_document_part(number, part, side);
+    }
+
+    /// Draw `part` of page `number` at `side`, apart from the page whole.
+    fn request_document_part(&mut self, number: u32, part: skwir_core::document::Part, side: u32) {
+        let Some(session) = self.preview.reader.session.clone() else {
+            return;
+        };
+        let scroll = &mut self.preview.reader.scroll;
+        let cancel = self.preview.reader.lifetime.child();
+        tracing::debug!(page = number, side, ?part, "draw what shows of a page");
+        scroll.part_pending = Some((number, cancel.clone()));
+        let (generation, tx, wake) = (scroll.generation, scroll.tx.clone(), self.waker());
+        self.app.scheduler.spawn(
+            Priority::Visible,
+            "document-page-part",
+            cancel.clone(),
+            move || {
+                let result = session
+                    .render_part(number, side, part, &cancel)
+                    .and_then(|page| {
+                        let drawn = page.part.unwrap_or(part);
+                        let bytes = page.pixels.len();
+                        let image = crate::thumbs::page_image(
+                            page.width,
+                            page.height,
+                            page.pixels,
+                            page.order,
+                        )
+                        .ok_or_else(|| anyhow::anyhow!("invalid document bitmap"))?;
+                        Ok(CachedPage {
+                            image,
+                            content: Arc::new(Page::new(page.content)),
+                            bytes,
+                            side,
+                            part: Some(drawn),
+                        })
+                    })
+                    .map_err(Words::of_error);
+                if !cancel.is_cancelled() {
+                    let _ = tx.send(PageResult {
+                        generation,
+                        number,
+                        result,
+                        part: true,
+                    });
+                    wake();
+                }
+            },
+        );
     }
 
     fn request_document_page(&mut self) {
@@ -986,18 +1223,25 @@ impl Shell {
         };
         // The page the preview opened on is drawn from its content until
         // it is shown larger than it was rendered.
-        let initial = initial.filter(|_| self.preview.reader.shown_side >= side);
+        let initial = initial.filter(|page| {
+            self.preview.reader.shown_side >= self.preview.reader.scroll.whole_side(*page, side)
+        });
         let scroll = &mut self.preview.reader.scroll;
         if scroll.pending.is_some() {
             return;
         }
         let Some(number) = scroll.wanted.iter().copied().find(|p| {
             Some(*p) != initial
-                && scroll.pages.get(p).is_none_or(|cached| cached.side < side)
+                && scroll
+                    .pages
+                    .get(p)
+                    .is_none_or(|cached| cached.side < scroll.whole_side(*p, side))
                 && !scroll.errors.contains_key(p)
         }) else {
             return;
         };
+        // As much as it may hold whole; what shows past that is drawn apart.
+        let side = scroll.whole_side(number, side);
         // Speculative neighbours must not interrupt an explicitly started find.
         // A missing current page still has priority over background searching.
         if self.preview.reader.search.is_pending() && number != self.preview.page {
@@ -1037,6 +1281,7 @@ impl Shell {
                             content: Arc::new(Page::new(page.content)),
                             bytes,
                             side,
+                            part: None,
                         })
                     })
                     .map_err(Words::of_error);
@@ -1045,6 +1290,7 @@ impl Shell {
                         generation,
                         number,
                         result,
+                        part: false,
                     });
                     wake();
                 }
@@ -1056,6 +1302,25 @@ impl Shell {
         while let Ok(reply) = self.preview.reader.scroll.rx.try_recv() {
             let scroll = &mut self.preview.reader.scroll;
             if reply.generation != scroll.generation {
+                continue;
+            }
+            // What shows of a page, drawn sharper: over the page, while it
+            // is wanted; a failure leaves the page as it was drawn.
+            if reply.part {
+                scroll.part_pending = None;
+                match reply.result {
+                    Ok(part) => {
+                        if let Some(old) =
+                            Rc::make_mut(&mut scroll.parts).insert(reply.number, part)
+                        {
+                            cx.drop_image(old.image, Some(window));
+                        }
+                        cx.notify();
+                    }
+                    Err(error) => {
+                        tracing::debug!(page = reply.number, "part not drawn: {}", error.english());
+                    }
+                }
                 continue;
             }
             scroll.pending = None;
@@ -1152,6 +1417,7 @@ impl Shell {
                 content: Arc::clone(page),
                 bytes: (pixels.width.0.max(0) as usize) * (pixels.height.0.max(0) as usize) * 4,
                 side,
+                part: None,
             };
             let scroll = &mut self.preview.reader.scroll;
             if let Some(old) = Rc::make_mut(&mut scroll.pages).insert(kept.content.page, kept) {
@@ -1289,9 +1555,14 @@ pub fn continuous_element(
     let zoom_anchor = scroll.zoom_anchor.clone();
     let requested = Rc::new(RefCell::new(Vec::new()));
     let seen = requested.clone();
-    // What the rows cover, read once they are laid out.
+    // What the rows cover, read once they are laid out, and what of them
+    // shows (ADR-147).
     let report = crate::elements::document::Report::default();
     let row_report = report.clone();
+    let visible = crate::elements::document::Visible::default();
+    let row_visible = visible.clone();
+    let parts = Rc::clone(&scroll.parts);
+    let last_seen = Rc::clone(&scroll.seen);
     let (side, scale) = (shell.preview.page_side, reader.shown_scale);
     let entity = cx.entity().downgrade();
     let after_entity = entity.clone();
@@ -1379,6 +1650,12 @@ pub fn continuous_element(
                             entity.clone(),
                             Some(row_report.clone()),
                             (&grab, drag_moves),
+                            (
+                                Some(row_visible.clone()),
+                                parts.get(&number).and_then(|cached| {
+                                    Some((cached.image.clone(), cached.part?))
+                                }),
+                            ),
                         ),
                     ));
                 } else {
@@ -1463,6 +1740,7 @@ pub fn continuous_element(
             .unwrap_or((after_list.logical_scroll_top().item_ix as u32 + 1).min(count));
             wanted = wanted_pages(wanted, current, count);
             report_shown(&report, side, scale, after_entity.clone(), window, cx);
+            report_seen(&visible, &last_seen, after_entity.clone(), window, cx);
             window.defer(cx, move |window, cx| {
                 if !lifetime.is_cancelled()
                     && let Some(entity) = after_entity.upgrade()
@@ -1533,14 +1811,89 @@ mod tests {
 
     #[test]
     fn pages_are_rendered_at_the_step_they_cover() {
-        use skwir_core::document::MAX_SIDE;
+        use skwir_core::document::MAX_PART_SIDE;
         // A little short of a step is that step; past it, the next.
         assert_eq!(page_side(426.), 512);
         assert_eq!(page_side(1067.), 1024);
         assert_eq!(page_side(1100.), 1536);
         assert_eq!(page_side(0.), 512);
         assert_eq!(page_side(f32::NAN), 512);
-        assert_eq!(page_side(100_000.), MAX_SIDE);
+        // Past what a page may hold whole: the side what shows of it is
+        // drawn at (ADR-147).
+        assert_eq!(page_side(10_000.), 9728);
+        assert_eq!(page_side(100_000.), MAX_PART_SIDE);
+        // A page whole is held as much as its shape may hold.
+        let state = DocumentScroll::default();
+        assert_eq!(state.whole_side(1, 9728), 4096, "an A4 page, unknown yet");
+    }
+
+    /// A page covering more than its pixels drawn whole hold has what shows
+    /// of it drawn apart, with a margin of half as much each way where a
+    /// page may hold it, at the side it covers; asked once while what was
+    /// drawn or asked holds it (ADR-147).
+    #[test]
+    fn what_shows_of_a_page_zoomed_past_its_whole_is_drawn_apart() {
+        use crate::elements::document::Seen;
+        use skwir_core::document::Part;
+        let seen = Seen {
+            page: 3,
+            own: (816., 1056.),
+            covered: 8000.,
+            held: 4096,
+            shown: Part {
+                left: 0.4,
+                top: 0.4,
+                right: 0.6,
+                bottom: 0.5,
+            },
+        };
+        let (part, side) = part_wanted(&seen, None).expect("a part");
+        assert_eq!(side, 7680);
+        // Half as much again each way.
+        assert!(
+            (part.left - 0.3).abs() < 1e-4 && (part.right - 0.7).abs() < 1e-4,
+            "{part:?}"
+        );
+        assert!(
+            (part.top - 0.35).abs() < 1e-4 && (part.bottom - 0.55).abs() < 1e-4,
+            "{part:?}"
+        );
+        // Held: not asked again; zoomed further, asked anew.
+        assert_eq!(part_wanted(&seen, Some((part, side))), None);
+        let further = Seen {
+            covered: 12_000.,
+            ..seen
+        };
+        assert!(part_wanted(&further, Some((part, side))).is_some());
+        // Within what the whole holds: none.
+        let fits = Seen {
+            covered: 4200.,
+            ..seen
+        };
+        assert_eq!(part_wanted(&fits, None), None);
+        // A tall page whose whole, drawn at that side, holds it: drawn
+        // whole again, no part.
+        let tall = Seen {
+            own: (533., 8000.),
+            covered: 7600.,
+            held: 2048,
+            ..seen
+        };
+        assert_eq!(part_wanted(&tall, None), None);
+        // What shows larger than a page may hold: no margin, a smaller side.
+        let wall = Seen {
+            covered: 30_000.,
+            shown: Part {
+                left: 0.,
+                top: 0.,
+                right: 1.,
+                bottom: 1.,
+            },
+            ..seen
+        };
+        let (part, side) = part_wanted(&wall, None).unwrap();
+        assert_eq!(part, wall.shown);
+        assert!(side < 30_000, "{side}");
     }
 
     /// Before any page was shown, the first is rendered at the side an
@@ -1666,6 +2019,7 @@ mod tests {
                     // Exercise accounting with tiny synthetic buffers.
                     bytes: CACHE_BYTES / 4,
                     side: 1024,
+                    part: None,
                 },
             );
             Rc::make_mut(&mut state.sizes).insert(number, (600., 800.));
@@ -1701,6 +2055,7 @@ mod tests {
             }))),
             bytes: 4,
             side,
+            part: None,
         };
         Rc::make_mut(&mut state.pages).insert(6, page(6, 1536));
         Rc::make_mut(&mut state.pages).insert(4, page(4, 512));

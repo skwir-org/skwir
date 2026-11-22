@@ -286,6 +286,7 @@ impl skwir_core::document::DocumentSession for Drawn {
                 chars: Vec::new(),
                 links: Vec::new(),
             }),
+            part: None,
         })
     }
     fn search(

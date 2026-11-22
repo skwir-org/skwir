@@ -681,6 +681,7 @@ pub fn page_element(
         return crate::reader_scroll::continuous_element(shell, image, page, cx);
     }
     let report = crate::elements::document::Report::default();
+    let visible = crate::elements::document::Visible::default();
     let element = page_surface(
         shell,
         image,
@@ -688,15 +689,19 @@ pub fn page_element(
         zoom,
         shell.preview.fit_width,
         Some(report.clone()),
+        Some(visible.clone()),
         cx,
     );
     // Once the page is laid out: what it covers, for the side pages are
-    // rendered at (`Shell::document_shown`).
+    // rendered at (`Shell::document_shown`), and what of it shows, for its
+    // part drawn sharper (`Shell::document_parts`).
     let (side, scale) = (shell.preview.page_side, shell.preview.reader.shown_scale);
     let entity = cx.entity().downgrade();
+    let last = shell.preview.reader.scroll.seen.clone();
     let watch = gpui::canvas(
         move |_, window, cx| {
-            crate::reader_scroll::report_shown(&report, side, scale, entity, window, cx);
+            crate::reader_scroll::report_shown(&report, side, scale, entity.clone(), window, cx);
+            crate::reader_scroll::report_seen(&visible, &last, entity, window, cx);
         },
         |_, (), _, _| {},
     )
@@ -808,8 +813,10 @@ pub(crate) fn page_surface(
     zoom: Option<f32>,
     fit_width: bool,
     report: Option<crate::elements::document::Report>,
+    visible: Option<crate::elements::document::Visible>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let part = shell.preview.reader.scroll.part_of(page.page);
     surface(
         image,
         page,
@@ -827,6 +834,7 @@ pub(crate) fn page_surface(
         cx.entity().downgrade(),
         report,
         (&shell.preview.grab, shell.preview.reader.drag_moves),
+        (visible, part),
     )
 }
 
@@ -846,6 +854,12 @@ pub(crate) fn surface(
     // The press holding the pages, and whether a drag across text moves
     // them (`ReaderState::drag_moves`).
     (grab, drag_moves): (&crate::elements::pan::Grab, bool),
+    // What of it shows is said there; what shows drawn sharper is drawn
+    // over it (ADR-147).
+    (visible, part): (
+        Option<crate::elements::document::Visible>,
+        Option<(Arc<RenderImage>, skwir_core::document::Part)>,
+    ),
 ) -> AnyElement {
     let number = page.page;
     let drags = drags(drag_moves, &page);
@@ -870,6 +884,8 @@ pub(crate) fn surface(
         zoom,
         fit_width,
         report,
+        visible,
+        part,
         colors: (theme.page_match, theme.page_selection),
         grab: grab.clone(),
         drags,

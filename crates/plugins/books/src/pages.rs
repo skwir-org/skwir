@@ -248,6 +248,7 @@ impl DocumentSession for FixedBook {
                 chars: Vec::new(),
                 links: Vec::new(),
             }),
+            part: None,
         })
     }
 

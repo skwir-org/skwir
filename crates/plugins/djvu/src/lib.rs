@@ -184,6 +184,15 @@ impl DocumentSession for Holding {
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
         self.session.render(page, side, cancel)
     }
+    fn render_part(
+        &self,
+        page: u32,
+        side: u32,
+        part: skwir_core::document::Part,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<DocumentPage> {
+        self.session.render_part(page, side, part, cancel)
+    }
     fn search(&self, query: &str, cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>> {
         self.session.search(query, cancel)
     }

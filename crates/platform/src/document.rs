@@ -17,8 +17,8 @@ use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
 use skwir_core::CancelToken;
 use skwir_core::document::{
-    DocumentInfo, DocumentPage, DocumentSession, MAX_PAGE_SIZE, MAX_REPLY, MAX_SIDE, PIXELS_FILE,
-    SearchHit, WorkerReply, WorkerRequest,
+    DocumentInfo, DocumentPage, DocumentSession, MAX_PAGE_SIZE, MAX_PART_SIDE, MAX_REPLY,
+    PIXELS_FILE, SearchHit, WorkerReply, WorkerRequest,
 };
 use skwir_core::fs::kept_open::WhileOpen;
 use skwir_core::words;
@@ -563,7 +563,39 @@ impl DocumentSession for WorkerSession {
         true
     }
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
-        match self.request(WorkerRequest::Render { page, side }, cancel)? {
+        match self.request(
+            WorkerRequest::Render {
+                page,
+                side,
+                part: None,
+            },
+            cancel,
+        )? {
+            Response::Page(page) => Ok(page),
+            Response::Matches(_)
+            | Response::Located(_)
+            | Response::Composed(..)
+            | Response::Printed(_) => {
+                anyhow::bail!("unexpected document search result")
+            }
+        }
+    }
+    /// The helpers draw the part alone, at the scale asked (ADR-147).
+    fn render_part(
+        &self,
+        page: u32,
+        side: u32,
+        part: skwir_core::document::Part,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<DocumentPage> {
+        match self.request(
+            WorkerRequest::Render {
+                page,
+                side,
+                part: Some(part),
+            },
+            cancel,
+        )? {
             Response::Page(page) => Ok(page),
             Response::Matches(_)
             | Response::Located(_)
@@ -712,10 +744,30 @@ impl Manager {
                 width,
                 height,
                 order,
+                part,
             } => {
+                // A page whole within what a page may hold (a tall one past
+                // `MAX_SIDE`, ADR-147), a part of one within as much: never
+                // more pixels than a square page at `MAX_SIDE`.
                 anyhow::ensure!(
-                    width > 0 && height > 0 && width <= MAX_SIDE && height <= MAX_SIDE,
+                    width > 0
+                        && height > 0
+                        && width <= MAX_PART_SIDE
+                        && height <= MAX_PART_SIDE
+                        && u64::from(width) * u64::from(height)
+                            <= u64::from(skwir_core::document::MAX_SIDE)
+                                * u64::from(skwir_core::document::MAX_SIDE),
                     "invalid document bitmap size"
+                );
+                anyhow::ensure!(
+                    part.is_none_or(|part| {
+                        [part.left, part.top, part.right, part.bottom]
+                            .iter()
+                            .all(|share| share.is_finite() && (0. ..=1.).contains(share))
+                            && part.left < part.right
+                            && part.top < part.bottom
+                    }),
+                    "invalid document part"
                 );
                 anyhow::ensure!(
                     [content.width, content.height]
@@ -740,6 +792,7 @@ impl Manager {
                     pixels: read,
                     order,
                     content: Arc::new(content),
+                    part,
                 }))
             }
             WorkerReply::Matches(hits) => Ok(Response::Matches(hits)),

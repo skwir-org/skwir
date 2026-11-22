@@ -32,6 +32,43 @@ def has_ink(pixels, width, height, bounds):
                for y in range(y0, y1) for x in range(x0, x1))
 
 
+def check_part(process, root, number):
+    """A part of a page drawn alone (ADR-147) is that part of the page drawn
+    whole at the same side, to a level of anti-aliasing at most; asked at
+    twice the side, it is twice as many pixels across; the part said is the
+    one drawn, holding the one asked."""
+    whole = send(process, {"Render": {"page": number, "side": 600}})["Page"]
+    width, height = whole["width"], whole["height"]
+    pixels = (root / "page.rgba").read_bytes()
+    asked = {"left": 0.25, "top": 0.2, "right": 0.7, "bottom": 0.55}
+    page = send(process, {"Render": {"page": number, "side": 600, "part": asked}})["Page"]
+    drawn = page["part"]
+    assert drawn["left"] <= asked["left"] and drawn["top"] <= asked["top"], drawn
+    assert drawn["right"] >= asked["right"] and drawn["bottom"] >= asked["bottom"], drawn
+    left, top = round(drawn["left"] * width), round(drawn["top"] * height)
+    assert page["width"] == round((drawn["right"] - drawn["left"]) * width), (page, width)
+    assert page["height"] == round((drawn["bottom"] - drawn["top"]) * height), (page, height)
+    assert page["content"]["chars"] == [], "a part carries no text again"
+    part = (root / "page.rgba").read_bytes()
+    assert len(part) == page["width"] * page["height"] * 4
+    differences = [
+        abs(part[(y * page["width"] + x) * 4 + c] - pixels[((top + y) * width + left + x) * 4 + c])
+        for y in range(page["height"]) for x in range(page["width"]) for c in range(3)
+    ]
+    # PDFium places a glyph's anti-aliasing by the bitmap's own pixels: at
+    # an offset a few edge pixels differ, nothing more.
+    far_off = sum(1 for d in differences if d > 48) / len(differences)
+    assert far_off < 0.005 and sum(differences) / len(differences) < 1.5, (
+        far_off, max(differences), sum(differences) / len(differences))
+    # Twice the side: the part alone, at twice the pixels across.
+    large = send(process, {"Render": {"page": number, "side": 1200, "part": asked}})["Page"]
+    assert abs(large["width"] - 2 * page["width"]) <= 2, (large["width"], page["width"])
+    # Past what a page may hold whole, a part still comes at the side asked.
+    far = send(process, {"Render": {"page": number, "side": 20000,
+                                    "part": {"left": 0.5, "top": 0.5, "right": 0.52, "bottom": 0.52}}})["Page"]
+    assert 200 <= max(far["width"], far["height"]) <= 600, far
+
+
 def page_text(process, number):
     page = send(process, {"Render": {"page": number, "side": 600}})["Page"]["content"]
     return " ".join("".join(char["text"] for char in page["chars"]).split())
@@ -176,6 +213,8 @@ def main():
                         json.dumps(dest) for dest in [{"Uri": "https://example.org/"}, {"Page": 2}])
                     for link in page["links"]:
                         assert has_ink(pixels, width, height, link["bounds"]), "link misses text"
+                check_part(process, root, 1)
+                check_part(process, root, 2)
                 assert "Error" in send(process, {"Search": {"query": "x" * 5000}})
                 assert send(process, "Cancel") == {"Error": "cancelled"}
                 assert send(process, {"Search": {"query": "absent"}}) == {"Matches": []}

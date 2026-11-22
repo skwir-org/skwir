@@ -248,10 +248,39 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   whatever its pixels.
 - Pages render at the side they cover on screen, never a fixed one. Page
   elements report their coverage in prepaint (`elements::document::Shown`);
-  the shell keeps one side in 512 px steps up to `MAX_SIDE`
+  the shell keeps one side in 512 px steps up to `MAX_PART_SIDE`
   (`reader_scroll::page_side`, `Shell::document_shown`), across documents.
   New pages render at that side; shown pages rendered smaller render again
   in place. A smaller side redraws nothing; later pages come smaller.
+- **A page drawn whole is counted in pixels** (ADR-147): at that side, at
+  most `PAGE_PIXELS` (an A4 page at `MAX_SIDE`), never fewer than
+  `MAX_SIDE` on its longer side (`document::held_side`): a tall page (a
+  webtoon's) whole at its own width. The reader asks each page at that
+  (`DocumentScroll::whole_side`, its shape as its engine said it), and
+  every helper bounds a whole page by the same function; the manager
+  takes at most a square page's pixels at `MAX_SIDE`.
+- **Past it, what shows is drawn apart** (ADR-147). Each page element
+  says in prepaint what of it shows within its view, what it covers and
+  what its drawing whole holds (`document::Seen`), read once laid out
+  (`report_seen`, both modes). A page covering more than its whole holds
+  has the part that shows, with a margin of half as much each way where
+  `PAGE_PIXELS` allows, drawn at the side it covers
+  (`reader_scroll::part_wanted`, `Shell::document_parts`,
+  `request_document_part`), over the page in its place
+  (`DocumentElement::part`). One part a page (`DocumentScroll::parts`),
+  one asked at a time beside the whole pages, not asked again while what
+  is drawn or asked holds what shows; a page that leaves the view lets
+  its part go, atlas entry and all, as the cache does pages.
+- **A part is asked in shares, never pixels** (`document::Part`,
+  `WorkerRequest::Render`'s `part`): each engine lays its own pixels on the
+  page at the side, draws the whole pixels round the part, and says the
+  part it drew exactly; a part carries no text (the whole did). Natively in
+  PDFium (`set_origin`), Poppler (cairo's translation), MuPDF (its matrix),
+  DjVuLibre (its render rectangle), djvu-rs (`RenderRequest::region`, in
+  the page as shown) and a comic (`inspection::picture_part`); elsewhere the whole is
+  drawn and the part cut (`DocumentSession::render_part`'s default).
+  `tools/pdf/check.py` and `tools/djvu/check.py` compare each engine's
+  part with the whole's at the same side.
 - Before any page was shown, the first renders at the side an upright page
   of ISO's shape covers in the content's area (`reader_scroll::area_side`),
   never a fixed side: the area says it as it is laid out for that preview

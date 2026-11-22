@@ -322,6 +322,7 @@ impl DocumentSession for Pages {
                 chars: chars(&words.text),
                 links: self.links(words.links),
             }),
+            part: None,
         })
     }
 

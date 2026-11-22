@@ -146,9 +146,104 @@ pub struct DocumentPage {
     pub pixels: Vec<u8>,
     pub order: PixelOrder,
     pub content: Arc<PageContent>,
+    /// The part of the page the pixels are, exactly as drawn
+    /// (`DocumentSession::render_part`, ADR-147); `None` for the whole.
+    pub part: Option<Part>,
+}
+
+/// A part of a page, as shares of its width and height (0 to 1, from its
+/// top left): what a page zoomed past what is held of it whole draws of
+/// itself, where it shows (ADR-147). Shares, never pixels: each engine
+/// lays its own pixels on the page at a side, and says back the part it
+/// drew exactly ([`Part::of_pixels`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Part {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
+impl Part {
+    /// The pixels of a page drawn `width` × `height` this part covers:
+    /// left, top, width and height, whole pixels round it, at least one.
+    pub fn pixels(&self, width: u32, height: u32) -> [u32; 4] {
+        // A share is a float: a pixel's edge it names may come a hair past
+        // it, which is that edge still.
+        let at = |share: f32, length: u32, up: bool| {
+            let at = f64::from(share.clamp(0., 1.)) * f64::from(length);
+            let at = if up {
+                (at - 1e-3).ceil()
+            } else {
+                (at + 1e-3).floor()
+            };
+            (at.max(0.) as u32).min(length)
+        };
+        let (left, top) = (at(self.left, width, false), at(self.top, height, false));
+        let right = at(self.right, width, true).max(left + 1).min(width.max(1));
+        let bottom = at(self.bottom, height, true)
+            .max(top + 1)
+            .min(height.max(1));
+        let (left, top) = (left.min(right - 1), top.min(bottom - 1));
+        [left, top, right - left, bottom - top]
+    }
+
+    /// The shares `pixels` (left, top, width, height) are of a page drawn
+    /// `width` × `height`: what an engine says it drew.
+    pub fn of_pixels([left, top, w, h]: [u32; 4], width: u32, height: u32) -> Self {
+        let share = |at: u32, length: u32| (f64::from(at) / f64::from(length.max(1))) as f32;
+        Part {
+            left: share(left, width),
+            top: share(top, height),
+            right: share(left + w, width),
+            bottom: share(top + h, height),
+        }
+    }
+
+    /// Whether this part covers all of `other`.
+    pub fn holds(&self, other: &Part) -> bool {
+        self.left <= other.left
+            && self.top <= other.top
+            && self.right >= other.right
+            && self.bottom >= other.bottom
+    }
+}
+
+/// The longest side a page drawn whole is asked at: `side`, at most
+/// `MAX_SIDE`, or, for a page longer than an A4 one, as many pixels as an
+/// A4 page has there (`PAGE_PIXELS`, ADR-147). `width` × `height` is its
+/// own size, in any unit. A tall page (a webtoon's, 800 × 12 000) is held
+/// whole at its own width, where `MAX_SIDE` alone held it at 273 pixels
+/// across; no page is held at fewer pixels than `MAX_SIDE` held it.
+pub fn held_side(width: f32, height: f32, side: u32) -> u32 {
+    let (width, height) = (f64::from(width.max(1.)), f64::from(height.max(1.)));
+    let counted = (width.max(height) * (PAGE_PIXELS as f64 / (width * height)).sqrt()).floor();
+    let most = counted.max(f64::from(MAX_SIDE));
+    (f64::from(side).min(most).max(64.)).min(f64::from(MAX_PART_SIDE)) as u32
 }
 
 impl DocumentPage {
+    /// The part `part` of this page, cut from its pixels: what an engine
+    /// that draws no part gives (`DocumentSession::render_part`), the part
+    /// it says exactly the pixels cut.
+    pub fn cut(self, part: Part) -> Self {
+        let [left, top, w, h] = part.pixels(self.width, self.height);
+        let stride = self.width as usize * 4;
+        let mut pixels = Vec::with_capacity(w as usize * h as usize * 4);
+        for row in top..top + h {
+            let start = row as usize * stride + left as usize * 4;
+            pixels.extend_from_slice(&self.pixels[start..start + w as usize * 4]);
+        }
+        DocumentPage {
+            part: Some(Part::of_pixels([left, top, w, h], self.width, self.height)),
+            width: w,
+            height: h,
+            pixels,
+            order: self.order,
+            content: self.content,
+        }
+    }
+
     /// The page's pixels in RGBA order, for what is not the window.
     pub fn into_rgba(self) -> Vec<u8> {
         let mut pixels = self.pixels;
@@ -182,6 +277,20 @@ pub struct SearchHit {
 pub trait DocumentSession: Send + Sync {
     fn info(&self) -> &DocumentInfo;
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage>;
+    /// `part` of page `page`, drawn as the page would be with `side` on its
+    /// longer side, though the whole would be past what a page may hold
+    /// (ADR-147): what shows of a page zoomed in. An engine that draws at
+    /// the scale asked draws the part alone; by default the whole is drawn
+    /// at `side` (as large as it may be) and the part cut from it.
+    fn render_part(
+        &self,
+        page: u32,
+        side: u32,
+        part: Part,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<DocumentPage> {
+        Ok(self.render(page, side, cancel)?.cut(part))
+    }
     fn search(&self, query: &str, cancel: &CancelToken) -> anyhow::Result<Vec<SearchHit>>;
     /// The page nearest `near` holding `text`, for a book laid out again:
     /// the page where what was read now lies. `None` when no page near
@@ -232,6 +341,10 @@ pub enum WorkerRequest {
     Render {
         page: u32,
         side: u32,
+        /// Only this part of it, the page at `side` however large
+        /// (`DocumentSession::render_part`); absent for the whole.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<Part>,
     },
     Search {
         query: String,
@@ -309,6 +422,10 @@ pub enum WorkerReply {
         /// What a helper that says nothing writes is RGBA.
         #[serde(default)]
         order: PixelOrder,
+        /// The part drawn, exactly, where one was asked; its `content` may
+        /// then leave out the page's text, which the whole carried.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part: Option<Part>,
     },
     Matches(Vec<SearchHit>),
     Located(Option<u32>),
@@ -327,6 +444,13 @@ pub enum WorkerReply {
 /// The longest side a page is rendered at. The reader asks for the side a
 /// page covers on screen (`reader::page_side`), up to this.
 pub const MAX_SIDE: u32 = 4096;
+/// The most pixels a page drawn whole holds: an A4 page's at `MAX_SIDE`
+/// (11.9 megapixels, 47 MB), counted rather than a side, so a tall page
+/// is held as long as an A4 one is wide (`held_side`, ADR-147).
+pub const PAGE_PIXELS: u64 = (MAX_SIDE as u64) * (MAX_SIDE as u64) * 1000 / 1414;
+/// The longest side a page is drawn at for a part of it: past it, a zoom
+/// enlarges what is drawn (about 30 times an A4 page at 96 per inch).
+pub const MAX_PART_SIDE: u32 = 32_768;
 /// Bytes of one reply line, its newline included.
 pub const MAX_REPLY: usize = 32 * 1024 * 1024;
 /// Bytes of one request line, its newline included: a document composed
@@ -529,6 +653,94 @@ mod label_tests {
         // Bounded.
         let long = "x".repeat(200);
         assert_eq!(labels(&[&long])[0].chars().count(), 64);
+    }
+}
+
+#[cfg(test)]
+mod part_tests {
+    use std::sync::Arc;
+
+    use super::{DocumentPage, MAX_SIDE, PAGE_PIXELS, PageContent, Part, PixelOrder, held_side};
+
+    /// A part in shares covers whole pixels round it, and says back the
+    /// shares those pixels are exactly.
+    #[test]
+    fn a_part_lies_on_whole_pixels() {
+        let part = Part {
+            left: 0.25,
+            top: 0.1,
+            right: 0.6,
+            bottom: 0.55,
+        };
+        assert_eq!(part.pixels(100, 50), [25, 5, 35, 23]);
+        let back = Part::of_pixels(part.pixels(100, 50), 100, 50);
+        assert_eq!(back.pixels(100, 50), [25, 5, 35, 23]);
+        assert!(back.holds(&part), "what is drawn holds what was asked");
+        // Never empty, never past the page.
+        let thin = Part {
+            left: 0.999,
+            top: 1.,
+            right: 1.,
+            bottom: 1.2,
+        };
+        assert_eq!(thin.pixels(100, 50), [99, 49, 1, 1]);
+    }
+
+    /// A part cut from a page drawn whole is its pixels there.
+    #[test]
+    fn a_part_is_cut_from_the_whole() {
+        let page = DocumentPage {
+            width: 4,
+            height: 3,
+            pixels: (0..48).collect(),
+            order: PixelOrder::Rgba,
+            content: Arc::new(PageContent {
+                page: 1,
+                width: 4.,
+                height: 3.,
+                chars: Vec::new(),
+                links: Vec::new(),
+            }),
+            part: None,
+        };
+        let cut = page.cut(Part {
+            left: 0.5,
+            top: 1. / 3.,
+            right: 1.,
+            bottom: 1.,
+        });
+        assert_eq!((cut.width, cut.height), (2, 2));
+        // Rows 1 and 2, columns 2 and 3: bytes from 4 × (4 × row + column).
+        assert_eq!(
+            cut.pixels,
+            [
+                24, 25, 26, 27, 28, 29, 30, 31, 40, 41, 42, 43, 44, 45, 46, 47
+            ]
+        );
+        assert_eq!(cut.part.unwrap().pixels(4, 3), [2, 1, 2, 2]);
+    }
+
+    /// A page drawn whole holds as many pixels as an A4 page at
+    /// `MAX_SIDE`, counted: a tall page as long as an A4 page is wide.
+    #[test]
+    fn a_page_drawn_whole_is_bounded_by_its_pixels() {
+        let a4 = (595., 842.);
+        assert_eq!(
+            held_side(a4.0, a4.1, 1000),
+            1000,
+            "as asked, below the bound"
+        );
+        let side = held_side(a4.0, a4.1, 100_000);
+        assert!((MAX_SIDE - 8..=MAX_SIDE + 8).contains(&side), "{side}");
+        // A webtoon's page, 800 × 12 000, whole at its own size.
+        assert_eq!(held_side(800., 12_000., 12_000), 12_000);
+        let tall = held_side(800., 12_000., 100_000);
+        let pixels = u64::from(tall) * u64::from(tall) * 800 / 12_000;
+        assert!(pixels <= PAGE_PIXELS, "{tall}");
+        assert!(tall > 12_000);
+        // A squarer page keeps `MAX_SIDE`, as before.
+        assert_eq!(held_side(600., 800., 100_000), MAX_SIDE);
+        assert_eq!(held_side(10., 10., 1), 64, "at least the least side");
     }
 }
 

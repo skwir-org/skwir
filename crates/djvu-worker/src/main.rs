@@ -9,13 +9,13 @@ use std::path::Path;
 use anyhow::Context;
 use djvu_rs::annotation::{MapArea, Shape};
 use djvu_rs::djvu_document::{DjVuBookmark, DjVuDocument, DjVuPage};
-use djvu_rs::djvu_render::{RenderOptions, render_pixmap};
+use djvu_rs::djvu_render::{RenderOptions, RenderRect, RenderRequest, render_pixmap};
 use djvu_rs::resource_limits::{ParseOptions, ResourceLimits};
 use djvu_rs::text::{TextZone, TextZoneKind};
 use skwir_core::document::{
-    Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_SIZE, MAX_SIDE, Outline,
-    PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, words,
-    worker,
+    Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_SIZE, MAX_PART_SIDE, MAX_SIDE,
+    Outline, PAGE_PIXELS, PIXELS_FILE, PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply,
+    WorkerRequest, held_side, words, worker,
 };
 
 /// The largest document read: djvu-rs holds the file in memory.
@@ -85,7 +85,7 @@ fn run() -> anyhow::Result<()> {
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
-        WorkerRequest::Render { page, side } => document.render(page, side, scratch),
+        WorkerRequest::Render { page, side, part } => document.render(page, side, part, scratch),
         WorkerRequest::Search { query } => document
             .search(&query, superseded)
             .map(WorkerReply::Matches),
@@ -176,12 +176,24 @@ impl<'a> Document<'a> {
         (1..=self.pages).contains(&page).then_some(page)
     }
 
-    /// Page `number` drawn with at most `side` pixels on its longer side.
-    fn render(&self, number: u32, side: u32, scratch: &Path) -> anyhow::Result<WorkerReply> {
+    /// Page `number` drawn with at most `side` pixels on its longer side,
+    /// whole within what a page may hold, or its `part` alone at `side`
+    /// however large (ADR-147).
+    fn render(
+        &self,
+        number: u32,
+        side: u32,
+        part: Option<Part>,
+        scratch: &Path,
+    ) -> anyhow::Result<WorkerReply> {
         let number = number.clamp(1, self.pages);
         let page = self.page(number)?;
         let geometry = Geometry::of(page);
-        let limit = f64::from(side.clamp(64, MAX_SIDE));
+        if let Some(part) = part {
+            return self.render_part(number, page, &geometry, side, part, scratch);
+        }
+        let side = held_side(geometry.width as f32, geometry.height as f32, side);
+        let limit = f64::from(side);
         let scale = limit / f64::from(geometry.width.max(geometry.height));
         // Rounding must not push a side above the protocol's limit.
         let width = (f64::from(geometry.width) * scale).round().clamp(1., limit) as u32;
@@ -248,7 +260,95 @@ impl<'a> Document<'a> {
             width,
             height,
             order: PixelOrder::Rgba,
+            part: None,
         })
+    }
+
+    /// The part `part` of page `number` drawn alone where the whole would
+    /// have `side` on its longer side (ADR-147): djvu-rs composes only that
+    /// rectangle, at a size it draws in place, its region in the page as
+    /// shown (turned as the file says).
+    fn render_part(
+        &self,
+        number: u32,
+        page: &DjVuPage,
+        geometry: &Geometry,
+        side: u32,
+        part: Part,
+        scratch: &Path,
+    ) -> anyhow::Result<WorkerReply> {
+        let limit = f64::from(side.clamp(64, MAX_PART_SIDE));
+        let scale = limit / f64::from(geometry.width.max(geometry.height));
+        let wanted = (
+            (f64::from(geometry.width) * scale).round().clamp(1., limit) as u32,
+            (f64::from(geometry.height) * scale)
+                .round()
+                .clamp(1., limit) as u32,
+        );
+        // The options are in the page's own orientation, the region in the
+        // page as shown.
+        let quarter = geometry.quarters % 2 == 1;
+        let (stored, native) = if quarter {
+            ((geometry.height, geometry.width), (wanted.1, wanted.0))
+        } else {
+            ((geometry.width, geometry.height), wanted)
+        };
+        let (across, down) = exact_size(stored, native);
+        let shown = if quarter {
+            (down, across)
+        } else {
+            (across, down)
+        };
+        let drawn = part.pixels(shown.0, shown.1);
+        let [x, y, width, height] = drawn;
+        anyhow::ensure!(
+            u64::from(width) * u64::from(height) <= PAGE_PIXELS,
+            "the part asked is larger than a page may be"
+        );
+        let options = RenderOptions {
+            width: across,
+            height: down,
+            ..RenderOptions::default()
+        };
+        let pixmap = RenderRequest::new(options)
+            .region(RenderRect {
+                x,
+                y,
+                width,
+                height,
+            })
+            .pixmap(page)
+            .map_err(|error| anyhow::anyhow!("page {number}: {error}"))?;
+        self.inner
+            .enforce_cache_budget(KEPT_BYTES, &[number as usize - 1]);
+        anyhow::ensure!(
+            pixmap.width == width
+                && pixmap.height == height
+                && pixmap.data.len() == width as usize * height as usize * 4,
+            "page {number}'s part was drawn {}×{}, not {width}×{height}",
+            pixmap.width,
+            pixmap.height
+        );
+        std::fs::write(scratch.join(PIXELS_FILE), &pixmap.data)?;
+        Ok(WorkerReply::Page {
+            content: Self::part_content(number, geometry),
+            width,
+            height,
+            order: PixelOrder::Rgba,
+            part: Some(Part::of_pixels(drawn, shown.0, shown.1)),
+        })
+    }
+
+    /// What a part's page says of itself: its size, its text none again
+    /// (the whole carried it).
+    fn part_content(number: u32, geometry: &Geometry) -> PageContent {
+        PageContent {
+            page: number,
+            width: geometry.css(geometry.width),
+            height: geometry.css(geometry.height),
+            chars: Vec::new(),
+            links: Vec::new(),
+        }
     }
 
     /// The page's links: a part of it that leads to another page or out.

@@ -4,7 +4,9 @@
 use skwir_core::{
     App, CancelToken,
     direction::Direction,
-    document::{DocumentInfo, DocumentPage, DocumentSession, PageContent, PixelOrder, SearchHit},
+    document::{
+        DocumentInfo, DocumentPage, DocumentSession, PageContent, Part, PixelOrder, SearchHit,
+    },
     plugin::Plugin,
     preview::{Held, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
@@ -312,6 +314,39 @@ impl DocumentSession for Comic {
                 chars: Vec::new(),
                 links: Vec::new(),
             }),
+            part: None,
+        })
+    }
+
+    /// A part of a page past what is held of it whole (ADR-147): only that
+    /// region of its picture, decoded at the side asked
+    /// (`picture::decode_region`), never the whole shrunk and cut.
+    fn render_part(
+        &self,
+        page: u32,
+        side: u32,
+        part: Part,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<DocumentPage> {
+        let number = page.clamp(1, self.info.pages);
+        let bytes = self.bytes(number, cancel)?;
+        // A drawing's page has no part decoded alone: its whole, cut.
+        let Ok((decoded, drawn)) = inspection::picture_part(&bytes, part, side) else {
+            return Ok(self.render(number, side, cancel)?.cut(part));
+        };
+        Ok(DocumentPage {
+            width: decoded.width,
+            height: decoded.height,
+            pixels: decoded.rgba,
+            order: PixelOrder::Rgba,
+            content: Arc::new(PageContent {
+                page: number,
+                width: decoded.own.0 as f32,
+                height: decoded.own.1 as f32,
+                chars: Vec::new(),
+                links: Vec::new(),
+            }),
+            part: Some(drawn),
         })
     }
 

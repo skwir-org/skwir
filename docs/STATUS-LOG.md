@@ -21974,3 +21974,63 @@ in two parts, each the user's choice.
   one thread from many; `--exact` with two names runs both in one process
   unrefused; other crates' tests that change core's state are not covered
   (`cfg(test)` is core's alone).
+
+## 2026-11-22: a page shows what it covers (ADR-147)
+
+The first of the two follow-ups the user asked for after ADR-146, decided
+up front with them (the reader's 64 MiB unchanged; only what shows of a
+page drawn past what is held of it whole) and built that night.
+
+- **Built.** `document::Part` (shares of a page) in the helpers' protocol
+  (`WorkerRequest::Render`'s `part`, `WorkerReply::Page`'s `part`), and
+  `DocumentSession::render_part` (by default the whole drawn and cut,
+  `DocumentPage::cut`). Each helper draws a part alone at any side up to
+  `MAX_PART_SIDE`: PDFium into a bitmap the part's size (`set_origin`),
+  Poppler through cairo's translation, MuPDF through its matrix,
+  DjVuLibre with a page rectangle and a rectangle to draw, djvu-rs
+  through `RenderRequest::region` (in the page as shown, turned pages
+  included); a comic's page decodes its region alone
+  (`inspection::picture_part`). A page drawn whole is counted in pixels
+  (`document::held_side`, `PAGE_PIXELS`: an A4 page's at `MAX_SIDE`, never
+  fewer than `MAX_SIDE` on a side), by every helper and by the reader
+  (`DocumentScroll::whole_side`). The page element says what of it shows
+  (`document::Seen`); `Shell::document_parts` asks what shows of a page
+  covering more than its whole holds, with a margin (`part_wanted`), and
+  it is drawn over the page. Embedded pictures (a comic's pages among
+  them) are bounded by their bytes, no longer 8192 pixels a side
+  (`limits::IMAGE_SIDE` now `MAX_PART_SIDE`): a webtoon's page of
+  800 × 12 000 had been refused ("Image size exceeds limit") before
+  tonight too.
+- **Checked by each engine.** `tools/pdf/check.py` (PDFium, Poppler,
+  MuPDF; the four rotations) and `tools/djvu/check.py` (DjVuLibre, djvu-rs;
+  a page as stored and a turned one) now draw a part alone and compare it
+  with the same part of the page drawn whole at the same side, ask it at
+  twice the side and at 20 000. Poppler, MuPDF and both DjVu engines draw
+  the same pixels within anti-aliasing; PDFium places a glyph's
+  anti-aliasing by the bitmap's own pixels, so at an offset a few edge
+  pixels differ (fewer than one in two hundred, a mean difference of 0.06
+  levels). All five pass.
+- **Checked in a window** (Xvfb, lavapipe, the debug build, its helpers
+  beside it; a panel 320 pixels wide). A synthetic A4 PDF of 7-point text
+  at 400 %: what shows drawn apart at 4608 (the whole held at 4096), the
+  letters sharp. A PDF page of 400 × 6000 points at 100 %: drawn whole
+  (8000 pixels long, past `MAX_SIDE`, within `PAGE_PIXELS`), no part; at
+  400 %, what shows drawn at 30 720. A comic of one 800 × 12 000 page:
+  whole and sharp at 100 %, its part at 23 040 at 200 %; before the bound
+  by bytes it showed "Image size exceeds limit". Found in the window and
+  fixed: a part was asked while the whole, drawn again at the new side,
+  would hold what shows (`part_wanted` now asks the whole's side first).
+- **Tests**: `document::part_tests` (a part's pixels and shares, the cut,
+  the bound), `reader_scroll::tests::what_shows_of_a_page_zoomed_past_its_whole_is_drawn_apart`,
+  the side test past `MAX_SIDE`, `inspection`'s bound in pixels; clippy on
+  every crate touched, the five helpers included. The tests of core,
+  platform, the UI, the comics, books and DjVu plugins, plugins from
+  outside and the djvu-rs helper: 2486 passed; the ten that did not were
+  plugins from outside's, stopped at 172 s while they built their modules
+  with the disk nearly full, and all 29 passed alone once it was pruned;
+  the binary's `shrink` test passed. `just check-cross` green.
+- **Not done**: no screen of two device pixels a pixel (where an A4 page
+  at 400 % needs its part most) in this check, left for ADR-146's
+  leftovers; a part's decode for a comic decodes its picture whole at the
+  scale covering the side (a JPEG's region alone is ADR-146's leftover);
+  Windows and macOS compiled only.

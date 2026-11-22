@@ -9,8 +9,9 @@ use pdfium_render::prelude::*;
 use skwir_core::direction::Direction;
 use skwir_core::document::{
     COMPOSED_FILE, CSS_PER_POINT, Compose, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS,
-    MAX_PAGE_CHARS, MAX_SIDE, Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit,
-    TextChar, WorkerReply, WorkerRequest, page_labels, worker,
+    MAX_PAGE_CHARS, MAX_PART_SIDE, Outline, PAGE_PIXELS, PIXELS_FILE, PageContent, Part,
+    PixelOrder, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, held_side, page_labels,
+    worker,
 };
 
 mod print;
@@ -106,7 +107,7 @@ fn run() -> anyhow::Result<()> {
     worker::greet(&WorkerReply::Ready(info))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
-        WorkerRequest::Render { page, side } => render(&document, page, side, scratch),
+        WorkerRequest::Render { page, side, part } => render(&document, page, side, part, scratch),
         WorkerRequest::Search { query } => {
             search(&document, &query, superseded).map(WorkerReply::Matches)
         }
@@ -847,18 +848,49 @@ fn render(
     document: &PdfDocument<'_>,
     number: u32,
     side: u32,
+    part: Option<Part>,
     scratch: &Path,
 ) -> anyhow::Result<WorkerReply> {
     let number = number.clamp(1, u32::try_from(document.pages().len())?);
     let page = document.pages().get(PdfPageIndex::try_from(number - 1)?)?;
-    let side = i32::try_from(side.clamp(64, MAX_SIDE))?;
+    let (own_width, own_height) = (page.width().value, page.height().value);
+    // Whole, within what a page may hold; a part, the page at the side
+    // asked however large (ADR-147).
+    let side = match part {
+        None => held_side(own_width, own_height, side),
+        Some(_) => side.clamp(64, MAX_PART_SIDE),
+    };
+    let side = i32::try_from(side)?;
     // BGRA, PDFium's own order and the window's: pdfium-render asks for
     // the reverse unless told.
     let config = PdfRenderConfig::new()
         .set_target_width(side)
         .set_maximum_height(side)
         .set_reverse_byte_order(false);
-    let bitmap = page.render_with_config(&config)?;
+    // The whole page's pixels at that side, as pdfium-render lays them.
+    let scale = (side as f32 / own_width.max(1.)).min(side as f32 / own_height.max(1.));
+    let whole = (
+        ((own_width * scale).round() as u32).max(1),
+        ((own_height * scale).round() as u32).max(1),
+    );
+    let (bitmap, drawn) = match part {
+        None => (page.render_with_config(&config)?, None),
+        Some(part) => {
+            let [left, top, w, h] = part.pixels(whole.0, whole.1);
+            anyhow::ensure!(
+                u64::from(w) * u64::from(h) <= PAGE_PIXELS,
+                "the part asked is larger than a page may be"
+            );
+            // The page laid at that side with its corner off the bitmap's,
+            // the part's own size: only the part is drawn.
+            let mut bitmap =
+                PdfBitmap::empty(i32::try_from(w)?, i32::try_from(h)?, PdfBitmapFormat::BGRA)?;
+            let config = config.set_origin(-i32::try_from(left)?, -i32::try_from(top)?);
+            page.render_into_bitmap_with_config(&mut bitmap, &config)?;
+            let drawn = Part::of_pixels([left, top, w, h], whole.0, whole.1);
+            (bitmap, Some(drawn))
+        }
+    };
     let width = u32::try_from(bitmap.width())?;
     let height = u32::try_from(bitmap.height())?;
     // Written as it was drawn, but for a bitmap of another layout.
@@ -873,6 +905,26 @@ fn render(
         (bitmap.as_rgba_bytes(), PixelOrder::Rgba)
     };
     std::fs::write(scratch.join(PIXELS_FILE), pixels)?;
+    // The page's own size: its pixels whole scaled to its longer side in
+    // points, which a rotation does not change.
+    let long = own_width.max(own_height) * CSS_PER_POINT;
+    let own = long / whole.0.max(whole.1).max(1) as f32;
+    // A part's page carried its text whole: none again.
+    if let Some(drawn) = drawn {
+        return Ok(WorkerReply::Page {
+            content: PageContent {
+                page: number,
+                width: whole.0 as f32 * own,
+                height: whole.1 as f32 * own,
+                chars: Vec::new(),
+                links: Vec::new(),
+            },
+            width,
+            height,
+            order,
+            part: Some(drawn),
+        });
+    }
     // Text is what can be selected on the page; the pixels are already
     // rendered. A page whose text cannot be read, or holds more than the
     // protocol carries, is shown without selectable text rather than lost.
@@ -925,10 +977,6 @@ fn render(
             })
         })
         .collect();
-    // The page's own size: the rendered pixels scaled to its longer side
-    // in points, which a rotation does not change.
-    let long = page.width().value.max(page.height().value) * CSS_PER_POINT;
-    let own = long / width.max(height).max(1) as f32;
     Ok(WorkerReply::Page {
         content: PageContent {
             page: number,
@@ -940,6 +988,7 @@ fn render(
         width,
         height,
         order,
+        part: None,
     })
 }
 

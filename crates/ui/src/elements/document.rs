@@ -10,7 +10,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Pixels, RenderImage, Style, Window, fill, point, px, relative,
     size,
 };
-use skwir_core::document::{PageContent, Rect};
+use skwir_core::document::{PageContent, Part, Rect};
 
 type Pointer = Rc<dyn Fn(&str, f32, f32, &mut Window, &mut App)>;
 
@@ -24,6 +24,23 @@ pub struct Shown {
     pub scale: f32,
 }
 pub type Report = Rc<std::cell::Cell<Option<Shown>>>;
+
+/// What of a page shows, reported by its element in prepaint (ADR-147):
+/// the reader draws the part that shows of a page covering more than its
+/// pixels drawn whole hold (`Shell::document_parts`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seen {
+    pub page: u32,
+    /// Its own size, in CSS pixels.
+    pub own: (f32, f32),
+    /// The device pixels its longer side covers.
+    pub covered: f32,
+    /// The longer side of its pixels drawn whole.
+    pub held: u32,
+    /// What of it shows, in shares of it.
+    pub shown: Part,
+}
+pub type Visible = Rc<std::cell::RefCell<Vec<Seen>>>;
 pub struct DocumentElement {
     pub image: Arc<RenderImage>,
     pub page: Arc<Page>,
@@ -35,6 +52,11 @@ pub struct DocumentElement {
     pub fit_width: bool,
     pub on_pointer: Pointer,
     pub report: Option<Report>,
+    /// What of the page shows, said in prepaint (`Seen`).
+    pub visible: Option<Visible>,
+    /// What shows of it drawn sharper than its whole holds (ADR-147),
+    /// drawn over it where it lies.
+    pub part: Option<(Arc<RenderImage>, Part)>,
     /// The press holding the pages, shared with the layer under them that
     /// moves them (`elements::pan`, ADR-143).
     pub grab: crate::elements::pan::Grab,
@@ -477,6 +499,26 @@ impl Element for DocumentElement {
                 report.set(Some(shown));
             }
         }
+        if let Some(visible) = &self.visible {
+            let view = window.content_mask().bounds.intersect(&image);
+            if view.size.width > px(0.) && view.size.height > px(0.) {
+                let size = self.image.size(0);
+                let (left, top) = share(image, view.origin);
+                let (right, bottom) = share(image, view.bottom_right());
+                visible.borrow_mut().push(Seen {
+                    page: self.page.page,
+                    own: (self.page.width, self.page.height),
+                    covered: w.max(h) * window.scale_factor(),
+                    held: u32::try_from(size.width.0.max(size.height.0)).unwrap_or(0),
+                    shown: Part {
+                        left: left.clamp(0., 1.),
+                        top: top.clamp(0., 1.),
+                        right: right.clamp(0., 1.),
+                        bottom: bottom.clamp(0., 1.),
+                    },
+                });
+            }
+        }
         // The page alone, not the room around it a page at a time: a press
         // there is the layer's under it, and its hand shows there.
         let hitbox = window.insert_hitbox(image, HitboxBehavior::Normal);
@@ -512,6 +554,23 @@ impl Element for DocumentElement {
                 0,
                 false,
             );
+            // What shows of it drawn sharper, over its place.
+            if let Some((part, at)) = &self.part {
+                let bounds = Bounds::from_corners(
+                    image_bounds.origin
+                        + point(
+                            image_bounds.size.width * at.left,
+                            image_bounds.size.height * at.top,
+                        ),
+                    image_bounds.origin
+                        + point(
+                            image_bounds.size.width * at.right,
+                            image_bounds.size.height * at.bottom,
+                        ),
+                );
+                let _ =
+                    window.paint_image(bounds, bounds, Corners::default(), part.clone(), 0, false);
+            }
             for (rects, color) in [
                 (&self.highlights, self.colors.0),
                 (&self.selection, self.colors.1),

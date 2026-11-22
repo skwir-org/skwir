@@ -19,9 +19,9 @@ use anyhow::Context;
 use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFlags};
 use skwir_core::direction::Direction;
 use skwir_core::document::{
-    CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE,
-    Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply,
-    WorkerRequest, page_labels, worker,
+    CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS,
+    MAX_PART_SIDE, Outline, PAGE_PIXELS, PIXELS_FILE, PageContent, Part, PixelOrder, Rect,
+    SearchHit, TextChar, WorkerReply, WorkerRequest, held_side, page_labels, worker,
 };
 
 mod fonts;
@@ -121,7 +121,9 @@ fn run() -> anyhow::Result<()> {
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
-        WorkerRequest::Render { page, side } => render(document, pages, page, side, scratch),
+        WorkerRequest::Render { page, side, part } => {
+            render(document, pages, page, side, part, scratch)
+        }
         WorkerRequest::Search { query } => {
             search(document, pages, &query, superseded).map(WorkerReply::Matches)
         }
@@ -243,18 +245,35 @@ fn render(
     pages: u32,
     number: u32,
     max_side: u32,
+    part: Option<Part>,
     scratch: &Path,
 ) -> anyhow::Result<WorkerReply> {
     let number = number.clamp(1, pages);
     let page = document.load_page(i32::try_from(number - 1)?)?;
     let space = bounds(&page)?;
     let [x0, y0, page_width, page_height] = space;
-    let limit = max_side.clamp(64, MAX_SIDE) as f32;
+    // Whole, within what a page may hold; a part, the page at the side
+    // asked however large (ADR-147).
+    let side = match part {
+        None => held_side(page_width, page_height, max_side),
+        Some(_) => max_side.clamp(64, MAX_PART_SIDE),
+    };
+    let limit = side as f32;
     let scale = limit / page_width.max(page_height);
     // The pixmap is exactly the size asked for: MuPDF would round the page's
     // bounds itself, and a cropped page's fractional origin can add a pixel.
-    let width = (page_width * scale).ceil().clamp(1., limit) as u32;
-    let height = (page_height * scale).ceil().clamp(1., limit) as u32;
+    let whole_width = (page_width * scale).ceil().clamp(1., limit) as u32;
+    let whole_height = (page_height * scale).ceil().clamp(1., limit) as u32;
+    // The whole, or the part alone: the page laid at that scale with its
+    // corner off the pixmap's.
+    let [left, top, width, height] = match part {
+        None => [0, 0, whole_width, whole_height],
+        Some(part) => part.pixels(whole_width, whole_height),
+    };
+    anyhow::ensure!(
+        part.is_none() || u64::from(width) * u64::from(height) <= PAGE_PIXELS,
+        "the part asked is larger than a page may be"
+    );
     let mut pixmap = Pixmap::new_with_w_h(
         &Colorspace::device_rgb(),
         i32::try_from(width)?,
@@ -266,6 +285,7 @@ fn render(
         let device = Device::from_pixmap(&pixmap)?;
         let mut ctm = Matrix::new_translate(-x0, -y0);
         ctm.concat(Matrix::new_scale(scale, scale));
+        ctm.concat(Matrix::new_translate(-(left as f32), -(top as f32)));
         page.run(&device, &ctm)?;
     }
     let (columns, stride) = (width as usize * 3, usize::try_from(pixmap.stride())?);
@@ -280,17 +300,24 @@ fn render(
         output.write_all(&row)?;
     }
     output.flush()?;
+    // A part's page carried its text whole: none again.
+    let (chars, links) = if part.is_some() {
+        (Vec::new(), Vec::new())
+    } else {
+        (chars(&page, space), links(&page, space))
+    };
     Ok(WorkerReply::Page {
         content: PageContent {
             page: number,
             width: page_width * CSS_PER_POINT,
             height: page_height * CSS_PER_POINT,
-            chars: chars(&page, space),
-            links: links(&page, space),
+            chars,
+            links,
         },
         width,
         height,
         order: PixelOrder::Bgra,
+        part: part.map(|_| Part::of_pixels([left, top, width, height], whole_width, whole_height)),
     })
 }
 

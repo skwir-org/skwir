@@ -165,6 +165,46 @@ def expected_ink(number, width, height):
     return l * width / WIDTH, t * height / HEIGHT, r * width / WIDTH, b * height / HEIGHT
 
 
+def rgba(rendered, pixels):
+    """The pixels in RGBA order, whatever order the engine said."""
+    if rendered["order"] != "Bgra":
+        return pixels
+    return bytes(b for i in range(0, len(pixels), 4)
+                 for b in (pixels[i + 2], pixels[i + 1], pixels[i], pixels[i + 3]))
+
+
+def check_part(process, scratch, number):
+    """A part of a page drawn alone (ADR-147) is that part of the page drawn
+    whole at the same side, within scanned ink's anti-aliasing; the part said
+    is the one drawn, holding the one asked; a part comes at a side past what
+    a page may hold whole."""
+    whole = send(process, {"Render": {"page": number, "side": 1500}})["Page"]
+    width, height = whole["width"], whole["height"]
+    pixels = rgba(whole, (scratch / "page.rgba").read_bytes())
+    asked = {"left": 0.2, "top": 0.1, "right": 0.6, "bottom": 0.45}
+    page = send(process, {"Render": {"page": number, "side": 1500, "part": asked}})["Page"]
+    drawn = page["part"]
+    assert drawn["left"] <= asked["left"] + 1e-6 and drawn["top"] <= asked["top"] + 1e-6, drawn
+    assert drawn["right"] >= asked["right"] - 1e-6 and drawn["bottom"] >= asked["bottom"] - 1e-6, drawn
+    assert page["content"]["chars"] == [], "a part carries no text again"
+    part = rgba(page, (scratch / "page.rgba").read_bytes())
+    pw, ph = page["width"], page["height"]
+    assert len(part) == pw * ph * 4
+    # The part said is in shares of the page drawn at that side.
+    left, top = round(drawn["left"] * width), round(drawn["top"] * height)
+    assert abs(pw - round((drawn["right"] - drawn["left"]) * width)) <= 1, (pw, width, drawn)
+    differences = [
+        abs(part[(y * pw + x) * 4 + c] - pixels[((top + y) * width + left + x) * 4 + c])
+        for y in range(min(ph, height - top)) for x in range(min(pw, width - left)) for c in range(3)
+    ]
+    far_off = sum(1 for d in differences if d > 48) / len(differences)
+    assert far_off < 0.02 and sum(differences) / len(differences) < 4, (
+        far_off, sum(differences) / len(differences))
+    far = send(process, {"Render": {"page": number, "side": 20000,
+                                    "part": {"left": 0.5, "top": 0.5, "right": 0.52, "bottom": 0.52}}})["Page"]
+    assert 200 <= max(far["width"], far["height"]) <= 600, far
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", type=Path, required=True)
@@ -244,6 +284,9 @@ def main():
                             assert ink(pixels, width, height, link["bounds"]), "link misses its words"
                     else:
                         assert links == [], links
+            # Parts, of a page as stored and of one turned.
+            check_part(process, scratch, 1)
+            check_part(process, scratch, 3)
             for side, expected in [(0, 64), (10000, 4096)]:
                 rendered = send(process, {"Render": {"page": 100, "side": side}})["Page"]
                 assert expected * 0.93 <= max(rendered["width"], rendered["height"]) <= expected

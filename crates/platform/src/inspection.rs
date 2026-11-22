@@ -75,8 +75,12 @@ pub mod limits {
     /// stylesheets together are bounded by `TEXT_INPUT`.
     pub const STYLE_RULES: usize = 4000;
     pub const EMBEDDED_IMAGES: usize = 8;
-    /// Decoded embedded images: pixel side, decoder allocation and display side.
-    pub const IMAGE_SIDE: u32 = 8192;
+    /// Decoded embedded images: pixel side, decoder allocation and display
+    /// side. The side is as long as a page's part may be
+    /// (`document::MAX_PART_SIDE`): what bounds a picture is its bytes
+    /// (`IMAGE_ALLOC`), so a tall one (a webtoon's page, 800 × 12 000) is
+    /// read as a square one of as many pixels is (ADR-147).
+    pub const IMAGE_SIDE: u32 = skwir_core::document::MAX_PART_SIDE;
     pub const IMAGE_ALLOC: u64 = 128 * 1024 * 1024;
     pub const IMAGE_DISPLAY_SIDE: u32 = 1600;
     /// The largest side a picture shown zoomed in (a page, a comic's) is
@@ -983,10 +987,13 @@ pub fn image_too_large(limit: usize) -> Words {
         note = "Why a picture a document names is not shown. size: the largest read (16 MB)."
     )
 }
-/// A picture decoded with at most `side` pixels on its longer side (bounded
-/// by `limits::PICTURE_SIDE`), never enlarged, with its own size, what 100%
-/// is: a page of a comic as the reader asks for it.
+/// A picture decoded with at most `side` pixels on its longer side, never
+/// enlarged, with its own size, what 100% is: a page of a comic as the
+/// reader asks for it. Bounded by `limits::PICTURE_SIDE`, or, for a tall
+/// or wide picture, as many pixels as a page may hold
+/// (`document::held_side`, ADR-147): a webtoon's page as long as it is.
 pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
+    let asked = side;
     let side = side.clamp(64, limits::PICTURE_SIDE);
     anyhow::ensure!(
         bytes.len() <= limits::BINARY_INPUT,
@@ -1009,6 +1016,12 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     let jpeg = first.format() == Some(image::ImageFormat::Jpeg);
     // Its own size, from its header, checked against the limits.
     let own = crate::picture::size(reader()?)?;
+    let held = skwir_core::document::held_side(
+        own.0 as f32,
+        own.1 as f32,
+        skwir_core::document::MAX_PART_SIDE,
+    );
+    let side = asked.clamp(64, limits::PICTURE_SIDE.max(held));
     // A JPEG larger than asked is decoded at the least of its reduced
     // scales that still covers `side` (`picture::jpeg_fitted`): a comic's
     // page asked small, or drawn small first while it is drawn sharp,
@@ -1029,15 +1042,9 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     let img = if let Some(img) = fitted {
         img
     } else {
-        let mut img = crate::picture::decode(first, image_limits())?;
-        // Only shrink: `thumbnail` would otherwise scale a tiny icon up to
-        // the display side and hand the UI megabytes of pixels per
-        // embedded image.
-        let (width, height) = shown(img.width(), img.height(), side);
-        if (width, height) != (img.width(), img.height()) {
-            img = img.thumbnail_exact(width, height);
-        }
-        img
+        // Only shrunk: a tiny icon is never scaled up to the display side,
+        // which would hand the UI megabytes of pixels per embedded image.
+        crate::picture::shrink(crate::picture::decode(first, image_limits())?, side)
     };
     let img = img.into_rgba8();
     Ok(Decoded {
@@ -1047,6 +1054,51 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
         own,
     })
 }
+/// The part `part` of a picture (a comic's page zoomed past what is held
+/// of it whole, ADR-147): only that region decoded, at the scale where the
+/// whole's longer side is `side` (`picture::decode_region`), read as
+/// [`picture`] reads it, within its limits. With its own size, and the
+/// part exactly as decoded. A drawing has none: its whole is drawn.
+pub fn picture_part(
+    bytes: &[u8],
+    part: skwir_core::document::Part,
+    side: u32,
+) -> anyhow::Result<(Decoded, skwir_core::document::Part)> {
+    anyhow::ensure!(
+        bytes.len() <= limits::BINARY_INPUT && !is_svg(bytes),
+        "no part of this picture is decoded alone"
+    );
+    let reader = || -> anyhow::Result<_> {
+        let mut reader =
+            image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+        reader.limits(image_limits());
+        Ok(reader)
+    };
+    let own = crate::picture::size(reader()?)?;
+    anyhow::ensure!(
+        u64::from(own.0) * u64::from(own.1) <= limits::PICTURE_PIXELS,
+        "the picture is larger than a page may be"
+    );
+    let region = part.pixels(own.0, own.1);
+    let img = crate::picture::decode_region(
+        reader()?,
+        own,
+        region,
+        side.clamp(64, skwir_core::document::MAX_PART_SIDE),
+        crate::picture::Threads::Caller,
+    )?
+    .into_rgba8();
+    Ok((
+        Decoded {
+            width: img.width(),
+            height: img.height(),
+            rgba: img.into_raw(),
+            own,
+        },
+        skwir_core::document::Part::of_pixels(region, own.0, own.1),
+    ))
+}
+
 /// The size a picture of `width` × `height` is shown at: its own, or
 /// shrunk to fit `side`.
 fn shown(width: u32, height: u32, side: u32) -> (u32, u32) {
@@ -1692,8 +1744,27 @@ mod tests {
         };
         assert_eq!(at(1000), (1000, 200));
         assert_eq!(at(2400), (2400, 480));
-        assert_eq!(at(u32::MAX), (limits::PICTURE_SIDE, 819), "bounded");
+        // A wide picture of fewer pixels than a page may hold: its own,
+        // past `PICTURE_SIDE` (ADR-147).
+        assert_eq!(at(u32::MAX), (5000, 1000), "its own");
         assert_eq!(image(&bytes).map(|i| i.width).unwrap(), 1600);
+        // Past what a page may hold: as many pixels as an A4 page has.
+        let mut wide = Vec::new();
+        image::GrayImage::new(16_000, 1000)
+            .write_to(
+                &mut std::io::Cursor::new(&mut wide),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let decoded = picture(&wide, u32::MAX).unwrap();
+        assert!(decoded.width < 16_000 && decoded.width > limits::PICTURE_SIDE);
+        assert!(
+            u64::from(decoded.width) * u64::from(decoded.height)
+                <= skwir_core::document::PAGE_PIXELS + 16_000,
+            "{}×{}",
+            decoded.width,
+            decoded.height
+        );
     }
 
     /// A JPEG asked smaller than it is decodes reduced (a page of a comic

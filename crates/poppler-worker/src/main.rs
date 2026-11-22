@@ -6,8 +6,9 @@ use anyhow::Context;
 use cairo::{Context as CairoContext, Format, ImageSurface};
 use poppler::{Document, Page};
 use skwir_core::document::{
-    CSS_PER_POINT, DocumentInfo, FIRST_PAGE, MAX_HITS, MAX_SIDE, PIXELS_FILE, PageContent,
-    PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, page_labels, worker,
+    CSS_PER_POINT, DocumentInfo, FIRST_PAGE, MAX_HITS, MAX_PART_SIDE, PAGE_PIXELS, PIXELS_FILE,
+    PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, held_side,
+    page_labels, worker,
 };
 
 mod navigation;
@@ -78,7 +79,7 @@ fn run() -> anyhow::Result<()> {
     }))?;
     let scratch = Path::new(&args[1]);
     worker::serve(|request, superseded| match request {
-        WorkerRequest::Render { page, side } => render(&document, page, side, scratch),
+        WorkerRequest::Render { page, side, part } => render(&document, page, side, part, scratch),
         WorkerRequest::Search { query } => {
             search(&document, &query, superseded).map(WorkerReply::Matches)
         }
@@ -121,6 +122,7 @@ fn render(
     document: &Document,
     number: u32,
     max_side: u32,
+    part: Option<Part>,
     scratch: &Path,
 ) -> anyhow::Result<WorkerReply> {
     let number = number.clamp(1, u32::try_from(document.n_pages())?);
@@ -128,16 +130,34 @@ fn render(
         .page(i32::try_from(number - 1)?)
         .context("missing page")?;
     let size = page_size(&page)?;
-    let limit = f64::from(max_side.clamp(64, MAX_SIDE));
+    // Whole, within what a page may hold; a part, the page at the side
+    // asked however large (ADR-147).
+    let longest = match part {
+        None => held_side(size.0 as f32, size.1 as f32, max_side),
+        Some(_) => max_side.clamp(64, MAX_PART_SIDE),
+    };
+    let limit = f64::from(longest);
     let scale = limit / size.0.max(size.1);
     // Rounding must not push a dimension above the protocol pixel limit.
-    let width = (size.0 * scale).ceil().clamp(1., limit) as i32;
-    let height = (size.1 * scale).ceil().clamp(1., limit) as i32;
+    let whole_width = (size.0 * scale).ceil().clamp(1., limit) as u32;
+    let whole_height = (size.1 * scale).ceil().clamp(1., limit) as u32;
+    // The whole, or the part alone: the page laid at that scale with its
+    // corner off the surface's.
+    let [left, top, w, h] = match part {
+        None => [0, 0, whole_width, whole_height],
+        Some(part) => part.pixels(whole_width, whole_height),
+    };
+    anyhow::ensure!(
+        part.is_none() || u64::from(w) * u64::from(h) <= PAGE_PIXELS,
+        "the part asked is larger than a page may be"
+    );
+    let (width, height) = (i32::try_from(w)?, i32::try_from(h)?);
     let mut surface = ImageSurface::create(Format::ARgb32, width, height)?;
     {
         let context = CairoContext::new(&surface)?;
         context.set_source_rgb(1., 1., 1.);
         context.paint()?;
+        context.translate(-f64::from(left), -f64::from(top));
         context.scale(scale, scale);
         page.render(&context);
         context.status()?;
@@ -158,10 +178,15 @@ fn render(
         output.write_all(row)?;
     }
     output.flush()?;
-    let chars = navigation::chars(&page, size);
-    let links = navigation::links(document, &page, size);
-    let width = u32::try_from(width)?;
-    let height = u32::try_from(height)?;
+    // A part's page carried its text whole: none again.
+    let (chars, links) = if part.is_some() {
+        (Vec::new(), Vec::new())
+    } else {
+        (
+            navigation::chars(&page, size),
+            navigation::links(document, &page, size),
+        )
+    };
     Ok(WorkerReply::Page {
         content: PageContent {
             page: number,
@@ -170,9 +195,10 @@ fn render(
             chars,
             links,
         },
-        width,
-        height,
+        width: w,
+        height: h,
         order: PixelOrder::Bgra,
+        part: part.map(|_| Part::of_pixels([left, top, w, h], whole_width, whole_height)),
     })
 }
 

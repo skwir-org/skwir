@@ -208,7 +208,12 @@ fn a_document_is_drawn_read_and_searched_through_the_protocol() {
             width,
             height,
             order,
-        } = worker.ask(&WorkerRequest::Render { page: 1, side })
+            ..
+        } = worker.ask(&WorkerRequest::Render {
+            page: 1,
+            side,
+            part: None,
+        })
         else {
             panic!("no page");
         };
@@ -245,6 +250,7 @@ fn a_document_is_drawn_read_and_searched_through_the_protocol() {
     let WorkerReply::Page { content, .. } = worker.ask(&WorkerRequest::Render {
         page: 99,
         side: 200,
+        part: None,
     }) else {
         panic!("no page");
     };

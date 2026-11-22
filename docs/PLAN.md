@@ -1266,6 +1266,16 @@ windows (ADR-145, after what GTK, KDE, COSMIC Files and Windows do); a
 skwir the bus starts reaches no display until it is asked. Checks in
 `docs/STATUS-LOG.md` (2026-11-21).
 
+## A page shows what it covers (ADR-147, 2026-11-22)
+
+The first follow-up of ADR-146, on the user's answers: a page drawn whole
+is counted in pixels (an A4 page's at `MAX_SIDE`, so a webtoon's page is
+whole at its own width), and past that what shows of it is drawn apart at
+the side it covers by its own engine, the reader's 64 MiB unchanged.
+Every helper draws a part of a page (`WorkerRequest::Render`'s `part`);
+embedded pictures are bounded by their bytes, so a webtoon's page of
+800 × 12 000 opens at all. Checks in `docs/STATUS-LOG.md` (2026-11-22).
+
 ## A picture held at the pixels it covers (ADR-146, 2026-11-21)
 
 Asked by the user: stepping through JPEGs was slower than in Gwenview,
@@ -1337,19 +1347,12 @@ decode takes the preview's turn, so a step taken meanwhile waits for it;
 no screen of two device pixels a pixel, nor 4K, tried in a window; the
 memory held while browsing (two kept pictures, a region) not measured.
 
-**Pictures at the pixels they cover: the next two** (asked by the user
+**Pictures at the pixels they cover: the next one** (comic and PDF pages done as ADR-147, 2026-11-22; asked by the user
 on 2026-11-21, to be done right after the preview's pictures, steps 1–4
 of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
 24-megapixel PNG decodes in 165 ms, a WebP in 822 ms through image-webp
 against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
 time).
-- *Comic and PDF pages.* The reader keeps the longer side of a page at
-  most `document::MAX_SIDE` (4096) and asks in 512 px steps
-  (`reader::page_side`, reader.md): a webtoon's tall page, 800 × 12 000,
-  blurs when zoomed as a tall picture did in the preview. A comic's
-  pages decode through `picture::jpeg_fitted`. The same rule should
-  apply to them: the pixels covered, the pixel budget in place of the
-  side, the page drawn as tiles, and the fast resize.
 - *HEIC, HEIF, AVIF, JPEG XL and camera raw files.* Skwir does not
   decode them: the preview is the desktop thumbnailer's picture at
   1024 px (`PICTURE_SIZE = XXLarge`, the `thumbnails` plugin), final
