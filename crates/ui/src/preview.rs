@@ -1996,7 +1996,7 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
         let bytes = inspection::read_drawing(held, Bounds::QUICK, cancel).ok()?;
         return inspection::drawing_size(&bytes).ok();
     }
-    skwir_platform::picture::size(skwir_platform::picture::open(held).ok()?).ok()
+    skwir_platform::picture::size(skwir_platform::picture::open_typed(held, Some(mime)).ok()?).ok()
 }
 
 /// An image decoded at the side `cover` asks (`IMAGE_MAX_SIDE` where it
@@ -2006,13 +2006,15 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
 /// before, to stand for it meanwhile.
 fn decode_image(
     held: &Arc<Held>,
+    mime: Option<&str>,
     cover: Option<Cover>,
     bounds: Bounds,
     turn: Turn,
     first: Option<&dyn Fn(PreviewContent)>,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
-    let reader = || skwir_platform::picture::open(held);
+    // A raw file as the JPEG it carries (ADR-148).
+    let reader = || skwir_platform::picture::open_typed(held, mime);
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
         return Err(bounds.refuse(words!(
@@ -2106,6 +2108,7 @@ fn decode_image(
 /// the preview's own decodes: the whole may be decoded at its full size.
 fn decode_region(
     held: &Arc<Held>,
+    mime: Option<&str>,
     own: (u32, u32),
     region: [u32; 4],
     side: u32,
@@ -2117,7 +2120,7 @@ fn decode_region(
     }
     let started = std::time::Instant::now();
     let img = skwir_platform::picture::decode_region(
-        skwir_platform::picture::open(held)?,
+        skwir_platform::picture::open_typed(held, mime)?,
         own,
         region,
         side,
@@ -2481,8 +2484,16 @@ fn compute(
         Drawn::Drawing => {
             decode_drawing(&held, cover(), bounds, cancel).unwrap_or_else(failure_content)
         }
-        Drawn::Picture => decode_image(&held, cover(), bounds, Turn::Shown, Some(first), cancel)
-            .unwrap_or_else(failure_content),
+        Drawn::Picture => decode_image(
+            &held,
+            mime,
+            cover(),
+            bounds,
+            Turn::Shown,
+            Some(first),
+            cancel,
+        )
+        .unwrap_or_else(failure_content),
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
         Drawn::Text => match skwir_platform::inspection::plain(&held, mime, cancel) {
@@ -4789,7 +4800,15 @@ impl Shell {
                         if skwir_platform::thumb_providers::is_drawing(&mime) {
                             decode_drawing(&held, cover, Bounds::QUICK, &token)
                         } else {
-                            decode_image(&held, cover, Bounds::QUICK, Turn::Ahead, None, &token)
+                            decode_image(
+                                &held,
+                                Some(&mime),
+                                cover,
+                                Bounds::QUICK,
+                                Turn::Ahead,
+                                None,
+                                &token,
+                            )
                         }
                     })
                     .unwrap_or_else(failure_content);
@@ -6656,7 +6675,8 @@ impl Shell {
             wake,
             move |cancel| {
                 let held = request.held()?;
-                let image = decode_region(&held, own, region, side, cancel)?;
+                let image =
+                    decode_region(&held, request.mime.as_deref(), own, region, side, cancel)?;
                 Ok(Detail {
                     key,
                     region,
@@ -9910,6 +9930,7 @@ mod tests {
         let error = super::decode_image(
             &held(&path),
             None,
+            None,
             Bounds::QUICK,
             super::Turn::Shown,
             None,
@@ -9940,6 +9961,7 @@ mod tests {
         let content = super::decode_image(
             &held(&path),
             None,
+            None,
             Bounds::QUICK,
             super::Turn::Ahead,
             None,
@@ -9966,6 +9988,7 @@ mod tests {
         };
         let content = super::decode_image(
             &held(&path),
+            None,
             Some(super::Cover::Fit(room)),
             Bounds::QUICK,
             super::Turn::Ahead,

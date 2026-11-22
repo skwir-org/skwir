@@ -17,7 +17,40 @@ use skwir_core::preview::{FileSource, ReadSeek};
 pub fn open<S: FileSource + ?Sized>(
     file: &S,
 ) -> anyhow::Result<ImageReader<BufReader<Box<dyn ReadSeek + Send>>>> {
+    formats();
     Ok(ImageReader::new(BufReader::new(file.open_reader()?)).with_guessed_format()?)
+}
+
+/// A reader over the picture `file` of type `mime`: a camera's raw file as
+/// the JPEG it carries (`raw::embedded_jpeg`, ADR-148), held in memory;
+/// any other as [`open`] reads it.
+pub fn open_typed<S: FileSource + ?Sized>(
+    file: &S,
+    mime: Option<&str>,
+) -> anyhow::Result<ImageReader<BufReader<Box<dyn ReadSeek + Send>>>> {
+    if mime.is_some_and(crate::raw::is_raw) {
+        let jpeg = crate::raw::embedded_jpeg(&mut file.open_reader()?)?;
+        let inner: Box<dyn ReadSeek + Send> = Box::new(std::io::Cursor::new(jpeg));
+        return Ok(ImageReader::with_format(
+            BufReader::new(inner),
+            ImageFormat::Jpeg,
+        ));
+    }
+    open(file)
+}
+
+/// The formats Skwir decodes beside `image`'s own, taught to it once
+/// (ADR-148): JPEG XL through jxl-oxide's decoding hook, HEIC and AVIF
+/// through the libheif helper where it is installed (`heif`), so whatever reads
+/// a picture through `image` (its size, a reduced decode, a region, a
+/// thumbnail, a comic's page) reads one. Asked by every entry point that
+/// guesses a picture's format; the first call registers, the rest return.
+pub fn formats() {
+    static TAUGHT: std::sync::Once = std::sync::Once::new();
+    TAUGHT.call_once(|| {
+        jxl_oxide::integration::register_image_decoding_hook();
+        crate::heif::register();
+    });
 }
 
 /// The picture's width and height once turned, read from its header.
@@ -977,6 +1010,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!((whole.width(), whole.height()), (800, 1200));
+    }
+
+    /// A JPEG XL picture is read where any picture is (ADR-148): its size
+    /// from its header, decoded and shrunk as a thumbnail is, its colours
+    /// where they were (a gradient from red at the top to blue).
+    #[test]
+    fn a_jpeg_xl_picture_is_read_as_any_picture() {
+        const JXL: &[u8] = include_bytes!("../testdata/synthetic-gradient.jxl");
+        formats();
+        let reader = || {
+            ImageReader::new(Cursor::new(JXL))
+                .with_guessed_format()
+                .unwrap()
+        };
+        assert_eq!(size(reader()).unwrap(), (96, 64));
+        let fitted = decode_fitted(reader(), 48, Threads::Caller)
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(fitted.dimensions(), (48, 32));
+        let [r, _, b] = fitted.get_pixel(24, 1).0;
+        assert!(r > 180 && b < 80, "the top is red: {r} {b}");
+        let [r, _, b] = fitted.get_pixel(24, 30).0;
+        assert!(r < 80 && b > 180, "the bottom is blue: {r} {b}");
     }
 
     /// What may be held of a picture is counted in pixels: a square one at

@@ -1266,6 +1266,18 @@ windows (ADR-145, after what GTK, KDE, COSMIC Files and Windows do); a
 skwir the bus starts reaches no display until it is asked. Checks in
 `docs/STATUS-LOG.md` (2026-11-21).
 
+## Pictures Skwir reads itself (ADR-148, 2026-11-22)
+
+The second follow-up of ADR-146, on the user's answers: JPEG XL decoded
+in process by jxl-oxide, taught to `image`; a camera's raw file shown by
+the largest JPEG it carries (TIFF-shaped raws, Fuji's RAF, Canon's CR3),
+then read as a JPEG is; HEIC and AVIF by libheif in a helper of its own,
+`skwir-heif-worker`, taught to `image` as a decoder where it is
+installed, a package of its own on Debian and Fedora, in Arch's `skwir`,
+a flag of Nix's package. Each is then held at the pixels it covers, read
+ahead and kept, thumbnails included. Checks in `docs/STATUS-LOG.md`
+(2026-11-22).
+
 ## A page shows what it covers (ADR-147, 2026-11-22)
 
 The first follow-up of ADR-146, on the user's answers: a page drawn whole
@@ -1347,22 +1359,28 @@ decode takes the preview's turn, so a step taken meanwhile waits for it;
 no screen of two device pixels a pixel, nor 4K, tried in a window; the
 memory held while browsing (two kept pictures, a region) not measured.
 
-**Pictures at the pixels they cover: the next one** (comic and PDF pages done as ADR-147, 2026-11-22; asked by the user
+**Pictures at the pixels they cover: the next one** (comic and PDF pages done as ADR-147, the formats below as ADR-148, 2026-11-22; asked by the user
 on 2026-11-21, to be done right after the preview's pictures, steps 1–4
 of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
 24-megapixel PNG decodes in 165 ms, a WebP in 822 ms through image-webp
 against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
 time).
-- *HEIC, HEIF, AVIF, JPEG XL and camera raw files.* Skwir does not
-  decode them: the preview is the desktop thumbnailer's picture at
-  1024 px (`PICTURE_SIZE = XXLarge`, the `thumbnails` plugin), final
-  (`Pixels::Drawn`), so an iPhone photo on a 4K screen or zoomed shows
-  1024 px. They need a decoder that takes a size: the full-size JPEG
-  most raw files carry (then the JPEG path, its reduced scales
-  included), jxl-oxide for JPEG XL (pure Rust; its eighth comes first
-  and it decodes a region), libheif for HEIC and AVIF (LGPL, allowed by
-  ADR-042; an iPhone's HEIC is stored as 512 px tiles). Each one decoded
-  in-process is then read ahead and kept like the rest.
+- *HEIC, HEIF, AVIF, JPEG XL and camera raw files* (built as ADR-148,
+  2026-11-22). Left: JPEG XL decoded whole each time (jxl-oxide decodes
+  a region, and its progressive passes could stand in first, as a JPEG's
+  eighth does, neither asked through `image`); a HEIC decoded whole by
+  the helper, in a run for its size and another for its pixels (an
+  iPhone's is stored as 512 px tiles, which libheif decodes one by one:
+  a region, or a size asked once, would save most of it); the helper in
+  the AppImage (Ubuntu 22.04's libheif is 1.12, without `heif_init`: a
+  newer one bundled with libde265 and dav1d as plugins beside it);
+  Windows' WIC and macOS's ImageIO for HEIC and AVIF; a raw file whose
+  JPEG hides in its maker note (Olympus's ORF), Canon's CRW, Sigma's
+  X3F; a raw file never tried from a real camera (synthetic containers
+  laid out as each maker's are), the AVIF decoder never tried on Debian's
+  split plugins; the `thumbnails` plugin's words still name JPEG XL among
+  what stops working without ImageMagick (a message changed is one for
+  every catalog, left for the words' next pass).
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not

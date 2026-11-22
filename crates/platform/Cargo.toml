@@ -26,6 +26,7 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "ti
 imagesize = "0.15"
 jpeg-decoder.workspace = true
 fast_image_resize.workspace = true
+jxl-oxide.workspace = true
 png.workspace = true
 parking_lot.workspace = true
 globset.workspace = true

@@ -57,6 +57,7 @@ pub mod grammars;
 #[cfg(target_os = "linux")]
 mod gtk_theme;
 pub mod handover;
+pub mod heif;
 pub mod highlight;
 #[cfg(feature = "http")]
 pub mod http;
@@ -91,6 +92,7 @@ pub mod print_job;
 pub mod process;
 #[cfg(target_os = "linux")]
 mod qt_palette;
+pub mod raw;
 pub mod recent;
 pub mod sandbox;
 pub mod shell_environment;

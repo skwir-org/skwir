@@ -344,8 +344,9 @@ def check_helpers(app, build):
     (`--probe`). One that needs FUSE, in a root without it, may only say
     so: the systems the package goes to may have none either."""
     fuse = set(listed("fuse"))
+    left_out = set(listed("appimage/left-out"))
     for program in listed("programs"):
-        if program == "skwir":
+        if program == "skwir" or program in left_out:
             continue
         helper = app / "usr/lib/skwir" / program
         said = run([helper, "--build"], capture_output=True, text=True).stdout.strip()

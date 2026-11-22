@@ -66,8 +66,10 @@ def main():
     if APP.exists():
         shutil.rmtree(APP)
     helpers = APP / "usr/lib/skwir"
+    left_out = {line for line in (TOOLS / "appimage/left-out").read_text().splitlines()
+                if line and not line.startswith("#")}
     programs = (TOOLS / "programs").read_text().splitlines()
-    for program in programs:
+    for program in (program for program in programs if program not in left_out):
         dest = APP / "usr/bin" if program == "skwir" else helpers
         copy(pathlib.Path(os.environ["CARGO_TARGET_DIR"]) / "dist" / program, dest / program)
     copy(ROOT / "target/pdfium/libpdfium.so", helpers / "libpdfium.so")

@@ -104,7 +104,8 @@
           ]
         );
 
-      # Optional native workers link these; skwir itself does not.
+      # Optional native workers link these (libheif: the HEIC and AVIF
+      # helper, ADR-148); skwir itself does not.
       mediaPlugins = with pkgs.gst_all_1; [
         gst-plugins-base
         gst-plugins-good
@@ -113,7 +114,7 @@
         gst-libav
       ];
       buildInputs =
-        [pkgs.libarchive pkgs.poppler_gi pkgs.djvulibre pkgs.cairo pkgs.glib pkgs.gst_all_1.gstreamer]
+        [pkgs.libarchive pkgs.poppler_gi pkgs.djvulibre pkgs.libheif pkgs.cairo pkgs.glib pkgs.gst_all_1.gstreamer]
         ++ mediaPlugins
         ++ (lib.optionals stdenv.hostPlatform.isLinux linuxBuildInputs) ++ darwinBuildInputs;
 

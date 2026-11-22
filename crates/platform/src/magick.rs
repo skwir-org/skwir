@@ -425,6 +425,7 @@ mod tests {
       EPS  rw-   Encapsulated PostScript
      HEIC  rw+   High Efficiency Image Format (1.23.5)
       ORA  ---   OpenRaster format
+      ORF  r--   Olympus camera raw format (0.22.1-Release)
       PAM* rw+   Common 2-dimensional bitmap format
       PNG* rw-   Portable Network Graphics (libpng 1.6.58)
       SVG  rw+   Scalable Vector Graphics (RSVG 2.62.3)
@@ -435,13 +436,13 @@ mod tests {
     fn the_listing_says_what_it_reads() {
         let formats = readable(LISTING);
         for format in [
-            "ARW", "AVIF", "DJVU", "EPS", "HEIC", "PAM", "PNG", "SVG", "XCF",
+            "ARW", "AVIF", "DJVU", "EPS", "HEIC", "ORF", "PAM", "PNG", "SVG", "XCF",
         ] {
             assert!(formats.contains(format), "{format}");
         }
         assert!(!formats.contains("ORA"), "listed, not readable");
         assert!(!formats.contains("FORMAT") && !formats.contains("DJVU 1.2"));
-        assert_eq!(formats.len(), 9);
+        assert_eq!(formats.len(), 10);
     }
 
     #[cfg(target_os = "linux")]
@@ -456,8 +457,12 @@ mod tests {
             Some("HEIC")
         );
         assert_eq!(
-            magick.format("image/x-sony-arw", None).as_deref(),
-            Some("ARW")
+            magick.format("image/x-olympus-orf", None).as_deref(),
+            Some("ORF")
+        );
+        assert!(
+            !magick.draws("image/x-sony-arw"),
+            "skwir reads its JPEG (ADR-148)"
         );
         assert!(magick.draws("image/x-xcf"));
         assert!(!magick.draws("image/png"), "skwir decodes it");

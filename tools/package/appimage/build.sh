@@ -17,7 +17,9 @@ python3 tools/package/appimage/gstreamer.py
 # SQLite built in: Ubuntu 22.04's is older than rusqlite needs, and the
 # systems the AppImage runs on may be as old (ADR-022).
 # shellcheck disable=SC2046 # the shared list is one package per line
-cargo build --locked --profile dist --features skwir/bundled-sqlite $(sed 's/^/-p /' tools/package/programs)
+# Every program, but those it leaves out (tools/package/appimage/left-out).
+cargo build --locked --profile dist --features skwir/bundled-sqlite \
+    $(grep -vxF -f tools/package/appimage/left-out tools/package/programs | sed 's/^/-p /')
 # What ships has what a start runs laid out together (ADR-128).
 tools/build/link-ordered --check "${CARGO_TARGET_DIR:-target}/dist/skwir"
 tools/package/pdfium.sh linux-x64 target/pdfium

@@ -993,6 +993,7 @@ pub fn image_too_large(limit: usize) -> Words {
 /// or wide picture, as many pixels as a page may hold
 /// (`document::held_side`, ADR-147): a webtoon's page as long as it is.
 pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
+    crate::picture::formats();
     let asked = side;
     let side = side.clamp(64, limits::PICTURE_SIDE);
     anyhow::ensure!(

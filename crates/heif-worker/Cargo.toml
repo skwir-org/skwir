@@ -1,0 +1,21 @@
+[package]
+name = "skwir-heif-worker"
+description = "On-demand HEIC and AVIF picture worker for skwir"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+# Our source is Apache-2.0 like the rest of skwir. The worker binary links
+# libheif (LGPL-3.0 or later), which decodes through libde265 (LGPL-3.0 or
+# later) and dav1d (BSD-2-Clause), dynamically, the system's (ADR-148).
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+
+[dev-dependencies]
+image.workspace = true
+skwir-platform.workspace = true
+
+[lints]
+workspace = true

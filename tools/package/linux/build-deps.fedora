@@ -15,6 +15,7 @@ sqlite-devel
 fontconfig-devel
 poppler-glib-devel
 djvulibre-devel
+libheif-devel
 cairo-devel
 cairo-gobject-devel
 glib2-devel

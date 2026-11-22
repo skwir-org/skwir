@@ -145,7 +145,7 @@ alike: lists, grids and columns that stay responsive on very large \
 folders, previews of documents, pictures, music, films, archives and \
 maps, tags kept on the files themselves, and every change undoable."""
 depends = "$auto, libvulkan1, libfontconfig1"
-recommends = "skwir-media, mesa-vulkan-drivers, bubblewrap, udisks2"
+recommends = "skwir-media, skwir-heif, mesa-vulkan-drivers, bubblewrap, udisks2"
 # Beside the other readers and what previews use: the tools remote
 # folders mount through (ADR-077), the FUSE rclone and the phone helper
 # need, rsync for copies over sftp, and what finds servers nearby
@@ -213,6 +213,18 @@ assets = [
     ["target/release/skwir-djvulibre-worker", "usr/lib/skwir/", "755"],
     ["../../tools/package/linux/copyright-djvulibre", "usr/share/doc/skwir-djvulibre/copyright", "644"],
     ["../../tools/package/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-djvulibre/", "644"],
+]
+
+[package.metadata.deb.variants.heif]
+name = "skwir-heif"
+extended-description = "HEIC and AVIF pictures read by libheif, shown sharp at any size in skwir (ADR-148)."
+depends = "$auto, skwir"
+# Debian's and Ubuntu's libheif decode through plugins of their own.
+recommends = "libheif-plugin-libde265, libheif-plugin-dav1d"
+suggests = ""
+assets = [
+    ["target/release/skwir-heif-worker", "usr/lib/skwir/", "755"],
+    ["../../tools/package/notices/skwir-heif/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-heif/", "644"],
 ]
 
 [package.metadata.deb.variants.mermaid]
@@ -300,6 +312,7 @@ fontconfig = "*"
 
 [package.metadata.generate-rpm.recommends]
 skwir-media = "*"
+skwir-heif = "*"
 mesa-vulkan-drivers = "*"
 bubblewrap = "*"
 udisks2 = "*"
@@ -371,6 +384,19 @@ assets = [
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-djvulibre/LICENSE", mode = "644" },
     { source = "../../tools/package/notices/skwir-djvulibre/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-djvulibre/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../tools/package/licenses/GPL-3.0", dest = "/usr/share/licenses/skwir-djvulibre/GPL-3.0", mode = "644" },
+]
+requires = { skwir = "*" }
+recommends = {}
+suggests = {}
+
+[package.metadata.generate-rpm.variants.heif]
+name = "skwir-heif"
+summary = "HEIC and AVIF pictures read by libheif for skwir"
+license = "Apache-2.0"
+assets = [
+    { source = "target/release/skwir-heif-worker", dest = "/usr/libexec/skwir/skwir-heif-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-heif/LICENSE", mode = "644" },
+    { source = "../../tools/package/notices/skwir-heif/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-heif/THIRD-PARTY-NOTICES", mode = "644" },
 ]
 requires = { skwir = "*" }
 recommends = {}

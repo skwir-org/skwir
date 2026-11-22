@@ -207,7 +207,19 @@ A name that says nothing is not a binary file.
 
 - Skwir decodes in-process what `thumb_providers::decodes` lists, and
   `ImageDecoder` thumbnails all of it; a new in-process decoder adds its
-  type there, which keeps the fallback away. A drawing
+  type there, which keeps the fallback away. Beside `image`'s own
+  formats (ADR-148): JPEG XL through jxl-oxide, taught to `image` once by
+  its decoding hook (`picture::formats`, which every entry point that
+  guesses a picture's format calls, and the program as it starts); a
+  camera's raw file of the types `raw::is_raw` lists, by the largest JPEG
+  it carries (`raw::embedded_jpeg`, its Orientation written in where the
+  JPEG says none), read wherever the type is known
+  (`picture::open_typed`: the preview's decode, a region, read ahead,
+  thumbnails), never its sensor data; HEIC and AVIF through the libheif
+  helper (`heif`), an `image` decoder whose types count as decoded here
+  only where the helper is installed (`heif::reads`): a format a helper
+  reads is never listed as decoded where the helper is missing, or its
+  pictures would lose the thumbnailer's. A drawing
   (`thumb_providers::is_drawing`: SVG, plain or compressed) is drawn to
   the thumbnail's side, enlarged too, by the preview's inert path.
   Other `image/*` types and 3D models (`model/*`, and types the MIME

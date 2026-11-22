@@ -27,7 +27,7 @@ license=('Apache-2.0')
 makedepends=(
   'cargo' 'clang' 'cmake' 'python'
   'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'sqlite' 'libarchive'
-  'cairo' 'glib2' 'poppler-glib' 'djvulibre' 'gstreamer' 'gst-plugins-base-libs'
+  'cairo' 'glib2' 'poppler-glib' 'djvulibre' 'libheif' 'gstreamer' 'gst-plugins-base-libs'
   'fontconfig' 'vulkan-icd-loader' 'vulkan-driver'
 )
 # makepkg's LTO compiles the C that crates build (MuPDF) into GCC's
@@ -78,6 +78,7 @@ package_skwir() {
     'gst-libav: more audio and video formats'
     'poppler-glib: PDFs through Poppler, beside the PDFium skwir carries'
     'djvulibre: DjVu through DjVuLibre, beside the djvu-rs reader skwir carries'
+    'libheif: HEIC and AVIF pictures shown sharp at any size'
     'skwir-mermaid: Mermaid diagrams drawn in Markdown previews'
     'skwir-math: formulas typeset in Markdown, notebooks and HTML'
     'skwir-mupdf: the MuPDF engine, PDFs and books laid out into pages'

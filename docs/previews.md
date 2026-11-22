@@ -358,15 +358,21 @@ The player, in the panel or pinned at its foot:
 ### Pictures
 
 - Decoded in Skwir: PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, QOI, TGA, PNM,
-  OpenEXR, DDS. SVG drawings (`.svg`, `.svgz`) are drawn, thumbnails
-  included, and sharper as the preview is zoomed. Zoomed past the panel,
-  a picture moves with a drag.
-- Other kinds (HEIC, AVIF, JPEG XL, a camera's raw file) are shown as
-  the desktop's thumbnailer for them draws them, at most 1024 pixels,
+  OpenEXR, DDS, JPEG XL. A camera's raw file (Nikon, Canon CR2 and CR3,
+  Sony, Adobe DNG, Pentax, Samsung, Panasonic, Fujifilm) is shown by the
+  full-size JPEG the camera stored in it. HEIC and AVIF are decoded by
+  libheif where its helper is installed (the `skwir-heif` package on
+  Debian, Ubuntu and Fedora; `libheif` on Arch; HEIC on Fedora needs RPM
+  Fusion's `libheif-freeworld`). SVG drawings (`.svg`, `.svgz`) are
+  drawn, thumbnails included, and sharper as the preview is zoomed.
+  Zoomed past the panel, a picture moves with a drag.
+- Other kinds (HEIC and AVIF without libheif's helper, as in the
+  AppImage, on Windows and macOS; an Olympus or Sigma raw file) are shown
+  as the desktop's thumbnailer for them draws them, at most 1024 pixels,
   when one is installed (`thumbnails` plugin). Otherwise ImageMagick
-  draws them (**Use ImageMagick**, on by default): AVIF, HEIC, JPEG XL,
-  JPEG 2000, raw files, Photoshop and GIMP images, whatever its build
-  reads (DjVu too, when the `djvu` plugin is off).
+  draws them (**Use ImageMagick**, on by default): AVIF, HEIC, JPEG 2000,
+  raw files, Photoshop and GIMP images, whatever its build reads (DjVu
+  too, when the `djvu` plugin is off).
 - Thumbnailers and ImageMagick run isolated from your files and the
   network where bubblewrap works
   ([ADR-031](adr/031-pictures-by-imagemagick-thumbnailers-isolated.md)).
@@ -623,7 +629,8 @@ external program or network service.
 | Formulas (TeX, MathML's TeX) | `skwir-math-worker` | Nothing (RaTeX and KaTeX's fonts, Rust, built by default; a package of its own on Linux because the typesetter and its fonts are about 5 MB; in Windows' and macOS's packages) |
 | Histories of commits | `skwir-git-worker` | Nothing (gitoxide, Rust, built by default, about 2 MB); not the `git` program |
 | 3D meshes without a stored picture | `skwir-model-worker` | Nothing (Rust, built by default); without it, an installed thumbnailer (f3d) draws them, if any |
-| HEIC, AVIF, JPEG XL, raw photos | | A thumbnailer for them (libheif's `heif-thumbnailer`, for example), else ImageMagick (`magick`, or ImageMagick 6's `convert`) and bubblewrap; with neither they show no picture |
+| HEIC, AVIF | `skwir-heif-worker` | libheif with its HEVC and AV1 decoders (libde265, dav1d); without the helper, a thumbnailer for them (libheif's `heif-thumbnailer`, for example), else ImageMagick (`magick`, or ImageMagick 6's `convert`) and bubblewrap; with neither they show no picture |
+| Raw photos Skwir does not read (Olympus, Sigma, Canon CRW) | | As HEIC without `skwir-heif` |
 
 Thumbnailers run in bubblewrap when it is installed and can isolate;
 ImageMagick runs only there.

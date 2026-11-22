@@ -16,6 +16,7 @@ members = [
     "crates/mupdf-worker",
     "crates/djvu-worker",
     "crates/djvulibre-worker",
+    "crates/heif-worker",
     "crates/media-worker",
     "crates/archive-worker",
     "crates/mermaid-worker",
@@ -29,7 +30,7 @@ members = [
     "crates/shrink",
     "crates/words-macros",
 ]
-# The native workers link Poppler, MuPDF, DjVuLibre, GStreamer and
+# The native workers link Poppler, MuPDF, DjVuLibre, libheif, GStreamer and
 # libarchive. They are optional at runtime and stay out of the default build
 # so the application, plugins and tests compile without those libraries;
 # `just workers` / `just test-all` include them; release-check and the manual
@@ -169,6 +170,9 @@ jpeg-decoder = { version = "0.3", default-features = false }
 # (SSE4.1, AVX2, NEON, chosen as it runs), alpha weighted; through
 # `image`'s own buffers.
 fast_image_resize = { version = "5.5", default-features = false, features = ["image"] }
+# JPEG XL, decoded in process (ADR-148): pure Rust, through `image`'s
+# decoding hook, so every path a picture takes reads it.
+jxl-oxide = { version = "0.12", features = ["image"] }
 png = "0.18"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"

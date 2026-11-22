@@ -106,8 +106,9 @@ fn mime_of(req: &ThumbRequest) -> Option<String> {
     }
 }
 
-/// Pictures skwir does not decode itself (HEIF, AVIF, JPEG XL, a camera's
-/// raw file) previewed as the desktop's thumbnailer draws them, else as
+/// Pictures skwir does not decode itself (HEIF and AVIF without the
+/// libheif helper, a raw file whose JPEG it does not find, ADR-148)
+/// previewed as the desktop's thumbnailer draws them, else as
 /// `ImageMagick` does, at the largest size the thumbnail cache knows, and
 /// kept there like any thumbnail so the next look, and other applications,
 /// find it drawn. A 3D model is one too (`pictured`): what f3d or Blender

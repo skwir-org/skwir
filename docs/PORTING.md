@@ -367,6 +367,13 @@ Left:
     refused. Pandoc (`documents/pandoc.rs`) runs in its own
     `--sandbox` (2.15 or later) on every system, and alone where the system
     isolates nothing.
+- HEIC and AVIF (ADR-148, `platform/heif.rs`): the libheif helper is
+  shipped in Linux's packages alone (not the AppImage, whose libheif is
+  too old). The decoder compiles everywhere and reads where a helper is
+  found; Windows (WIC, with its HEIF and AV1 extensions) and macOS
+  (ImageIO) would read them through the system instead, not yet built:
+  there the system's thumbnail stands for them. JPEG XL and the JPEG in a
+  raw file are Rust's, read everywhere.
 - System thumbnails (ADR-041, `platform/system_thumbs.rs`), at the Generate
   stage after Skwir's decoder: Quick Look on macOS (compiled, never run
   **(5b)**); the shell's `IShellItemImageFactory` on Windows (under Wine,

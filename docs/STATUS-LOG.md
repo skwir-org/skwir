@@ -22034,3 +22034,55 @@ page drawn past what is held of it whole) and built that night.
   leftovers; a part's decode for a comic decodes its picture whole at the
   scale covering the side (a JPEG's region alone is ADR-146's leftover);
   Windows and macOS compiled only.
+
+## 2026-11-22: pictures Skwir reads itself (ADR-148)
+
+The second follow-up of ADR-146, on the user's answers of 2026-11-21
+(a libheif helper for HEIC and AVIF, the embedded JPEG for raw files,
+jxl-oxide for JPEG XL).
+
+- **JPEG XL**: jxl-oxide 0.12 (MIT or Apache-2.0) through `image`'s
+  decoding hook, registered once by `picture::formats` (every entry point
+  that guesses a picture's format calls it, and the binary as it starts).
+  `image/jxl` counts as decoded (`thumb_providers::decodes`).
+- **Raw files** (`raw.rs`): the largest JPEG by its frame header, found in
+  a TIFF-shaped file's IFDs, SubIFDs and EXIF's (`JPEGInterchangeFormat`,
+  a strip compressed as a JPEG, Panasonic's `JpgFromRaw`), a RAF's header,
+  a CR3's first track; the raw file's Orientation written into the JPEG
+  where it says none. `picture::open_typed` reads one as its JPEG wherever
+  the type is known: the preview's decode and region, read ahead,
+  thumbnails.
+- **HEIC and AVIF**: `skwir-heif-worker` (libheif through a few calls,
+  1.13 or later: `heif_init` loads Debian's decoder plugins; the plane
+  read with 1.4's call, not 1.20's), run isolated (`sandbox::untrusted`,
+  a folder in memory) for a picture's size, then for its pixels, rows of
+  RGB or RGBA written to a file. `heif.rs` makes it an `image` decoder,
+  found by the brands of a file's first box, its types counted as decoded
+  only where the helper is installed. Packaged: `skwir-heif` for Debian
+  (recommending libheif's libde265 and dav1d plugins) and Fedora, both
+  recommended by `skwir`; in Arch's `skwir` with `libheif` optional (and
+  `skwir-git`'s); `withHeif` in Nix's package, on by default; left out of
+  the AppImage (`tools/package/appimage/left-out`: Ubuntu 22.04's libheif
+  is 1.12). Notices made (`skwir-heif`, Arch's `skwir`).
+- **Checked in a window** (Xvfb, lavapipe, the debug build, the helper
+  beside it), a folder of synthetic pictures from one 4000 × 3000 photo:
+  an AVIF with alpha (1600 × 1200) drawn over the panel; a NEF laid out
+  as Nikon's (a small JPEG in IFD0, the full one in a SubIFD's strip,
+  Orientation 6) shown upright at 3000 × 4000, its thumbnail too; an AVIF,
+  a HEIC and a JPEG XL decoded at the panel's room and at their own
+  4000 × 3000 at 100 %; each read ahead and kept on the way back. Debug
+  times on a loaded machine (thumbnails decoding beside): the HEIC 4.1 s
+  read ahead, 1.9 s at 100 %; the JPEG XL 8.3 s, 4.7 s at 100 %; the
+  NEF's JPEG 1.2 s.
+- **Tests**: `raw::tests` (a TIFF's largest JPEG, turned; a RAF; a CR3; no
+  JPEG), the JPEG XL fixture through the picture path, the helper's
+  `--probe` and `--build`, a HEIC and an AVIF with alpha through the
+  picture path, the brands, no helper leaving the types to the desktop;
+  ImageMagick's test now names an Olympus ORF for what it draws. Tests of
+  platform, the UI, the heif helper, the thumbnails and comics plugins:
+  1435 passed. Clippy on every crate touched, `just check-cross`,
+  `just release-tools-check`, `just notices-check`, `just deny` green.
+- **Not done**: nothing measured in release; JPEG XL and HEIC decode
+  whole each time; no real camera's file, no Debian or Fedora package
+  built or installed (`just package-try`); Windows and macOS compiled
+  only, where the helper is not shipped.

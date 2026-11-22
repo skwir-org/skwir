@@ -1,0 +1,7 @@
+# The programs of tools/package/programs the AppImage and the tarball made
+# of it leave out, each with why.
+#
+# Ubuntu 22.04's libheif (1.12) has no heif_init, which loads the decoders
+# a distribution ships as plugins; bundling a newer libheif with libde265
+# and dav1d is left (ADR-148). The thumbnailer draws HEIC and AVIF there.
+skwir-heif-worker

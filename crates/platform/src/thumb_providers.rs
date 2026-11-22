@@ -45,6 +45,7 @@ pub fn ensure_file(p: &Path) -> anyhow::Result<()> {
 /// there may be a pipe, which would hold the worker, or a link to an
 /// endless device.
 pub(crate) fn drawn(output: &Path, pixels: u32) -> anyhow::Result<Image> {
+    crate::picture::formats();
     let bytes = crate::file::read_regular(output, DRAWN_BYTES)?;
     let open = || -> anyhow::Result<_> {
         Ok(image::ImageReader::new(std::io::Cursor::new(&bytes)).with_guessed_format()?)
@@ -221,6 +222,8 @@ pub struct ImageDecoder;
 static RASTERS: crate::mime::Types = crate::mime::Types::new(&[
     "image/png",
     "image/jpeg",
+    // Through jxl-oxide (`picture::formats`, ADR-148).
+    "image/jxl",
     "image/gif",
     "image/webp",
     "image/bmp",
@@ -241,10 +244,12 @@ static DRAWINGS: crate::mime::Types =
     crate::mime::Types::new(&["image/svg+xml", "image/svg+xml-compressed"]);
 
 /// Whether skwir decodes pictures of type `mime` itself: a raster the
-/// `image` crate reads, or a drawing (`is_drawing`). What it lists,
-/// `ImageDecoder` thumbnails and the fallbacks leave alone.
+/// `image` crate reads (JPEG XL taught to it), a drawing (`is_drawing`), a
+/// camera's raw file by its JPEG (`raw::is_raw`), a HEIC or an AVIF where
+/// the libheif helper is installed (`heif::reads`, ADR-148). What it
+/// lists, `ImageDecoder` thumbnails and the fallbacks leave alone.
 pub fn decodes(mime: &str) -> bool {
-    raster(mime) || is_drawing(mime)
+    raster(mime) || is_drawing(mime) || crate::raw::is_raw(mime) || crate::heif::reads(mime)
 }
 
 /// Whether a file of type `mime` is a drawing, read by
@@ -274,8 +279,12 @@ impl ThumbnailProvider for ImageDecoder {
         if mime_of(req).is_some_and(|m| is_drawing(&m)) {
             return drawn_to(path, req.size.pixels(), cancel);
         }
-        let open =
-            || crate::picture::open(path).with_context(|| format!("open {}", path.display()));
+        // A raw file as the JPEG it carries (ADR-148).
+        let mime = mime_of(req);
+        let open = || {
+            crate::picture::open_typed(path, mime.as_deref())
+                .with_context(|| format!("open {}", path.display()))
+        };
         let (w, h) = open()?.into_dimensions()?;
         anyhow::ensure!(
             u64::from(w) * u64::from(h) <= MAX_PIXELS,

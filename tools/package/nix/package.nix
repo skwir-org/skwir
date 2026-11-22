@@ -48,6 +48,7 @@
   cairo,
   glib,
   djvulibre,
+  libheif,
   libarchive,
   gst_all_1,
 
@@ -65,6 +66,8 @@
   withMupdf ? false,
   # DjVuLibre's DjVu reader (the built-in djvu-rs one stays, ADR-061).
   withDjvulibre ? true,
+  # HEIC and AVIF pictures read by libheif (ADR-148).
+  withHeif ? true,
   # Archives opened and extracted (libarchive).
   withArchive ? true,
   # Mermaid diagrams drawn (pure Rust, but large).
@@ -118,6 +121,12 @@ let
       programs = [ "skwir-djvulibre-worker" ];
       libraries = [ djvulibre ];
       notices = [ "skwir-djvulibre" ];
+    };
+    withHeif = {
+      on = withHeif;
+      programs = [ "skwir-heif-worker" ];
+      libraries = [ libheif ];
+      notices = [ "skwir-heif" ];
     };
     withArchive = {
       on = withArchive;
@@ -309,7 +318,7 @@ rustPlatform.buildRustPackage {
     homepage = "https://skwir.org";
     changelog = "https://github.com/skwir-org/skwir/blob/main/CHANGELOG.md";
     # skwir's own, with the model helper's STEP reader (ogeom) under the
-    # LGPL; Poppler's and DjVuLibre's readers link libraries under the
+    # LGPL (and libheif, the HEIF helper's, ADR-148); Poppler's and DjVuLibre's readers link libraries under the
     # GPL, MuPDF's under the AGPL (ADR-042, ADR-061).
     license =
       with lib.licenses;
@@ -317,6 +326,7 @@ rustPlatform.buildRustPackage {
         asl20
         lgpl21Only
       ]
+      ++ lib.optional withHeif lgpl3Plus
       ++ lib.optional (withPoppler || withDjvulibre) gpl3Only
       ++ lib.optional withMupdf agpl3Plus;
     mainProgram = "skwir";

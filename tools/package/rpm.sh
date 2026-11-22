@@ -6,8 +6,8 @@
 # entry and the metainfo merged with their translations
 # (tools/package/linux/l10n.sh), then cargo-generate-rpm, from
 # crates/skwir/Cargo.toml's [package.metadata.generate-rpm]: skwir, and
-# skwir-media, skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-math
-# and skwir-mupdf (its variants).
+# skwir-media, skwir-poppler, skwir-djvulibre, skwir-heif, skwir-mermaid,
+# skwir-math and skwir-mupdf (its variants).
 #
 #     tools/package/rpm.sh        # into target/generate-rpm/
 #
@@ -38,6 +38,6 @@ python3 tools/package/fonts.py target/fonts
 # (ADR-139), merged where the package's assets take them.
 tools/package/linux/l10n.sh merge target/l10n
 cargo generate-rpm -p crates/skwir --profile dist
-for variant in media poppler djvulibre mermaid math mupdf; do
+for variant in media poppler djvulibre heif mermaid math mupdf; do
     cargo generate-rpm -p crates/skwir --profile dist --variant "$variant"
 done

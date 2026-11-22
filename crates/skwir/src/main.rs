@@ -57,6 +57,9 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(i32::from(!answered));
     }
     skwir_core::scheduler::release_when_idle(skwir_alloc::collect);
+    // The picture formats `image` is taught (JPEG XL, ADR-148), before any
+    // picture is read.
+    skwir_platform::picture::formats();
     // Which build this is, for a helper's failure to say when the helper
     // is of another (`process::explain`).
     skwir_platform::process::set_build(env!("SKWIR_BUILD"));

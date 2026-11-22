@@ -7,8 +7,8 @@
 # (tools/package/linux/l10n.sh), then cargo-deb, from
 # crates/skwir/Cargo.toml's
 # [package.metadata.deb]: skwir, and skwir-media, skwir-poppler,
-# skwir-djvulibre, skwir-mermaid, skwir-math and skwir-mupdf (its
-# variants).
+# skwir-djvulibre, skwir-heif, skwir-mermaid, skwir-math and skwir-mupdf
+# (its variants).
 #
 #     tools/package/deb.sh        # into target/debian/
 #
@@ -50,6 +50,6 @@ if [ -r /etc/os-release ]; then
     esac
 fi
 cargo deb --locked -p skwir --no-build --deb-revision "$revision"
-for variant in media poppler djvulibre mermaid math mupdf; do
+for variant in media poppler djvulibre heif mermaid math mupdf; do
     cargo deb --locked -p skwir --no-build --deb-revision "$revision" --variant "$variant"
 done

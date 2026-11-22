@@ -31,6 +31,7 @@ libraries() {
     case "$1" in
     skwir-poppler-worker) echo "poppler-glib" ;;
     skwir-djvulibre-worker) echo "djvulibre" ;;
+    skwir-heif-worker) echo "libheif" ;;
     skwir-archive-worker) echo "libarchive" ;;
     skwir-media-worker) echo "gstreamer gst-plugins-base" ;;
     skwir-pdf-worker) echo "pdfium" ;;

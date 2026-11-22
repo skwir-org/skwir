@@ -616,8 +616,9 @@ crates/platform    per-OS adapters: MIME, icons, thumbnails, places, open, termi
 crates/ui          the gpui shell: views, panels, prompts, keymap, elements
 crates/skwir       the binary: wires plugins and starts the UI
 crates/*-worker    optional helper processes: pdf (PDFium, loaded at runtime),
-                   poppler, mupdf (AGPL, ADR-014), djvulibre and djvu
-                   (djvu-rs, pure Rust; ADR-061), media (GStreamer), archive
+                   poppler, mupdf (AGPL, ADR-014), heif (libheif, ADR-148),
+                   djvulibre and djvu (djvu-rs, pure Rust; ADR-061), media
+                   (GStreamer), archive
                    (libarchive), mermaid, math and model (pure Rust), git
                    (gitoxide: histories and the files' state, ADR-133/134), module (a
                    plugin's WebAssembly module, Wasmtime), kmtp (a phone
@@ -667,7 +668,7 @@ with the commit that moves the pin and fixes them.
 ```
 just build / test / lint   default members (no native workers); tests via nextest;
                            lint is rustfmt --check + clippy -D warnings
-just workers               build the Poppler, MuPDF, DjVuLibre, GStreamer and libarchive workers
+just workers               build the Poppler, MuPDF, DjVuLibre, libheif, GStreamer and libarchive workers
 just test-all / lint-all   every crate, workers included; lint-all adds check-cross
 just check-cross           clippy for Windows and macOS from Linux (ADR-035)
 just macos-sdk             Apple's macOS SDK, by xmac, for building for macOS (you accept Apple's licence)
@@ -699,8 +700,8 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
   Routine GitHub CI runs only `ci-check`; the full suite and Linux
   packaging are also manual workflows (ADR-053). A green routine CI alone
   is not the full gate. The native workers are outside `default-members`,
-  so the default build needs no Poppler, MuPDF, DjVuLibre, GStreamer or
-  libarchive; run the `-all` recipes before committing worker changes.
+  so the default build needs no Poppler, MuPDF, DjVuLibre, libheif,
+  GStreamer or libarchive; run the `-all` recipes before committing worker changes.
   `spikes/` is a separate workspace, not covered by the root checks.
 - A dependency added or updated passes `just deny`: fix an advisory by an
   update, or ignore it in `deny.toml` with its reason. Then `just notices`

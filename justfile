@@ -42,9 +42,9 @@ build:
     cargo build
     tools/build/prune.py record build --quiet
 
-# Build the optional native workers (Poppler, MuPDF, DjVuLibre, GStreamer, libarchive).
+# Build the optional native workers (Poppler, MuPDF, DjVuLibre, libheif, GStreamer, libarchive).
 workers:
-    cargo build -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker
+    cargo build -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvulibre-worker -p skwir-heif-worker -p skwir-media-worker -p skwir-archive-worker
 
 # Build everything, native workers included.
 build-all:
@@ -431,12 +431,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-math-worker -p skwir-model-worker -p skwir-git-worker -p skwir-module-worker -p skwir-kmtp-worker -p skwir-tree-sitter-worker -p skwir-print-worker
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-heif-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-math-worker -p skwir-model-worker -p skwir-git-worker -p skwir-module-worker -p skwir-kmtp-worker -p skwir-tree-sitter-worker -p skwir-print-worker
     ./target/release/skwir {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-math-worker -p skwir-model-worker -p skwir-git-worker -p skwir-module-worker -p skwir-kmtp-worker -p skwir-tree-sitter-worker -p skwir-print-worker
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-heif-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-math-worker -p skwir-model-worker -p skwir-git-worker -p skwir-module-worker -p skwir-kmtp-worker -p skwir-tree-sitter-worker -p skwir-print-worker
     samply record ./target/release/skwir {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.
