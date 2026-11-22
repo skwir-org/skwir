@@ -2012,8 +2012,8 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
 /// An image decoded at the side `cover` asks (`IMAGE_MAX_SIDE` where it
 /// is not known), at most its own and within `limits::PICTURE_HELD`, with
 /// its own size, what 100% is, as its width and height, if its pixels are
-/// within `bounds` (ADR-146). A progressive JPEG's eighth goes to `first`
-/// before, to stand for it meanwhile.
+/// within `bounds` (ADR-146). A progressive JPEG's eighth, or a HEIF's
+/// thumbnail, goes to `first` before, to stand for it meanwhile.
 fn decode_image(
     held: &Arc<Held>,
     mime: Option<&str>,
@@ -2055,19 +2055,20 @@ fn decode_image(
     let started = std::time::Instant::now();
     // A progressive JPEG's eighth stands for it while the rest is decoded
     // (ADR-146, 6): its DC scans, a few milliseconds where its AC scans
-    // take hundreds.
+    // take hundreds; so does the thumbnail a HEIF carries (ADR-148
+    // amended), in some 25 ms where its whole takes most of a second.
     if let Some(first) = first
-        && let Ok(Some(eighth)) = skwir_platform::picture::progressive_eighth(
+        && let Ok(Some(stand_in)) = skwir_platform::picture::stand_in(
             reader()?,
             side,
             skwir_platform::picture::Threads::Components,
         )
-        && let Some((image, ink)) = crate::thumbs::picture_image(eighth)
+        && let Some((image, ink)) = crate::thumbs::picture_image(stand_in)
         && !cancel.is_cancelled()
     {
         tracing::debug!(
             ms = started.elapsed().as_secs_f64() * 1000.,
-            "picture's eighth first"
+            "picture's stand-in first"
         );
         first(PreviewContent::Image {
             image,

@@ -69,3 +69,229 @@ fn without_the_helper_a_heic_is_left_to_the_desktop() {
     assert!(!skwir_platform::heif::reads("image/heic"));
     assert!(!skwir_platform::thumb_providers::decodes("image/avif"));
 }
+
+/// What the helper says, run directly on the fixture `name`: the size it
+/// decoded, its alpha, and for a region the tiles it decoded.
+fn said(name: &str, args: &[&str]) -> String {
+    // Tests run from a console: no console window to keep away.
+    #[allow(clippy::disallowed_methods)]
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_skwir-heif-worker"))
+        .arg(fixture(name))
+        .arg("/dev/null")
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// How far two pictures of one size differ: the pixels whose channels
+/// differ by more than 3, of every pixel.
+fn differing(a: &image::RgbImage, b: &image::RgbImage) -> (usize, usize) {
+    assert_eq!(a.dimensions(), b.dimensions());
+    let differs = a
+        .pixels()
+        .zip(b.pixels())
+        .filter(|(a, b)| a.0.iter().zip(b.0).any(|(a, b)| a.abs_diff(b) > 3))
+        .count();
+    (differs, a.pixels().len())
+}
+
+/// A region of a HEIC stored in tiles is decoded from the tiles it covers
+/// alone (ADR-148 amended): four of the six for one across their corner,
+/// as the whole decoded and cut.
+#[test]
+fn a_heic_region_is_decoded_from_its_tiles() {
+    taught();
+    // 384 × 256, tiles of 128: three across, two down.
+    assert_eq!(
+        said(
+            "synthetic-tiles.heic",
+            &["region", "1000000", "100", "100", "100", "60"]
+        ),
+        "100 60 0 4"
+    );
+    let path = fixture("synthetic-tiles.heic");
+    let whole = picture::decode(picture::open(&path).unwrap(), image::Limits::default())
+        .unwrap()
+        .to_rgb8();
+    for region in [[0, 0, 100, 40], [100, 100, 100, 60], [300, 200, 84, 56]] {
+        let cut = picture::decode_region(
+            picture::open(&path).unwrap(),
+            (384, 256),
+            region,
+            384,
+            Threads::Caller,
+        )
+        .unwrap()
+        .to_rgb8();
+        let [x, y, width, height] = region;
+        let expected = image::imageops::crop_imm(&whole, x, y, width, height).to_image();
+        let (differs, of) = differing(&cut, &expected);
+        assert!(differs * 100 < of, "{region:?}: {differs} of {of} differ");
+    }
+}
+
+/// A HEIC turned a quarter counter-clockwise, its tiles reaching past its
+/// top as it is shown: a region is cut where it is shown, from its tiles.
+#[test]
+fn a_turned_heic_region_is_cut_as_shown() {
+    taught();
+    // 300 × 200 as stored, red at the top and blue at the bottom; shown
+    // 200 × 300, red on the left.
+    assert_eq!(said("synthetic-turned-tiles.heic", &["size"]), "200 300 0");
+    assert_eq!(
+        said(
+            "synthetic-turned-tiles.heic",
+            &["region", "1000000", "0", "0", "50", "300"]
+        ),
+        "50 300 0 3"
+    );
+    let path = fixture("synthetic-turned-tiles.heic");
+    let whole = picture::decode(picture::open(&path).unwrap(), image::Limits::default())
+        .unwrap()
+        .to_rgb8();
+    for (region, red) in [([0, 0, 50, 300], true), ([150, 0, 50, 300], false)] {
+        let cut = picture::decode_region(
+            picture::open(&path).unwrap(),
+            (200, 300),
+            region,
+            300,
+            Threads::Caller,
+        )
+        .unwrap()
+        .to_rgb8();
+        let [x, y, width, height] = region;
+        let expected = image::imageops::crop_imm(&whole, x, y, width, height).to_image();
+        let (differs, of) = differing(&cut, &expected);
+        assert!(differs * 100 < of, "{region:?}: {differs} of {of} differ");
+        let [r, _, b] = cut.get_pixel(25, 150).0;
+        assert_eq!(r > b, red, "{region:?}: {r} {b}");
+    }
+}
+
+/// A HEIC whose tiles are one (not stored in tiles) has its region cut
+/// from the whole, in the helper.
+#[test]
+fn a_heic_in_one_piece_has_its_region_cut_from_the_whole() {
+    taught();
+    assert_eq!(
+        said(
+            "synthetic-gradient.heic",
+            &["region", "1000000", "10", "0", "20", "64"]
+        ),
+        "20 64 0 0"
+    );
+    let cut = picture::decode_region(
+        picture::open(&fixture("synthetic-gradient.heic")).unwrap(),
+        (96, 64),
+        [10, 0, 20, 64],
+        96,
+        Threads::Caller,
+    )
+    .unwrap()
+    .to_rgb8();
+    assert_eq!(cut.dimensions(), (20, 64));
+    let [r, _, b] = cut.get_pixel(10, 1).0;
+    assert!(r > 170 && b < 90, "the top is red: {r} {b}");
+}
+
+/// The thumbnail a HEIC carries stands for it while it decodes, turned
+/// as it is shown; none where it carries none, or where it would not be
+/// smaller than what is asked.
+#[test]
+fn a_heic_s_thumbnail_stands_in_for_it() {
+    taught();
+    let stand_in = |name: &str, side: u32| {
+        picture::stand_in(
+            picture::open(&fixture(name)).unwrap(),
+            side,
+            Threads::Caller,
+        )
+        .unwrap()
+    };
+    let thumbnail = stand_in("synthetic-tiles.heic", 1000).unwrap();
+    assert_eq!((thumbnail.width(), thumbnail.height()), (96, 64));
+    assert!(
+        stand_in("synthetic-tiles.heic", 96).is_none(),
+        "not smaller"
+    );
+    let turned = stand_in("synthetic-turned-tiles.heic", 1000)
+        .unwrap()
+        .to_rgb8();
+    assert_eq!(turned.dimensions(), (64, 96));
+    let [r, _, b] = turned.get_pixel(4, 48).0;
+    assert!(r > 170 && b < 90, "the left is red: {r} {b}");
+    let [r, _, b] = turned.get_pixel(60, 48).0;
+    assert!(r < 90 && b > 170, "the right is blue: {r} {b}");
+    assert!(
+        stand_in("synthetic-gradient.heic", 1000).is_none(),
+        "it carries none"
+    );
+    assert_eq!(said("synthetic-gradient.heic", &["thumbnail"]), "0 0 0");
+}
+
+/// A region of a HEIC in tiles, in each of the eight ways a picture is
+/// turned and mirrored (EXIF's, which `heif-enc` writes as `irot` and
+/// `imir`), its tiles reaching past its right and bottom as stored: cut
+/// where it is shown, from the tiles it covers alone, as libheif decodes
+/// and turns the whole.
+#[test]
+fn a_heic_region_is_cut_as_shown_however_it_is_turned() {
+    taught();
+    for orientation in 1..=8 {
+        let name = format!("synthetic-orientation-{orientation}.heic");
+        let path = fixture(&name);
+        let whole = picture::decode(picture::open(&path).unwrap(), image::Limits::default())
+            .unwrap()
+            .to_rgb8();
+        let own = whole.dimensions();
+        // 132 × 76 as stored, tiles of 64: three across, two down.
+        assert_eq!(
+            own,
+            if orientation >= 5 {
+                (76, 132)
+            } else {
+                (132, 76)
+            },
+            "{name}"
+        );
+        for region in [
+            [0, 0, 20, 20],
+            [10, 30, 50, 40],
+            [own.0 - 17, own.1 - 9, 17, 9],
+            [0, 0, own.0, own.1],
+        ] {
+            let [x, y, width, height] = region;
+            let numbers = region.map(|n| n.to_string());
+            let mut args = vec!["region", "1000000"];
+            args.extend(numbers.iter().map(String::as_str));
+            let tiles: u32 = said(&name, &args)
+                .split_whitespace()
+                .nth(3)
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(tiles > 0, "{name} {region:?}: decoded whole");
+            let cut = picture::decode_region(
+                picture::open(&path).unwrap(),
+                own,
+                region,
+                own.0.max(own.1),
+                Threads::Caller,
+            )
+            .unwrap()
+            .to_rgb8();
+            let expected = image::imageops::crop_imm(&whole, x, y, width, height).to_image();
+            let (differs, of) = differing(&cut, &expected);
+            assert!(
+                differs * 50 < of,
+                "{name} {region:?}: {differs} of {of} differ"
+            );
+        }
+    }
+}

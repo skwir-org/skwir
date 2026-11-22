@@ -1280,6 +1280,9 @@ ahead and kept, thumbnails included. Checks in `docs/STATUS-LOG.md`
 megapixels or more was not shown at all (jxl-oxide's frame in floats
 past `image`'s limit) and a turned one was turned twice; it is now read
 in bands and a region alone, by a decoder of Skwir's own, turned once.
+Then a HEIC's or an AVIF's region decoded from the tiles it covers
+(found as stored and turned by the helper: libheif's tiling as shown
+misplaces a turned picture's), and its thumbnail shown while it decodes.
 
 ## A page shows what it covers (ADR-147, 2026-11-22)
 
@@ -1370,22 +1373,24 @@ of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
 against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
 time).
 - *HEIC, HEIF, AVIF, JPEG XL and camera raw files* (built as ADR-148,
-  2026-11-22; JPEG XL in bands and its regions alone, amended the same
-  day). Left: a JPEG XL decoded at full size for every view (its eighth,
-  which the format stores first, could stand in as a JPEG's does; shrunk
-  band by band, it would not hold its eight bits whole); a HEIC decoded
-  whole by the helper for its regions too, 855 ms and 279 MiB for 45
-  megapixels (an iPhone's is stored as 512 px tiles, which libheif 1.19
-  decodes one by one, Ubuntu 24.04's being 1.17: looked up as the helper
-  starts, a region would decode a tenth of them), and nothing shown
-  before it (the thumbnail a HEIC carries came out in 25 ms; the run for
-  its size costs 6 ms, not worth saving); the helper in the AppImage
-  (Ubuntu 22.04's libheif is 1.12, without `heif_init`: a newer one
-  bundled with libde265 and dav1d as plugins beside it); Windows' WIC
-  and macOS's ImageIO for HEIC and AVIF; a raw file whose JPEG hides in
-  its maker note (Olympus's ORF), Canon's CRW, Sigma's X3F; a raw file
-  never tried from a real camera (synthetic containers laid out as each
-  maker's are), the AVIF decoder never tried on Debian's split plugins.
+  2026-11-22; JPEG XL in bands and its regions alone, a HEIC's regions
+  from its tiles and its thumbnail first, amended the same day). Left: a
+  JPEG XL decoded at full size for every view (its eighth, which the
+  format stores first, could stand in as a JPEG's does; shrunk band by
+  band, it would not hold its eight bits whole); a HEIC's tiles never
+  decoded by a libheif older than 1.19 here (none on this machine: the
+  lookup's failing path is the one a picture of one tile takes, which
+  the tests take), nor a picture its file crops (`clap`, decoded whole:
+  no fixture writes one); the thumbnail a HEIC carries used for its
+  grid's thumbnails too, where it is large enough (asked only for the
+  preview); the helper in the AppImage (Ubuntu 22.04's libheif is 1.12,
+  without `heif_init`: a newer one bundled with libde265 and dav1d as
+  plugins beside it); Windows' WIC and macOS's ImageIO for HEIC and
+  AVIF; a raw file whose JPEG hides in its maker note (Olympus's ORF),
+  Canon's CRW, Sigma's X3F; a raw file never tried from a real camera
+  (synthetic containers laid out as each maker's are), nor a HEIC from a
+  real phone (made by `heif-enc` in 512 px tiles, as an iPhone's), the
+  AVIF decoder never tried on Debian's split plugins.
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not

@@ -223,7 +223,12 @@ A name that says nothing is not a binary file.
   helper (`heif`), an `image` decoder whose types count as decoded here
   only where the helper is installed (`heif::reads`): a format a helper
   reads is never listed as decoded where the helper is missing, or its
-  pictures would lose the thumbnailer's. A drawing
+  pictures would lose the thumbnailer's. A region of a picture in tiles
+  is decoded from the tiles it covers, found as stored and turned by the
+  helper (`picture::Regional`), never by libheif's tiling as shown, which
+  misplaces a turned picture's; what stands for a picture while it
+  decodes is asked of `picture::stand_in` (a progressive JPEG's eighth,
+  a HEIF's thumbnail), never of one format's code. A drawing
   (`thumb_providers::is_drawing`: SVG, plain or compressed) is drawn to
   the thumbnail's side, enlarged too, by the preview's inert path.
   Other `image/*` types and 3D models (`model/*`, and types the MIME

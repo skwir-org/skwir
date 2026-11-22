@@ -363,7 +363,9 @@ The player, in the panel or pinned at its foot:
   full-size JPEG the camera stored in it. HEIC and AVIF are decoded by
   libheif where its helper is installed (the `skwir-heif` package on
   Debian, Ubuntu and Fedora; `libheif` on Arch; HEIC on Fedora needs RPM
-  Fusion's `libheif-freeworld`). SVG drawings (`.svg`, `.svgz`) are
+  Fusion's `libheif-freeworld`): the small picture a HEIC carries shows
+  at once while the whole decodes, and zoomed in, only the part shown is
+  decoded (libheif 1.19 or later). SVG drawings (`.svg`, `.svgz`) are
   drawn, thumbnails included, and sharper as the preview is zoomed.
   Zoomed past the panel, a picture moves with a drag.
 - Other kinds (HEIC and AVIF without libheif's helper, as in the

@@ -54,8 +54,8 @@ pub(crate) fn starts(start: &[u8]) -> bool {
     start.starts_with(&CODESTREAM) || start.starts_with(&CONTAINER)
 }
 
-/// A JPEG XL picture, or the region of it [`Decoder::cut`] says, read in
-/// bands.
+/// A JPEG XL picture, or the region of it `picture::Regional::cut` says,
+/// read in bands.
 pub(crate) struct Decoder<R: Read> {
     inner: JxlDecoder<R>,
     /// What is read (left, top, width, height, as shown): the whole
@@ -77,25 +77,6 @@ impl<R: Read> Decoder<R> {
         })
     }
 
-    /// Read `region` alone (left, top, width, height, as shown), within
-    /// the picture, at least a pixel: what [`Decoder::region`] says.
-    pub(crate) fn cut(&mut self, [left, top, width, height]: [u32; 4]) {
-        let (own_width, own_height) = self.inner.dimensions();
-        let left = left.min(own_width.saturating_sub(1));
-        let top = top.min(own_height.saturating_sub(1));
-        self.region = [
-            left,
-            top,
-            width.clamp(1, own_width - left),
-            height.clamp(1, own_height - top),
-        ];
-    }
-
-    /// What is read: the whole, or what [`Decoder::cut`] said.
-    pub(crate) fn region(&self) -> [u32; 4] {
-        self.region
-    }
-
     /// A band's rows: as many as the decode may hold of its width, a
     /// multiple of a group's side, at least one group.
     fn rows(&self) -> u32 {
@@ -103,6 +84,16 @@ impl<R: Read> Decoder<R> {
         let samples = u64::from(self.inner.color_type().channel_count());
         let rows = self.held / (width * samples * BAND_SAMPLE_BYTES);
         (u32::try_from(rows).unwrap_or(u32::MAX) / GROUP * GROUP).max(GROUP)
+    }
+}
+
+impl<R: Read> crate::picture::Regional for Decoder<R> {
+    fn cut(&mut self, region: [u32; 4]) {
+        self.region = crate::picture::inside(region, self.inner.dimensions());
+    }
+
+    fn region(&self) -> [u32; 4] {
+        self.region
     }
 }
 
@@ -162,6 +153,7 @@ impl<R: Read> ImageDecoder for Decoder<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::picture::Regional;
 
     /// A band is as tall as what may be held allows, in groups.
     #[test]

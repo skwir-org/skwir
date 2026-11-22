@@ -8,7 +8,9 @@ that night; the helper in Debian's, Fedora's, Arch's and Nix's packages,
 not yet in the AppImage (decision 3). Amended the next day (2026-11-22),
 as the user asked once it was measured: JPEG XL read in bands and a
 region alone, by a decoder of Skwir's own around jxl-oxide (decision 1);
-a photo of 24 megapixels or more had not been shown at all.
+a photo of 24 megapixels or more had not been shown at all. Then, as the
+user chose once HEIC was measured: a HEIC's or an AVIF's region decoded
+from its tiles, and its thumbnail shown while it decodes (decision 3).
 
 ## Context
 
@@ -78,7 +80,28 @@ a photo of 24 megapixels or more had not been shown at all.
    22.04's libheif is 1.12. Fedora's libheif decodes AVIF but no HEVC:
    HEIC there needs RPM Fusion's `libheif-freeworld`. Windows and macOS
    keep the thumbnailer's picture until their own decoders (WIC, ImageIO)
-   are asked.
+   are asked. Amended:
+   - **A region is decoded from the tiles it covers** (the helper's
+     `region`, `heif::Decoder` cut by `picture::decode_region`): an
+     iPhone's photo is a grid of 512 px tiles, which libheif 1.19 and
+     later decodes one by one; the calls are looked up as the helper runs,
+     so an older libheif (Ubuntu 24.04's 1.17) still runs it and decodes
+     the whole, cut in the helper, only the part crossing to Skwir. The
+     tiles are found and decoded as stored, the part then turned and
+     mirrored by the helper as the file says (`irot`, `imir`, in its
+     order): libheif's tiling as shown places a turned picture's first
+     tile by the pixels of its last (`image % tile`, 1.19 to 1.23), not by
+     what of it lies past the picture, so a portrait photo's part would
+     come out shifted. A picture its file crops (`clap`) is decoded whole.
+     The tiles decode on as many threads as libheif decodes a whole on
+     (its default, 4). A part of 2000 × 1600 of 45 megapixels: about
+     0.2 to 0.4 s at 25 to 35 MiB, where the whole took 0.9 to 1.6 s at
+     279 MiB in the helper, and as much again in Skwir.
+   - **Its thumbnail stands for it** while it decodes
+     (`picture::stand_in`, as a progressive JPEG's eighth does, ADR-146,
+     6): the one the file carries (320 px in the files measured), turned
+     as the picture, decoded by the helper in 10 to 25 ms; none where it
+     carries none, or where it is no smaller than what is asked.
 
 ## Alternatives
 
@@ -101,9 +124,12 @@ a photo of 24 megapixels or more had not been shown at all.
 - A large JPEG XL decodes all its bands each time it is asked smaller
   (no reduced scale in jxl-oxide's decoder through `image`, its eighth
   not asked apart), holding the picture's eight bits whole; a HEIC or an
-  AVIF decodes whole, in a helper started for its size and again for its
-  pixels: an iPhone's photo of 12 megapixels is some 50 MB written and
+  AVIF decodes whole (HEVC and AV1 have no smaller scale), in a helper
+  started for its size and again for its pixels, its thumbnail shown
+  meanwhile: an iPhone's photo of 12 megapixels is some 50 MB written and
   read in memory.
 - Past the preview's bound, a JPEG XL decodes its region alone (2000 ×
   1600 of 45 megapixels in 150 to 320 ms, where the whole took 1.8 s or
-  more); a HEIC or an AVIF decodes whole for its region, as a PNG does.
+  more), a HEIC or an AVIF the tiles its region covers; an AVIF is
+  seldom stored in tiles, and decodes whole for its region, as a PNG
+  does.

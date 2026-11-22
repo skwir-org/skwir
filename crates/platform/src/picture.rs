@@ -145,6 +145,30 @@ pub fn decode_fitted_within<R: BufRead + Seek>(
     Ok(fitted(whole(reader)?, side))
 }
 
+/// What stands for a picture while it is decoded at `side`, where it is
+/// smaller: a progressive JPEG's eighth (`progressive_eighth`, ADR-146,
+/// 6), a HEIF's or an AVIF's thumbnail, turned as it is shown, decoded by
+/// the helper (ADR-148 amended: 21 to 29 ms, where the whole of 45
+/// megapixels took 855). `None` for any other picture.
+pub fn stand_in<R: BufRead + Seek>(
+    reader: ImageReader<R>,
+    side: u32,
+    threads: Threads,
+) -> ImageResult<Option<DynamicImage>> {
+    if reader.format() == Some(ImageFormat::Jpeg) {
+        return progressive_eighth(reader, side, threads);
+    }
+    if reader.format().is_some() {
+        return Ok(None);
+    }
+    let mut inner = reader.into_inner();
+    if !crate::heif::starts(inner.fill_buf()?) {
+        return Ok(None);
+    }
+    Ok(crate::heif::thumbnail(inner)?
+        .filter(|thumbnail| thumbnail.width().max(thumbnail.height()) < side))
+}
+
 /// A progressive JPEG's eighth, turned (ADR-146, 6): its DC scans alone,
 /// about a tenth of the file, decoded in a few milliseconds where the
 /// whole picture's AC scans take hundreds at a quarter or a half; what
@@ -224,8 +248,8 @@ pub fn decode_region<R: BufRead + Seek>(
     side: u32,
     threads: Threads,
 ) -> ImageResult<DynamicImage> {
-    // A JPEG's rows around the region alone, a JPEG XL's region alone; any
-    // other picture whole.
+    // A JPEG's rows around the region alone, a JPEG XL's or a HEIF's
+    // region alone; any other picture whole.
     let format = reader.format();
     let mut inner = reader.into_inner();
     let band = if format == Some(ImageFormat::Jpeg) {
@@ -234,7 +258,9 @@ pub fn decode_region<R: BufRead + Seek>(
             None => Band::whole(whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?),
         }
     } else if format.is_none() && crate::jxl::starts(inner.fill_buf()?) {
-        jxl_region(inner, own, region)?
+        region_alone(crate::jxl::Decoder::new(inner)?, own, region)?
+    } else if format.is_none() && crate::heif::starts(inner.fill_buf()?) {
+        region_alone(crate::heif::Decoder::new(inner)?, own, region)?
     } else {
         let reader = match format {
             Some(format) => ImageReader::with_format(inner, format),
@@ -433,15 +459,37 @@ impl Band {
     }
 }
 
-/// The region of a JPEG XL a zoom shows, decoded alone (`jxl::Decoder::cut`:
-/// the groups it covers and those beside them) at its full size, the only
-/// one it is decoded at, as it is shown (`own`): jxl-oxide turns it.
-fn jxl_region<R: BufRead + Seek>(
-    reader: R,
+/// A decoder that reads a region of its picture alone: a JPEG XL's groups
+/// (`jxl`), a HEIF's tiles (`heif`, ADR-148 amended).
+pub(crate) trait Regional: ImageDecoder {
+    /// Read `region` alone (left, top, width, height, as shown), within
+    /// the picture (`inside`): what [`Regional::region`] says.
+    fn cut(&mut self, region: [u32; 4]);
+    /// What is read: the whole, or what [`Regional::cut`] said.
+    fn region(&self) -> [u32; 4];
+}
+
+/// `[left, top, width, height]` within a picture of `size`, at least a
+/// pixel.
+pub(crate) fn inside([left, top, width, height]: [u32; 4], size: (u32, u32)) -> [u32; 4] {
+    let left = left.min(size.0.saturating_sub(1));
+    let top = top.min(size.1.saturating_sub(1));
+    [
+        left,
+        top,
+        width.clamp(1, size.0.saturating_sub(left).max(1)),
+        height.clamp(1, size.1.saturating_sub(top).max(1)),
+    ]
+}
+
+/// The region of a picture a zoom shows, decoded alone by `decoder` at its
+/// full size, the only one it is decoded at, as it is shown (`own`): the
+/// decoder turns it.
+fn region_alone(
+    mut decoder: impl Regional,
     own: (u32, u32),
     region: [u32; 4],
 ) -> ImageResult<Band> {
-    let mut decoder = crate::jxl::Decoder::new(reader)?;
     let size = decoder.dimensions();
     // In its pixels, should what was shown be of another size.
     let (across, down) = (

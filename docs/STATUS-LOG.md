@@ -22197,3 +22197,54 @@ three rounds alternated on a machine at a load of 2 to 7.
   XL's eighth as a picture shown first; a lossless (modular) JPEG XL not
   measured; HEIC tiles and its thumbnail shown first, left for the
   user's answer.
+
+## 2026-11-22: a HEIC's regions from its tiles, its thumbnail first (ADR-148 amended)
+
+Asked by the user once HEIC was measured (the entry above). Fixtures:
+the 24- and 45-megapixel HEICs above, and the 45-megapixel photo again
+as a portrait one (its EXIF Orientation 6, which `heif-enc` writes as
+`irot` 270), in tiles of 512 px with a 320 px thumbnail.
+
+- **libheif's tiling as shown misplaces a turned picture's tiles**: for
+  a picture of 300 × 200 in tiles of 128, turned a quarter
+  counter-clockwise, libheif 1.23.6 says the first tile begins 44 rows
+  above the picture, where its decoded tile holds the picture from its
+  row 84 (its source, 1.19.8 and 1.23.6 alike, starts from `image %
+  tile`, the last tile's pixels, not what of it lies past the picture).
+  A region cut by it came out 40 rows of black at the top. The helper
+  finds and decodes the tiles as stored instead
+  (`ignore_transformations`), and turns and mirrors the part itself by
+  the transformations the file lists, in their order; a picture it
+  crops (`clap`) is decoded whole, no fixture writing one.
+- **The calls are looked up as the helper runs** (`dlsym` on the program
+  itself): the tiles' (1.19) and the transformations' (all in 1.19.8,
+  checked in its library); an older libheif decodes the whole, cut in
+  the helper. Not tried with one: none is on this machine; the path it
+  takes is a picture of one tile's, which the tests take.
+- **Measured** (the helper in release, built apart in a scratch target;
+  its runs alone, not isolated; three rounds, load about 1.7): a region
+  of 2000 × 1600 decodes 16 to 20 tiles in 214–403 ms at 25–35 MiB, where
+  the whole took 497–644 ms at 154 MiB (24 megapixels) and 0.9–1.6 s at
+  279 MiB (45, landscape or portrait). Decoded one after another, the
+  tiles had taken 400–530 ms: they are decoded on as many threads as
+  libheif decodes a whole on (its default, 4). The thumbnail: 9–15 ms
+  at 15 MiB.
+- **In the window** (debug build, Xvfb, the folder of the three HEICs
+  and the 24-megapixel JPEG XL): the portrait's thumbnail drawn upright
+  0.6 s after the step, the panel still loading, its whole (12 s in the
+  debug build) after; `picture's stand-in first` at 23–46 ms; at the
+  panel's 320 px nothing stands in (the thumbnail is no smaller); at
+  100 % the regions of the portrait and the landscape photo, 480 × 952,
+  decoded in 150 and 119 ms (the zoom's sharper whole first, 15 and
+  19 s unoptimized); the JPEG XL shown (14 s read ahead, unoptimized).
+  PSS 407 MiB at fit, 544–555 at 100 %, 424 at the end.
+- **Tests** (`crates/heif-worker/tests/pictures.rs`): a region from four
+  of six tiles (the helper says how many it decoded), each of the eight
+  orientations (`heif-enc` from EXIF's, tiles past the right and bottom
+  as stored) cut where it is shown from tiles alone as libheif's whole
+  is, a turned one's colours, a picture of one tile cut from its whole,
+  the thumbnail turned, none where there is none or where it is no
+  smaller; `heif::tests` tells the brands by the shared `starts`.
+- **Not done**: a HEIC from a real phone; the thumbnail for the grid's
+  thumbnails (asked only for the preview); a libheif older than 1.19
+  tried.
