@@ -18,18 +18,30 @@ use skwir_core::words::Words;
 use skwir_core::{CancelToken, Entry};
 
 /// A step that waits until it is opened, holding its plan's run as a long
-/// copy before the others would.
+/// copy before the others would; whether its run has reached it.
 #[derive(Debug, Clone)]
-struct Held(Arc<(Mutex<bool>, Condvar)>);
+struct Held(
+    Arc<(Mutex<bool>, Condvar)>,
+    Arc<std::sync::atomic::AtomicBool>,
+);
 
 impl Held {
     fn new() -> Self {
-        Held(Arc::new((Mutex::new(false), Condvar::new())))
+        Held(
+            Arc::new((Mutex::new(false), Condvar::new())),
+            Arc::default(),
+        )
     }
 
     fn open(&self) {
         *self.0.0.lock() = true;
         self.0.1.notify_all();
+    }
+
+    /// Whether the run holds there now: what comes after it waits for it,
+    /// never for the run to begin (its plan checking itself first).
+    fn holds(&self) -> bool {
+        self.1.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 
@@ -51,6 +63,7 @@ impl Operation for Held {
         StepStatus::Pending { reversible: false }
     }
     fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        self.1.store(true, std::sync::atomic::Ordering::Release);
         let mut open = self.0.0.lock();
         while !*open {
             self.0.1.wait(&mut open);
@@ -110,11 +123,12 @@ fn a_copy_waiting_stands_where_it_will_land_and_goes_once_landed() {
         ],
     );
     app.executor.execute(plan, CancelToken::new());
-    // Both, as their sources are, waiting for the step before them.
+    // Both, as their sources are, waiting for the step before them, which
+    // the run holds at (before, it checks itself: they are starting).
     // What each is made from is read on a worker, as the run goes on.
     let read = |a: &[Arriving]| a.iter().all(|a| a.arrival.like.metadata.is_hydrated());
     let arriving = until(&app, &dest, |a| {
-        a.len() == 2 && a.iter().all(|a| a.state == Arrives::Waiting) && read(a)
+        held.holds() && a.len() == 2 && a.iter().all(|a| a.state == Arrives::Waiting) && read(a)
     });
     let names: Vec<&OsStr> = arriving
         .iter()
