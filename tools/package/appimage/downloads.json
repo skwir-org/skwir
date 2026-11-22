@@ -82,5 +82,13 @@
   "meson-1.9.1-py3-none-any.whl": {
     "url": "https://files.pythonhosted.org/packages/9c/07/b48592d325cb86682829f05216e4efb2dc881762b8f1bafb48b57442307a/meson-1.9.1-py3-none-any.whl",
     "sha256": "f824ab770c041a202f532f69e114c971918ed2daff7ea56583d80642564598d0"
+  },
+  "libde265-1.1.3.tar.gz": {
+    "url": "https://github.com/strukturag/libde265/releases/download/v1.1.3/libde265-1.1.3.tar.gz",
+    "sha256": "554228bd17788c99a7e63b37ab5634722190e6e2bf60c1dcb01cef328e133905"
+  },
+  "libheif-1.23.7.tar.gz": {
+    "url": "https://github.com/strukturag/libheif/releases/download/v1.23.7/libheif-1.23.7.tar.gz",
+    "sha256": "f7483e818503ea6224c8863e4a56ac02c7089021a98472c811c12aa19faf2475"
   }
 }

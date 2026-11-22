@@ -1374,22 +1374,22 @@ of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
 against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
 time).
 - *HEIC, HEIF, AVIF, JPEG XL and camera raw files* (built as ADR-148,
-  2026-11-22; JPEG XL in bands, its regions and its eighth alone, a
-  HEIC's regions from its tiles, its thumbnail first, for the grid and as
-  a preview no larger, amended the same day; seven HEICs from phones
-  tried). Left: a JPEG XL asked larger than its eighth decoded whole, in
-  bands (shrunk band by band, it would not hold its eight bits whole),
-  and a lossless one at every size (it stores no LF to read alone); a
-  HEIC's tiles never decoded by a libheif older than 1.19 here (none on this machine:
-  the lookup's failing path is the one a picture of one tile takes,
-  which the tests take), nor a picture its file crops (`clap`, decoded
-  whole: no fixture writes one); the helper in the AppImage (Ubuntu
-  22.04's libheif is 1.12, without `heif_init`: a newer one bundled with
-  libde265 and dav1d as plugins beside it); Windows' WIC and macOS's
-  ImageIO for HEIC and AVIF; a raw file whose JPEG hides in its maker
-  note (Olympus's ORF), Canon's CRW, Sigma's X3F; a raw file never tried
-  from a real camera (synthetic containers laid out as each maker's
-  are); the AVIF decoder never tried on Debian's split plugins.
+  2026-11-22; JPEG XL in bands, its regions and its eighth alone, a HEIC's
+  regions from its tiles, its thumbnail first, for the grid and as a
+  preview no larger, amended the same day; seven HEICs from phones tried;
+  the helper in the AppImage). Left: a JPEG XL asked larger than its
+  eighth decoded whole, in bands (shrunk band by band, it would not hold
+  its eight bits whole), and a lossless one at every size (it stores no LF
+  to read alone); a HEIC's tiles never decoded by a libheif older than
+  1.19 here (none on this machine: the lookup's failing path is the one a
+  picture of one tile takes, which the tests take), nor a picture its file
+  crops (`clap`, decoded whole: no fixture writes one); the AppImage's
+  helper tried only in its Ubuntu 22.04 root (its check), not on other
+  distributions; Windows' WIC and macOS's ImageIO for HEIC and AVIF; a raw
+  file whose JPEG hides in its maker note (Olympus's ORF), Canon's CRW,
+  Sigma's X3F; a raw file never tried from a real camera (synthetic
+  containers laid out as each maker's are); the AVIF decoder never tried
+  on Debian's split plugins.
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not

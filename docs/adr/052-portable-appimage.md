@@ -7,6 +7,8 @@ requested it).
 Decision 2's GStreamer amended 2026-11-14 (the user's choice of the set):
 all of it built at one version, not Ubuntu's 1.20 plugins beside it, and
 PulseAudio's client library and libva built too.
+Decision 2 amended 2026-11-22 (ADR-148): libheif and libde265 built
+too, for the HEIF helper.
 
 ## Context
 
@@ -71,7 +73,14 @@ filesystem, as `tools/package/try.sh` already does.
    staged library, but what the media helper's environment points
    elsewhere (its plugins and scanner) and what playback never reads.
    Ship the exact source archives, including their licence notices,
-   beside the native library notices.
+   beside the native library notices. **Amended 2026-11-22:** libheif
+   1.23.7 and libde265 1.1.3 are built the same way, for the HEIF helper
+   (ADR-148; `tools/package/appimage/heif.py`), Jammy's libheif being
+   1.12: in a prefix of their own, first on the root's loader path,
+   linked by the helper (`LIBRARY_PATH`), the decoders built in and AV1
+   through Jammy's libaom, which GStreamer's AV1 decoder links already.
+   `check.py` fails on any path of that prefix in a staged library, and
+   decodes a HEIC and an AVIF with the bundled helper.
 3. **Library paths stay inside the package.** Each ELF's RUNPATH is relative
    to its executable or library; it does not impose an inherited RPATH on
    host graphics drivers. AppRun exports no loader or search paths

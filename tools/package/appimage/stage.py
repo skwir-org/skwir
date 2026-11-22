@@ -119,11 +119,14 @@ def main():
     copy(runtime / "libexec/gstreamer-1.0/gst-plugin-scanner", helpers / "gst-plugin-scanner")
     inputs = json.loads((TOOLS / "appimage/downloads.json").read_text())
     for name in inputs:
-        if name.startswith(("gstreamer-", "gst-plugins-", "gst-libav-", "orc-", "pulseaudio-", "libva-")) \
-                and name.endswith((".tar.xz", ".tar.bz2")):
+        if name.startswith(("gstreamer-", "gst-plugins-", "gst-libav-", "orc-", "pulseaudio-", "libva-",
+                            "libheif-", "libde265-")) \
+                and name.endswith((".tar.xz", ".tar.bz2", ".tar.gz")):
             # Exact unmodified sources, including their copyright and
-            # licence notices, travel with the native components built here.
-            part = next((p for p in ("pulseaudio", "libva") if name.startswith(p + "-")), "gstreamer")
+            # licence notices, travel with the native components built here
+            # (gstreamer.py's, heif.py's).
+            part = next((p for p in ("pulseaudio", "libva", "libheif", "libde265") if name.startswith(p + "-")),
+                        "gstreamer")
             copy(pathlib.Path("/inputs") / name, licences / part / name)
     deploy = "/opt/linuxdeploy/squashfs-root/AppRun"
     linked = libraries() | {(multiarch / name).resolve() for name in ("libvulkan.so.1", "libfontconfig.so.1")}

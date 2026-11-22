@@ -363,15 +363,16 @@ The player, in the panel or pinned at its foot:
   full-size JPEG the camera stored in it. HEIC and AVIF are decoded by
   libheif where its helper is installed (the `skwir-heif` package on
   Debian, Ubuntu and Fedora; `libheif` on Arch; HEIC on Fedora needs RPM
-  Fusion's `libheif-freeworld`): the small picture a HEIC carries makes
+  Fusion's `libheif-freeworld`; the AppImage and its tarball carry
+  theirs): the small picture a HEIC carries makes
   its thumbnails and its preview where the preview is no larger, and
   shows at once while the whole decodes; zoomed in, only the part shown
   is decoded (libheif 1.19 or later). A JPEG XL's eighth, which a lossy
   one stores first, serves the same way. SVG drawings (`.svg`, `.svgz`) are
   drawn, thumbnails included, and sharper as the preview is zoomed.
   Zoomed past the panel, a picture moves with a drag.
-- Other kinds (HEIC and AVIF without libheif's helper, as in the
-  AppImage, on Windows and macOS; an Olympus or Sigma raw file) are shown
+- Other kinds (HEIC and AVIF without libheif's helper, as on Windows and
+  macOS; an Olympus or Sigma raw file) are shown
   as the desktop's thumbnailer for them draws them, at most 1024 pixels,
   when one is installed (`thumbnails` plugin). Otherwise ImageMagick
   draws them (**Use ImageMagick**, on by default): AVIF, HEIC, JPEG 2000,

@@ -26,6 +26,7 @@ import wave
 import zipfile
 
 from gstreamer import PREFIX
+from heif import PREFIX as HEIF_PREFIX
 from stage import HOST_ABI
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -71,7 +72,7 @@ def check_elf(app):
         baked = built_here(path)
         assert not baked, (path, sorted(baked), "a path of the build's prefix, looked for on the user's machine")
     print(f"ok: {count} ELFs resolve their libraries; glibc <= 2.35, relative runtime paths, "
-          f"no path of {PREFIX} looked for", flush=True)
+          f"no path of {PREFIX} or {HEIF_PREFIX} looked for", flush=True)
 
 
 # What of the build's prefix (gstreamer.py's PREFIX, which exists only
@@ -95,12 +96,14 @@ NAMED_IN = {
 
 
 def built_here(path):
-    """The paths of PREFIX `path` names and may not: in any section but
-    the dynamic string table, where patchelf leaves the RUNPATH it
-    replaced (the RUNPATH itself is checked above), and other than an
-    assertion's message naming a header (PREFIX/include)."""
+    """The paths of PREFIX, or of heif.py's, `path` names and may not: in
+    any section but the dynamic string table, where patchelf leaves the
+    RUNPATH it replaced (the RUNPATH itself is checked above), and other
+    than an assertion's message naming a header (PREFIX/include). Of
+    heif.py's, none is named at all: its libraries load no plugin."""
     data = path.read_bytes()
-    named = re.compile(re.escape(str(PREFIX).encode()) + rb"[\x21-\x7e]*")
+    named = re.compile(rb"(?:" + re.escape(str(PREFIX).encode()) + rb"|"
+                       + re.escape(str(HEIF_PREFIX).encode()) + rb")[\x21-\x7e]*")
     allowed = set().union(*(paths for pattern, paths in NAMED_IN.items() if fnmatch.fnmatch(path.name, pattern)))
     # ELF64, little-endian (x86-64): the section headers and their names.
     offset, = struct.unpack_from("<Q", data, 0x28)
@@ -114,9 +117,13 @@ def built_here(path):
         if kind == 8 or section == b".dynstr":
             continue
         for match in named.finditer(data, start, start + length):
-            rest = match.group().decode()[len(str(PREFIX)):]
+            text = match.group().decode()
+            if text.startswith(str(HEIF_PREFIX)):
+                found.add(text)
+                continue
+            rest = text[len(str(PREFIX)):]
             if not rest.startswith("/include/") and rest not in allowed:
-                found.add(match.group().decode())
+                found.add(text)
     return found
 
 
@@ -361,6 +368,29 @@ def check_helpers(app, build):
             raise AssertionError(f"{program} --probe failed: {why}")
 
 
+def check_heif(app, work):
+    """The bundle's HEIF helper decodes with the libheif built for it
+    (heif.py): a HEIC's HEVC, a region from its tiles, the thumbnail it
+    carries; an AVIF's AV1, its alpha kept. Its tests' fixtures, and the
+    answers its tests expect."""
+    helper = app / "usr/lib/skwir/skwir-heif-worker"
+    data = ROOT / "crates/heif-worker/tests/data"
+    pixels = work / "heif-pixels"
+    most = str(1 << 28)
+    for name, args, said, size in (
+        ("synthetic-tiles.heic", ["decode", most], "384 256 0", 384 * 256 * 3),
+        ("synthetic-tiles.heic", ["region", most, "100", "100", "100", "60"], "100 60 0 4", 100 * 60 * 3),
+        ("synthetic-tiles.heic", ["thumbnail", most], "128 84 0", 128 * 84 * 3),
+        ("synthetic-fade.avif", ["decode", most], "96 64 1", 96 * 64 * 4),
+    ):
+        answer = run([helper, data / name, pixels] + args, capture_output=True, text=True).stdout.strip()
+        assert answer == said, (name, args, answer, said)
+        assert pixels.stat().st_size == size, (name, args, pixels.stat().st_size, size)
+    pixels.unlink()
+    print("ok: the HEIF helper decodes a HEIC (its whole, a region from its tiles, its thumbnail) "
+          "and an AVIF with its alpha", flush=True)
+
+
 def elf_section(path, wanted):
     """The bytes of the section named `wanted` of the 64-bit ELF file at
     `path` (an AppImage's runtime), read by its section headers."""
@@ -522,6 +552,7 @@ def main():
             worker = "skwir-pdf-worker" if engine == "pdfium" else f"skwir-{engine}-worker"
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,
                  "--worker", app / "usr/lib/skwir" / worker])
+        check_heif(app, work)
         check_media(app, work)
         if args.film:
             check_film(app, work, args.film.resolve())

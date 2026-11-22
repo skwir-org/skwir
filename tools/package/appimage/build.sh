@@ -7,6 +7,7 @@ source_date="$1"
 export CARGO_TARGET_DIR=/build/target
 export CARGO_INCREMENTAL=0
 python3 tools/package/appimage/gstreamer.py
+python3 tools/package/appimage/heif.py
 # A film for the bundle's check (check.py's check_film), made by the
 # GStreamer built here: twelve seconds of VP8 and Vorbis in Matroska.
 /opt/skwir-gstreamer/bin/gst-launch-1.0 -q \
@@ -18,6 +19,9 @@ python3 tools/package/appimage/gstreamer.py
 # systems the AppImage runs on may be as old (ADR-022).
 # shellcheck disable=SC2046 # the shared list is one package per line
 # Every program, but those it leaves out (tools/package/appimage/left-out).
+# The HEIF helper links the libheif built here (heif.py), not Jammy's: its
+# prefix is searched before the system's.
+LIBRARY_PATH=/opt/skwir-heif/lib \
 cargo build --locked --profile dist --features skwir/bundled-sqlite \
     $(grep -vxF -f tools/package/appimage/left-out tools/package/programs | sed 's/^/-p /')
 # What ships has what a start runs laid out together (ADR-128).

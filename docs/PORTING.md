@@ -368,8 +368,8 @@ Left:
     `--sandbox` (2.15 or later) on every system, and alone where the system
     isolates nothing.
 - HEIC and AVIF (ADR-148, `platform/heif.rs`): the libheif helper is
-  shipped in Linux's packages alone (not the AppImage, whose libheif is
-  too old). The decoder compiles everywhere and reads where a helper is
+  shipped in Linux's packages alone (the AppImage and its tarball with a
+  libheif built for them). The decoder compiles everywhere and reads where a helper is
   found; Windows (WIC, with its HEIF and AV1 extensions) and macOS
   (ImageIO) would read them through the system instead, not yet built:
   there the system's thumbnail stands for them. JPEG XL and the JPEG in a

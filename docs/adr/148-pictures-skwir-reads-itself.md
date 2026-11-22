@@ -5,7 +5,8 @@ ADR-146, that HEIC, AVIF, JPEG XL and camera raw files be shown at the
 pixels they cover too; chose a libheif helper for HEIC and AVIF, the
 embedded JPEG for raw files, jxl-oxide for JPEG XL). Built on Linux
 that night; the helper in Debian's, Fedora's, Arch's and Nix's packages,
-not yet in the AppImage (decision 3). Amended the next day (2026-11-22),
+in the AppImage once it carried a libheif of its own, the next day
+(decision 3). Amended the next day (2026-11-22),
 as the user asked once it was measured: JPEG XL read in bands and a
 region alone, by a decoder of Skwir's own around jxl-oxide (decision 1);
 a photo of 24 megapixels or more had not been shown at all. Then, as the
@@ -96,18 +97,22 @@ asked, in the preview as in the grid (decision 3).
    `heif_init`, which loads the decoders Debian ships as plugins). It is
    taught to `image` as a decoder (`heif::register`, by the brands of a
    file's first box): its size asked of the helper when the decoder is
-   made, without decoding, its pixels when they are read, the file
-   written to a folder in memory for it. Its types count as read here
-   only where it is installed (`heif::reads`), so elsewhere the
-   desktop's thumbnailer draws them as before. A package of its own,
-   `skwir-heif`, recommended by `skwir` (Debian's recommending libheif's
-   decoder plugins); in Arch's `skwir`, `libheif` an optional dependency;
-   a flag of Nix's package, on by default. Left out of the AppImage and
-   the tarball made of it (`tools/package/appimage/left-out`): Ubuntu
-   22.04's libheif is 1.12. Fedora's libheif decodes AVIF but no HEVC:
-   HEIC there needs RPM Fusion's `libheif-freeworld`. Windows and macOS
-   keep the thumbnailer's picture until their own decoders (WIC, ImageIO)
-   are asked. Amended:
+   made, without decoding, its pixels when they are read, the file written
+   to a folder in memory for it. Its types count as read here only where
+   it is installed (`heif::reads`), so elsewhere the desktop's thumbnailer
+   draws them as before. A package of its own, `skwir-heif`, recommended
+   by `skwir` (Debian's recommending libheif's decoder plugins); in Arch's
+   `skwir`, `libheif` an optional dependency; a flag of Nix's package, on
+   by default. In the AppImage and the tarball made of it, with a libheif
+   built for it in its Ubuntu 22.04 root
+   (`tools/package/appimage/heif.py`: Jammy's is 1.12, without `heif_init`
+   or the tiles' calls): libheif 1.23.7 and libde265 1.1.3, the newest,
+   the decoders built into libheif rather than loaded as plugins, AV1
+   through Jammy's libaom, which the AppImage carries for GStreamer
+   already; no encoder, tool or gdk-pixbuf loader. Fedora's libheif
+   decodes AVIF but no HEVC: HEIC there needs RPM Fusion's
+   `libheif-freeworld`. Windows and macOS keep the thumbnailer's picture
+   until their own decoders (WIC, ImageIO) are asked. Amended:
    - **A region is decoded from the tiles it covers** (the helper's
      `region`, `heif::Decoder` cut by `picture::decode_region`): an
      iPhone's photo is a grid of 512 px tiles, which libheif 1.19 and

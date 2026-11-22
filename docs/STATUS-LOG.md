@@ -22334,3 +22334,40 @@ try (sample photos from a public site, kept out of the repository).
 - **Not done**: a lossless JPEG XL's preview stays a whole decode; a
   JPEG XL's eighth not kept for a region (zoomed, the regions decode at
   full size).
+
+
+## 2026-11-22: the HEIF helper in the AppImage (ADR-148 and ADR-052 amended)
+
+Asked by the user with the entry above. The AppImage and its tarball
+left the helper out: Ubuntu 22.04's libheif, which its root builds
+against, is 1.12, without `heif_init` or the tiles' calls.
+
+- **Built in the root** (`tools/package/appimage/heif.py`, as
+  `gstreamer.py` builds GStreamer): libde265 1.1.3 and libheif 1.23.7,
+  the newest releases, from their checksum-pinned tarballs
+  (`downloads.json`), into `/opt/skwir-heif`, first on the root's loader
+  path (Jammy's libheif 1.12 and libde265 1.0.8 are there too, by the
+  Debian package's build dependencies). The decoders built into libheif,
+  no plugin loading; AV1 through Jammy's libaom 3.3, carried for
+  GStreamer already; no encoder, tool, test or gdk-pixbuf loader.
+  libde265 picks its SSE, AVX2 or AVX-512 kernels as it runs
+  (`__builtin_cpu_supports`). Cached by a key of the script, the root's
+  build dependencies and the pinned tarballs. The helper links it through
+  `LIBRARY_PATH`, searched before the system's folders; it is no longer
+  in `appimage/left-out`, which lists none now.
+- **Staged** as any library the programs link (`stage.py`'s closure):
+  `libheif.so.1.23.7`, `libde265.so.0.2.3` (1.1.3's), beside the
+  `libaom.so.3.3.0` already there; the two source tarballs in
+  `share/licenses/skwir/libheif` and `libde265`, as GStreamer's travel.
+  The AppImage went from 204.4 to 210.3 MB, the tarball from 220.0 to
+  226.2 MB.
+- **Checked** (`just package-appimage`, 13 min of Rust in the root, both
+  artifacts in the runtime-only root): `check.py` fails on any path of
+  `/opt/skwir-heif` in a staged library (none: no plugin folder), the
+  helper answers `--build` and `--probe`, and decodes the helper's test
+  fixtures with the answers its tests expect: a HEIC's whole (384 × 256),
+  a region from four of its tiles, its 128 × 84 thumbnail, an AVIF with
+  its alpha (`check_heif`). 283 ELFs resolve within glibc 2.35, both
+  artifacts passed.
+- **Not done**: the AppImage's helper on other distributions (CI's
+  `package-try` roots); a phone's HEIC through the AppImage's window.
