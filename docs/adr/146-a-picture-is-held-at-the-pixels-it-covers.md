@@ -6,7 +6,8 @@ about 2000 × 11 000 stays blurred when zoomed in the preview; chose
 today's memory as the bound, counted in pixels; the region's tiles next;
 two pictures kept; a picture a tenth short shown at once, then
 sharpened; `fast_image_resize`). Decisions 1 to 4 built on Linux the
-same day; 5 to 7 to come, in that order.
+same day, 5 to 7 that night (2026-11-22); each checked in a window on
+Xvfb.
 
 ## Context
 
@@ -71,21 +72,26 @@ Measured in release on synthetic photos of about three bits a pixel
    (vendored gpui 0090): each piece holds the pixel beside its own
    where another lies, so no seam shows, and only the pieces that show
    are uploaded. Every image gains, not only pictures.
-5. **Past the bound, only what shows is held at the side asked** (to
-   come): the visible region and a margin, as tiles, over the whole
-   held within the bound, as the map's tiles are; a first version
-   decodes the picture once and keeps the tiles near the view, then a
-   JPEG's region is decoded on its own.
-6. **Something sooner** (to come): a progressive JPEG shows its eighth
-   first (its DC scans, 9 to 17 ms for 24 to 45 megapixels); a picture
-   whose cheaper scale is at most a tenth short of what it covers is
-   shown at that scale at once, and decoded again at its side once the
-   walk stops on it.
-7. **Read ahead and kept** (to come): the next picture is read ahead
-   from the first step, the way it went (forward by default), not after
-   two steps alike; the last two pictures decoded are kept at the size
-   they were shown, let go after a minute unseen, so a step back shows
-   at once.
+5. **Past the bound, only what shows is held at the side asked**: the
+   part in view and a margin round it of half as much each way, as many
+   pixels as the bound allows, decoded at the side it covers and drawn
+   over the whole held within the bound (`preview::Detail`,
+   `region_past_held`, `picture::decode_region`). One region at a time;
+   one within it at no larger side is not asked again. Its decode reads
+   the whole at the least reduced scale covering the side, then cuts,
+   turns and shrinks the region alone. A JPEG's region decoded without
+   decoding the whole is left (PLAN's "What is left").
+6. **Something sooner**: a progressive JPEG shows its eighth first (its
+   DC scans, 9 to 17 ms for 24 to 45 megapixels), as the stand-in a
+   thumbnail is; while stepping, a picture whose cheaper scale is at most
+   a tenth short of its room's side is decoded at that scale
+   (`Cover::Quick`), and at its side once the walk has rested on it
+   600 ms (`settle_picture`).
+7. **Read ahead and kept**: the next picture is read ahead from the first
+   picture shown, the way the last step went (forward before any), not
+   after two steps alike; the last two pictures shown fitted in their
+   room are kept as shown, let go after a minute unseen, so a step back
+   shows at once.
 
 ## Alternatives
 

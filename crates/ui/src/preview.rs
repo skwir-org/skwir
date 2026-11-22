@@ -93,6 +93,10 @@ impl Room {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Cover {
     Fit(Room),
+    /// Fitted while stepping: a JPEG at the smaller scale that is at most
+    /// a tenth short of the room's side, quicker than the next one up,
+    /// decoded at its side once the walk stops (`settle_picture`).
+    Quick(Room),
     Side(u32),
 }
 
@@ -100,25 +104,58 @@ impl Cover {
     /// The longer side a picture of `own` pixels is asked at.
     fn side(&self, own: (u32, u32)) -> u32 {
         match self {
-            Self::Fit(room) => room.side(own),
+            Self::Fit(room) | Self::Quick(room) => room.side(own),
             Self::Side(side) => *side,
+        }
+    }
+
+    /// The least a picture asked `side` is decoded at: a tenth short where
+    /// it is quick.
+    fn least(&self, side: u32) -> u32 {
+        match self {
+            Self::Quick(_) => (side as f32 * QUICK_SHORT).ceil() as u32,
+            Self::Fit(_) | Self::Side(_) => side,
         }
     }
 
     /// Whether a picture decoded for this covers what `other` asks.
     fn holds(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Fit(room), Self::Fit(other)) => room.holds(other),
+            (Self::Fit(room), Self::Fit(other) | Self::Quick(other))
+            | (Self::Quick(room), Self::Quick(other)) => room.holds(other),
             (Self::Side(side), Self::Side(other)) => side >= other,
             _ => false,
         }
     }
 }
 
+/// How short of its side a picture decoded while stepping may be
+/// (`Cover::Quick`): a tenth.
+const QUICK_SHORT: f32 = 0.9;
+
+/// How long a walk rests on a picture decoded short (`Cover::Quick`)
+/// before it is decoded at its side (`Shell::settle_picture`): longer than
+/// a step held or pressed in turn, shorter than a look.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(600);
+
 /// What a picture is asked to cover where the room it is shown in is not
 /// known: `IMAGE_MAX_SIDE`, a drawing its own size (`decode_drawing`).
 fn cover_or_default(cover: Option<Cover>) -> Cover {
     cover.unwrap_or(Cover::Side(IMAGE_MAX_SIDE))
+}
+
+/// What shows of a picture zoomed past what is held of it whole (ADR-146,
+/// 5): the region in view and a margin round it, decoded at the side the
+/// zoom covers, drawn over the whole (`picture`). One at a time, of the
+/// file shown; let go with the content (`replace_preview_content`).
+pub(crate) struct Detail {
+    /// The file it is of.
+    key: PreviewKey,
+    /// Left, top, width and height, in the picture's own pixels as shown.
+    region: [u32; 4],
+    /// The longer side the whole would have at its scale.
+    side: u32,
+    image: Arc<RenderImage>,
 }
 
 pub enum PreviewContent {
@@ -180,6 +217,24 @@ enum Media {
     NoPlayer,
 }
 
+/// A picture shown before, kept as it was shown, fitted in its room
+/// (ADR-146, 7): a step back shows it at once. `KEPT_PICTURES` at most,
+/// each let go `KEPT_FOR` unseen; its GPU copy goes as it is kept and is
+/// made again if it is shown.
+struct KeptPicture {
+    key: PreviewKey,
+    version: Version,
+    content: PreviewContent,
+    serial: u64,
+    /// Lets it go once unseen `KEPT_FOR`.
+    _expiry: gpui::Task<()>,
+}
+
+/// How many pictures shown before are kept (`KeptPicture`), and for how
+/// long unseen.
+const KEPT_PICTURES: usize = 2;
+const KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// A picture read ahead for the next step (`read_ahead`), the whole
 /// screen's or a walk's: what it is for, as the step's preview will be
 /// keyed, and where its worker stands.
@@ -225,18 +280,16 @@ enum AheadSlot {
 }
 
 /// The steps the preview takes through its pane's order as the cursor
-/// moves, in places of that order (`ListState::sorted`): two alike in a
-/// row are a walk (Down twice; in a grid, a row down twice), whose next
-/// entry is read ahead in the panel and in peek (`Shell::read_ahead_next`).
-/// A click lands anywhere, so it starts no walk.
+/// moves, in places of that order (`ListState::sorted`): the entry the next
+/// step reaches, the way the last went (Down; in a grid, a row down), or
+/// the next one before any step, is read ahead in the panel and in peek
+/// (`Shell::read_ahead_next`, ADR-146, 7), as image viewers preload it.
 #[derive(Default)]
 struct Walk {
     /// The entry shown last, its pane and its place in the order.
     at: Option<(PaneId, EntryId, usize)>,
     /// The last step; 0 before one.
     step: isize,
-    /// Whether the step before it was the same.
-    alike: bool,
 }
 
 impl Walk {
@@ -263,19 +316,19 @@ impl Walk {
             }
             _ => 0,
         };
-        self.alike = step != 0 && step == self.step;
         self.step = step;
         self.at = Some((pane, id, index));
     }
 
-    /// Where the walk goes next in `pane`, listed in `sorted`: `None` until
-    /// two steps alike make it one.
+    /// Where the walk goes next in `pane`, listed in `sorted`: the way the
+    /// last step went, the next entry before any.
     fn next(&self, pane: PaneId, sorted: &[EntryId]) -> Option<EntryId> {
         let (walked, id, index) = self.at?;
-        if !self.alike || walked != pane || sorted.get(index) != Some(&id) {
+        if walked != pane || sorted.get(index) != Some(&id) {
             return None;
         }
-        sorted.get(index.checked_add_signed(self.step)?).copied()
+        let step = if self.step == 0 { 1 } else { self.step };
+        sorted.get(index.checked_add_signed(step)?).copied()
     }
 }
 
@@ -1020,6 +1073,22 @@ pub struct PreviewState {
     /// The side an image was asked to be decoded at for a zoom
     /// (`sharpen_picture`); 0 for the display side.
     pub(crate) picture_side: u32,
+    /// What shows of the picture past what is held of it whole (ADR-146,
+    /// 5), what is asked of it, and the region and side last asked.
+    pub(crate) detail: Option<Detail>,
+    pub(crate) detail_asked: crate::latest::Latest<anyhow::Result<Detail>>,
+    pub(crate) detail_wanted: Option<([u32; 4], u32)>,
+    /// Whether the picture shown is asked at its side, not a tenth short:
+    /// the walk stopped on it (`settle_picture`); and the wait for that.
+    pub(crate) exact: bool,
+    settle: Option<gpui::Task<()>>,
+    /// The side the walk's rest asked the picture at (`settle_picture`),
+    /// which `Sharpen` counts as asked; 0 before.
+    pub(crate) settled: u32,
+    /// Pictures shown before, the last first (`KeptPicture`), and the
+    /// serial the next is kept under.
+    kept: std::collections::VecDeque<KeptPicture>,
+    kept_serial: u64,
     /// The side document pages are rendered at: the one they were last
     /// shown at (`Shell::document_shown`), kept from one document to the
     /// next, so a page opens at the size the panel shows it. `None` until a
@@ -1446,6 +1515,14 @@ impl Default for PreviewState {
             placeholder: None,
             placeholder_page: false,
             picture_side: 0,
+            detail: None,
+            detail_asked: crate::latest::Latest::default(),
+            detail_wanted: None,
+            exact: false,
+            settle: None,
+            settled: 0,
+            kept: std::collections::VecDeque::new(),
+            kept_serial: 0,
             page_side: None,
             area: Arc::default(),
             window_shown: true,
@@ -1583,6 +1660,9 @@ impl PreviewState {
         if self.held.take().is_some() {
             crate::held_before::let_go();
         }
+        // So do the pictures shown before (their GPU copies went as they
+        // were kept).
+        self.kept.clear();
     }
 
     /// The slot of the file shown, for another request about `entry`
@@ -1922,12 +2002,14 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
 /// An image decoded at the side `cover` asks (`IMAGE_MAX_SIDE` where it
 /// is not known), at most its own and within `limits::PICTURE_HELD`, with
 /// its own size, what 100% is, as its width and height, if its pixels are
-/// within `bounds` (ADR-146).
+/// within `bounds` (ADR-146). A progressive JPEG's eighth goes to `first`
+/// before, to stand for it meanwhile.
 fn decode_image(
     held: &Arc<Held>,
     cover: Option<Cover>,
     bounds: Bounds,
     turn: Turn,
+    first: Option<&dyn Fn(PreviewContent)>,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
     let reader = || skwir_platform::picture::open(held);
@@ -1959,11 +2041,40 @@ fn decode_image(
         anyhow::bail!("cancelled");
     }
     let started = std::time::Instant::now();
+    // A progressive JPEG's eighth stands for it while the rest is decoded
+    // (ADR-146, 6): its DC scans, a few milliseconds where its AC scans
+    // take hundreds.
+    if let Some(first) = first
+        && let Ok(Some(eighth)) = skwir_platform::picture::progressive_eighth(
+            reader()?,
+            side,
+            skwir_platform::picture::Threads::Components,
+        )
+        && let Some((image, ink)) = crate::thumbs::picture_image(eighth)
+        && !cancel.is_cancelled()
+    {
+        tracing::debug!(
+            ms = started.elapsed().as_secs_f64() * 1000.,
+            "picture's eighth first"
+        );
+        first(PreviewContent::Image {
+            image,
+            width: w,
+            height: h,
+            detail: None,
+            document: None,
+            facts: Vec::new(),
+            pixels: Pixels::Own,
+            ink,
+        });
+    }
     // A JPEG at least twice the side is decoded at a reduced scale: a
     // 24-megapixel photo has a quarter of its pixels computed and held.
     // With a thread a component: the picture waited for, in its turn.
-    let img = skwir_platform::picture::decode_fitted(
+    let least = cover.map_or(side, |cover| cover.least(side));
+    let img = skwir_platform::picture::decode_fitted_within(
         reader()?,
+        least,
         side,
         skwir_platform::picture::Threads::Components,
     )?;
@@ -1988,6 +2099,43 @@ fn decode_image(
         pixels: Pixels::Own,
         ink,
     })
+}
+
+/// The `region` of a picture of `own` pixels (as shown) at the scale where
+/// its longer side is `side`, as GPUI draws it (ADR-146, 5). In the turn of
+/// the preview's own decodes: the whole may be decoded at its full size.
+fn decode_region(
+    held: &Arc<Held>,
+    own: (u32, u32),
+    region: [u32; 4],
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Arc<RenderImage>> {
+    let _turn = Turn::Shown.take();
+    if cancel.is_cancelled() {
+        anyhow::bail!("cancelled");
+    }
+    let started = std::time::Instant::now();
+    let img = skwir_platform::picture::decode_region(
+        skwir_platform::picture::open(held)?,
+        own,
+        region,
+        side,
+        skwir_platform::picture::Threads::Components,
+    )?;
+    if cancel.is_cancelled() {
+        anyhow::bail!("cancelled");
+    }
+    let kept = (img.width(), img.height());
+    let (image, _) = crate::thumbs::picture_image(img).ok_or_else(invalid_image)?;
+    tracing::debug!(
+        ?region,
+        side,
+        ?kept,
+        ms = started.elapsed().as_secs_f64() * 1000.,
+        "picture region decoded"
+    );
+    Ok(image)
 }
 
 /// A drawing (SVG) rasterized at the side `cover` asks (ADR-146): fitted
@@ -2312,6 +2460,7 @@ fn compute(
     mime: Option<&str>,
     code: &crate::code_preview::CodeTheme,
     cover: &dyn Fn() -> Option<Cover>,
+    first: &dyn Fn(PreviewContent),
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> PreviewContent {
@@ -2332,7 +2481,7 @@ fn compute(
         Drawn::Drawing => {
             decode_drawing(&held, cover(), bounds, cancel).unwrap_or_else(failure_content)
         }
-        Drawn::Picture => decode_image(&held, cover(), bounds, Turn::Shown, cancel)
+        Drawn::Picture => decode_image(&held, cover(), bounds, Turn::Shown, Some(first), cancel)
             .unwrap_or_else(failure_content),
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
@@ -3201,7 +3350,9 @@ impl Shell {
         if self.turn_from_kept(window, cx) {
             return;
         }
-        if !self.take_ahead(&key, &version, window, cx) {
+        if !self.take_kept(&key, &version, window, cx)
+            && !self.take_ahead(&key, &version, window, cx)
+        {
             let book = self.preview.book_text_size(&cx.global::<Theme>().sizes);
             self.preview_request(&key, &version, &entry, book);
         }
@@ -3601,6 +3752,7 @@ impl Shell {
             PreviewPhase::Loading
         };
         self.fullscreen_arrived(window, cx);
+        self.arm_settle(window, cx);
         self.read_ahead_next(window, cx);
         // A book laid out at a size changed since it was asked (ADR-117).
         if opened {
@@ -3628,7 +3780,7 @@ impl Shell {
         match next {
             None => self.let_ahead_go(window, cx),
             Some(id) if self.preview.phase == PreviewPhase::Idle => {
-                let cover = self.preview.area.last_room().map(Cover::Fit);
+                let cover = self.preview.area.last_room().map(Cover::Quick);
                 self.read_ahead(id, cover, window, cx);
             }
             Some(_) => {}
@@ -3860,6 +4012,8 @@ impl Shell {
             .then(|| entry.type_name().to_owned());
         let session = self.preview.reader.session.clone();
         let picture_side = self.preview.picture_side;
+        // Decoded at its side: the walk stopped on it (`settle_picture`).
+        let exact = self.preview.exact;
         // A film's picture is asked to fit the box it is shown in, or at
         // the side a zoom or the whole screen asked for (`sharpen_picture`).
         let media_box = self.preview.media_box;
@@ -4456,8 +4610,29 @@ impl Shell {
                         &|| {
                             if picture_side > 0 {
                                 Some(Cover::Side(picture_side))
-                            } else {
+                            } else if exact {
                                 area.room(&cancel).map(Cover::Fit)
+                            } else {
+                                area.room(&cancel).map(Cover::Quick)
+                            }
+                        },
+                        // What stands for a picture while it is decoded,
+                        // kept aside as the desktop's thumbnail is.
+                        &|content| {
+                            if !cancel.is_cancelled() {
+                                let _ = tx.send(PreviewResult {
+                                    generation,
+                                    content,
+                                    complete: false,
+                                    session: None,
+                                    media: None,
+                                    sniffed: None,
+                                    placeholder: true,
+                                    closed_links: None,
+                                    picture_source: None,
+                                    page_side: None,
+                                });
+                                wake();
                             }
                         },
                         Bounds::of(&inspection),
@@ -4535,6 +4710,15 @@ impl Shell {
             return;
         }
         self.let_ahead_go(window, cx);
+        // Shown before and kept: shown from there (`take_kept`).
+        if self
+            .preview
+            .kept
+            .iter()
+            .any(|kept| kept.key == key && !kept.version.rewritten(&version))
+        {
+            return;
+        }
         let settled = entry.inode_type().is_some()
             || (mime.is_some() && !skwir_platform::mime::ambiguous(entry.type_name()));
         let (Some(mime), Some(content)) = (mime.filter(|_| settled), key.content.clone()) else {
@@ -4605,7 +4789,7 @@ impl Shell {
                         if skwir_platform::thumb_providers::is_drawing(&mime) {
                             decode_drawing(&held, cover, Bounds::QUICK, &token)
                         } else {
-                            decode_image(&held, cover, Bounds::QUICK, Turn::Ahead, &token)
+                            decode_image(&held, cover, Bounds::QUICK, Turn::Ahead, None, &token)
                         }
                     })
                     .unwrap_or_else(failure_content);
@@ -4643,6 +4827,93 @@ impl Shell {
             cancel,
             slot,
         });
+    }
+
+    /// Keep the picture shown, fitted in its room, as the preview leaves it
+    /// (ADR-146, 7): its GPU copy goes now, made again if it is shown.
+    /// Zoomed, it holds more than its room, and is not kept.
+    fn keep_shown_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let fitted = self.preview.picture_side == 0
+            && matches!(
+                self.preview.content,
+                Some(PreviewContent::Image {
+                    document: None,
+                    detail: None,
+                    pixels: Pixels::Own | Pixels::Any,
+                    ..
+                })
+            );
+        let (Some(key), Some(version)) = (self.preview.key.clone(), self.preview.version.clone())
+        else {
+            return;
+        };
+        if !fitted || !self.preview.nested.is_empty() {
+            return;
+        }
+        let Some(content) = self.preview.content.take() else {
+            return;
+        };
+        if let PreviewContent::Image { image, .. } = &content {
+            cx.drop_image(Arc::clone(image), Some(window));
+        }
+        let serial = self.preview.kept_serial;
+        self.preview.kept_serial += 1;
+        let expiry = cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(KEPT_FOR).await;
+            let _ = this.update(cx, |this, _| {
+                this.preview.kept.retain(|kept| kept.serial != serial);
+            });
+        });
+        self.preview.kept.retain(|kept| kept.key != key);
+        self.preview.kept.push_front(KeptPicture {
+            key,
+            version,
+            content,
+            serial,
+            _expiry: expiry,
+        });
+        self.preview.kept.truncate(KEPT_PICTURES);
+    }
+
+    /// The picture kept from when `key` was shown before, as the file stands:
+    /// shown now, in the frame the step is drawn in. False when none is.
+    fn take_kept(
+        &mut self,
+        key: &PreviewKey,
+        version: &Version,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(at) = self.preview.kept.iter().position(|kept| kept.key == *key) else {
+            return false;
+        };
+        let Some(kept) = self.preview.kept.remove(at) else {
+            return false;
+        };
+        if kept.version.rewritten(version)
+            || !self.preview.nested.is_empty()
+            || self.preview.descend.is_some()
+        {
+            return false;
+        }
+        tracing::debug!("picture kept shown again");
+        // Shown as a file is first looked at, fitted in its room.
+        self.preview.asked = skwir_core::inspection::InspectRequest::default();
+        self.preview.picture_side = 0;
+        let result = PreviewResult {
+            generation: self.preview.generation,
+            content: kept.content,
+            complete: true,
+            session: None,
+            media: None,
+            sniffed: None,
+            placeholder: false,
+            closed_links: None,
+            picture_source: None,
+            page_side: None,
+        };
+        self.preview_arrived(result, window, cx);
+        true
     }
 
     /// The picture read ahead, when it is `key`'s as the file stands: shown
@@ -4796,10 +5067,12 @@ impl Shell {
     ) {
         // RenderImage's Arc does not own its uploaded atlas entry. Evict it
         // explicitly, just like the thumbnail LRU, on replacement and close.
-        // A thumbnail kept aside for the wait goes with it.
+        // A thumbnail kept aside for the wait goes with it, and what showed
+        // of the picture past what was held whole.
         if let Some(PreviewContent::Image { image, .. }) = self.preview.placeholder.take() {
             cx.drop_image(image, Some(window));
         }
+        self.let_detail_go(window, cx);
         match self.preview.content.take() {
             // A document's page the reader keeps stays in the atlas: the
             // cache drops it as the page goes (`DocumentScroll::holds`).
@@ -5129,6 +5402,7 @@ impl Shell {
                 None => window.focus(&self.ui().focus, cx),
             }
         }
+        self.keep_shown_picture(window, cx);
         self.preview.key = None;
         self.preview.version = None;
         self.preview.info = Info::default();
@@ -5150,6 +5424,9 @@ impl Shell {
         self.preview.fit_width = false;
         self.preview.picture_scroll = gpui::ScrollHandle::new();
         self.preview.picture_side = 0;
+        self.preview.exact = false;
+        self.preview.settle = None;
+        self.preview.settled = 0;
         self.preview.text_percent = None;
         self.preview.map = crate::map_preview::MapState::default();
         self.preview.model = crate::model_preview::ModelState::default();
@@ -6248,6 +6525,174 @@ impl Shell {
         cx.notify();
     }
 
+    /// A picture fitted in its room, decoded while stepping (`Cover::Quick`):
+    /// once the walk has rested on it `SETTLE`, it is asked at its side
+    /// (`settle_picture`). Another step, or anything shown in its place,
+    /// lets the wait go.
+    fn arm_settle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let fitted = !self.preview.exact
+            && self.preview.picture_side == 0
+            && matches!(
+                self.preview.content,
+                Some(PreviewContent::Image {
+                    document: None,
+                    detail: None,
+                    pixels: Pixels::Own,
+                    ..
+                })
+            );
+        if !fitted {
+            self.preview.settle = None;
+            return;
+        }
+        let key = self.preview.key.clone();
+        self.preview.settle = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(SETTLE).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.preview.key == key {
+                    this.settle_picture(window, cx);
+                }
+            });
+        }));
+    }
+
+    /// The walk stopped on a picture decoded while stepping: from now on it
+    /// is asked at its side, and decoded again at it where it was short
+    /// (ADR-146, 6). In place: the zoom and the scroll stay.
+    fn settle_picture(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.preview.settle = None;
+        if self.preview.exact || self.preview.picture_side > 0 {
+            return;
+        }
+        self.preview.exact = true;
+        let Some(PreviewContent::Image {
+            image,
+            width,
+            height,
+            document: None,
+            detail: None,
+            pixels: Pixels::Own,
+            ..
+        }) = &self.preview.content
+        else {
+            return;
+        };
+        let Some(room) = self.preview.area.last_room() else {
+            return;
+        };
+        let own = (*width, *height);
+        let wanted =
+            room.side(own)
+                .min(own.0.max(own.1))
+                .min(skwir_platform::picture::side_within(
+                    own.0,
+                    own.1,
+                    skwir_platform::inspection::limits::PICTURE_HELD,
+                ));
+        let size = image.size(0);
+        let raster = size.width.0.max(size.height.0) as f32;
+        if raster * 1.02 >= wanted as f32 {
+            return;
+        }
+        tracing::debug!(
+            raster,
+            wanted,
+            "the walk stopped: draw the picture at its side"
+        );
+        self.preview.settled = wanted;
+        self.cancel_pending_preview();
+        self.preview.refresh = true;
+        self.preview.phase = PreviewPhase::Queued;
+        cx.notify();
+    }
+
+    /// A picture zoomed past what is held of it whole (ADR-146, 5): decode
+    /// `region` of it (its own pixels, as shown) at the scale where its
+    /// longer side is `side`, to draw over the whole (`picture`). What
+    /// shows stays until it comes; asked again, the last ask wins.
+    pub(crate) fn sharpen_region(&mut self, region: [u32; 4], side: u32) {
+        if self.preview.detail_wanted == Some((region, side)) {
+            return;
+        }
+        let Some(key) = self.preview.key.clone() else {
+            return;
+        };
+        let Some(entry) = key.content.clone() else {
+            return;
+        };
+        let Some(PreviewContent::Image {
+            width,
+            height,
+            document: None,
+            detail: None,
+            pixels: Pixels::Own,
+            ..
+        }) = &self.preview.content
+        else {
+            return;
+        };
+        let own = (*width, *height);
+        // What was read of the file shown, as its request has it.
+        let request = skwir_core::preview::PreviewRequest {
+            held: self.preview.held_of(&entry),
+            entry,
+            mime: self.preview.info.mime.clone(),
+            page: 1,
+            seconds: None,
+            max_side: side,
+            text_size: None,
+            fit: None,
+        };
+        self.preview.detail_wanted = Some((region, side));
+        tracing::debug!(?region, side, "draw a region sharper");
+        let lane = skwir_core::fs::reach::lane(&request.entry.path);
+        let wake = self.waker();
+        self.preview.detail_asked.ask_waking(
+            &self.app,
+            lane,
+            self.app.lifetime(),
+            Priority::Visible,
+            "picture-region",
+            wake,
+            move |cancel| {
+                let held = request.held()?;
+                let image = decode_region(&held, own, region, side, cancel)?;
+                Ok(Detail {
+                    key,
+                    region,
+                    side,
+                    image,
+                })
+            },
+        );
+    }
+
+    /// A region drawn sharper, once decoded, in place of the one shown,
+    /// if it is still of the file shown.
+    pub fn sync_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.preview.detail_asked.take() {
+            Some(Ok(detail)) if self.preview.key.as_ref() == Some(&detail.key) => {
+                if let Some(old) = self.preview.detail.replace(detail) {
+                    cx.drop_image(old.image, Some(window));
+                }
+                cx.notify();
+            }
+            Some(Ok(detail)) => cx.drop_image(detail.image, Some(window)),
+            Some(Err(error)) => tracing::debug!("region not drawn sharper: {error:#}"),
+            None => {}
+        }
+    }
+
+    /// Let go of what showed of the picture past what was held of it whole,
+    /// and of what was asked.
+    fn let_detail_go(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview.detail_asked.forget();
+        self.preview.detail_wanted = None;
+        if let Some(detail) = self.preview.detail.take() {
+            cx.drop_image(detail.image, Some(window));
+        }
+    }
+
     /// The poster shows more pixels than it has (a larger panel, the
     /// whole screen): read it again at `side` alone, the frame it shows
     /// (`seconds`), never with a second player. The one shown stays until
@@ -7218,10 +7663,21 @@ pub(crate) fn content(
                     "preview-image-scroll",
                     // A picture shown smaller than its own size was decoded
                     // smaller; one given at its pixels has no more; none
-                    // is held with more than `PICTURE_HELD` (ADR-146).
-                    Some(Sharpen {
+                    // is held with more than `PICTURE_HELD` (ADR-146). Only
+                    // the one shown asks: the panel behind peek and the
+                    // whole screen draws it too, at another size.
+                    interactive.then(|| Sharpen {
                         shell: cx.entity().downgrade(),
-                        asked: p.picture_side,
+                        asked: p.picture_side.max(p.settled),
+                        region: p
+                            .detail_wanted
+                            .or_else(|| p.detail.as_ref().map(|d| (d.region, d.side))),
+                        detail: p
+                            .detail
+                            .as_ref()
+                            .filter(|detail| p.key.as_ref() == Some(&detail.key))
+                            .map(|detail| (Arc::clone(&detail.image), detail.region)),
+                        patient: !p.exact && p.picture_side == 0,
                         most: {
                             let held = skwir_platform::picture::side_within(
                                 *width,
@@ -8105,6 +8561,38 @@ pub(crate) fn picture(
         let size = image.size(0);
         u32::try_from(size.width.0.max(size.height.0)).unwrap_or(0)
     };
+    // What shows past what is held whole (ADR-146, 5), over its place.
+    let detail = sharpen
+        .as_ref()
+        .and_then(|sharpen| sharpen.detail.clone())
+        .map(|(detail, [x, y, w, h])| {
+            let size = image.size(0);
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, (), window, _| {
+                    let picture = ObjectFit::Contain.get_bounds(bounds, size);
+                    let across = f32::from(picture.size.width) / width;
+                    let down = f32::from(picture.size.height) / height;
+                    let at = gpui::Bounds::new(
+                        gpui::point(
+                            picture.origin.x + px(x as f32 * across),
+                            picture.origin.y + px(y as f32 * down),
+                        ),
+                        gpui::size(px(w as f32 * across), px(h as f32 * down)),
+                    );
+                    let _ = window.paint_image(
+                        at,
+                        at,
+                        gpui::Corners::default(),
+                        Arc::clone(&detail),
+                        0,
+                        false,
+                    );
+                },
+            )
+            .absolute()
+            .size_full()
+        });
     let watch = sharpen.map(|sharpen| sharpen.watch(raster, (width, height)));
     if let Some(zoom) = lay.zoom {
         // Smaller than the panel, it sits in the middle, as whole; larger,
@@ -8132,6 +8620,7 @@ pub(crate) fn picture(
                         .h(px(height * zoom))
                         .children(backdrop)
                         .child(pixels)
+                        .children(detail)
                         .children(watch),
                 )
                 .into_any_element(),
@@ -8149,6 +8638,7 @@ pub(crate) fn picture(
                 })
                 .children(backdrop)
                 .child(pixels)
+                .children(detail)
                 .children(watch)
                 .into_any_element(),
         )
@@ -8174,6 +8664,7 @@ pub(crate) fn picture(
                         })
                         .children(backdrop)
                         .child(pixels)
+                        .children(detail)
                         .children(watch),
                 )
                 .into_any_element(),
@@ -8188,11 +8679,24 @@ pub(crate) struct Sharpen {
     pub(crate) shell: gpui::WeakEntity<Shell>,
     pub(crate) asked: u32,
     pub(crate) most: u32,
+    /// Past what is held whole (ADR-146, 5): the region shown or asked and
+    /// its side, which a region within it at no larger side is not asked
+    /// again for, and what shows of it, drawn over the whole.
+    pub(crate) region: Option<([u32; 4], u32)>,
+    pub(crate) detail: Option<(Arc<RenderImage>, [u32; 4])>,
+    /// Whether it may be a tenth short while the walk goes on (`PATIENT`).
+    pub(crate) patient: bool,
 }
 
 /// Steps a picture is drawn again at: a zoom step of 1.25 crosses at most
 /// one, and a picture a little short of its pixels is left as it is.
 const SHARPEN_STEP: u32 = 512;
+
+/// How short of what it covers a picture is left as it is: a little; a
+/// tenth while stepping (`Cover::Quick`), decoded at its side once the
+/// walk stops (`Shell::settle_picture`).
+const SLACK: f32 = 1.05;
+const PATIENT: f32 = 1. / QUICK_SHORT + 0.01;
 
 impl Sharpen {
     /// A canvas over the picture's box that, once laid out, measures the
@@ -8203,11 +8707,40 @@ impl Sharpen {
                 let scale = (f32::from(bounds.size.width) / width)
                     .min(f32::from(bounds.size.height) / height);
                 let covered = width.max(height) * scale * window.scale_factor();
-                if let Some(side) = sharper(covered, raster, self.asked, self.most) {
-                    let shell = self.shell.clone();
+                let shell = self.shell.clone();
+                let slack = if self.patient { PATIENT } else { SLACK };
+                if let Some(side) = sharper(covered, raster, self.asked, self.most, slack) {
                     window.defer(cx, move |window, cx| {
                         if let Some(shell) = shell.upgrade() {
                             shell.update(cx, |shell, cx| shell.sharpen_picture(side, window, cx));
+                        }
+                    });
+                    return;
+                }
+                // Whole in the box, as `Contain` lays it, and what of it
+                // shows.
+                let (shown_width, shown_height) = (width * scale, height * scale);
+                let picture = [
+                    f32::from(bounds.origin.x) + (f32::from(bounds.size.width) - shown_width) / 2.,
+                    f32::from(bounds.origin.y)
+                        + (f32::from(bounds.size.height) - shown_height) / 2.,
+                    shown_width,
+                    shown_height,
+                ];
+                let mask = window.content_mask().bounds;
+                let view = [
+                    f32::from(mask.origin.x),
+                    f32::from(mask.origin.y),
+                    f32::from(mask.size.width),
+                    f32::from(mask.size.height),
+                ];
+                let own = (width as u32, height as u32);
+                if let Some((region, side)) =
+                    region_past_held(covered, raster, self.most, own, picture, view, self.region)
+                {
+                    window.defer(cx, move |_, cx| {
+                        if let Some(shell) = shell.upgrade() {
+                            shell.update(cx, |shell, _| shell.sharpen_region(region, side));
                         }
                     });
                 }
@@ -8219,12 +8752,97 @@ impl Sharpen {
     }
 }
 
+/// What of a picture to decode past what is held of it whole (ADR-146, 5),
+/// and the side to decode it at: when it covers `covered` device pixels on
+/// its longer side and holds `raster`, already as many as may be held
+/// whole (`most`), fewer than its `own`. `picture` is its rectangle in the
+/// window and `view` what shows there (left, top, width, height, in
+/// pixels). The part in view, and a margin round it of half as much each
+/// way, as many pixels as `PICTURE_HELD` allows, at the side it covers,
+/// never past its own. `None` while what is held suffices, nothing shows,
+/// or `held` (a region shown or asked, and its side) holds what shows at
+/// that side.
+pub(crate) fn region_past_held(
+    covered: f32,
+    raster: u32,
+    most: u32,
+    own: (u32, u32),
+    picture: [f32; 4],
+    view: [f32; 4],
+    held: Option<([u32; 4], u32)>,
+) -> Option<([u32; 4], u32)> {
+    use skwir_platform::inspection::limits::PICTURE_HELD;
+    let longer = own.0.max(own.1);
+    if !covered.is_finite()
+        || raster < most
+        || most >= longer
+        || covered <= raster as f32 * 1.05
+        || own.0 == 0
+        || own.1 == 0
+    {
+        return None;
+    }
+    let [left, top, width, height] = picture;
+    if !(width > 0. && height > 0.) {
+        return None;
+    }
+    // What shows, in the picture's own pixels.
+    let (across, down) = (
+        f64::from(own.0) / f64::from(width),
+        f64::from(own.1) / f64::from(height),
+    );
+    let from = |at: f32, start: f32, scale: f64, most: u32| {
+        ((f64::from(at - start) * scale).floor().max(0.) as u32).min(most)
+    };
+    let to = |at: f32, start: f32, scale: f64, most: u32| {
+        ((f64::from(at - start) * scale).ceil().max(0.) as u32).min(most)
+    };
+    let x0 = from(left.max(view[0]), left, across, own.0);
+    let y0 = from(top.max(view[1]), top, down, own.1);
+    let x1 = to((left + width).min(view[0] + view[2]), left, across, own.0);
+    let y1 = to((top + height).min(view[1] + view[3]), top, down, own.1);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let mut side = (covered.ceil() as u32).min(longer);
+    if let Some(([hx, hy, hw, hh], held_side)) = held
+        && held_side as f32 * 1.05 >= side as f32
+        && hx <= x0
+        && hy <= y0
+        && hx + hw >= x1
+        && hy + hh >= y1
+    {
+        return None;
+    }
+    // Its pixels at that side: no more than may be held, the margin
+    // included where there is room for it.
+    let ratio = f64::from(side) / f64::from(longer);
+    let shown = f64::from(x1 - x0) * f64::from(y1 - y0) * ratio * ratio;
+    let room = PICTURE_HELD as f64 / shown;
+    if room < 1. {
+        side = ((f64::from(side) * room.sqrt()).floor() as u32).max(1);
+    }
+    let margin = ((room.sqrt() - 1.) / 2.).clamp(0., 0.5);
+    let grow = |length: u32| (f64::from(length) * margin).floor() as u32;
+    let (grow_x, grow_y) = (grow(x1 - x0), grow(y1 - y0));
+    let (x0, y0) = (x0.saturating_sub(grow_x), y0.saturating_sub(grow_y));
+    let (x1, y1) = ((x1 + grow_x).min(own.0), (y1 + grow_y).min(own.1));
+    Some(([x0, y0, x1 - x0, y1 - y0], side))
+}
+
 /// The side to draw a picture again at, when `covered` device pixels show
 /// one of `raster` pixels: the next step up, within `most` (what the
 /// picture can have, as many pixels as may be held of it), and above what
-/// was already `asked`. `None` while its pixels suffice or can be no more.
-pub(crate) fn sharper(covered: f32, raster: u32, asked: u32, most: u32) -> Option<u32> {
-    if !covered.is_finite() || covered <= raster as f32 * 1.05 || raster >= most {
+/// was already `asked`. `None` while its pixels suffice (short by `slack`
+/// at most: a little, `SLACK`; a tenth while stepping, `PATIENT`), what was
+/// asked covers it, or it can be no more.
+pub(crate) fn sharper(covered: f32, raster: u32, asked: u32, most: u32, slack: f32) -> Option<u32> {
+    if !covered.is_finite()
+        || covered <= raster as f32 * slack
+        || raster >= most
+        // Asked already at what it covers: on its way, or all it has.
+        || covered <= asked as f32 * slack
+    {
         return None;
     }
     let side = ((covered / SHARPEN_STEP as f32).ceil() as u32 * SHARPEN_STEP).min(most);
@@ -8607,8 +9225,9 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 #[cfg(test)]
 mod tests {
     use super::{
-        Counted, Lay, PeekPress, SHARPEN_STEP, ShownAs, SourceTypes, Version, arrowed, count_waits,
-        max_width, picture_written, selection_stamp, sharper, still_counts, zoomed_offset,
+        Counted, Lay, PATIENT, PeekPress, SHARPEN_STEP, SLACK, ShownAs, SourceTypes, Version,
+        arrowed, count_waits, max_width, picture_written, selection_stamp, sharper, still_counts,
+        zoomed_offset,
     };
     use skwir_core::workspace::{PaneId, Selection};
 
@@ -8966,22 +9585,74 @@ mod tests {
     fn a_picture_is_drawn_sharper_in_steps_up_to_what_it_can_have() {
         use skwir_platform::inspection::limits::PICTURE_HELD;
         // Its pixels suffice, or nearly.
-        assert_eq!(sharper(1500., 1600, 0, u32::MAX), None);
-        assert_eq!(sharper(1650., 1600, 0, u32::MAX), None);
+        assert_eq!(sharper(1500., 1600, 0, u32::MAX, SLACK), None);
+        assert_eq!(sharper(1650., 1600, 0, u32::MAX, SLACK), None);
         // Short: the next step up, once.
-        assert_eq!(sharper(2100., 1600, 0, u32::MAX), Some(5 * SHARPEN_STEP));
-        assert_eq!(sharper(2100., 1600, 5 * SHARPEN_STEP, u32::MAX), None);
+        assert_eq!(
+            sharper(2100., 1600, 0, u32::MAX, SLACK),
+            Some(5 * SHARPEN_STEP)
+        );
+        assert_eq!(
+            sharper(2100., 1600, 5 * SHARPEN_STEP, u32::MAX, SLACK),
+            None
+        );
         // Never past what the picture has, nor what may be held of it.
-        assert_eq!(sharper(2100., 1600, 0, 1800), Some(1800));
-        assert_eq!(sharper(2100., 1800, 0, 1800), None);
-        assert_eq!(sharper(f32::NAN, 1600, 0, u32::MAX), None);
+        assert_eq!(sharper(2100., 1600, 0, 1800, SLACK), Some(1800));
+        assert_eq!(sharper(2100., 1800, 0, 1800, SLACK), None);
+        assert_eq!(sharper(f32::NAN, 1600, 0, u32::MAX, SLACK), None);
+        // While stepping, a picture a tenth short is left as it is.
+        assert_eq!(sharper(1750., 1600, 0, u32::MAX, PATIENT), None);
+        assert_eq!(
+            sharper(1800., 1600, 0, u32::MAX, PATIENT),
+            Some(4 * SHARPEN_STEP)
+        );
         // A tall picture (2000 × 11 500) is held as many pixels as a square
         // one: past the side that bounded it (4096, 712 across), up to 85 %
         // of its own.
         let tall = skwir_platform::picture::side_within(2000, 11_500, PICTURE_HELD);
         assert_eq!(tall, 9821);
-        assert_eq!(sharper(20_000., 4096, 0, tall), Some(tall));
-        assert_eq!(sharper(20_000., tall, 0, tall), None);
+        assert_eq!(sharper(20_000., 4096, 0, tall, SLACK), Some(tall));
+        assert_eq!(sharper(20_000., tall, 0, tall, SLACK), None);
+    }
+
+    /// Zoomed past what is held of it whole, a picture has what shows of it
+    /// decoded at the side it covers, with a margin round it of half as
+    /// much each way where the bound leaves room; asked once while what was
+    /// asked holds it.
+    #[test]
+    fn a_picture_past_what_is_held_whole_has_what_shows_decoded() {
+        use super::region_past_held as past;
+        use skwir_platform::inspection::limits::PICTURE_HELD;
+        // 45 megapixels, held whole at 5015 on its longer side.
+        let own = (8192, 5464);
+        let most = skwir_platform::picture::side_within(own.0, own.1, PICTURE_HELD);
+        assert_eq!(most, 5015);
+        // At 100 % on a screen of one pixel a pixel, scrolled 1000 across
+        // and 500 down, in a view 1000 × 800.
+        let picture = [-1000., -500., 8192., 5464.];
+        let view = [0., 0., 1000., 800.];
+        let asked = past(8192., most, most, own, picture, view, None);
+        assert_eq!(asked, Some(([500, 100, 2000, 1600], 8192)));
+        // What was asked holds it: not asked again; a step on, it is.
+        assert_eq!(past(8192., most, most, own, picture, view, asked), None);
+        let further = [-2600., -500., 8192., 5464.];
+        assert!(past(8192., most, most, own, further, view, asked).is_some());
+        // Held whole well enough, or not yet as much as may be: none.
+        assert_eq!(past(5100., most, most, own, picture, view, None), None);
+        assert_eq!(past(8192., 4000, most, own, picture, view, None), None);
+        // A picture held whole at its own size has nothing past it.
+        assert_eq!(
+            past(8192., 4000, 4000, (4000, 3000), picture, view, None),
+            None
+        );
+        // A view larger than may be held: no margin, a smaller side.
+        let wall = [0., 0., 8192., 5464.];
+        let (region, side) = past(8192., most, most, own, wall, wall, None).unwrap();
+        assert_eq!(region, [0, 0, 8192, 5464]);
+        assert_eq!(side, most);
+        // Nothing in view: nothing asked.
+        let away = [5000., 5000., 8192., 5464.];
+        assert_eq!(past(8192., most, most, own, away, view, None), None);
     }
 
     /// Fitted in its room, a picture covers as much of it as its shape
@@ -9025,6 +9696,7 @@ mod tests {
             mime,
             &crate::code_preview::CodeTheme::own(false),
             &|| Some(super::Cover::Side(1024)),
+            &|_| {},
             skwir_platform::inspection::limits::Bounds::QUICK,
             &skwir_core::CancelToken::new(),
         ) {
@@ -9056,6 +9728,7 @@ mod tests {
                 Some("image/svg+xml"),
                 &crate::code_preview::CodeTheme::own(false),
                 &|| (side > 0).then_some(super::Cover::Side(side)),
+                &|_| {},
                 skwir_platform::inspection::limits::Bounds::QUICK,
                 &cancel,
             );
@@ -9139,6 +9812,7 @@ mod tests {
             mime,
             &crate::code_preview::CodeTheme::own(false),
             &|| Some(super::Cover::Side(1024)),
+            &|_| {},
             skwir_platform::inspection::limits::Bounds::QUICK,
             &cancel,
         ) {
@@ -9238,6 +9912,7 @@ mod tests {
             None,
             Bounds::QUICK,
             super::Turn::Shown,
+            None,
             &skwir_core::CancelToken::new(),
         )
         .err()
@@ -9267,6 +9942,7 @@ mod tests {
             None,
             Bounds::QUICK,
             super::Turn::Ahead,
+            None,
             &skwir_core::CancelToken::new(),
         )
         .unwrap();
@@ -9293,6 +9969,7 @@ mod tests {
             Some(super::Cover::Fit(room)),
             Bounds::QUICK,
             super::Turn::Ahead,
+            None,
             &skwir_core::CancelToken::new(),
         )
         .unwrap();
@@ -9304,11 +9981,11 @@ mod tests {
         assert_eq!((size.width.0, size.height.0), (1000, 14));
     }
 
-    /// Two steps alike through the pane's order make a walk, whose next
-    /// entry is read ahead; a step another way, another pane or nothing
-    /// shown starts it again.
+    /// What the next step reaches is read ahead: the way the last step went
+    /// through the pane's order, the next entry before any step; another
+    /// pane, or nothing shown, starts again (ADR-146, 7).
     #[test]
-    fn two_steps_alike_make_a_walk() {
+    fn a_walk_reads_ahead_the_way_it_goes() {
         use skwir_core::EntryId;
         // Identities only: nothing here is listed from a disk.
         let sorted: Vec<EntryId> = (0..10).map(EntryId::place).collect();
@@ -9318,39 +9995,32 @@ mod tests {
             walk.moved(Some((pane, sorted[index])), &sorted);
             walk.next(pane, &sorted)
         };
-        assert_eq!(to(&mut walk, pane, 2), None, "shown, no step yet");
-        assert_eq!(to(&mut walk, pane, 3), None, "one step is no walk");
+        assert_eq!(to(&mut walk, pane, 2), Some(sorted[3]), "shown: the next");
+        assert_eq!(to(&mut walk, pane, 3), Some(sorted[4]), "a step on");
         assert_eq!(to(&mut walk, pane, 4), Some(sorted[5]));
-        assert_eq!(to(&mut walk, pane, 5), Some(sorted[6]));
-        assert_eq!(to(&mut walk, pane, 3), None, "a step back breaks it");
-        assert_eq!(to(&mut walk, pane, 1), None, "nothing before the first");
-        // A grid's row down, twice.
-        to(&mut walk, pane, 0);
-        to(&mut walk, pane, 3);
+        assert_eq!(to(&mut walk, pane, 3), Some(sorted[2]), "a step back");
+        assert_eq!(to(&mut walk, pane, 0), None, "nothing before the first");
+        // A grid's row down.
+        assert_eq!(to(&mut walk, pane, 3), Some(sorted[6]));
         assert_eq!(to(&mut walk, pane, 6), Some(sorted[9]));
         assert_eq!(to(&mut walk, pane, 9), None, "nothing after the last");
-        // Another pane, or nothing shown, starts again.
+        // Another pane, or nothing shown, starts again: the next.
         to(&mut walk, pane, 2);
-        to(&mut walk, pane, 3);
-        assert_eq!(to(&mut walk, other, 4), None);
-        assert_eq!(to(&mut walk, other, 5), None);
         assert_eq!(to(&mut walk, other, 6), Some(sorted[7]));
+        assert_eq!(to(&mut walk, other, 4), Some(sorted[2]));
         walk.moved(None, &sorted);
-        assert_eq!(to(&mut walk, other, 7), None);
-        // Sorted again with the last one moved: its place says nothing.
+        assert_eq!(walk.next(other, &sorted), None, "nothing shown");
+        assert_eq!(to(&mut walk, other, 7), Some(sorted[8]));
+        // Sorted again with the last one moved: its place says nothing, the
+        // walk starts again from where it is.
         to(&mut walk, pane, 1);
-        to(&mut walk, pane, 2);
+        to(&mut walk, pane, 4);
         let mut resorted = sorted.clone();
-        resorted.swap(2, 8);
+        resorted.swap(4, 8);
         walk.moved(Some((pane, resorted[3])), &resorted);
-        assert_eq!(walk.next(pane, &resorted), None);
-        // Still walking, its order sorted again: its next is the new one's.
-        walk.moved(Some((pane, resorted[4])), &resorted);
-        assert_eq!(walk.next(pane, &resorted), None, "one step since");
+        assert_eq!(walk.next(pane, &resorted), Some(resorted[4]));
         walk.moved(Some((pane, resorted[5])), &resorted);
-        assert_eq!(walk.next(pane, &resorted), Some(resorted[6]));
-        resorted.swap(5, 9);
-        assert_eq!(walk.next(pane, &resorted), None, "its place moved");
+        assert_eq!(walk.next(pane, &resorted), Some(resorted[7]));
     }
 
     /// A folder's file is found by its names in their order, letter case

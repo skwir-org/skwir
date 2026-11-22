@@ -86,10 +86,23 @@ pub fn decode_fitted<R: BufRead + Seek>(
     side: u32,
     threads: Threads,
 ) -> ImageResult<DynamicImage> {
+    decode_fitted_within(reader, side, side, threads)
+}
+
+/// As [`decode_fitted`], a JPEG at its least reduced scale at least `least`
+/// on its longer side: a picture up to `side / least` short of `side` where
+/// a smaller scale reaches it, quicker to decode than the next one up (a
+/// whole decode shrunk), shown while stepping (ADR-146, 6).
+pub fn decode_fitted_within<R: BufRead + Seek>(
+    reader: ImageReader<R>,
+    least: u32,
+    side: u32,
+    threads: Threads,
+) -> ImageResult<DynamicImage> {
     if reader.format() == Some(ImageFormat::Jpeg) {
         let mut inner = reader.into_inner();
-        if let Some(image) = jpeg_fitted(&mut inner, side, threads, REDUCED_BYTES)? {
-            return Ok(image);
+        if let Some(reduced) = jpeg_reduced(&mut inner, least.min(side), threads, REDUCED_BYTES)? {
+            return Ok(fitted(reduced, side));
         }
         return Ok(fitted(
             whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?,
@@ -97,6 +110,48 @@ pub fn decode_fitted<R: BufRead + Seek>(
         ));
     }
     Ok(fitted(whole(reader)?, side))
+}
+
+/// A progressive JPEG's eighth, turned (ADR-146, 6): its DC scans alone,
+/// about a tenth of the file, decoded in a few milliseconds where the
+/// whole picture's AC scans take hundreds at a quarter or a half; what
+/// stands for it while it is decoded at `side`. `None` for any other
+/// picture, or where its eighth covers `side` already.
+pub fn progressive_eighth<R: BufRead + Seek>(
+    reader: ImageReader<R>,
+    side: u32,
+    threads: Threads,
+) -> ImageResult<Option<DynamicImage>> {
+    if reader.format() != Some(ImageFormat::Jpeg) {
+        return Ok(None);
+    }
+    let mut inner = reader.into_inner();
+    let start = inner
+        .stream_position()
+        .map_err(image::ImageError::IoError)?;
+    let read = {
+        let mut jpeg = jpeg_decoder::Decoder::new(&mut inner);
+        jpeg.read_info()
+            .ok()
+            .and_then(|()| jpeg.info())
+            .map(|info| {
+                (
+                    info.coding_process == jpeg_decoder::CodingProcess::DctProgressive,
+                    info.width.max(info.height),
+                )
+            })
+    };
+    inner
+        .seek(std::io::SeekFrom::Start(start))
+        .map_err(image::ImageError::IoError)?;
+    let Some((true, longer)) = read else {
+        return Ok(None);
+    };
+    let eighth = u32::from(longer).div_ceil(8);
+    if side <= eighth {
+        return Ok(None);
+    }
+    jpeg_fitted(&mut inner, eighth, threads, REDUCED_BYTES)
 }
 
 /// A JPEG decoded at a reduced scale, shrunk to at most `side` on its
@@ -121,6 +176,98 @@ fn fitted((image, orientation): (DynamicImage, Orientation), side: u32) -> Dynam
     image
 }
 
+/// The part `region` of the picture `reader` reads (left, top, width and
+/// height in its own pixels, turned as it is shown, `own` its size so), at
+/// the scale where its longer side is `side` (ADR-146, 5): what a zoom
+/// shows of a picture past what is held of it whole. Decoded as
+/// [`decode_fitted`] decodes it, at the least reduced scale covering
+/// `side`, then the region alone cut, turned and shrunk to its size at
+/// that scale: the whole is never turned or shrunk. Within `image`'s own
+/// limits.
+pub fn decode_region<R: BufRead + Seek>(
+    reader: ImageReader<R>,
+    own: (u32, u32),
+    region: [u32; 4],
+    side: u32,
+    threads: Threads,
+) -> ImageResult<DynamicImage> {
+    let (decoded, orientation) = if reader.format() == Some(ImageFormat::Jpeg) {
+        let mut inner = reader.into_inner();
+        match jpeg_reduced(&mut inner, side, threads, REDUCED_BYTES)? {
+            Some(reduced) => reduced,
+            None => whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?,
+        }
+    } else {
+        whole(reader)?
+    };
+    let longer = own.0.max(own.1).max(1);
+    // Where the region lies in the pixels as stored, then in those decoded.
+    let [left, top, width, height] = stored_region(region, own, orientation);
+    let stored = turned(own.0, own.1, orientation);
+    let (across, down) = (
+        f64::from(decoded.width()) / f64::from(stored.0.max(1)),
+        f64::from(decoded.height()) / f64::from(stored.1.max(1)),
+    );
+    let from = |at: u32, scale: f64, most: u32| ((f64::from(at) * scale).floor() as u32).min(most);
+    let to = |at: u32, scale: f64, most: u32| ((f64::from(at) * scale).ceil() as u32).min(most);
+    let (x0, y0) = (
+        from(left, across, decoded.width()),
+        from(top, down, decoded.height()),
+    );
+    let (x1, y1) = (
+        to(left + width, across, decoded.width()).max(x0 + 1),
+        to(top + height, down, decoded.height()).max(y0 + 1),
+    );
+    let mut cut = decoded.crop_imm(x0, y0, x1 - x0, y1 - y0);
+    cut.apply_orientation(orientation);
+    // Its size where the whole's longer side is `side`, never larger than
+    // what was cut.
+    let scale = f64::from(side.min(longer)) / f64::from(longer);
+    let at = |length: u32, most: u32| ((f64::from(length) * scale).round() as u32).clamp(1, most);
+    let (to_width, to_height) = (at(region[2], cut.width()), at(region[3], cut.height()));
+    Ok(resized(cut, to_width, to_height))
+}
+
+/// Where `region` of a picture shown `own` (left, top, width, height,
+/// turned as `orientation` turns it) lies in its pixels as stored.
+fn stored_region(region: [u32; 4], own: (u32, u32), orientation: Orientation) -> [u32; 4] {
+    let [x, y, width, height] = region;
+    let (shown_width, shown_height) = own;
+    // From the right or the bottom of what is shown.
+    let right = shown_width.saturating_sub(x + width);
+    let bottom = shown_height.saturating_sub(y + height);
+    match orientation {
+        Orientation::NoTransforms => [x, y, width, height],
+        Orientation::FlipHorizontal => [right, y, width, height],
+        Orientation::FlipVertical => [x, bottom, width, height],
+        Orientation::Rotate180 => [right, bottom, width, height],
+        // A quarter turn: what is shown across was stored down.
+        Orientation::Rotate90 => [y, right, height, width],
+        Orientation::Rotate270 => [bottom, x, height, width],
+        Orientation::Rotate90FlipH => [y, x, height, width],
+        Orientation::Rotate270FlipH => [bottom, right, height, width],
+    }
+}
+
+/// `image` resized to `width` × `height` as [`shrink`] does.
+fn resized(image: DynamicImage, width: u32, height: u32) -> DynamicImage {
+    if (image.width(), image.height()) == (width, height) {
+        return image;
+    }
+    let mut out = DynamicImage::new(width, height, image.color());
+    let done = fast_image_resize::Resizer::new().resize(
+        &image,
+        &mut out,
+        &fast_image_resize::ResizeOptions::new(),
+    );
+    match done {
+        Ok(()) => out,
+        // A layout it does not take (none `image` decodes to): `image`'s
+        // own filter.
+        Err(_) => image.resize_exact(width, height, image::imageops::FilterType::Triangle),
+    }
+}
+
 /// `image` shrunk to at most `side` on its longer side, its proportions
 /// kept, by a Lanczos filter weighted by each pixel's alpha
 /// (`fast_image_resize`, ADR-146): a picture decoded larger than it is
@@ -136,18 +283,8 @@ pub fn shrink(image: DynamicImage, side: u32) -> DynamicImage {
     }
     let scale = f64::from(side) / f64::from(longer);
     let fit = |length: u32| ((f64::from(length) * scale).round() as u32).clamp(1, side);
-    let mut shrunk = DynamicImage::new(fit(width), fit(height), image.color());
-    let resized = fast_image_resize::Resizer::new().resize(
-        &image,
-        &mut shrunk,
-        &fast_image_resize::ResizeOptions::new(),
-    );
-    match resized {
-        Ok(()) => shrunk,
-        // A layout it does not take (none `image` decodes to): `image`'s
-        // own filter.
-        Err(_) => image.thumbnail(side, side),
-    }
+    let (width, height) = (fit(width), fit(height));
+    resized(image, width, height)
 }
 
 /// The longer side a picture of `width` × `height` pixels is held at with
@@ -653,6 +790,69 @@ mod tests {
         assert_eq!(image.map(|i| (i.width(), i.height())), Some((300, 225)));
     }
 
+    /// Allowed short of its side, a JPEG is decoded at the smaller scale
+    /// that reaches what it may be: 1200 × 800 asked at 640, at least 576,
+    /// is its half (600 × 400), not its whole shrunk; any other picture
+    /// is its side.
+    #[test]
+    fn a_picture_may_be_decoded_a_little_short() {
+        let bytes = jpeg_of(1200, 800, 1);
+        let quick = decode_fitted_within(reader(&bytes), 576, 640, Threads::Caller).unwrap();
+        assert_eq!((quick.width(), quick.height()), (600, 400));
+        let exact = decode_fitted_within(reader(&bytes), 640, 640, Threads::Caller).unwrap();
+        assert_eq!((exact.width(), exact.height()), (640, 427));
+        // Short by more than allowed: the scale above, shrunk.
+        let further = decode_fitted_within(reader(&bytes), 620, 640, Threads::Caller).unwrap();
+        assert_eq!(further.width(), 640);
+        let png = {
+            let mut bytes = Vec::new();
+            DynamicImage::new_rgb8(1200, 800)
+                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+                .unwrap();
+            bytes
+        };
+        let other = decode_fitted_within(reader(&png), 576, 640, Threads::Caller).unwrap();
+        assert_eq!(other.width(), 640);
+    }
+
+    /// A progressive JPEG asked larger than its eighth has its eighth to
+    /// stand for it, read to its DC scans; a sequential one, or one asked
+    /// no larger, has none.
+    #[test]
+    fn a_progressive_jpeg_has_its_eighth_first() {
+        let eighth = progressive_eighth(reader(PLASMA_PROGRESSIVE), 400, Threads::Caller)
+            .unwrap()
+            .expect("an eighth");
+        assert_eq!((eighth.width(), eighth.height()), (100, 75));
+        // As the eighth decoded for itself (`a_progressive_jpeg_at_an_eighth_…`).
+        let fitted = decode_fitted(reader(PLASMA_PROGRESSIVE), 100, Threads::Caller).unwrap();
+        assert_eq!(eighth.to_rgb8(), fitted.to_rgb8());
+        assert!(
+            progressive_eighth(reader(PLASMA_PROGRESSIVE), 100, Threads::Caller)
+                .unwrap()
+                .is_none(),
+            "its eighth covers what is asked"
+        );
+        assert!(
+            progressive_eighth(reader(PLASMA), 400, Threads::Caller)
+                .unwrap()
+                .is_none(),
+            "sequential"
+        );
+        let png = {
+            let mut bytes = Vec::new();
+            DynamicImage::new_rgb8(800, 600)
+                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+                .unwrap();
+            bytes
+        };
+        assert!(
+            progressive_eighth(reader(&png), 400, Threads::Caller)
+                .unwrap()
+                .is_none()
+        );
+    }
+
     /// 64 × 48, the plasma in eight bits, lossless (`cjpeg -lossless 1`), in
     /// RGB (`-rgb`) and in grey.
     const LOSSLESS_RGB: &[u8] = include_bytes!("../testdata/synthetic-lossless-rgb.jpg");
@@ -712,6 +912,71 @@ mod tests {
         assert_eq!(shrink(small.clone(), 100).width(), 30);
         let fitted = shrink(DynamicImage::new_rgb8(1200, 800), 100);
         assert_eq!((fitted.width(), fitted.height()), (100, 67));
+    }
+
+    /// A region cut from a picture as it is shown is the region of the
+    /// whole turned, whatever its EXIF Orientation: each of the eight read
+    /// back from where it was stored.
+    #[test]
+    fn a_region_is_cut_where_the_picture_is_shown() {
+        // 7 × 5 as stored, each pixel its own colour.
+        let stored = DynamicImage::ImageRgb8(image::RgbImage::from_fn(7, 5, |x, y| {
+            image::Rgb([
+                u8::try_from(x * 30).unwrap(),
+                u8::try_from(y * 50).unwrap(),
+                9,
+            ])
+        }));
+        for exif in 1..=8 {
+            let orientation = Orientation::from_exif(exif).unwrap();
+            let mut shown = stored.clone();
+            shown.apply_orientation(orientation);
+            let own = (shown.width(), shown.height());
+            let region = [1, 2, 2, 3];
+            let [x, y, width, height] = stored_region(region, own, orientation);
+            let mut cut = stored.crop_imm(x, y, width, height);
+            cut.apply_orientation(orientation);
+            assert_eq!(
+                cut.to_rgb8(),
+                shown.crop_imm(1, 2, 2, 3).to_rgb8(),
+                "orientation {exif}"
+            );
+        }
+    }
+
+    /// A region decoded at a scale is the whole decoded at that scale, cut:
+    /// a JPEG at its reduced scale, turned as it is shown.
+    #[test]
+    fn a_region_is_the_whole_at_its_scale_cut() {
+        let bytes = jpeg_of(1200, 800, 6);
+        // Shown 800 × 1200: its top third red, the rest blue.
+        let region = decode_region(
+            reader(&bytes),
+            (800, 1200),
+            [100, 300, 400, 600],
+            600,
+            Threads::Caller,
+        )
+        .unwrap()
+        .to_rgb8();
+        // At half its size: 200 × 300, from 50, 150 of the whole's 400 × 600.
+        assert_eq!(region.dimensions(), (200, 300));
+        // Shown rows 300 to 400 are red (the top third is 0 to 400), the
+        // rest blue.
+        let [r, _, b] = region.get_pixel(100, 10).0;
+        assert!(r > 200 && b < 60, "the top is red");
+        let [r, _, b] = region.get_pixel(100, 250).0;
+        assert!(r < 60 && b > 200, "the bottom is blue");
+        // Asked past the picture's own pixels, it is cut at its own.
+        let whole = decode_region(
+            reader(&bytes),
+            (800, 1200),
+            [0, 0, 800, 1200],
+            5000,
+            Threads::Caller,
+        )
+        .unwrap();
+        assert_eq!((whole.width(), whole.height()), (800, 1200));
     }
 
     /// What may be held of a picture is counted in pixels: a square one at

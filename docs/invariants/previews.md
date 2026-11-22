@@ -254,7 +254,31 @@ A name that says nothing is not a binary file.
   weighted by alpha: `fast_image_resize`), never by `image`'s
   `thumbnail`, which took longer than the decode. An RGB picture is
   made BGRA in one pass (`thumbs::picture_image`). An image larger than
-  the GPU's largest texture is drawn in pieces (vendored gpui 0090). A progressive JPEG holds besides the
+  the GPU's largest texture is drawn in pieces (vendored gpui 0090).
+- **Past what is held whole, only what shows** (ADR-146, 5): a picture
+  zoomed past `PICTURE_HELD` (held whole at that bound, short of what it
+  covers, fewer pixels than its own) has the part in view, and a margin
+  of half as much each way where the bound leaves room, decoded at the
+  side it covers (`preview::region_past_held`, asked from `Sharpen`'s
+  prepaint; `Shell::sharpen_region`, `picture::decode_region`: the whole
+  decoded at the least reduced scale covering it, the region alone cut,
+  turned and shrunk) and drawn over the whole in its place
+  (`preview::Detail`, `picture`). One at a time, a `Latest`; a region
+  within what was asked, at no larger side, is not asked again; its
+  pixels go with the content (`replace_preview_content`). Its decode
+  takes the preview's turn (`Turn::Shown`).
+- **Something sooner** (ADR-146, 6). A progressive JPEG asked larger than
+  its eighth has its eighth decoded first (`picture::progressive_eighth`:
+  its DC scans, a few milliseconds) and sent as the stand-in a thumbnail
+  is (`PreviewResult::placeholder`, shown once the wait lasts). While
+  stepping, a picture fitted in its room is asked `Cover::Quick`: a JPEG
+  at the smaller scale at most a tenth short of the room's side
+  (`QUICK_SHORT`, `picture::decode_fitted_within`), quicker than the next
+  one up decoded whole and shrunk; `Sharpen` leaves it so meanwhile
+  (`PATIENT`, else `SLACK`). Once the walk has rested on it `SETTLE`
+  (`Shell::arm_settle`, a task the next step drops), it is asked at its
+  side (`settle_picture`, `PreviewState::exact`), decoded again only
+  where it was short, in place. A progressive JPEG holds besides the
   coefficients of the whole picture, 64 a block, two bytes a pixel of
   each component, except at an eighth: there it keeps and reads only
   every block's DC coefficient, all an eighth draws, to the first scans
@@ -273,10 +297,11 @@ A name that says nothing is not a binary file.
 - **The next picture is read ahead** (`Shell::read_ahead_next`,
   `read_ahead`), `reading.read_ahead` on (the default). On the whole
   screen, the next picture the way the last step went; in the panel and
-  in peek, the next entry of a walk (`preview::Walk`): two steps alike
-  in the pane's order (Down twice, a grid's row down twice), so a click
-  starts none. Either fitted in the room the content's area was last
-  laid out with (`Area::last_room`): the screen's, the panel's. Only once the one shown has
+  in peek, the entry the next step reaches (`preview::Walk`): the way
+  the last step went in the pane's order (Down, a grid's row down), the
+  next one before any step, as image viewers preload it (ADR-146, 7).
+  Either fitted in the room the content's area was last laid out with
+  (`Area::last_room`, `Cover::Quick`): the screen's, the panel's. Only once the one shown has
   arrived: the two never wait for each other's decode, and an arrow held
   down, its steps quicker than a photo's decode, starts none. One at most, `PreviewState::ahead`, kept
   beside the preview since a step replaces the preview. It is keyed as
@@ -291,9 +316,19 @@ A name that says nothing is not a binary file.
   may read), and not written as text (an SVG may open on its source,
   and offers it). A file another program, a player or a reader shows is
   never opened before it is asked for. What was read ahead goes, pixels
-  and all, when the whole screen is left, a walk breaks, the panel and
-  peek close, the pane shows another location (it is the pane's work,
+  and all, when the whole screen is left, the next step reads nothing
+  ahead (the order's end) and the step was elsewhere, the panel and peek
+  close, the pane shows another location (it is the pane's work,
   `location_lifetime`) or the setting is turned off.
+- **The last pictures shown are kept** (ADR-146, 7; `KeptPicture`): as the
+  preview leaves a picture fitted in its room (not zoomed, not a page or
+  a film's), it keeps it as shown, `KEPT_PICTURES` (two) at most, each let
+  go `KEPT_FOR` (a minute) unseen and all when the panel and peek close
+  (`let_go_of_held`). Its GPU copy goes as it is kept and is made again
+  if it is shown. A step back to it, the file unchanged, shows it in the
+  frame the step is drawn in (`take_kept`, before `take_ahead`), then as
+  any picture: sharper where its room grew, at its side once the walk
+  rests on it.
 - A picture the panel shows and a document's pictures sit on
   `picture_backdrop` as thumbnails do (`backdrop`, views.md). Their ink is
   read where they are decoded, on the worker (`PreviewContent::Image`'s

@@ -21826,3 +21826,65 @@ zoomed in the preview. Measured first, then decided with the user
   zoom does. Steps 2 to 4 (the region's tiles past the bound, a
   progressive JPEG's eighth first and the two-stage rule, read ahead from
   the first step and two pictures kept) follow.
+
+## 2026-11-22: past the bound, sooner, read ahead and kept (ADR-146, steps 2 to 4)
+
+The rest of ADR-146, built the night after step 1 and checked together
+in a window, then committed as one change.
+
+- **Built.** Past `PICTURE_HELD`, the part of a picture in view and a
+  margin of half as much each way, as many pixels as the bound allows,
+  decoded at the side the zoom covers (`picture::decode_region`: the
+  whole decoded at the least reduced scale covering it, the region alone
+  cut, turned for its EXIF Orientation, shrunk) and drawn over the whole
+  (`preview::Detail`, asked from `Sharpen`'s prepaint by
+  `region_past_held`). A progressive JPEG asked larger than its eighth
+  sends its eighth first (`picture::progressive_eighth`), as the stand-in
+  a thumbnail is. While stepping a picture is decoded `Cover::Quick`, a
+  JPEG at the smaller scale at most a tenth short of its room's side
+  (`picture::decode_fitted_within`); once the walk rests 600 ms on it,
+  it is asked at its side (`settle_picture`), decoded again only where it
+  was short. The next picture is read ahead from the first one shown, the
+  way the last step went (`Walk::next`); the last two pictures shown
+  fitted in their room are kept, a minute at most unseen, and a step back
+  shows one at once (`take_kept`).
+- **Checked in a window** (Xvfb, lavapipe, the same fixtures and harness
+  as step 1; the whole screen's room 1200 × 800; the machine's load about
+  9 from other work). The read-ahead began with the first picture shown.
+  A 12-megapixel photo in the whole screen was read ahead quick (1000 ×
+  750 for a room asking 1067, 65 ms) and decoded at 1067 × 800 once the
+  walk rested (71 ms). A progressive 24-megapixel photo reached by three
+  quick steps, nothing read ahead: its eighth in 12 ms, shown at 0.3 s
+  (softer than the picture that followed, the two screenshots compared),
+  the whole at a quarter 464 ms after. Steps back and forth showed kept
+  pictures at once ("picture kept shown again", three times). The
+  45-megapixel photo at 100 %: held whole at 5015 × 3345 (438 ms), then
+  its region in view, 1800 × 1200 at its own scale (364 ms); the tall
+  page at 100 %: 1708 × 9821 whole, its region 1800 × 1200 at 11 500
+  (92 ms), scrolled down: just after the scroll, the lines above the
+  region's edge sharp and those below slightly softer, the text running
+  on across it without a shift; 124 ms later the next region sharp.
+- **Found in the window and fixed before this commit.** The panel drawn
+  behind the whole screen asked for its own region, so the two asks
+  replaced each other at every frame: only the picture shown asks now
+  (`interactive`). The walk's rest asked the exact side, and `Sharpen`
+  then asked its 512-pixel step on top (1536 for 1067): the side the rest
+  asked counts as asked (`PreviewState::settled`, `sharper` leaves a
+  side asked that covers what shows). A picture kept was read ahead all
+  the same (629 ms for nothing): no more.
+- **Tests**: `picture::tests::a_region_is_cut_where_the_picture_is_shown`
+  (the eight orientations against `apply_orientation`),
+  `a_region_is_the_whole_at_its_scale_cut`,
+  `a_progressive_jpeg_has_its_eighth_first`,
+  `a_picture_may_be_decoded_a_little_short`;
+  `preview::tests::a_picture_past_what_is_held_whole_has_what_shows_decoded`,
+  `a_walk_reads_ahead_the_way_it_goes` (in place of the walk of two steps
+  alike), `sharper`'s patience. The two crates' tests, 1409 passed;
+  clippy; `just check-windows` green (macOS's check leaves the UI out).
+- **Not done**: a JPEG's region decoded without decoding the whole; the
+  eighth of a progressive JPEG read ahead and taken while decoding (only a
+  request decoded in its own turn sends it); the region decoded in the
+  preview's turn, so a step taken while a 45-megapixel picture's whole is
+  decoded for it waits (about 300 ms); no screen of two device pixels a
+  pixel, nor 4K, tried; memory while browsing not measured (two kept
+  pictures at their rooms' size, a region within 64 MiB).

@@ -1272,11 +1272,15 @@ Asked by the user: stepping through JPEGs was slower than in Gwenview,
 and a tall picture stayed blurred when zoomed. Measured first: the panel
 decoded every picture at 2048 pixels or more, `image`'s `thumbnail`
 took longer than the decode, and a side of 4096 bounded what was held.
-Step 1 built: a picture is decoded for the room it is fitted in, at most
-its own pixels and 16.7 megapixels (counted, not a side), shrunk by
+A picture is decoded for the room it is fitted in, at most its own
+pixels and 16.7 megapixels (counted, not a side), shrunk by
 `fast_image_resize`; gpui draws an image larger than a texture in pieces
-(0090). Steps 2 to 4 follow (ADR-146, 5 to 7). Checks in
-`docs/STATUS-LOG.md` (2026-11-21).
+(0090). Past the bound, the region in view is decoded at the zoom's side
+over the whole; a progressive JPEG shows its eighth first; while
+stepping a picture may be a tenth short, decoded at its side once the
+walk rests; the next picture is read ahead from the first step, and two
+are kept for a step back. Checks in `docs/STATUS-LOG.md` (2026-11-21 and
+2026-11-22).
 
 ## A new version told where nothing else tells it (ADR-142, 2026-11-19)
 
@@ -1321,6 +1325,17 @@ Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**Pictures at the pixels they cover** (ADR-146, built 2026-11-21 and
+22). Left: a JPEG's region decoded without decoding the whole (a patch
+to the vendored jpeg-decoder: the entropy decoded to the region's last
+row, the IDCT only within it, and the decoder's state at each row of
+blocks kept from the first pass so the next region starts at its own
+row); the eighth of a progressive JPEG read ahead and taken while it
+decodes (only a request decoded in its own turn sends one); the region's
+decode takes the preview's turn, so a step taken meanwhile waits for it;
+no screen of two device pixels a pixel, nor 4K, tried in a window; the
+memory held while browsing (two kept pictures, a region) not measured.
 
 **Pictures at the pixels they cover: the next two** (asked by the user
 on 2026-11-21, to be done right after the preview's pictures, steps 1–4
