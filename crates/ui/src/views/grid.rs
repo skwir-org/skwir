@@ -40,7 +40,7 @@ use skwir_core::words;
 use skwir_core::words::Words;
 
 use crate::elements::uniform_grid::{
-    GridGroups, HeadingAt, TileHeights, UniformGridScrollHandle, uniform_grid,
+    GridGroups, HeadingAt, TileHeights, UniformGridScrollHandle, math::Top, uniform_grid,
 };
 use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::icons;
@@ -513,9 +513,12 @@ impl GridView {
     }
 
     /// A fold (or an unfold), from a heading, its menu or the palette,
-    /// keeps the view on what was at its top (ADR-131, 2): the tile there,
-    /// where it is now, or, one folded away, its group's heading at the
-    /// top; never the tile that took its number.
+    /// keeps the view on what was at its very top (ADR-131, 2), as the
+    /// list keeps its row (`RowMap::kept_row`): a heading there, by its
+    /// group, at the top; a row, by its first tile, where it is now, as
+    /// far into it, or, folded away, its group's heading at the top; never
+    /// the tile that took its number, nor the line under the pinned
+    /// heading, which a group opened at the top would push out of view.
     fn keep_top(&mut self, shell: &Shell, rows: &crate::views::groups::RowMap) {
         let folds = shell
             .app
@@ -531,31 +534,32 @@ impl GridView {
         if was.is_none() || self.scroll.asked() {
             return;
         }
-        let list = &shell.ui().list;
-        let (tile, within) = self.scroll.anchor();
+        let (tile, within) = match self.scroll.top() {
+            Some(Top::Row(tile, within)) => (tile, within),
+            Some(Top::Heading(d)) => {
+                if let Some(d) = rows.drawn_like(&self.drawn, d) {
+                    self.scroll.scroll_heading_to_top(d);
+                }
+                return;
+            }
+            None => return,
+        };
         let Some(Tile::Entry(at)) = self.drawn.at_tile(tile) else {
             return;
         };
         let Some(&id) = self.drawn_order.get(at) else {
             return;
         };
-        if let Some(now) = list.index_of(id) {
-            self.scroll.scroll_to_anchor((rows.tile_of(now), within));
+        if let Some(now) = shell.ui().list.index_of(id) {
+            self.scroll.scroll_row_to_top((rows.tile_of(now), within));
             return;
         }
         // Folded away: its group's heading at the top.
-        let group = self
+        let drawn = self
             .drawn
             .group_of(at)
-            .and_then(|n| self.drawn.spans().get(n))
-            .map(|span| span.group.clone());
-        let drawn = group.and_then(|group| {
-            let n = rows
-                .spans()
-                .iter()
-                .position(|span| skwir_core::grouping::same(span.group.as_ref(), group.as_ref()))?;
-            rows.drawn_of(n)
-        });
+            .and_then(|n| rows.group_like(&self.drawn, n))
+            .and_then(|n| rows.drawn_of(n));
         if let Some(drawn) = drawn {
             self.scroll.scroll_heading_to_top(drawn);
         }

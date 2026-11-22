@@ -684,10 +684,17 @@ around the views is in [shell.md](shell.md).
   first heading or the last. A page that lands below the last entry (a
   folded group's heading, what arrives after every entry) goes to the last
   (`RowMap::entry_near`). A fold or an unfold, wherever it is asked (a
-  heading, its menu, the palette), keeps the view on what was at its top:
-  the same entry where it is now, or, one folded away, its group's heading
-  at the top (`RowMap::kept_row`, `GridView::keep_top`), never what slid
-  under the same pixels or took the same tile's number.
+  heading, its menu, the palette), keeps the view on what was at its very
+  top, the line drawn there under the pinned heading or not: a heading by
+  its group, at the top; an entry where it is now, as far into its row
+  or, one folded away, its group's heading at the top (`RowMap::kept_row`,
+  `GridView::keep_top` with `Slots::top`), never what slid under the
+  same pixels or took the same tile's number. A folded group's heading
+  has no entry, and is followed by the next heading: never tell a
+  heading by the entry after it where its rows change, and where they do
+  not (a tab come back, a grid reflowed), tell it by that entry and a
+  distance counting every row between (`RowMap::anchor`,
+  `Slots::anchor`), so a view at the first of several stays there.
 - **A heading acts** (ADR-130, 12, `groups::acting`): lit where the
   pointer is; a press selects what it counts (`ui.select_group`, its own
   entries in the tree; with Ctrl, beside what is selected), from the first

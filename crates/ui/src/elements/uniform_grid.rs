@@ -174,6 +174,16 @@ pub mod math {
         }
     }
 
+    /// The line at the very top of a view (`Slots::top`).
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub enum Top {
+        /// The heading of the group drawn.
+        Heading(usize),
+        /// The row that begins with this tile, and how far into it the
+        /// view begins.
+        Row(usize, f32),
+    }
+
     /// Where the tiles are, in content coordinates (origin at the top left
     /// of the scrolled content, inside the padding). The grid places tiles
     /// with it and the rubber band hit-tests with it, so they cannot disagree.
@@ -518,17 +528,16 @@ pub mod math {
         /// into that line the viewport begins: what a reflow must keep. The
         /// top is under the pinned heading, where groups are drawn: a view at
         /// the very top stays there when its tiles are grouped. A heading
-        /// there is told from its group's first row, below it.
+        /// there is told from its group's first row, below it, by a negative
+        /// distance that counts every line between: a folded group's heading
+        /// has no row, and is followed by the next heading.
         pub fn anchor(&self, offset_y: f32) -> (usize, f32) {
             if self.rows() == 0 {
                 return (0, 0.);
             }
             let top = (-offset_y).max(0.) + self.heading;
-            let row = self.row_at(top);
-            match self.lines[row] {
-                Line::Tiles { first, .. } => (first, top - self.tops[row]),
-                Line::Heading { first, .. } => (first, top - self.tops[(row + 1).min(self.rows())]),
-            }
+            let first = self.lines[self.row_at(top)].first();
+            (first, top - self.tops[self.line_of(first)])
         }
 
         /// Scroll offset that shows `anchor` again after the lines changed: a
@@ -539,9 +548,44 @@ pub mod math {
             }
             let row = self.line_of(item).min(self.rows() - 1);
             let room = (self.tops[row + 1] - self.tops[row] - 1.).max(0.);
-            // Above, as far as the line before it reaches.
-            let above = self.tops[row] - self.tops[row.saturating_sub(1)];
+            // Above, as far as the headings over its row reach.
+            let above = self.tops[row] - self.tops[self.run_of(row)];
             -(self.tops[row] + within.clamp(-above, room) - self.heading).max(0.)
+        }
+
+        /// The first of the lines that start at the tile line `row` starts
+        /// at: the headings over a group's first row (its own, and those of
+        /// folded groups before it), else the row itself.
+        fn run_of(&self, row: usize) -> usize {
+            let first = self.lines[row].first();
+            self.lines.partition_point(|line| line.first() < first)
+        }
+
+        /// The line at the very top of a view scrolled to `offset_y`, wholly
+        /// in view or in part, under the pinned heading or not: what a fold
+        /// keeps there (ADR-131, 2), as the list keeps its row. A heading is
+        /// told by its group (drawn), as a folded one has no tile.
+        pub fn top(&self, offset_y: f32) -> Option<Top> {
+            if self.rows() == 0 {
+                return None;
+            }
+            let top = (-offset_y).max(0.);
+            let row = self.row_at(top);
+            Some(match self.lines[row] {
+                Line::Heading { group, .. } => Top::Heading(group),
+                Line::Tiles { first, .. } => Top::Row(first, top - self.tops[row]),
+            })
+        }
+
+        /// The offset that puts tile `ix`'s row at the very top of the
+        /// view, `within` into it (`Top::Row`).
+        pub fn offset_for_row(&self, (ix, within): (usize, f32)) -> f32 {
+            if self.rows() == 0 {
+                return 0.;
+            }
+            let row = self.line_of(ix).min(self.rows() - 1);
+            let room = (self.tops[row + 1] - self.tops[row] - 1.).max(0.);
+            -(self.tops[row] + within.clamp(0., room))
         }
 
         /// Offset that shows the heading of group `group` (drawn), moving the
@@ -758,8 +802,12 @@ enum Deferred {
     /// Bring the first of `items` into the middle unless one of them is
     /// wholly in view (`GridScrollState::then` runs if it moved).
     Among { items: Rc<[usize]> },
-    /// Put an item's row at the top, `within` pixels scrolled into it.
+    /// Put an item's row at the top, `within` pixels scrolled into it
+    /// (`Slots::anchor`: under the pinned heading).
     Anchor { ix: usize, within: f32 },
+    /// Put an item's row at the very top, `within` pixels scrolled into
+    /// it (`Slots::top`).
+    Row { ix: usize, within: f32 },
     /// Bring the heading of a group drawn (`Slots::offset_for_heading`)
     /// into view, or to the top.
     Heading { group: usize, at_top: bool },
@@ -866,6 +914,21 @@ impl UniformGridScrollHandle {
     /// been resized, the zoom changed, entries added before it).
     pub fn scroll_to_anchor(&self, (ix, within): (usize, f32)) {
         self.0.borrow_mut().deferred = Some(Deferred::Anchor { ix, within });
+    }
+
+    /// The line at the very top of the last prepaint (`Slots::top`).
+    pub fn top(&self) -> Option<math::Top> {
+        let state = self.0.borrow();
+        state
+            .layout
+            .slots
+            .top(f32::from(state.base_handle.offset().y))
+    }
+
+    /// Put item `ix`'s row at the very top, `within` pixels into it, from
+    /// the rows as they are then: what was at the top (`top`) kept there.
+    pub fn scroll_row_to_top(&self, (ix, within): (usize, f32)) {
+        self.0.borrow_mut().deferred = Some(Deferred::Row { ix, within });
     }
 
     /// Whether a scroll is asked and not yet carried out.
@@ -1130,6 +1193,9 @@ impl Element for UniformGrid {
                     }
                     Some(Deferred::Anchor { ix, within }) => {
                         y = slots.offset_for_anchor((ix.min(item_count.saturating_sub(1)), within));
+                    }
+                    Some(Deferred::Row { ix, within }) => {
+                        y = slots.offset_for_row((ix.min(item_count.saturating_sub(1)), within));
                     }
                     Some(Deferred::Heading { group, at_top }) => {
                         y = slots.offset_for_heading(group, at_top, viewport_h, content_h, y);
@@ -1565,6 +1631,47 @@ mod tests {
 
     /// Every group folded: no tile, and every heading a line drawn, the
     /// way back to the files.
+    #[test]
+    fn folded_headings_at_the_top_are_kept_whole() {
+        // Groups of 0, 0 and 7 tiles, five a row: headings at 0, 30 and 60,
+        // rows at 90 and 238.
+        let folded = |width| {
+            Slots::grouped(
+                Columns::fit(width, 100., 12., 40.),
+                8.,
+                &[0, 0, 7],
+                30.,
+                |_| 140.,
+            )
+        };
+        let (wide, narrow) = (folded(600.), folded(340.));
+        assert_eq!((wide.columns.cols, narrow.columns.cols), (5, 3));
+        // What a reflow keeps is told from the first row, across the three
+        // headings over it: the view at the top, or at the second heading,
+        // stays there.
+        assert_eq!(wide.anchor(0.), (0, -60.));
+        for y in [0., -30., -45., -100.] {
+            let anchor = wide.anchor(y);
+            assert!((wide.offset_for_anchor(anchor) - y).abs() < 1e-3, "{y}");
+            assert!((narrow.offset_for_anchor(anchor) - y).abs() < 1e-3, "{y}");
+        }
+        // What a fold keeps is the line at the very top: a heading by its
+        // group, which the first tile would not tell apart; a row as far
+        // into it.
+        assert_eq!(wide.top(0.), Some(Top::Heading(0)));
+        assert_eq!(wide.top(-30.), Some(Top::Heading(1)));
+        assert_eq!(wide.top(-45.), Some(Top::Heading(1)));
+        assert_eq!(wide.top(-100.), Some(Top::Row(0, 10.)));
+        assert_eq!(wide.top(-250.), Some(Top::Row(5, 12.)));
+        assert!((wide.offset_for_row((0, 10.)) - -100.).abs() < 1e-3);
+        assert!((wide.offset_for_row((6, 12.)) - -250.).abs() < 1e-3);
+        assert!(
+            (wide.offset_for_row((0, 900.)) - -237.).abs() < 1e-3,
+            "within its row"
+        );
+        assert_eq!(Slots::default().top(0.), None);
+    }
+
     #[test]
     fn every_group_folded_is_its_headings() {
         let slots = Slots::grouped(

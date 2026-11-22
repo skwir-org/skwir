@@ -357,14 +357,7 @@ impl RowMap {
         row: usize,
         position_of: impl Fn(skwir_core::EntryId) -> Option<usize>,
     ) -> Option<usize> {
-        let heading_of = |n: usize| {
-            let group = old.spans.get(n)?.group.as_ref();
-            let m = self
-                .spans
-                .iter()
-                .position(|span| skwir_core::grouping::same(span.group.as_ref(), group))?;
-            self.headings.get(m).copied()
-        };
+        let heading_of = |n: usize| self.headings.get(self.group_like(old, n)?).copied();
         match old.at(row)? {
             Row::Heading(n) => heading_of(n),
             Row::Entry(p) => match position_of(*old_order.get(p)?) {
@@ -372,6 +365,32 @@ impl RowMap {
                 None => heading_of(old.group_of(p)?),
             },
             Row::Fresh(_) | Row::Arriving(_) => None,
+        }
+    }
+
+    /// The pane's group here that is group `n` of `old`, wherever the
+    /// order puts it now: a heading is told by its group, a folded group
+    /// having no entry to be found by.
+    pub fn group_like(&self, old: &RowMap, n: usize) -> Option<usize> {
+        let group = old.spans.get(n)?.group.as_ref();
+        self.spans
+            .iter()
+            .position(|span| skwir_core::grouping::same(span.group.as_ref(), group))
+    }
+
+    /// The group drawn here (`drawn`) that is the `d`th drawn in `old`:
+    /// one of the pane's, or one no file is in yet, by its group.
+    pub fn drawn_like(&self, old: &RowMap, d: usize) -> Option<usize> {
+        match *old.drawn.get(d)? {
+            Drawn::Group(n) => self.drawn_of(self.group_like(old, n)?),
+            Drawn::Fresh(k) => {
+                let group = Some(&old.fresh.get(k)?.group);
+                let k = self
+                    .fresh
+                    .iter()
+                    .position(|fresh| skwir_core::grouping::same(Some(&fresh.group), group))?;
+                self.drawn.iter().position(|d| *d == Drawn::Fresh(k))
+            }
         }
     }
 
@@ -465,26 +484,43 @@ impl RowMap {
     /// The entry at the top of a view scrolled to `offset` (pixels down)
     /// over rows `height` tall, and how far above the view begins from
     /// that entry's row: a heading, or what arrives, at the top is told by
-    /// a negative distance, so that the view comes back to it.
+    /// a negative distance, so that the view comes back to it. The
+    /// distance counts every row between: a folded group's heading is
+    /// followed by the next heading, not by an entry, and several may
+    /// stand above the entry they are told from. What follows the last
+    /// entry is told from it, by a distance below it.
     pub fn anchor(&self, offset: f32, height: f32) -> Option<(usize, f32)> {
         let row = (offset.max(0.) / height).floor() as usize;
         let within = offset.max(0.) - row as f32 * height;
-        if row >= self.len() {
+        if row >= self.len() || self.entries == 0 {
             return None;
         }
-        match self.extra_at(row) {
-            Err(above) => Some((row - above, within)),
-            Ok(k) => Some((
-                self.entries_above(k).min(self.entries.saturating_sub(1)),
-                within - height,
-            )),
-        }
+        let position = match self.extra_at(row) {
+            Err(above) => return Some((row - above, within)),
+            Ok(k) => self.entries_above(k).min(self.entries - 1),
+        };
+        let between = row as f32 - self.row_of(position) as f32;
+        Some((position, within + between * height))
     }
 
-    /// The offset (pixels down) that puts `anchor` back at the top.
+    /// The offset (pixels down) that puts `anchor` back at the top: no
+    /// further from its entry's row than the rows told from it (`anchor`)
+    /// reach.
     pub fn offset_of(&self, (position, within): (usize, f32), height: f32) -> f32 {
         let position = position.min(self.entries.saturating_sub(1));
-        (self.row_of(position) as f32 * height + within.clamp(-height, height - 1.)).max(0.)
+        let row = self.row_of(position);
+        // Those since the entry before it; the last's, those after it too.
+        let first = position
+            .checked_sub(1)
+            .map_or(0, |before| self.row_of(before) + 1);
+        let end = if position + 1 >= self.entries {
+            self.len()
+        } else {
+            row + 1
+        };
+        let above = -((row - first) as f32) * height;
+        let below = (end.saturating_sub(row) as f32 * height - 1.).max(above);
+        (row as f32 * height + within.clamp(above, below)).max(0.)
     }
 
     /// How many tiles a grid draws: the entries and what arrives.
@@ -1321,5 +1357,55 @@ mod tests {
         // The same entry in other groups: where it is now.
         let other = RowMap::new(Arc::from([span(0, 3), span(3, 3)]), 6);
         assert!((other.offset_of((2, 7.), h) - (3. * h + 7.)).abs() < 1e-3);
+    }
+
+    /// Folded groups' headings follow one another with no entry between:
+    /// a view at the first comes back to it, not to the last above the
+    /// entry they are told from. Rows 0 H0 folded, 1 H1 folded, 2 H2,
+    /// 3 e0, 4 e1, 5 H3 folded.
+    #[test]
+    fn headings_with_no_entry_between_come_back_whole() {
+        let folded = |start, count| Span {
+            start,
+            len: 0,
+            count,
+            group: None,
+        };
+        let rows = RowMap::new(
+            Arc::from([folded(0, 2), folded(0, 8), span(0, 2), folded(2, 4)]),
+            2,
+        );
+        let h = 20.;
+        let back = |offset: f32| rows.offset_of(rows.anchor(offset, h).unwrap(), h);
+        for offset in [0., 7., h, h + 3., 2. * h + 5., 3. * h + 9., 5. * h + 2.] {
+            assert!((back(offset) - offset).abs() < 1e-3, "{offset}");
+        }
+        assert_eq!(rows.anchor(0., h), Some((0, -3. * h)));
+        assert_eq!(rows.anchor(5. * h, h), Some((1, h)), "after the last");
+        // A distance past what is told from the entry is cut there.
+        assert!(rows.offset_of((0, -9. * h), h).abs() < 1e-3);
+        assert!((rows.offset_of((1, 9. * h), h) - (6. * h - 1.)).abs() < 1e-3);
+        // Every group folded: no entry to tell it from.
+        let shut = RowMap::new(Arc::from([folded(0, 1), folded(0, 1)]), 0);
+        assert_eq!(shut.anchor(0., h), None);
+    }
+
+    /// A heading is found again by its group, wherever the order puts it.
+    #[test]
+    fn a_group_is_found_again_by_its_group() {
+        let group = |label: &str| Some(Arc::new(skwir_core::grouping::Group::new(0, label)));
+        let of = |start, len, label| Span {
+            start,
+            len,
+            count: 2,
+            group: group(label),
+        };
+        let old = RowMap::new(Arc::from([of(0, 2, "a"), of(2, 2, "b")]), 4);
+        let now = RowMap::new(Arc::from([of(0, 0, "a"), of(0, 2, "b")]), 2);
+        assert_eq!(now.group_like(&old, 1), Some(1));
+        assert_eq!(now.drawn_like(&old, 0), Some(0));
+        let gone = RowMap::new(Arc::from([of(0, 2, "b")]), 2);
+        assert_eq!(gone.group_like(&old, 0), None);
+        assert_eq!(gone.drawn_like(&old, 1), Some(0));
     }
 }
