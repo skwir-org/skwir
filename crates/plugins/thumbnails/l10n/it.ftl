@@ -16,7 +16,7 @@ thumbnails_imagemagick = Usa ImageMagick
 thumbnails_imagemagick_description = Disegna con ImageMagick, se è installato, le miniature e le anteprime delle immagini che nessun generatore di miniature disegna.
 
 # draft
-thumbnails_imagemagick_description_more = Legge HEIC, AVIF, JPEG XL, file raw delle fotocamere, immagini Photoshop e GIMP e altro, isolato dai tuoi file e dalla rete.
+thumbnails_imagemagick_description_more = Legge immagini Photoshop e GIMP, i file raw delle fotocamere che Skwir non legge, HEIC e AVIF dove l’assistente HEIF di Skwir non è installato, e altro, isolato dai tuoi file e dalla rete.
 
 # draft
 thumbnails_none_draws = Nessun generatore di miniature disegna questa immagine
@@ -28,7 +28,7 @@ thumbnails_plugin_description = Miniature dalla cache del desktop, da un decodif
 thumbnails_plugin_title = Miniature
 
 # draft
-thumbnails_requirement_magick = Immagini che nessun generatore di miniature disegna (HEIC, AVIF, JPEG XL, file raw…)
+thumbnails_requirement_magick = Immagini che nessun generatore di miniature disegna (immagini Photoshop e GIMP, alcuni file raw…)
 
 # draft
 thumbnails_requirement_sandbox = Generatori di miniature e ImageMagick eseguiti in isolamento

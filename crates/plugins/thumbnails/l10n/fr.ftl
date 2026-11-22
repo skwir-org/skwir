@@ -16,7 +16,7 @@ thumbnails_imagemagick = Utiliser ImageMagick
 thumbnails_imagemagick_description = Dessiner avec ImageMagick, s’il est installé, les vignettes et les aperçus des images qu’aucun générateur de vignettes ne dessine.
 
 # draft
-thumbnails_imagemagick_description_more = Il lit HEIC, AVIF, JPEG XL, les fichiers raw des appareils photo, les images Photoshop et GIMP et plus encore, isolé de vos fichiers et du réseau.
+thumbnails_imagemagick_description_more = Il lit les images Photoshop et GIMP, les fichiers raw des appareils photo que Skwir ne lit pas, HEIC et AVIF là où le programme auxiliaire HEIF de Skwir n’est pas installé, et plus encore, isolé de vos fichiers et du réseau.
 
 # draft
 thumbnails_none_draws = Aucun générateur de vignettes ne dessine cette image
@@ -28,7 +28,7 @@ thumbnails_plugin_description = Vignettes du cache du bureau, d’un décodeur d
 thumbnails_plugin_title = Vignettes
 
 # draft
-thumbnails_requirement_magick = Images qu’aucun générateur de vignettes ne dessine (HEIC, AVIF, JPEG XL, fichiers raw…)
+thumbnails_requirement_magick = Images qu’aucun générateur de vignettes ne dessine (images Photoshop et GIMP, certains fichiers raw…)
 
 # draft
 thumbnails_requirement_sandbox = Générateurs de vignettes et ImageMagick exécutés en isolation

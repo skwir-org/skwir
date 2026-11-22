@@ -337,8 +337,8 @@ impl Plugin for ThumbnailsPlugin {
         vec![Requirement::program(
             "magick",
             words!(
-                thumbnails_requirement_magick = "Pictures no thumbnailer draws (HEIC, AVIF, JPEG XL, raw files…)",
-                note = "What stops working without ImageMagick, in the settings' list of what a plugin needs. HEIC, AVIF and JPEG XL are formats' names."
+                thumbnails_requirement_magick = "Pictures no thumbnailer draws (Photoshop and GIMP images, some raw files…)",
+                note = "What stops working without ImageMagick, in the settings' list of what a plugin needs. Photoshop and GIMP are programs' names."
             ),
         )]
         .into_iter()
@@ -422,8 +422,8 @@ impl Plugin for ThumbnailsPlugin {
                         note = "ImageMagick is a program's name."
                     ),
                     words!(
-                        thumbnails_imagemagick_description_more = "It reads HEIC, AVIF, JPEG XL, camera raw files, Photoshop and GIMP images and more, isolated from your files and the network.",
-                        note = "Photoshop and GIMP are programs' names; HEIC, AVIF and JPEG XL are formats' names."
+                        thumbnails_imagemagick_description_more = "It reads Photoshop and GIMP images, the camera raw files Skwir does not read, HEIC and AVIF where Skwir's HEIF helper is not installed, and more, isolated from your files and the network.",
+                        note = "Photoshop and GIMP are programs' names; HEIC and AVIF are formats' names. Skwir's HEIF helper is the program Skwir reads HEIC and AVIF pictures with, installed apart (skwir-heif)."
                     ),
                 ),
                 true,
