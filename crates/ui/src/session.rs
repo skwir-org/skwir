@@ -283,21 +283,40 @@ impl Placement {
         }
     }
 
-    /// [`Placement::of`] for a dialog's window (ADR-144, 4): where the
-    /// compositor tiles it (gpui's `Window::tiling`, as Wayland's
-    /// compositors say it; X11's say nothing), its size is its tile's, not
-    /// one the user gave it, and the size it had `before` is kept, which
-    /// the dialogs remember.
-    pub fn of_dialog(window: &gpui::Window, before: &Placement, cx: &gpui::App) -> Placement {
-        let now = Placement::of(window, Some(before), cx);
-        if window.tiling().is_tiled() {
+    /// [`Placement::of`] for a dialog's window (ADR-144, 4): the size the
+    /// user gave it, which the dialogs remember. `dragged` while the user
+    /// drags an edge or a corner and by the change that ends the drag
+    /// (gpui's `Window::is_being_resized`, Wayland's `resizing` state), the
+    /// size it is given is theirs; otherwise, where the compositor tiles it
+    /// (`Window::tiling`, as Wayland's compositors say it; X11's say
+    /// nothing), its size is its tile's (`kept_by_dialog`).
+    pub fn of_dialog(
+        window: &gpui::Window,
+        before: &Placement,
+        dragged: bool,
+        cx: &gpui::App,
+    ) -> Placement {
+        Placement::of(window, Some(before), cx).kept_by_dialog(
+            before,
+            window.tiling().is_tiled(),
+            dragged,
+        )
+    }
+
+    /// What a dialog keeps of this placement, taken as it is `tiled` or
+    /// `dragged` (`of_dialog`): a size the user dragged it to, whatever the
+    /// compositor says of tiling (Hyprland says every window is tiled on
+    /// every edge, floating or not); else the size it had `before` while
+    /// tiled, never its tile's.
+    fn kept_by_dialog(self, before: &Placement, tiled: bool, dragged: bool) -> Placement {
+        if tiled && !dragged {
             return Placement {
                 width: before.width,
                 height: before.height,
-                ..now
+                ..self
             };
         }
-        now
+        self
     }
 
     /// The bounds a window opens with, taking this placement, and the
@@ -851,6 +870,29 @@ mod tests {
             bounds,
             visible: bounds,
         }
+    }
+
+    #[test]
+    fn a_dialog_keeps_the_size_dragged_never_a_tiles() {
+        let before = Placement {
+            width: 1000.,
+            height: 680.,
+            maximized: false,
+            at: None,
+        };
+        let now = Placement {
+            width: 864.,
+            height: 1792.,
+            ..before.clone()
+        };
+        // Floating, as the compositor says: any size it is given.
+        assert_eq!(now.clone().kept_by_dialog(&before, false, false), now);
+        // Tiled, nobody dragging: the tile's size is not the user's.
+        assert_eq!(now.clone().kept_by_dialog(&before, true, false), before);
+        // Dragged, whatever the compositor says of tiling (Hyprland says
+        // every window is tiled): the user's.
+        assert_eq!(now.clone().kept_by_dialog(&before, true, true), now);
+        assert_eq!(now.clone().kept_by_dialog(&before, false, true), now);
     }
 
     #[test]

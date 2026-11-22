@@ -2421,7 +2421,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   pictures or films alone (`chooser::asks_pictures`) the view and zoom
   kept for those (the grid at first), never a split nor a terminal, the
   size it was left at while it floated (a dialog's at first; a tile's
-  size never kept, `Placement::of_dialog`) and never maximized, the
+  size never kept, `Placement::of_dialog`; a size the user dragged it
+  to kept whatever the compositor says of tiling, `dialog_dragged`, as
+  Hyprland says every window is tiled) and never maximized, the
   asking window's child where its identifier names one
   (`chooser::foreign_parent`, gpui's `WindowOptions::foreign_parent`),
   and tagged `file chooser` where every window of the user's own is

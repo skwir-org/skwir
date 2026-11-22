@@ -20,7 +20,10 @@ answers again is still its window's), 2 (a desktop's notice of a
 dialog's work brings the dialog forward), 4 (the names given the
 sidebar's places one set, every window's), 6 (All files in each of its
 forms makes no extension the program's), 7 (KConfig's locks read) and
-10 (saving several files, a dropped file's name is not taken).
+10 (saving several files, a dropped file's name is not taken). Decision
+4 amended 2026-11-23, on the user's asking: a size the user drags a
+dialog to is kept whatever the compositor says of tiling (Hyprland says
+every window is tiled).
 
 ## Context
 
@@ -140,7 +143,13 @@ forms makes no extension the program's), 7 (KConfig's locks read) and
    it is given while it floats, never one the compositor tiles it at
    (`Placement::of_dialog`, by the tiled states Wayland's compositors
    say; X11's window managers say none, amended as reviewed,
-   2026-11-20). Preferences stay the program's, one for all its
+   2026-11-20), and a size the user drags it to whatever the compositor
+   says of tiling (gpui's `Window::is_being_resized`, Wayland's
+   `resizing` state, patch 0091), the change that ends the drag
+   included. Hyprland says every window is tiled on every edge, floating
+   or not, so no other size was ever kept there; a resize there by keys
+   alone, which says no drag, is still not kept (amended 2026-11-23, on
+   the user's asking). Preferences stay the program's, one for all its
    windows: hidden files, sorting, folders first, text sizes. A folder
    that remembers its view (ADR-132) shows it in a dialog too. (Amended
    by ADR-145, 2026-11-21: the dialogs keep their own order, hidden

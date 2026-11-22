@@ -1252,7 +1252,10 @@ folder above that differs, a folder's place saying its path when pointed
 at, and a launch handed to a skwir the bus started for a dialog showing
 the startup choice rather than an empty window (the choice is made as
 the user's windows first come up). Checks in `docs/STATUS-LOG.md`
-(2026-11-20).
+(2026-11-20). Amended 2026-11-23, on the user's asking: a size the user
+drags a dialog to is kept whatever the compositor says of tiling
+(gpui 0091, `Window::is_being_resized`): Hyprland says every window is
+tiled, so no size given a dialog was kept there (2026-11-23).
 
 ## A dialog's own way, Escape, Skwir Tabs, a lighter start (ADR-145, 2026-11-21)
 
@@ -1619,8 +1622,9 @@ its GPU.
 Left: a drag from a window of skwir's own onto a dialog (only another
 program's drop was tried); writing `recently-used.xbel` under GNOME with
 its privacy switch off (read through `gsettings`, not run); the size
-kept apart from a tile, never seen on a tiling compositor (a headless
-sway would show it); drops on a dialog's sidebar and what a screen
+kept as dragged, seen on a headless sway only, Hyprland's own drag not
+tried (no headless Hyprland here), and a resize there by keys alone not
+kept (it says no drag); drops on a dialog's sidebar and what a screen
 reader hears of a dimmed file, tested and read, not tried in a window
 nor with a screen reader; Xfce's (xfconf's `/Gtk/RecentFilesEnabled`)
 and MATE's switches for recent files, not read; a name to save with a

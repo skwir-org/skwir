@@ -22574,3 +22574,43 @@ go of told.
   succeeded, the pane saying it is not mounted with Mount and Go Home.
 - **Not done**: Windows and macOS compiled only, neither following
   another program's unmount; `just release-check` not run.
+
+## 2026-11-23: a dialog keeps the size it is dragged to (ADR-144 amended)
+
+The user's file chooser opened tall on a portrait monitor under
+Hyprland. That came from a window rule of their own (60 % × 70 % of the
+monitor), changed in their dotfiles. Looking at it showed a bug of
+Skwir's: Hyprland 0.57.2 says every toplevel is tiled on all four edges
+from its creation and never takes it back (`protocols/XDGShell.cpp`,
+read in its source), floating windows included. `Placement::of_dialog`
+read that as a tile and kept the size the dialog had before, so no size
+given a dialog was ever kept there.
+
+- **gpui 0091** (`window-being-resized`): `Window::is_being_resized`,
+  the configure's `resizing` state on Wayland (every compositor sets it
+  while the user drags an edge: Hyprland's `DragController`, sway's
+  tiling and floating resizes on the window and its neighbour), false
+  where the platform does not say.
+- **Skwir**: a dialog's window counts a size as the user's while a drag
+  is under way and for the change that ends it (`Shell::dialog_dragged`),
+  whatever the tiled states say; else, tiled, the size it had
+  (`Placement::kept_by_dialog`). A drag held still is looked at every
+  half second until it ends, so a release that changes no size still
+  ends it. A resize by keys alone (Hyprland's `resizeactive`, sway's
+  `resize`) says no drag: on Hyprland it is still not kept.
+- **Checked**: rustfmt; clippy `-D warnings` on skwir-ui (gpui and
+  gpui_linux built with 0091); `a_dialog_keeps_the_size_dragged_never_a_tiles`
+  and the placement test, green; the patch reverses cleanly on
+  `vendor/zed`. In a window: headless sway 1.12 (pixman, 8 px pixel
+  borders), wayvnc and vncdotool for the pointer, a private session bus
+  with no service folders, the debug build answering `OpenFile` sent
+  with busctl. The dialog opened as a 640 × 860 tile beside a terminal:
+  nothing kept. The border between them dragged: the tile 803 × 860, the
+  dialogs kept 787 × 844 (inside sway's borders). The terminal closed,
+  the dialog 1280 × 860 with no drag: still 787 × 844. A second drag
+  held still 1.5 s and released without moving: 747 × 844 kept, and the
+  1280 px tile after it not. Idle afterwards: 0 CPU ticks over 5 s.
+  Closing the window answered the request cancelled.
+- **Not done**: Hyprland itself (no headless Hyprland harness); X11
+  unchanged (its window managers say neither tiling nor drags); macOS
+  and Windows have no such dialogs.

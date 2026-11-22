@@ -751,6 +751,10 @@ pub struct Shell {
     /// (`window_moved`).
     pub(crate) placement: crate::session::Placement,
     placement_wait: Option<gpui::Task<()>>,
+    /// A dialog's window was dragged to its size since the placement was
+    /// last remembered (`window_moved`, `Placement::of_dialog`): the change
+    /// that ends the drag, which says no drag any more, is the user's too.
+    dialog_dragged: bool,
     /// Scroll position of the sidebar, so it can have a scrollbar.
     pub sidebar_scroll: gpui::ScrollHandle,
     /// The sidebar's keyboard (F6): its focus and its cursor.
@@ -1053,6 +1057,7 @@ impl Shell {
             stored_session: None,
             placement: crate::session::Placement::of(window, Some(&placed), cx),
             placement_wait: None,
+            dialog_dragged: false,
             sidebar_scroll: gpui::ScrollHandle::new(),
             sidebar_keys: crate::sidebar::Keys::new(cx.focus_handle()),
             first_frame: Some(first_frame),
@@ -1250,22 +1255,38 @@ impl Shell {
     }
 
     /// The window moved or was resized: where it is now, remembered once it
-    /// stays half a second, not at each step of a drag; a dialog's tiled,
-    /// the size it had (`Placement::of_dialog`, ADR-144, 4).
+    /// stays half a second, not at each step of a drag; a dialog's, the size
+    /// the user dragged it to, else the size it had while tiled
+    /// (`Placement::of_dialog`, ADR-144, 4).
     fn window_moved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.placement = if self.chooser.is_some() {
-            crate::session::Placement::of_dialog(window, &self.placement, cx)
+            self.dialog_dragged |= window.is_being_resized();
+            crate::session::Placement::of_dialog(window, &self.placement, self.dialog_dragged, cx)
         } else {
             crate::session::Placement::of(window, Some(&self.placement), cx)
         };
-        self.placement_wait = Some(cx.spawn(async move |this, cx| {
+        self.remember_placement_later(window, cx);
+    }
+
+    /// Remember where the window is once it stays half a second
+    /// (`window_moved`). A dialog's drag held still goes on: its end, which
+    /// may change no size and so tell nothing, is looked for every half
+    /// second until it comes, and what comes after is the compositor's
+    /// again (`dialog_dragged`).
+    fn remember_placement_later(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.placement_wait = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(500))
                 .await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
+                let dragging = this.dialog_dragged && window.is_being_resized();
+                this.dialog_dragged = dragging;
                 this.remember_session();
                 // No wake records it: moving a window wakes nothing.
                 crate::finishing::record_windows(cx);
+                if dragging {
+                    this.remember_placement_later(window, cx);
+                }
             });
         }));
     }
