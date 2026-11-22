@@ -594,9 +594,13 @@ around the views is in [shell.md](shell.md).
   its count beside it Small and muted, a line above it but the first;
   the one at the top is
   pinned (`groups::Pinned`, a decoration of the list, computed after it
-  scrolled), pushed up by the next, and a row brought into view from
-  above stops below it; a group no file is in yet's is pinned as theirs
-  are (`RowMap::drawn_at`, `groups::pinned_fresh`). Where its own row is
+  scrolled), on the files' ground it paints over what scrolls under it,
+  and lit under the pointer on that ground (`groups::acting` given it:
+  `ground.blend(hover)`), never by the translucent `hover` alone, which
+  would let through what is under it; pushed up by the next, and a row
+  brought into view from above stops below it; a group no file is in
+  yet's is pinned as theirs are (`RowMap::drawn_at`,
+  `groups::pinned_fresh`). Where its own row is
   not drawn, the pinned heading is the one a screen reader hears, and
   the keyboard's menu hangs from it while the keys are on it. The tree
   groups its top level: a folder opened

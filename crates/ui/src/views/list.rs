@@ -1133,7 +1133,7 @@ fn grouped_row_elements(
                 let heading = groups::ring(heading, stopped, theme);
                 // Each group's first entry says its group as well.
                 groups::expose(
-                    groups::acting(heading, n, shell.pane, cx.weak_entity(), theme),
+                    groups::acting(heading, n, shell.pane, cx.weak_entity(), theme, None),
                     span,
                     stopped,
                     shell.a11y,

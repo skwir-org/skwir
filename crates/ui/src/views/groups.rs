@@ -767,15 +767,19 @@ pub fn chevron(
 /// selects its group (`ui.select_group`; with Ctrl, beside what is
 /// selected), the right button opens its menu (Select these, Show only
 /// these). Its pane is made the active one as a press on an entry makes
-/// it; a band never begins on a heading (`marquee::Geometry::hits`).
+/// it; a band never begins on a heading (`marquee::Geometry::hits`). A
+/// heading that paints a `ground` of its own (one pinned, over what
+/// scrolls under it) is lit on that ground, which keeps hiding what is
+/// under it; one in its place, on the files' ground, by `hover` alone.
 pub fn acting(
     el: gpui::Stateful<Div>,
     group: usize,
     pane: skwir_core::workspace::PaneId,
     shell: gpui::WeakEntity<crate::shell::Shell>,
     theme: &Theme,
+    ground: Option<gpui::Hsla>,
 ) -> gpui::Stateful<Div> {
-    let hover = theme.hover;
+    let hover = ground.map_or(theme.hover, |ground| ground.blend(theme.hover));
     let menu = shell.clone();
     el.cursor_pointer()
         .hover(move |s| s.bg(hover))
@@ -1011,7 +1015,14 @@ impl UniformListDecoration for Pinned {
                 .map(crate::elements::popover::PopoverAnchor::marker),
         );
         let heading = ring(heading, stopped, &self.theme);
-        let heading = acting(heading, n, self.pane, self.shell.clone(), &self.theme);
+        let heading = acting(
+            heading,
+            n,
+            self.pane,
+            self.shell.clone(),
+            &self.theme,
+            Some(self.ground),
+        );
         let span = &self.rows.spans()[n];
         hang(expose(heading, span, stopped, self.a11y && alone))
     }

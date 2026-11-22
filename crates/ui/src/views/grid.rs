@@ -1218,7 +1218,7 @@ fn grid_groups(
             let span = &spans.spans()[n];
             let left = Some(left + FRAME);
             let on = stopped == Some(n);
-            let act = |el| groups::acting(el, n, pane, weak.clone(), &theme);
+            let act = |el, ground| groups::acting(el, n, pane, weak.clone(), &theme, ground);
             let chevron = Some(groups::chevron(
                 n,
                 spans.folded(n),
@@ -1239,7 +1239,7 @@ fn grid_groups(
                             .map(crate::elements::popover::PopoverAnchor::marker),
                     );
                 groups::expose(
-                    act(groups::ring(heading, on, &theme)),
+                    act(groups::ring(heading, on, &theme), Some(ground)),
                     span,
                     on,
                     a11y && alone,
@@ -1255,7 +1255,7 @@ fn grid_groups(
                                 .filter(|_| on)
                                 .map(crate::elements::popover::PopoverAnchor::marker),
                         );
-                groups::expose(act(groups::ring(heading, on, &theme)), span, on, a11y)
+                groups::expose(act(groups::ring(heading, on, &theme), None), span, on, a11y)
                     .into_any_element()
             }
         }),
