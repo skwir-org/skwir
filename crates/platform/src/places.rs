@@ -533,60 +533,219 @@ pub fn flush(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Call `told` with the mount points of each volume another program says
-/// it is about to unmount, on the session bus, until `stop` (ADR-149,
-/// amended): GIO's volume monitor before an unmount through it (GNOME's
-/// Eject, Nautilus, `gio mount -u`: `MountPreUnmount`, the mount's root a
-/// `file://` URI), KDE's Solid before a teardown (Dolphin, the device
-/// notifier: `teardownRequested`, the device's udi in its object path).
-/// On a thread of its own, connecting again when the session's bus is;
-/// `told` takes each at once and hands what may wait to a worker. What
-/// unmounts without saying so (`udisksctl`, udiskie) is not told. Linux
-/// only; elsewhere nothing is told. Whether it follows.
-pub fn follow_unmounts(stop: &CancelToken, told: impl Fn(Vec<PathBuf>) + Send + 'static) -> bool {
+/// What another program says of an unmount (`follow_unmounts`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnmountNotice {
+    /// A desktop announced it before unmounting (GIO, Solid), and asks
+    /// again while it is refused (GNOME's dialog retries).
+    Announced(Vec<PathBuf>),
+    /// udisks began it, asked by a program that announces nothing
+    /// (`udisksctl`, udiskie): as the system unmounts, so what held the
+    /// volume then made it refuse.
+    Begun(Vec<PathBuf>),
+    /// udisks's unmount of these was refused (busy, or anything else).
+    Refused(Vec<PathBuf>),
+}
+
+/// Call `told` with what other programs say of unmounting a volume, until
+/// `stop` (ADR-149, amended): on the session bus, GIO's volume monitor
+/// before an unmount through it (GNOME's Eject, Nautilus, `gio mount -u`:
+/// `MountPreUnmount`, the mount's root a `file://` URI) and KDE's Solid
+/// before a teardown (Dolphin, the device notifier: `teardownRequested`,
+/// the device's udi in its object path); on the system bus, udisks's
+/// unmount jobs, whoever asked (`filesystem-unmount`, its block devices
+/// in `Objects`, then `Completed`). On threads of their own, connecting
+/// again when a bus is; `told` takes each at once and hands what may wait
+/// to a worker. Linux only; elsewhere nothing is told. Whether it follows.
+pub fn follow_unmounts(
+    stop: &CancelToken,
+    told: impl Fn(UnmountNotice) + Send + Sync + 'static,
+) -> bool {
     #[cfg(target_os = "linux")]
     {
-        let stop = stop.clone();
-        std::thread::Builder::new()
-            .name("skwir-unmounts".into())
-            .spawn(move || {
-                crate::bus::keep(crate::bus::session, &stop, |bus| {
-                    let rules = [
-                        ("org.gtk.Private.RemoteVolumeMonitor", "MountPreUnmount"),
-                        ("org.kde.Solid.Device", "teardownRequested"),
-                    ]
-                    .into_iter()
-                    .filter_map(|(interface, member)| {
-                        zbus::MatchRule::builder()
-                            .msg_type(zbus::message::Type::Signal)
-                            .interface(interface)
-                            .and_then(|rule| rule.member(member))
-                            .map(zbus::match_rule::Builder::build)
-                            .ok()
-                    })
-                    .collect();
-                    crate::bus::listen(
-                        bus,
-                        rules,
-                        &stop,
-                        || {},
-                        |message| {
-                            let points = announced(message);
-                            tracing::debug!(?points, "an unmount announced");
-                            if !points.is_empty() {
-                                told(points);
-                            }
-                        },
-                    );
-                });
-            })
-            .is_ok()
+        let told = std::sync::Arc::new(told);
+        let session = {
+            let (stop, told) = (stop.clone(), std::sync::Arc::clone(&told));
+            std::thread::Builder::new()
+                .name("skwir-unmounts".into())
+                .spawn(move || {
+                    crate::bus::keep(crate::bus::session, &stop, |bus| {
+                        let rules = signal_rules(
+                            None,
+                            &[
+                                ("org.gtk.Private.RemoteVolumeMonitor", "MountPreUnmount"),
+                                ("org.kde.Solid.Device", "teardownRequested"),
+                            ],
+                        );
+                        crate::bus::listen(
+                            bus,
+                            rules,
+                            &stop,
+                            || {},
+                            |message| {
+                                let points = announced(message);
+                                tracing::debug!(?points, "an unmount announced");
+                                if !points.is_empty() {
+                                    told(UnmountNotice::Announced(points));
+                                }
+                            },
+                        );
+                    });
+                })
+                .is_ok()
+        };
+        let system = {
+            let (stop, told) = (stop.clone(), std::sync::Arc::clone(&told));
+            std::thread::Builder::new()
+                .name("skwir-udisks-jobs".into())
+                .spawn(move || {
+                    crate::bus::keep(zbus::blocking::Connection::system, &stop, |bus| {
+                        let rules = signal_rules(
+                            Some("org.freedesktop.UDisks2"),
+                            &[
+                                ("org.freedesktop.DBus.ObjectManager", "InterfacesAdded"),
+                                ("org.freedesktop.UDisks2.Job", "Completed"),
+                            ],
+                        );
+                        // The unmount jobs begun, by their object, with the
+                        // points they unmount.
+                        let mut jobs: std::collections::HashMap<String, Vec<PathBuf>> =
+                            std::collections::HashMap::new();
+                        crate::bus::listen(
+                            bus,
+                            rules,
+                            &stop,
+                            || {},
+                            |message| match udisks_job(message) {
+                                Some(Job::Begun(job, blocks)) => {
+                                    let points: Vec<PathBuf> =
+                                        blocks.iter().flat_map(|b| points_of_block(b)).collect();
+                                    tracing::debug!(?points, "an unmount begun by udisks");
+                                    if !points.is_empty() {
+                                        jobs.insert(job, points.clone());
+                                        told(UnmountNotice::Begun(points));
+                                    }
+                                }
+                                Some(Job::Ended(job, success)) => {
+                                    if let Some(points) = jobs.remove(&job)
+                                        && !success
+                                    {
+                                        told(UnmountNotice::Refused(points));
+                                    }
+                                }
+                                None => {}
+                            },
+                        );
+                    });
+                })
+                .is_ok()
+        };
+        session || system
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (stop, told);
         false
     }
+}
+
+/// Match rules for the signals `pairs` names, by interface and member,
+/// sent by `sender` where one is named.
+#[cfg(target_os = "linux")]
+fn signal_rules(
+    sender: Option<&'static str>,
+    pairs: &[(&'static str, &'static str)],
+) -> Vec<zbus::MatchRule<'static>> {
+    pairs
+        .iter()
+        .filter_map(|(interface, member)| {
+            let rule = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal);
+            let rule = match sender {
+                Some(sender) => rule.sender(sender).ok()?,
+                None => rule,
+            };
+            rule.interface(*interface)
+                .and_then(|rule| rule.member(*member))
+                .map(zbus::match_rule::Builder::build)
+                .ok()
+        })
+        .collect()
+}
+
+/// What a signal of udisks says of an unmount job.
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum Job {
+    /// Begun: its object, and the block devices it unmounts (`loop0`).
+    Begun(String, Vec<String>),
+    /// Ended: its object, and whether it unmounted.
+    Ended(String, bool),
+}
+
+/// The unmount job a signal of udisks tells of: one added to its objects
+/// (`InterfacesAdded`, a `Job` whose `Operation` is `filesystem-unmount`),
+/// or one completed (`Completed`, on the job's object).
+#[cfg(target_os = "linux")]
+fn udisks_job(message: &zbus::Message) -> Option<Job> {
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+    let header = message.header();
+    match header.member()?.as_str() {
+        "InterfacesAdded" => {
+            let (job, interfaces) = message
+                .body()
+                .deserialize::<(
+                    OwnedObjectPath,
+                    std::collections::HashMap<
+                        String,
+                        std::collections::HashMap<String, OwnedValue>,
+                    >,
+                )>()
+                .ok()?;
+            let props = interfaces.get("org.freedesktop.UDisks2.Job")?;
+            let operation = String::try_from(props.get("Operation")?.try_clone().ok()?).ok()?;
+            if operation != "filesystem-unmount" {
+                return None;
+            }
+            let objects =
+                Vec::<OwnedObjectPath>::try_from(props.get("Objects")?.try_clone().ok()?).ok()?;
+            let blocks = objects
+                .iter()
+                .filter_map(|object| {
+                    let name = object
+                        .as_str()
+                        .strip_prefix("/org/freedesktop/UDisks2/block_devices/")?;
+                    unescaped(name).filter(|name| !name.is_empty() && !name.contains('/'))
+                })
+                .collect();
+            Some(Job::Begun(job.as_str().to_owned(), blocks))
+        }
+        "Completed" => {
+            let (success, _) = message.body().deserialize::<(bool, String)>().ok()?;
+            Some(Job::Ended(header.path()?.as_str().to_owned(), success))
+        }
+        _ => None,
+    }
+}
+
+/// `text` with each `_` and the two hex digits after it made the byte they
+/// name: how Solid escapes a udi in an object path, and udisks a device's
+/// name (`dm_2d3` for `dm-3`). `None` for an escape cut short.
+#[cfg(target_os = "linux")]
+fn unescaped(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'_' {
+            let hex = text.get(at + 1..at + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// The mount points a notice of an unmount names: GIO's mount's root,
@@ -632,25 +791,9 @@ fn announced(message: &zbus::Message) -> Vec<PathBuf> {
 /// name, escaped as udisks escapes it (`dm_2d3`).
 #[cfg(target_os = "linux")]
 fn solid_block(path: &str) -> Option<String> {
-    fn unescape(text: &str) -> Option<String> {
-        let bytes = text.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut at = 0;
-        while at < bytes.len() {
-            if bytes[at] == b'_' {
-                let hex = text.get(at + 1..at + 3)?;
-                out.push(u8::from_str_radix(hex, 16).ok()?);
-                at += 3;
-            } else {
-                out.push(bytes[at]);
-                at += 1;
-            }
-        }
-        String::from_utf8(out).ok()
-    }
-    let udi = unescape(path.strip_prefix("/org/kde/solid/Device_")?)?;
+    let udi = unescaped(path.strip_prefix("/org/kde/solid/Device_")?)?;
     let name = udi.strip_prefix("/org/freedesktop/UDisks2/block_devices/")?;
-    unescape(name).filter(|name| !name.is_empty() && !name.contains('/'))
+    unescaped(name).filter(|name| !name.is_empty() && !name.contains('/'))
 }
 
 /// Where `block`'s filesystem is mounted, or the filesystem of what it
@@ -1648,6 +1791,80 @@ mod tests {
         assert_eq!(super::solid_block("/org/kde/solid/Device__2"), None);
         assert_eq!(super::solid_block("/org/kde/other"), None);
     }
+    /// udisks's unmount jobs, whoever asked for them (`udisksctl`,
+    /// udiskie): begun as their object is added, naming the block devices
+    /// they unmount, ended as they complete, refused or not. Its other
+    /// jobs say nothing. The fields as `gdbus monitor` showed them.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unmount_udisks_begins_names_its_devices_and_ends() {
+        use super::Job;
+        use std::collections::HashMap;
+        use zbus::zvariant::{ObjectPath, Value};
+        let added = |operation: &str, blocks: &[&str]| {
+            let objects: Vec<ObjectPath<'_>> = blocks
+                .iter()
+                .map(|b| ObjectPath::try_from(*b).unwrap())
+                .collect();
+            let job: HashMap<&str, Value<'_>> = HashMap::from([
+                ("Operation", Value::from(operation)),
+                ("Objects", Value::from(objects)),
+                ("StartedByUID", Value::from(0u32)),
+            ]);
+            let message = zbus::Message::signal(
+                "/org/freedesktop/UDisks2",
+                "org.freedesktop.DBus.ObjectManager",
+                "InterfacesAdded",
+            )
+            .unwrap()
+            .build(&(
+                ObjectPath::try_from("/org/freedesktop/UDisks2/jobs/74").unwrap(),
+                HashMap::from([("org.freedesktop.UDisks2.Job", job)]),
+            ))
+            .unwrap();
+            super::udisks_job(&message)
+        };
+        assert_eq!(
+            added(
+                "filesystem-unmount",
+                &[
+                    "/org/freedesktop/UDisks2/block_devices/loop0",
+                    "/org/freedesktop/UDisks2/block_devices/dm_2d3",
+                ]
+            ),
+            Some(Job::Begun(
+                "/org/freedesktop/UDisks2/jobs/74".into(),
+                vec!["loop0".into(), "dm-3".into()]
+            ))
+        );
+        assert_eq!(
+            added(
+                "filesystem-mount",
+                &["/org/freedesktop/UDisks2/block_devices/loop0"]
+            ),
+            None
+        );
+        let completed = |success: bool, why: &str| {
+            let message = zbus::Message::signal(
+                "/org/freedesktop/UDisks2/jobs/76",
+                "org.freedesktop.UDisks2.Job",
+                "Completed",
+            )
+            .unwrap()
+            .build(&(success, why))
+            .unwrap();
+            super::udisks_job(&message)
+        };
+        assert_eq!(
+            completed(false, "target is busy"),
+            Some(Job::Ended("/org/freedesktop/UDisks2/jobs/76".into(), false))
+        );
+        assert_eq!(
+            completed(true, ""),
+            Some(Job::Ended("/org/freedesktop/UDisks2/jobs/76".into(), true))
+        );
+    }
+
     /// What `diskutil apfs list -plist` answers, cut to what is read: a
     /// Mac's own container (its system, its data, unlocked) and a drive's,
     /// one volume locked, one not encrypted. Synthetic names and UUIDs, in

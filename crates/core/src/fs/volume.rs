@@ -33,7 +33,8 @@ const LAYERS: u8 = 8;
 /// Skwir shows it, whose unmount nothing of Skwir's may refuse as busy
 /// (ADR-149, amended): a remote, one mounted for the user
 /// ([`user_mounted`]) or a drive that can be unplugged ([`is_removable`]).
-/// Reads the table in memory, and sysfs: on a worker.
+/// Reads the table in memory, and sysfs (Windows asks the drive's type):
+/// on a worker.
 pub fn lets_go(path: &Path) -> bool {
     crate::fs::reach::of(path).is_some()
         || crate::fs::reach::volume_of(path).is_some_and(|point| user_mounted(&point))
@@ -50,9 +51,9 @@ pub fn user_mounted(point: &Path) -> bool {
     point.starts_with("/run/media") || point.starts_with("/media")
 }
 
-/// Whether `path` is on a drive the user can unplug: one whose disk says it
-/// is removable, or sits on USB, Firewire, PCMCIA or an SD card, through any
-/// device mapper (LUKS) or RAID layer. Reads sysfs: on a worker. A
+/// Whether `path` is on a drive the user can unplug, on Linux: one whose
+/// disk says it is removable, or sits on USB, Firewire, PCMCIA or an SD
+/// card, through any device mapper (LUKS) or RAID layer. Reads sysfs: on a worker. A
 /// filesystem mounted from no block device (FUSE, NFS) is not known to be
 /// on one.
 #[cfg(target_os = "linux")]
@@ -111,8 +112,17 @@ pub fn read_only(path: &Path) -> Option<bool> {
     }
 }
 
-/// [`is_removable`] where only Linux is read yet: never known.
-#[cfg(not(target_os = "linux"))]
+/// [`is_removable`] on Windows: the drive letter `path` is on is one
+/// Windows calls removable (`GetDriveTypeW`: a USB stick, a card reader;
+/// a USB disk Windows calls fixed is not). Asks the system, not the drive.
+#[cfg(windows)]
+pub fn is_removable(path: &Path) -> bool {
+    crate::fs::reach::volume_of(path).is_some_and(|root| super::win::is_removable_drive(&root))
+}
+
+/// [`is_removable`] where neither Linux nor Windows: never known (macOS's
+/// volumes are let go of by where they are mounted, `user_mounted`).
+#[cfg(not(any(target_os = "linux", windows)))]
 pub fn is_removable(_: &Path) -> bool {
     false
 }

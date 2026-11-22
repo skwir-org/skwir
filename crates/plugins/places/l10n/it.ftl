@@ -252,6 +252,9 @@ places_unmount_held = { $volume } sta per essere smontato, ma { $count ->
 places_unmount_held_cancel = Annulla
 
 # draft
+places_unmount_retry = { $volume } non è stato smontato. Skwir non lo usa più: se nient’altro lo usa, smontalo di nuovo.
+
+# draft
 places_unmount_unwritten = { $name } non è stato smontato: non è stato possibile scrivere tutto al suo interno ({ $error })
 
 # draft

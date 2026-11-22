@@ -251,6 +251,9 @@ places_unmount_held = { $volume } est en cours de démontage, mais { $count ->
 places_unmount_held_cancel = Annuler
 
 # draft
+places_unmount_retry = { $volume } n’a pas été démonté. Skwir ne l’utilise plus : si rien d’autre ne l’utilise, démontez-le à nouveau.
+
+# draft
 places_unmount_unwritten = { $name } n’a pas été démonté : tout n’a pas pu y être écrit ({ $error })
 
 # draft

@@ -27,8 +27,13 @@ impl App {
 
     /// Whether a thumbnail of the file at `path`, of `size` bytes if
     /// known, may be made unasked: anywhere on this machine; on a remote,
-    /// as its rule says (none where no plugin knows it).
+    /// as its rule says (none where no plugin knows it); never on a volume
+    /// about to be let go of (`letting_go`).
     pub fn shows_thumbnail(&self, path: &Path, size: Option<u64>) -> bool {
+        // Nothing read unasked on a volume about to be let go of (ADR-149).
+        if self.letting_go(path) {
+            return false;
+        }
         match self.remote(path) {
             None => true,
             Some((_, known)) => known
@@ -152,6 +157,61 @@ impl App {
         };
         for open in open {
             self.read_again(&open);
+        }
+    }
+}
+
+/// How often a mount is asked whether it answers because a folder of it
+/// failed (`App::ask_failed_remotes`).
+const REASKED: std::time::Duration = std::time::Duration::from_secs(5);
+
+impl App {
+    /// The remotes' folders among what `changed` panes show that failed:
+    /// their plugin is asked whether the mount still answers
+    /// (`Known::looked_at`, in the remote's lane), as when the window
+    /// comes back, once in [`REASKED`] a mount: a server that died under
+    /// its mount (sshfs keeps it) is said lost, and offers to connect again
+    /// (ADR-149, amended). Reads nothing here.
+    pub(crate) fn ask_failed_remotes(&self, changed: &[crate::workspace::PaneId]) {
+        static ASKED: parking_lot::Mutex<Vec<(std::path::PathBuf, std::time::Instant)>> =
+            parking_lot::Mutex::new(Vec::new());
+        if changed.is_empty() {
+            return;
+        }
+        let failed: Vec<std::path::PathBuf> = {
+            let ws = self.workspace.read();
+            changed
+                .iter()
+                .filter_map(|id| {
+                    let pane = ws.pane(*id)?;
+                    pane.listing.error()?;
+                    pane.location()?.path()
+                })
+                .collect()
+        };
+        for path in failed {
+            let Some((remote, Some(known))) = self.remote(&path) else {
+                continue;
+            };
+            let Some(look) = known.looked_at else {
+                continue;
+            };
+            {
+                let now = std::time::Instant::now();
+                let mut asked = ASKED.lock();
+                asked.retain(|(_, at)| now.duration_since(*at) < REASKED);
+                if asked.iter().any(|(point, _)| *point == remote.point) {
+                    continue;
+                }
+                asked.push((remote.point.clone(), now));
+            }
+            self.scheduler.spawn_in(
+                remote.lane(),
+                Priority::Normal,
+                "remote.failed",
+                self.lifetime().child(),
+                move || (look.0)(),
+            );
         }
     }
 }

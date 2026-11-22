@@ -1206,6 +1206,128 @@ fn a_server_kept_with_a_folder_opens_it_mounted_or_not() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A server that stops under its mount, which sshfs keeps (its
+/// `reconnect` failing at each call): the folder shown, read again, fails,
+/// and its remote is asked at once whether it answers, which says the
+/// connection lost and offers to connect again there; the server back,
+/// that offer shows the folder again (ADR-149, amended).
+#[test]
+fn a_server_that_stops_under_its_mount_offers_to_connect_again() {
+    let sshfs = Sshfs::default();
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("server-stops");
+    let Some(mut sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(served.join("a folder")).unwrap();
+    std::fs::write(served.join("a folder/it's there.txt"), "hi").unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let user = std::env::var("USER").expect("the user's name");
+    let address = Address::parse(&format!(
+        "sftp://{user}@127.0.0.1:{}{}",
+        sshd.port,
+        served.join("a folder").display()
+    ))
+    .unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &address.location()).unwrap();
+    until(&app, 60, "the server led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
+    let folder = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    let names = || -> Vec<String> {
+        let ws = app.workspace.read();
+        ws.pane(pane)
+            .unwrap()
+            .listing
+            .iter()
+            .map(|e| e.name_str().into_owned())
+            .collect()
+    };
+    assert_eq!(names(), ["it's there.txt"]);
+    let offer = || app.registry.reopens.find(|r| folder.starts_with(&r.at));
+    assert!(offer().is_none(), "nothing offered while it answers");
+
+    sshd.stop();
+    // F5 now and then, as sshfs answers a listing from its cache for 20 s.
+    let refreshed = std::cell::Cell::new(None::<Instant>);
+    let refresh = || {
+        if refreshed
+            .get()
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        refreshed.set(Some(Instant::now()));
+        app.dispatch(&Invocation::with_args(
+            "refresh",
+            &serde_json::json!({ "pane": pane }),
+        ))
+        .unwrap();
+    };
+    until(&app, 60, "its listing failed", || {
+        refresh();
+        app.workspace
+            .read()
+            .pane(pane)
+            .is_some_and(|p| p.listing.error().is_some())
+    });
+    until(&app, 30, "the connection said lost, with Connect", || {
+        offer().is_some()
+    });
+    let offered = offer().unwrap();
+    assert_eq!(offered.at, point, "offered for its mount");
+    assert!(
+        offered.title.english().contains("is lost"),
+        "{}",
+        offered.title.english()
+    );
+    assert_eq!(
+        app.pane_location(pane).unwrap().path().as_deref(),
+        Some(folder.as_path()),
+        "the pane stays where it was"
+    );
+
+    // The server back, its offer, as the banner's button runs it, shows
+    // the folder again in place.
+    sshd.start_again();
+    let below = folder.strip_prefix(&point).unwrap();
+    app.dispatch(
+        &offered
+            .command
+            .clone()
+            .with("pane", pane)
+            .with("below", skwir_core::os_path::PathArg::from(below)),
+    )
+    .unwrap();
+    until(&app, 60, "the folder shown again", || {
+        let shown = app.workspace.read().pane(pane).is_some_and(|p| {
+            p.listing.error().is_none()
+                && p.location().and_then(Location::path).as_deref() == Some(folder.as_path())
+        });
+        shown && names() == ["it's there.txt"]
+    });
+    assert!(offer().is_none(), "nothing offered once it answers");
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Copies made on a server are taken back by Undo and deleted for good
 /// together, by rsync in one run, as the pane and sshfs show at once: a
 /// network folder a program mounts keeps no trash, so Undo removes a copy

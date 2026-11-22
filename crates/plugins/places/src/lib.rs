@@ -618,6 +618,14 @@ pub fn scan() -> Vec<Place> {
 }
 
 impl Places {
+    /// Whether Skwir itself is unmounting the volume at `point` (Eject):
+    /// what another program says of it then is its own unmount's.
+    #[cfg_attr(windows, allow(dead_code))]
+    fn unmounting(&self, point: &Path) -> bool {
+        let location = Location::from_path(point);
+        self.0.lock().busy.iter().any(|b| b.location == location)
+    }
+
     /// The plugin's lifetime, for the jobs it starts; `None` once disabled.
     fn lifetime(&self) -> Option<CancelToken> {
         self.0.lock().lifetime.as_ref().map(CancelToken::child)
@@ -1190,7 +1198,7 @@ impl PlacesPlugin {
         #[cfg(not(windows))]
         if let Some(lifetime) = self.places.0.lock().lifetime.clone() {
             self.follow_mounts(app, &lifetime);
-            follow_unmounts(app, &lifetime);
+            follow_unmounts(&self.places, app, &lifetime);
         }
         // The bookmarks' folder holds other settings: only the file counts
         // (writers replace it, so its name is among the event's paths).
@@ -1276,19 +1284,27 @@ fn not_unmounted(name: Name, error: anyhow::Error) -> Words {
     )
 }
 
-/// Follow what other programs say they are about to unmount (GIO's
-/// volume monitor, KDE's Solid: `places::follow_unmounts`) and let go of
-/// it first, on a worker (`App::release`, ADR-149 amended): what shows it
-/// stays, reading it by its path. Skwir's own actions there hold it still
-/// and are named, with Cancel: the unmount would be refused as busy.
+/// Follow what other programs say of unmounting a volume
+/// (`places::follow_unmounts`: GIO's and Solid's notices, udisks's jobs)
+/// and let go of it first, on a worker (`App::release`, ADR-149 amended):
+/// what shows it stays, reading it by its path. Skwir's own actions there
+/// hold it still and are named, with Cancel. An unmount udisks refused,
+/// that no desktop announced (`udisksctl`, udiskie: Skwir let go of it
+/// only as it was refused), is said to be worth asking again, where a
+/// pane shows a folder there. Skwir's own unmount says what became of it
+/// itself.
 #[cfg(not(windows))]
-fn follow_unmounts(app: &App, lifetime: &CancelToken) {
-    let (weak, jobs) = (app.weak(), lifetime.clone());
-    skwir_platform::places::follow_unmounts(lifetime, move |points| {
+fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
+    use skwir_platform::places::UnmountNotice;
+    /// How long an announced unmount is the desktop's to retry and say.
+    const ANNOUNCED: Duration = Duration::from_secs(30);
+    let (weak, jobs, places) = (app.weak(), lifetime.clone(), places.clone());
+    let announced: Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>> = Arc::default();
+    skwir_platform::places::follow_unmounts(lifetime, move |notice| {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        let weak = app.weak();
+        let (weak, places, announced) = (app.weak(), places.clone(), Arc::clone(&announced));
         app.scheduler.spawn(
             Priority::Visible,
             "places-unmount-told",
@@ -1297,11 +1313,25 @@ fn follow_unmounts(app: &App, lifetime: &CancelToken) {
                 let Some(app) = weak.upgrade() else {
                     return;
                 };
+                let now = std::time::Instant::now();
+                announced
+                    .lock()
+                    .retain(|(_, at)| now.duration_since(*at) < ANNOUNCED);
+                let (points, refused) = match notice {
+                    UnmountNotice::Announced(points) => {
+                        announced
+                            .lock()
+                            .extend(points.iter().map(|point| (point.clone(), now)));
+                        (points, false)
+                    }
+                    UnmountNotice::Begun(points) => (points, false),
+                    UnmountNotice::Refused(points) => (points, true),
+                };
                 let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
                 for point in points {
-                    tracing::debug!(?point, "let go of before another program unmounts it");
-                    if let Err(error) = app.release(&point, &Location::from_path(&home)) {
-                        tracing::debug!(?point, "not let go of before its unmount: {error:#}");
+                    // Skwir's own Eject: it let go first, and says itself.
+                    if places.unmounting(&point) {
+                        continue;
                     }
                     let named: Vec<Words> = app
                         .executor
@@ -1315,6 +1345,24 @@ fn follow_unmounts(app: &App, lifetime: &CancelToken) {
                             )
                         })
                         .collect();
+                    if refused {
+                        let desktops = announced.lock().iter().any(|(at, _)| *at == point);
+                        if named.is_empty() && !desktops && shows_below(&app, &point) {
+                            app.notify(
+                                NotifyLevel::Warning,
+                                words!(
+                                    places_unmount_retry = "{ $volume } was not unmounted. Skwir is no longer using it: if nothing else is, unmount it again.",
+                                    volume = Name::of(&point),
+                                    note = "Another program (udisksctl, udiskie) unmounted a drive Skwir was showing, which was refused as something used it; Skwir let go of it as it was asked, but another program may use it still. volume: the drive's name."
+                                ),
+                            );
+                        }
+                        continue;
+                    }
+                    tracing::debug!(?point, "let go of before another program unmounts it");
+                    if let Err(error) = app.release(&point, &Location::from_path(&home)) {
+                        tracing::debug!(?point, "not let go of before its unmount: {error:#}");
+                    }
                     if named.is_empty() {
                         continue;
                     }
@@ -1345,6 +1393,16 @@ fn follow_unmounts(app: &App, lifetime: &CancelToken) {
             },
         );
     });
+}
+
+/// Whether a pane shows a folder at or below `point`.
+#[cfg(not(windows))]
+fn shows_below(app: &App, point: &Path) -> bool {
+    app.workspace.read().panes().iter().any(|pane| {
+        pane.location()
+            .and_then(Location::path)
+            .is_some_and(|path| path.starts_with(point))
+    })
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]

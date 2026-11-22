@@ -244,6 +244,9 @@ places_unmount_held = 正在卸载{ $volume }，但其上仍有操作正在进�
 places_unmount_held_cancel = 取消
 
 # draft
+places_unmount_retry = 未能卸载{ $volume }。Skwir 已不再使用它：如果没有其他程序在使用，请再次卸载。
+
+# draft
 places_unmount_unwritten = 未能卸载{ $name }：并非所有内容都已写入其中（{ $error }）
 
 # draft

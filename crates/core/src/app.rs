@@ -2272,6 +2272,8 @@ impl App {
         self.take_state_answers(&mut report);
         self.read_wanted_states();
         self.pace_states();
+        // A remote's folder that failed: is its server there still?
+        self.ask_failed_remotes(&report.panes_changed);
         // A folder is filled on a worker, an order asked anew made there,
         // and each taken by the pump its wake brings (ADR-120, ADR-121).
         // Never cancelled: a job for a folder left stops or is dropped, and
@@ -3894,6 +3896,8 @@ impl App {
             }
         }
         self.announce_letting_go(path);
+        // What was asked unasked there (thumbnails) stops reading it.
+        self.thumbnails.cancel_under(path);
         self.wake();
         Ok(())
     }

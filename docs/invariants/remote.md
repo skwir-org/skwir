@@ -130,6 +130,15 @@ ADR-077 (which revises ADR-021).
   change (`App::volumes_changed`): one published no more while the
   plugin is on is let go of. A remote's folder is held by nothing
   between reads (ADR-149, amended).
+- **A server that stops under its mount** (sshfs keeps it, its
+  `reconnect` failing at each call) is said lost as soon as a folder of
+  it shown fails: the plugin is asked at once whether the mount answers
+  (`App::ask_failed_remotes`, once in `REASKED` a mount, in its lane),
+  as when the window comes back. The mount's root is listed, never
+  stat-ed (the kernel may answer a stat from what it keeps), and an
+  input/output error counts as `ENOTCONN` does (`cut_off`): Connect
+  mounts it again. A pane still showing what it read says so above it,
+  with Connect, as one that shows nothing does.
 - **Listings** are read again when the window comes back
   (`App::refresh_remote`, at most once in `REFRESHED_WITHIN`) and on F5:
   a server does not say what changed on it. What this machine changes

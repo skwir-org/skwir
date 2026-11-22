@@ -12,7 +12,12 @@ a folder on a volume the user may let go of is held by nothing between
 reads; what other programs announce they unmount is let go of first,
 Skwir's own work there named with Cancel; Eject names that work rather
 than blaming another program; a server typed in the address field
-offers Connect too; a GVfs folder let go of is told.
+offers Connect too; a GVfs folder let go of is told. Amended again that
+night, on the user's go (decisions 13 to 16): a server that stops under
+its mount is said lost as a folder of it fails, with Connect where its
+files still show; nothing is read unasked on a volume let go of; what
+udisks unmounts unannounced is let go of as it begins; Windows' removable
+drives hold nothing between reads.
 
 ## Context
 
@@ -131,7 +136,8 @@ offers Connect too; a GVfs folder let go of is told.
    own actions there (a copy) are never cut unasked: they hold the
    volume, and a toast names them with Cancel (`cancel_in`); the other
    program says the volume is busy (GNOME's dialog retries every 2 s).
-   What unmounts without announcing it is not told; Linux only.
+   What unmounts without announcing it is not told, save udisks's own
+   (decision 15); Linux only.
 10. **Eject names Skwir's own work there** (amended): a drive's Eject is
     refused while an action of Skwir's is under way on it, naming it
     (`Executor::refuse_under_way`, which Disconnect asks too), rather
@@ -144,6 +150,41 @@ offers Connect too; a GVfs folder let go of is told.
 12. **A bridge's folder let go of is told** (amended): the remote plugin
     tells the core as the GVfs folders it publishes change, and one it
     publishes no more while it is on is let go of as a mount is.
+13. **A server that stops under its mount is said lost as a folder of it
+    fails** (amended again): sshfs keeps its mount when its server dies,
+    its `reconnect` failing at each call with an input/output error, so
+    no mount goes and the pane went on showing the files it had read, F5
+    saying only "Input/output error". A folder shown on a remote that
+    fails now asks its plugin at once whether the mount answers
+    (`App::ask_failed_remotes`, as the window coming back does, once in
+    5 s a mount, in its lane); the mount's root is listed, never stat-ed
+    (a stat may be answered from what the kernel keeps), and an
+    input/output error is a connection lost as `ENOTCONN` is. Said lost,
+    it is offered (decision 4: "The connection to nas is lost", Connect,
+    which mounts it again): above the files a pane still shows too, in
+    its banner, with the same button.
+14. **Nothing is read unasked on a volume let go of** (amended again):
+    for `LETTING_GO` no thumbnail is asked there and those asked are
+    dropped or stopped (`Thumbnails::cancel_under`), and Usage stops
+    walking there, walking again once it ends where the volume stays.
+15. **What udisks unmounts unannounced is let go of as it begins**
+    (amended again): `udisksctl` and udiskie announce nothing on the
+    session bus, but udisks's own jobs are seen on the system bus by
+    anyone (`filesystem-unmount`, its block devices in `Objects`, then
+    `Completed`): Skwir lets go as it begins (`App::release`). udisks
+    has begun by then, so what held the volume may make that try
+    refused (busy); refused with no desktop's notice before it (GNOME's
+    dialog retries by itself) while a pane shows a folder there, a toast
+    says Skwir no longer uses it, to unmount it again if nothing else
+    does (Skwir cannot tell whose hold it was). What Skwir is
+    unmounting itself is its own Eject's to say.
+16. **Windows' removable drives hold nothing between reads** (amended
+    again): a drive Windows calls removable (`GetDriveTypeW`: a USB
+    stick, a card reader) is read by its path, as Linux's are (decision
+    8); a USB disk Windows calls fixed is held. macOS's `/Volumes` was
+    already. Neither system's notice of an unmount to come is followed
+    (DiskArbitration's approval, `DBT_DEVICEQUERYREMOVE` to a window):
+    compiled only, tried nowhere.
 
 ## Considered
 
@@ -163,6 +204,12 @@ offers Connect too; a GVfs folder let go of is told.
 - **Holding no folder open anywhere**: a folder on a fixed disk moved by
   another program elsewhere on it would no longer be followed, where no
   unmount is asked of it anyway.
+- **Asking a remote whether it answers on a timer** (amended again): a
+  read across the network every few seconds for each server, where a
+  folder that fails says it already, and the window coming back asks.
+- **Following udisks's jobs only where Skwir shows the volume**: the job
+  names its devices, which are mapped to mount points from memory; a
+  volume no pane shows is let go of at no cost (nothing is held there).
 
 ## Consequences
 
@@ -181,7 +228,15 @@ offers Connect too; a GVfs folder let go of is told.
   the one before (as `reach` takes it): a folder lost then is not opened
   again by itself.
 - What shows a file on a volume announced is let go of for 10 s: an
-  unmount refused (busy) leaves the preview closed that long.
+  unmount refused (busy) leaves the preview closed that long, its
+  thumbnails not made and Usage not walking that long.
+- `App::ask_failed_remotes`; the remote plugin's `cut_off`;
+  `Thumbnails::cancel_under`; `places::UnmountNotice` (`Announced`,
+  `Begun`, `Refused`), followed on the system bus too; `fs::volume::
+  is_removable` on Windows.
+- An unmount by `udisksctl` of a volume a preview's helper or a terminal
+  shell holds may be refused once: udisks had begun when Skwir was told.
+  The toast says to try again, which succeeds.
 - Two ways back that stayed where the pane stays (found by the remote
   folders' tests): a kept listing that failed is opened anew, never
   shown as it was (`Pane::take_kept`), and an address's location that

@@ -222,8 +222,8 @@ fn an_agent_counts_no_file_whose_path_is_unknown() {
 
 /// A folder shown through a link into a volume (`~/Music` on a drive) is
 /// let go of with the volume: the pane stays, reading it by its path, and
-/// nothing holds the volume once its folder is let go of (ADR-149,
-/// amended).
+/// nothing holds the volume once its folder is let go of, and no
+/// thumbnail is made there meanwhile (ADR-149, amended).
 #[cfg(unix)]
 #[test]
 fn a_folder_shown_through_a_link_is_let_go_of_with_its_volume() {
@@ -242,9 +242,14 @@ fn a_folder_shown_through_a_link_is_let_go_of_with_its_volume() {
         !skwir_core::fs::wait_let_go(&volume, Duration::ZERO),
         "held through the link"
     );
+    let picture = music.join("a picture.png");
+    assert!(app.shows_thumbnail(&picture, None), "made unasked here");
     app.release(&volume, &Location::from_path(&home)).unwrap();
     assert_eq!(app.pane_dir(pane).unwrap(), link, "it stays where it is");
     assert!(skwir_core::fs::wait_let_go(&volume, Duration::from_secs(5)));
+    // Nothing read there unasked while it is let go of; elsewhere still.
+    assert!(!app.shows_thumbnail(&picture, None));
+    assert!(app.shows_thumbnail(&home.join("a picture.png"), None));
 }
 
 #[test]

@@ -194,6 +194,29 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
     if let Some(error) = pane_state.listing.error()
         && !pane_state.listing.is_empty()
     {
+        // Its server gone, while its files show as they were: said so,
+        // with the way to connect again (ADR-149, amended).
+        let reopen = pane_state
+            .location()
+            .and_then(Location::path)
+            .and_then(|path| crate::placeholder::reopening(shell, pane, &path));
+        if let Some(reopen) = reopen {
+            return Some(Banner {
+                text: reopen.title.say(),
+                ways: reopen
+                    .busy
+                    .is_none()
+                    .then(|| Way {
+                        id: "reopen",
+                        icon: "refresh",
+                        label: reopen.label.clone(),
+                        title: reopen.label,
+                        command: reopen.command,
+                    })
+                    .into_iter()
+                    .collect(),
+            });
+        }
         return Some(Banner::said(&words!(
             loading_partly_failed = "Some of this location could not be read: { $error }",
             error = error.clone(),

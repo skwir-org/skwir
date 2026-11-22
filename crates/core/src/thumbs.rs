@@ -267,6 +267,9 @@ struct Flight {
     /// A provider that makes thumbnails takes it: else only a cache is
     /// looked in (`Thumbnails::only_in_cache`).
     made: bool,
+    /// The file it reads, for what lets go of a volume
+    /// (`Thumbnails::cancel_under`).
+    path: std::path::PathBuf,
 }
 
 impl Flight {
@@ -584,6 +587,16 @@ impl Thumbnails {
         }
     }
 
+    /// What is asked of files at or below `tree` is dropped before it runs,
+    /// or cancelled while it runs: their volume is about to be let go of
+    /// (`App::release`, ADR-149 amended). Asked again later, it is made.
+    pub fn cancel_under(&self, tree: &std::path::Path) {
+        let s = self.state.lock();
+        for flight in s.in_flight.values().filter(|f| f.path.starts_with(tree)) {
+            flight.cancel.cancel();
+        }
+    }
+
     /// `asker` draws no more (a window closed): it asks for nothing any
     /// more, what no one else asked for is cancelled, and its frames
     /// forgotten.
@@ -673,6 +686,7 @@ impl Thumbnails {
                 priority,
                 cancel: self.lifetime.child(),
                 made,
+                path: req.entry.path.clone(),
             },
         );
         s.seq += 1;
@@ -1223,6 +1237,38 @@ mod tests {
         ));
         assert!(t.state.lock().in_flight.is_empty(), "not queued again");
         assert_eq!(none.calls.load(Ordering::Relaxed), 1, "tried once");
+    }
+
+    /// A volume about to be let go of (ADR-149, amended): what is asked of
+    /// its files stops, running or queued; another volume's goes on.
+    #[test]
+    fn what_is_asked_on_a_volume_let_go_of_stops() {
+        let t = Thumbnails::new(Scheduler::new(1));
+        let (slow, held) = holding();
+        t.register("core", slow);
+        let elsewhere = ThumbRequest {
+            entry: EntryRef::new(FileId::new(2, 9), "/y/9"),
+            ..req(9)
+        };
+        for r in [req(1), req(2), elsewhere.clone()] {
+            assert!(matches!(t.get(r, Priority::Visible), ThumbState::Pending));
+        }
+        // One runs, the others wait behind it.
+        held.taken();
+        t.cancel_under(std::path::Path::new("/x"));
+        let cancelled = |r: &ThumbRequest| {
+            t.state
+                .lock()
+                .in_flight
+                .get(&r.key())
+                .map(|f| f.cancel.is_cancelled())
+        };
+        assert_eq!(cancelled(&req(1)), Some(true));
+        assert_eq!(cancelled(&req(2)), Some(true));
+        assert_eq!(cancelled(&elsewhere), Some(false), "another volume's");
+        for _ in 0..3 {
+            held.release();
+        }
     }
 
     /// A request goes stale by the frames of the window that asked it

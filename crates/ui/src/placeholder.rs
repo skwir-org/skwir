@@ -119,7 +119,7 @@ pub fn failure(
 /// What brings back the folder at `path` that `pane` cannot show: the
 /// volume or server nearest above it offering to open it again
 /// (`Registry::reopens`), its command given the pane and the folder below.
-fn reopening(shell: &Shell, pane: PaneId, path: &std::path::Path) -> Option<Reopening> {
+pub(crate) fn reopening(shell: &Shell, pane: PaneId, path: &std::path::Path) -> Option<Reopening> {
     let reopens = shell.app.registry.reopens.all();
     let (reopen, below) = reopens
         .iter()

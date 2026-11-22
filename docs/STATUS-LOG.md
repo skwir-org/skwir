@@ -22516,3 +22516,61 @@ go of told.
 - **Not done**: a server dying under sshfs (above); unasked reads
   (thumbnails, sizes) not held back while a volume is let go of;
   Windows and macOS compiled only; `just release-check` not run.
+
+## 2026-11-22: ADR-149 amended again (a server that stops, unasked reads, udisks's jobs, Windows)
+
+- **A server that stops under sshfs** (decision 13): sshfs keeps its
+  mount, `reconnect` failing at each call with an input/output error, so
+  the pane showed its files as they were. A folder shown on a remote
+  that fails now asks its plugin at once whether the mount answers
+  (`App::ask_failed_remotes`, once in 5 s a mount, in its lane). For
+  sshfs the remote plugin asks how full the server is
+  (`statvfs@openssh.com`, which sshfs never answers from its cache),
+  then lists the root; an input/output error counts as lost there
+  alone, as elsewhere it may say a server refused one thing (a GVfs or
+  KIO bridge would have been unmounted whole). A pane still showing what
+  it read says "The connection to … is lost" in its banner, with
+  Connect; a connect that finds the mount answering again (sshfs
+  reconnected) clears it and asks its room again. The first build listed
+  the root, which sshfs answered from its cache for 20 s.
+- **Unasked reads** (decision 14): while a volume is let go of, no
+  thumbnail is asked there (`App::shows_thumbnail`) and those asked are
+  dropped or stopped (`Thumbnails::cancel_under`); Usage stops walking
+  there. What a sort reads on demand and the Git states (inotify
+  watches, a helper per call) hold nothing and are left as they are.
+- **udisks's own jobs** (decision 15): `udisksctl` and udiskie announce
+  nothing on the session bus, but udisks's `filesystem-unmount` jobs are
+  seen on the system bus (`InterfacesAdded` with `Operation` and
+  `Objects`, then `Completed(success, message)`, read with `gdbus
+  monitor` during a loop image's unmount, refused and not). Skwir lets go
+  as one begins; refused with no desktop's notice before it, while a
+  pane shows a folder there, a toast says Skwir no longer uses it, to
+  unmount it again if nothing else does (it cannot tell whose hold it
+  was). Skwir's own Eject is skipped.
+- **Windows** (decision 16): `fs::volume::is_removable` asks
+  `GetDriveTypeW`, so a drive Windows calls removable is read by path.
+  Compiled only.
+- **Checked**: rustfmt, clippy `-D warnings` on the seven crates
+  touched, for Windows and macOS too (but skwir-ui); `just words`
+  (`--check`); the tests of those crates and the binary's
+  `remote_folders` and `plugins_toggle`, green. New tests: a server
+  stopped under its sshfs mount (OpenSSH's sshd on 127.0.0.1): F5 fails,
+  the offer says the connection lost at the mount, the pane stays, the
+  server back its Connect shows the folder in place and the offer goes;
+  udisks's jobs decoded (begun with two devices, `dm_2d3` unescaped,
+  another operation ignored, completed refused and not); thumbnails
+  stopped below a volume let go of and not elsewhere; none made unasked
+  there meanwhile.
+- **In a window** (debug build, Xvfb, a private session bus): an SFTP
+  folder (sshd SFTP only, ssh's home a fixture through `nss_wrapper`)
+  showed its files; the server and its sessions killed, F5 for half a
+  minute showed "The connection to “skwirsftp” is lost" above the files
+  with Connect to “skwirsftp”, the sidebar's row dimmed; the server
+  started again, Connect showed the folder and the banner went. A FAT
+  image udisks mounted, its folder shown and the terminal's shell in it:
+  `udisksctl unmount` was refused (busy), Skwir was told by udisks's job
+  and let go (the shell went home), and the toast said “SKWIRJOB” was
+  not unmounted, Skwir no longer using it; the same unmount again
+  succeeded, the pane saying it is not mounted with Mount and Go Home.
+- **Not done**: Windows and macOS compiled only, neither following
+  another program's unmount; `just release-check` not run.

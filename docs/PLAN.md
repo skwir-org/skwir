@@ -1384,20 +1384,18 @@ may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
 **A folder comes back with its volume** (ADR-149, built and amended
-2026-11-22). Left: a folder deleted and made again at its path is not
-watched for; a mount let go of and made again within one settled change
-opens nothing again; what unmounts without announcing it (`udisksctl`,
-udiskie) finds a preview's helper, the player or the terminal's shell
-still holding a file there (a listing no longer); Windows (a drive's
-folder opened again as a window comes to the front) and macOS
-(`/Volumes` read by path) compiled only, and neither follows another
-program's unmount; a removable drive on Windows still held while shown;
-thumbnails and folder sizes read there unasked are not held back while
-a volume is let go of; a server that dies under sshfs (which keeps its
-mount, `reconnect`) is not told: the pane shows its files as they were,
-and F5 says an input/output error beside them with no Connect (the
-remote plugin's "connection lost" is asked only as the window comes
-back, and its offer shows only in place of an empty listing).
+twice 2026-11-22). Left: a folder deleted and made again at its path is
+not watched for; a mount let go of and made again within one settled
+change opens nothing again; an unmount by `udisksctl` or udiskie of a
+volume a preview's helper, the player or a terminal's shell holds may be
+refused once (udisks has begun as Skwir is told; a toast says to try
+again); Windows (a drive's folder opened again as a window comes to the
+front, removable drives read by path) and macOS (`/Volumes` read by
+path) compiled only, and neither follows another program's unmount
+(DiskArbitration's approval, `DBT_DEVICEQUERYREMOVE`); what a sort
+reads on demand (a picture's date, ADR-131) and the Git states, each a
+brief read, are not held back while a volume is let go of (thumbnails
+and Usage are).
 
 **Pictures at the pixels they cover** (ADR-146, built 2026-11-21 and
 22). The leftovers built 2026-11-22 (ADR-146 amended): a JPEG's region

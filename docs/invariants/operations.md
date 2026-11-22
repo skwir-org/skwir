@@ -719,9 +719,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   holds nothing and stays shown (ADR-149, amended), what cannot goes home
   or closes, and the windows let go of the files they show there. What
   another program announces it unmounts (GIO, Solid:
-  `places::follow_unmounts`) is let go of the same way; Skwir's actions
-  there are then named in a toast with Cancel (`cancel_in`), never cut
-  unasked. Then `places::flush` (`syncfs`)
+  `places::follow_unmounts`), or udisks begins to unmount unannounced
+  (its `filesystem-unmount` jobs on the system bus: `udisksctl`,
+  udiskie), is let go of the same way; Skwir's actions there are then
+  named in a toast with Cancel (`cancel_in`), never cut unasked. udisks
+  having begun, what held the volume may make that first try refused:
+  refused with no desktop's notice (which retries itself), a toast says
+  Skwir no longer uses it, to unmount it again if nothing else does. What Skwir unmounts itself
+  is its own Eject's to say. Then `places::flush` (`syncfs`)
   writes it out while still mounted: the kernel drops the mount from
   mountinfo as the unmount begins, before writing, so the row would look
   unmounted while the drive is written. The row stays busy under the

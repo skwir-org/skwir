@@ -371,6 +371,19 @@ impl Shell {
             .read()
             .pane(self.pane)
             .and_then(|p| p.location().and_then(skwir_core::Location::path));
+        // On a volume about to be let go of, nothing is walked there
+        // meanwhile (ADR-149, amended): walked again once that ends where
+        // the volume stays.
+        if dir.as_deref().is_some_and(|dir| self.app.letting_go(dir)) {
+            if self.ui().usage.root.is_some() {
+                let _ = self.app.dispatch(&Invocation::with_args(
+                    "usage.release",
+                    &serde_json::json!({"pane":self.pane}),
+                ));
+                self.ui_mut().usage = UsageState::default();
+            }
+            return;
+        }
         if self.ui().usage.root != dir
             || self
                 .ui()

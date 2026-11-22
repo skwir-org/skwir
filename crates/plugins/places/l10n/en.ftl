@@ -213,6 +213,9 @@ places_unmount_held = { $volume } is being unmounted, but { $count ->
 # The button of "… is being unmounted, but … is still under way on it": cancel what Skwir does on the drive.
 places_unmount_held_cancel = Cancel
 
+# Another program (udisksctl, udiskie) unmounted a drive Skwir was showing, which was refused as something used it; Skwir let go of it as it was asked, but another program may use it still. volume: the drive's name.
+places_unmount_retry = { $volume } was not unmounted. Skwir is no longer using it: if nothing else is, unmount it again.
+
 # The volume's label; the error: why the system could not write it.
 places_unmount_unwritten = { $name } was not unmounted: not everything could be written to it ({ $error })
 

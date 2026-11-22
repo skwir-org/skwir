@@ -1462,14 +1462,20 @@ asks the direction.
   owner does said in its button's place meanwhile. Mounted by anyone, the
   folder shows again by itself (`App::volumes_changed`): never ask the
   user to press F5 for it. Skwir's own Eject and Disconnect leave the
-  panes where they are (`App::release`), as another program's does.
+  panes where they are (`App::release`), as another program's does. A
+  pane still showing what it read before its server went, its reading
+  failing now, says so in its banner with the same button
+  (`loading::message`, "The connection to nas is lost", Connect).
 - **What shows a file on a volume about to be let go of lets go of it**
   (`App::letting_go`, for `LETTING_GO`: Skwir's Eject, another program's
   announced unmount): the preview reads nothing there and closes what
   read it (a document's helper), the player ends what it plays from
   there as at its end, a terminal shell there goes home (`Input::Leave`,
-  following or not). What the windows show again where the volume
-  stays (its unmount refused) once that ends.
+  following or not). Nothing is read there unasked meanwhile: no
+  thumbnail is asked (`App::shows_thumbnail`) and those asked are
+  cancelled (`Thumbnails::cancel_under`), Usage stops walking there. What
+  the windows show again where the volume stays (its unmount refused)
+  once that ends.
 - **A folder appears whole (ADR-120).** A pane goes to a folder at once
   (address, trail, an empty view, its files drawn meanwhile, below) and
   shows its entries together, sorted,

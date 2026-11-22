@@ -986,23 +986,29 @@ impl Remotes {
                 .as_ref()
                 .and_then(|top| top.below(address))
             {
-                // A mount whose program died answers nothing: mounted again.
+                // A mount whose program died, or whose connection was cut
+                // (sshfs keeps its mount), answers nothing: mounted again.
                 // A kio-fuse gone is let go of whole: the bus starts another,
                 // which mounts in a folder of its own.
-                match std::fs::symlink_metadata(&mounted.remote.point) {
-                    Err(error) if lost(&error) => {
-                        let point = if mounted.remote.fstype == kio::BRIDGE {
-                            reach::all()
-                                .iter()
-                                .find(|r| mounted.remote.point.starts_with(&r.point))
-                                .map_or_else(|| mounted.remote.point.clone(), |r| r.point.clone())
-                        } else {
-                            mounted.remote.point.clone()
-                        };
-                        let _ = mounter::force_unmount(&point);
-                        break;
-                    }
-                    _ => {}
+                if cut_off(&mounted.remote) {
+                    let point = if mounted.remote.fstype == kio::BRIDGE {
+                        reach::all()
+                            .iter()
+                            .find(|r| mounted.remote.point.starts_with(&r.point))
+                            .map_or_else(|| mounted.remote.point.clone(), |r| r.point.clone())
+                    } else {
+                        mounted.remote.point.clone()
+                    };
+                    let _ = mounter::force_unmount(&point);
+                    break;
+                }
+                // Said lost, it answers again (sshfs reconnected as its
+                // server came back): no longer offered, and how full it is
+                // asked again.
+                if self.state.lock().lost.remove(&mounted.remote.point) {
+                    self.publish(app);
+                    let point = mounted.remote.point.clone();
+                    self.ask_again(app, |at| at == point);
                 }
                 match &mounted.connector {
                     // A server kio-fuse holds, but maybe not this folder of
@@ -1469,6 +1475,7 @@ impl Remotes {
                 && m.connector.as_ref().is_some_and(|c| c.id() == "rclone")
                 && !self.state.lock().features.contains_key(&point);
             let lifetime_of_ask = lifetime.clone();
+            let remote = m.remote.clone();
             app.scheduler.spawn_in(
                 m.remote.lane(),
                 Priority::Background,
@@ -1476,7 +1483,7 @@ impl Remotes {
                 lifetime.clone(),
                 move || {
                     let _asking = asking;
-                    let gone = std::fs::symlink_metadata(&point).is_err_and(|e| lost(&e));
+                    let gone = cut_off(&remote);
                     // Answering: what copies cut short left there goes.
                     if !gone && let Some(app) = weak.upgrade() {
                         app.sweep_left_on(&point);
@@ -2109,6 +2116,34 @@ fn note_remembered(app: &App, noted: &passwords::Noted) {
 /// Whether `error` says a FUSE program is gone (`ENOTCONN`).
 fn lost(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotConnected
+}
+
+/// Whether the mount `remote` reaches no server: its program gone
+/// (`lost`), or, for sshfs, its connection cut and not made again. sshfs
+/// keeps its mount when its server dies, its `reconnect` failing at each
+/// call with an input/output error (ADR-149, amended): asked first what it
+/// never answers from its cache, how full the server is
+/// (`statvfs@openssh.com`), then its root listed, as a server without that
+/// extension is answered from memory. Elsewhere an input/output error says
+/// a server refused something, not that its connection went: a stat, as
+/// before (and on every system but Linux). Reads the mount: in its lane.
+fn cut_off(remote: &reach::Remote) -> bool {
+    let point = &remote.point;
+    #[cfg(target_os = "linux")]
+    if remote.fstype == sshfs::FSTYPE {
+        use rustix::io::Errno;
+        let cut = |error: Errno| matches!(error, Errno::IO | Errno::NOTCONN);
+        if rustix::fs::statvfs(point).is_err_and(cut) {
+            return true;
+        }
+        let listed = std::fs::read_dir(point).and_then(|mut entries| entries.next().transpose());
+        return listed.is_err_and(|error| {
+            error
+                .raw_os_error()
+                .is_some_and(|code| cut(Errno::from_raw_os_error(code)))
+        });
+    }
+    std::fs::symlink_metadata(point).is_err_and(|error| lost(&error))
 }
 
 /// `point` joined with `below`, the bytes of a server's path: name by

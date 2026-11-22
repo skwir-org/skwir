@@ -375,6 +375,13 @@ impl Iterator for Listing {
     }
 }
 
+/// Whether the drive at `root` (`E:\`) is one Windows calls removable.
+pub(crate) fn is_removable_drive(root: &Path) -> bool {
+    use windows_sys::Win32::System::WindowsProgramming::DRIVE_REMOVABLE;
+    // SAFETY: a NUL-ended root that outlives the call.
+    unsafe { fs::GetDriveTypeW(wide(root).as_ptr()) == DRIVE_REMOVABLE }
+}
+
 /// The bytes free to the caller on the volume `path` is on.
 pub(crate) fn free_space(path: &Path) -> Option<u64> {
     let mut free = 0u64;
