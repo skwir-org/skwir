@@ -21888,3 +21888,50 @@ in a window, then committed as one change.
   decoded for it waits (about 300 ms); no screen of two device pixels a
   pixel, nor 4K, tried; memory while browsing not measured (two kept
   pictures at their rooms' size, a region within 64 MiB).
+
+## 2026-11-22: Italian, drafted (#14), and core's tests outside nextest
+
+An outside contributor's pull request, reviewed, then squash-merged by
+the user (214a6cb8): every crate's `it.ftl` (6,990 messages, each
+`# draft`), `docs/glossary-it.md`, `it` in `tools/words/grammar`
+(masculine and feminine; the `definite`, `di+`, `in+` and `da+` forms),
+`it draft` in `tools/words/offered`. Automatic speaks it as a draft on an
+Italian system (ADR-139, 13).
+
+- **Checked before the merge.** The PR's CI (`ci-check`, on the PR merged
+  into its base): 994 skwir-core tests passed, the catalogs' test among
+  them. On its tree, `tools/words/extract.py --check` and `--release`
+  passed (`catalogs.rs` and `offered` as the catalogs give them); it
+  changed no script, build file or manifest, and `catalogs.rs` added
+  only the catalogs' entries and their share. A scan of every message:
+  none missing, every one a draft, no straight apostrophe, no `...`, no
+  quotes written around an argument; the six places given every form;
+  the `GENDER`/`FORM` sentences read right; about 70 messages read at
+  random, natural Italian after the glossary. No personal data. The
+  catalogs weigh about 600 KB in the binary (French's 640 KB).
+- **Changed after the merge**, by a model, still drafts: the search's
+  values offered as typed (`query_value_*`), left English; `sidebar_hid`,
+  which agreed in the masculine singular with the two plural places
+  (Recenti, i Dispositivi vicini) and now puts the place after an active
+  verb, with a rule for it in the glossary; `tools/package/linux/po/it.po`
+  (the desktop entry and the metainfo, nine messages, each fuzzy) and
+  `it` in `po/LINGUAS`; the glossary's "For the reviewer". Checked:
+  `just package-l10n` with `desktop-file-validate` and `appstreamcli`
+  borrowed from nixpkgs (the source and the merged files valid, each
+  language's PO merged), `tools/package/test_l10n.py`, `just words
+  --check` and `--release`, the words and locale tests of skwir-core
+  through nextest (52 passed). Not seen in a window running in Italian.
+- **The two tests the contributor saw fail** on main
+  (`moments_are_written_as_the_locale_writes_dates`,
+  `the_desktop_s_hours_outweigh_the_locale_s`) fail under `cargo test`,
+  not under an Italian locale: through nextest with `LANG`, `LC_ALL`,
+  `LC_TIME` and `LANGUAGE` Italian, all 45 `words::` tests passed. With
+  `cargo test words:: --test-threads=1`, exactly those two fail, an hour
+  off ("15:02" for "14:02", this machine's Europe/Paris as the
+  contributor's Europe/Rome): jiff keeps the system's zone for five
+  minutes, process-wide, so the `TZ=UTC` each test sets comes after an
+  earlier test read the machine's. With cargo's threads, 5 to 8 of them
+  fail at random, in a French locale as in an Italian one: core's tests
+  change process-wide languages, formats and hours and pass only in a
+  process each. CI runs on UTC. A fix is proposed in PLAN's "What is
+  left", for the user to say.

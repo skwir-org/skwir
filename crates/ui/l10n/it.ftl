@@ -8208,11 +8208,7 @@ sidebar_eject = Espelli { FORM($place, case: "definite") }
 sidebar_fold = Comprimi
 
 # draft
-sidebar_hid = { GENDER($place) ->
-        [masculine] { $place } nascosto dalla barra laterale
-        [feminine] { $place } nascosta dalla barra laterale
-       *[other] Posizione { $place } nascosta dalla barra laterale
-    }
+sidebar_hid = Hai nascosto { FORM($place, case: "definite") } dalla barra laterale
 
 # draft
 sidebar_hid_undo = Annulla

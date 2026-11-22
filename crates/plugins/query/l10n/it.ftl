@@ -1251,25 +1251,25 @@ query_unknown_flag = { $key } flag regex sconosciuto `{ $flag }` ({ $i }: maiusc
 query_unterminated_quote = virgolette non chiuse
 
 # draft
-query_value_dir = Dir
+query_value_dir = Cartella
 
 # draft
-query_value_false = False
+query_value_false = No
 
 # draft
 query_value_file = File
 
 # draft
-query_value_insensitive = Insensitive
+query_value_insensitive = Maiuscole non distinte
 
 # draft
-query_value_sensitive = Sensitive
+query_value_sensitive = Maiuscole distinte
 
 # draft
-query_value_symlink = Symlink
+query_value_symlink = Collegamento simbolico
 
 # draft
-query_value_true = True
+query_value_true = Sì
 
 # draft
 query_waits_contents = cosa contengono i file

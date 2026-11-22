@@ -1,4 +1,5 @@
 # The languages the desktop entry and the metainfo are translated to
 # (l10n.sh): one po/<language>.po each.
 fr
+it
 zh_CN

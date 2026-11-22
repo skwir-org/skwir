@@ -1599,7 +1599,9 @@ the store is refused).
 A to H [below](#words-in-every-language-adr-139)). Left: the user's
 review of the French drafts in the window, and of `fr.po`'s nine; a
 speaker's review of the Simplified Chinese drafts and `zh_CN.po`
-(`docs/glossary-zh-Hans.md`'s "For the reviewer"); Hosted Weblate, on
+(`docs/glossary-zh-Hans.md`'s "For the reviewer"), and of the Italian
+drafts and `it.po` (`docs/glossary-it.md`'s "For the reviewer"; #14,
+2026-11-22), which the next release's notes name; Hosted Weblate, on
 hold until its Libre plan can be asked (a project three months old with
 contributors), translations coming as pull requests meanwhile; a real
 right-to-left catalog and its review (only the pseudo-language `ar-XB`
@@ -1615,6 +1617,19 @@ catalogs after `just startup-order` (owed before the next tag), and an
 ICU4X data export keeping only the kinds of data Skwir uses if it ever
 weighs; Orca by ear, and Weblate's editing of attributes the English
 lacks, not tried. macOS and Windows: `docs/PORTING.md`'s ADR-139 lines.
+
+**Core's tests outside nextest** (found 2026-11-22, from #14): many of
+core's unit tests change what is process-wide (the languages, the
+formats, the hours, ISO dates, the `TZ` variable) and pass only in a
+process of their own, as nextest gives each. Under `cargo test`, 5 to 8
+fail at random; with one thread, two fail an hour off on a machine not
+on UTC (`moments_are_written_as_the_locale_writes_dates`,
+`the_desktop_s_hours_outweigh_the_locale_s`), as jiff keeps the system's
+zone five minutes and an earlier test read it before `TZ=UTC` was set.
+Proposed, the user to say: the zone held in core's `locale` as the date
+locale is (tests setting UTC there, no `set_var`), and core's
+process-wide setters refusing, in a test sharing its process, with a
+word to run nextest.
 
 **The title bar where the user wants it** (ADR-138, issue #11,
 2026-11-15): built on Linux and tried on headless Weston (which, as
@@ -4333,9 +4348,13 @@ agents' English, data or what leaves the window (`Words::say_plain`).
   reviewed once 90 % is: French is spoken as a draft until the user's
   review. Simplified Chinese drafted the same day for issue #13
   (`docs/glossary-zh-Hans.md`, every `zh-Hans.ftl`, `zh_CN.po`), for a
-  speaker of Chinese to review. Left: the user's review of the French
-  drafts in the window (and `fr.po`'s nine), a review of the Chinese,
-  Weblate.
+  speaker of Chinese to review. Italian came as a pull request on
+  2026-11-22 (#14, drafted with a model: `docs/glossary-it.md`, every
+  `it.ftl`, `it` in `tools/words/grammar` with its `di+`, `in+` and
+  `da+` forms), its `it.po` drafted the same day, for a speaker of
+  Italian to review. Left: the user's review of the French drafts in the
+  window (and `fr.po`'s nine), a review of the Chinese and of the
+  Italian, Weblate.
   - A glossary settled with the user first: Skwir's terms, and French
     typography (« », U+202F before `; : ! ?`).
   - Every crate's `fr.ftl`, drafted by a model crate by crate as each is

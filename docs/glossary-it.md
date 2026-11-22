@@ -64,6 +64,11 @@ line), which a sentence naming a place reads.
 - **`.gender`**, `masculine` or `feminine`, for what agrees with the
   place (« il Cestino è vuoto », « la Mensola è vuota »); a name is
   `other`: write the masculine agreement there.
+- **Two places are plural** (Recenti, i Dispositivi vicini), and the
+  grammar gives a place no number: where an adjective or a participle
+  would agree with a place, write the place after an active verb instead,
+  which agrees with nothing (« Hai nascosto i Dispositivi vicini dalla
+  barra laterale », `sidebar_hid`).
 - A place keeps its capital inside a sentence (« nel Cestino »). One
   that takes no article in prose (Recenti) is its own `.definite`.
 
@@ -163,3 +168,33 @@ line), which a sentence naming a place reads.
 | map | mappa | |
 | Ctrl, Shift, Alt, Super, Esc, Enter, Tab, Space, Backspace, Delete | Ctrl, Maiusc, Alt, Super, Esc, Invio, Tab, Spazio, Backspace, Canc | |
 | Page Up / Page Down, Home / End | PagSu / PagGiù, Inizio / Fine | |
+
+## For the reviewer
+
+The places to read first: what the drafts were least sure of, and what a
+model changed after them (2026-11-22).
+
+- **Destructive actions**, where a wrong word costs most: every
+  `deleting_*` and `prompt_delete` (ui), `trash_op_*` (core).
+- **A name agrees in the masculine**, whatever it names (a folder is
+  « cartella »): « { $name } è stato copiato… » (`op_original_stays`),
+  `query_place_moved`, `query_place_renamed`, `places_unmount_*`. Where a
+  noun comes before the name, it carries the agreement (« Segnalibro
+  { $name } spostato »): reword where the masculine reads wrong.
+- **Terms not settled above**: Peek, « Occhiata » (`commands_peek`); a
+  tag's pill in the sidebar (`tags_pill`); a contact sheet, « Foglio di
+  provini » (`print_contact_sheet`); Git's staging, « In stage »
+  (`vcs_staged`, `vcs_holds_staged`) but « in staging »
+  (`git_states_setting_description`): one of the two.
+- **Labels on links, for the keys** (a preview's, the terminal's) are
+  « etichetta », « etichettare » (`keymap_flag_labelling`,
+  `inspector_no_label`, `commands_terminal_links_description` and the
+  others of the family), the word of a tag too: keep it, or choose
+  another for these.
+- **Changed by a model after the drafts**, still drafts: the search's
+  values offered as typed (`query_value_*`: « Cartella », « Collegamento
+  simbolico », « Sì », « No », « Maiuscole distinte », « Maiuscole non
+  distinte »), left English at first; `sidebar_hid`, « Hai nascosto
+  … dalla barra laterale », an active verb where the toasts elsewhere say
+  a participle, for the plural places (above); `tools/package/linux/po/it.po`,
+  the desktop entry's and the metainfo's words, each fuzzy.
