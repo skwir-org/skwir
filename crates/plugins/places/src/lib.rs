@@ -114,6 +114,10 @@ struct Publisher {
     measuring: bool,
     /// A thread asks them again every `MEASURED_EVERY` (`Places::pace`).
     pacing: bool,
+    /// Where each volume was last seen mounted this run, by its key
+    /// (`volume_key`): what its place offers to mount again once it is
+    /// not (`Place::reopen`, ADR-149).
+    mounted_at: std::collections::HashMap<String, PathBuf>,
 }
 
 /// An unlocked container's volume, as `lsblk` lists it in its stead.
@@ -152,6 +156,64 @@ fn mark_busy(places: &mut [Place], busy: &[Busy], cleartext: &[Cleartext]) {
                     || b.device.as_ref() == Some(&place.location)
             })
             .map(|b| b.what.clone());
+    }
+}
+
+/// Note where each volume of `places` is mounted (`mounted_at`, by its
+/// key), and offer each one not mounted that was this run to be mounted
+/// again there (`Place::reopen`, ADR-149): a pane whose folder was on it
+/// offers its button, which mounts it and opens that folder again.
+fn offer_reopen(places: &mut [Place], mounted_at: &mut std::collections::HashMap<String, PathBuf>) {
+    for place in places.iter() {
+        if place.group != skwir_core::registry::groups::DEVICES.id || place.activate.is_some() {
+            continue;
+        }
+        if let (Some(key), Some(path)) = (&place.key, place.location.path()) {
+            mounted_at.insert(key.clone(), path);
+        }
+    }
+    for place in places {
+        let (Some(activate), Some(at)) = (
+            &place.activate,
+            place.key.as_ref().and_then(|key| mounted_at.get(key)),
+        ) else {
+            continue;
+        };
+        let name = || words::Named(place.title.clone());
+        let locked = activate.name.as_ref() != "places.mount";
+        let (title, label) = if locked {
+            (
+                words!(
+                    places_reopen_locked = "{ $name } is locked",
+                    name = name(),
+                    note = "Shown in place of a folder's files when the encrypted volume the folder is on was locked again. name: the volume's name, as the sidebar shows it."
+                ),
+                words!(
+                    places_reopen_unlock = "Unlock { $name }",
+                    name = name(),
+                    note = "The button under \"… is locked\" in place of a folder's files: unlock and mount the volume, and show the folder again."
+                ),
+            )
+        } else {
+            (
+                words!(
+                    places_reopen_not_mounted = "{ $name } is not mounted",
+                    name = name(),
+                    note = "Shown in place of a folder's files when the volume the folder is on is plugged in but not mounted. name: the volume's name, as the sidebar shows it."
+                ),
+                words!(
+                    places_reopen_mount = "Mount { $name }",
+                    name = name(),
+                    note = "The button under \"… is not mounted\" in place of a folder's files: mount the volume and show the folder again."
+                ),
+            )
+        };
+        place.reopen = Some(skwir_core::registry::Reopen {
+            at: at.clone(),
+            title,
+            label,
+            command: activate.clone(),
+        });
     }
 }
 
@@ -585,6 +647,7 @@ impl Places {
             publisher.cleartext = cleartext;
         }
         mark_busy(&mut places, &publisher.busy, &publisher.cleartext);
+        offer_reopen(&mut places, &mut publisher.mounted_at);
         publisher.shown.clone_from(&places);
         app.registry.places.replace_owner(ID, places);
         drop(guard);
@@ -882,6 +945,11 @@ struct MountArgs {
     /// Open the volume in a tab behind the one shown, not in the pane.
     #[serde(default)]
     tab: bool,
+    /// A folder inside the volume to open once it is mounted, by the
+    /// names leading to it: the one a pane could not show (ADR-149),
+    /// opened in place of that step.
+    #[serde(default)]
+    below: Option<PathArg>,
 }
 
 // No `Debug`: the passphrase must not reach a log through a formatter.
@@ -895,6 +963,10 @@ struct UnlockArgs {
     /// Open the volume in a tab behind the one shown, not in the pane.
     #[serde(default)]
     tab: bool,
+    /// A folder inside the volume to open once it is mounted, as
+    /// `places.mount` takes it.
+    #[serde(default)]
+    below: Option<PathArg>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -913,6 +985,10 @@ struct OpenLockedArgs {
     /// Open the volume in a tab behind the one shown, not in the pane.
     #[serde(default)]
     tab: bool,
+    /// A folder inside the volume to open once it is mounted, as
+    /// `places.mount` takes it.
+    #[serde(default)]
+    below: Option<PathArg>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -972,18 +1048,38 @@ fn unlocked_and_mounted(
     places::mount(&cleartext).map(Some)
 }
 
+/// Where a volume mounted is opened, as its command asked.
+struct Opened {
+    pane: Option<skwir_core::workspace::PaneId>,
+    /// In a tab behind the one shown, not in the pane.
+    tab: bool,
+    /// A folder inside it, by the names leading to it, opened in place of
+    /// the step that could not show it (ADR-149); its top when `None`.
+    below: Option<PathBuf>,
+}
+
+impl Opened {
+    fn new(
+        pane: Option<skwir_core::workspace::PaneId>,
+        tab: bool,
+        below: Option<PathArg>,
+    ) -> anyhow::Result<Self> {
+        let below = below.map(PathArg::into_inner);
+        if let Some(below) = &below {
+            skwir_core::registry::Reopen::below(below)?;
+        }
+        Ok(Opened { pane, tab, below })
+    }
+}
+
 /// Unlock as `unlock` says, mount, republish the places and open the
 /// volume in the pane that asked, or with `tab` in a tab behind the one
-/// shown. Everything blocks, so it runs on a worker; the pane is resolved
-/// now, not when the work ends.
-fn attach(
-    places: &Places,
-    app: &App,
-    device: String,
-    unlock: Unlock,
-    pane: Option<skwir_core::workspace::PaneId>,
-    tab: bool,
-) {
+/// shown; with `below`, the folder there inside it, in place of the step
+/// the pane could not show, read again where the pane shows it already.
+/// Everything blocks, so it runs on a worker; the pane is resolved now,
+/// not when the work ends.
+fn attach(places: &Places, app: &App, device: String, unlock: Unlock, opened: Opened) {
+    let Opened { pane, tab, below } = opened;
     let pane = app.pane_or_active(pane);
     let this = places.clone();
     // The place `volume_place` published for it.
@@ -1017,14 +1113,24 @@ fn attach(
             Ok(None) => {}
             Ok(Some(path)) => {
                 let name = Name::of(&path);
-                let location = Location::from_path(&path);
+                let location = Location::from_path(match &below {
+                    Some(below) => path.join(below),
+                    None => path.clone(),
+                });
                 // Whether in a tab: a window of one tab (a dialog's,
                 // ADR-144, 2) shows it in place.
                 let opened = if tab {
                     app.new_tab(Some(pane), Some(location), false)
                         .map(|(_, opened)| opened != pane)
-                } else {
+                } else if below.is_none() {
                     app.navigate(pane, &location).map(|()| false)
+                } else if app.shows(pane, &location) {
+                    // Shown already, as it could not be: read again now,
+                    // whether or not the mount was told yet.
+                    app.refresh_showing(&location.path().into_iter().collect::<Vec<_>>());
+                    Ok(false)
+                } else {
+                    app.navigate_in_place(pane, &location).map(|()| false)
                 };
                 match opened {
                     Ok(true) => app.notify(
@@ -1875,7 +1981,8 @@ impl Plugin for PlacesPlugin {
             words!(places_mount = "Mount volume"),
             words!(places_mount_description = "Mount a present volume through udisks and open it"),
             move |args, app| {
-                attach(&places, app, args.device, Unlock::Not, args.pane, args.tab);
+                let opened = Opened::new(args.pane, args.tab, args.below)?;
+                attach(&places, app, args.device, Unlock::Not, opened);
                 Ok(Outcome::Done)
             },
         );
@@ -1888,13 +1995,13 @@ impl Plugin for PlacesPlugin {
                 places_unlock_description = "Unlock an encrypted volume with the passphrase given, mount it and open it. The passphrase is a secret: it is handed to the system on standard input, never logged, and never kept"
             ),
             move |args, app| {
+                let opened = Opened::new(args.pane, args.tab, args.below)?;
                 attach(
                     &places,
                     app,
                     args.device,
                     Unlock::With(args.passphrase),
-                    args.pane,
-                    args.tab,
+                    opened,
                 );
                 Ok(Outcome::Done)
             },
@@ -1916,7 +2023,8 @@ impl Plugin for PlacesPlugin {
                         uuid: args.uuid,
                         keyring: Arc::clone(&keyring),
                     };
-                    attach(&places, app, args.device, unlock, args.pane, args.tab);
+                    let opened = Opened::new(args.pane, args.tab, args.below)?;
+                    attach(&places, app, args.device, unlock, opened);
                     Ok(Outcome::Done)
                 },
             )
@@ -2787,6 +2895,68 @@ mod tests {
         );
         offer_forget(&mut places, &[]);
         assert_eq!(forgets(&places), [0, 0, 0]);
+    }
+
+    /// A volume not mounted that was this run offers to be mounted again
+    /// where it was (ADR-149), unlocked first when it is locked; one never
+    /// seen mounted offers nothing, and a folder asked below it stays
+    /// inside it.
+    #[test]
+    fn a_volume_seen_mounted_offers_to_be_mounted_again_there() {
+        let devices = skwir_core::registry::groups::DEVICES.id;
+        let mounted = |key: &str, at: &str| Place {
+            key: Some(key.to_owned()),
+            ..Place::new(
+                devices,
+                Words::as_written("USB"),
+                "",
+                Location::from_path(Path::new(at)),
+            )
+        };
+        let unmounted = |key: &str, command: &str| Place {
+            key: Some(key.to_owned()),
+            activate: Some(Invocation::new(command).with("device", "/dev/sdz1")),
+            ..Place::new(
+                devices,
+                Words::as_written("USB"),
+                "",
+                device_location("/dev/sdz1"),
+            )
+        };
+        let mut at = std::collections::HashMap::new();
+        let mut places = vec![mounted("volume:1111", "/run/media/me/it's USB")];
+        offer_reopen(&mut places, &mut at);
+        assert!(places[0].reopen.is_none(), "mounted: nothing to offer");
+        let mut places = vec![
+            unmounted("volume:1111", "places.mount"),
+            unmounted("volume:2222", "places.mount"),
+        ];
+        offer_reopen(&mut places, &mut at);
+        let reopen = places[0].reopen.as_ref().expect("offered");
+        assert_eq!(reopen.at, Path::new("/run/media/me/it's USB"));
+        assert_eq!(&*reopen.command.name, "places.mount");
+        assert_eq!(reopen.command.args["device"], "/dev/sdz1");
+        assert!(
+            reopen.label.english().starts_with("Mount "),
+            "{}",
+            reopen.label.english()
+        );
+        assert!(reopen.title.english().ends_with(" is not mounted"));
+        assert!(places[1].reopen.is_none(), "never seen mounted");
+        let mut locked = vec![unmounted("volume:1111", "places.open_locked")];
+        offer_reopen(&mut locked, &mut at);
+        let reopen = locked[0].reopen.as_ref().expect("offered");
+        assert!(reopen.label.english().starts_with("Unlock "));
+        // What it opens is inside it.
+        for out in ["../elsewhere", "/etc", "a/../../b"] {
+            assert!(
+                Opened::new(None, false, Some(PathArg::from(Path::new(out)))).is_err(),
+                "{out}"
+            );
+        }
+        let inside =
+            Opened::new(None, false, Some(PathArg::from(Path::new("photos/été")))).unwrap();
+        assert_eq!(inside.below.as_deref(), Some(Path::new("photos/été")));
     }
 
     /// Asked from anywhere but the window (a script, an agent), Forget

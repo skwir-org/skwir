@@ -5342,6 +5342,9 @@ placeholder_hidden_show = 显示隐藏文件即可看到它们。
 placeholder_hidden_show_keys = 显示隐藏文件即可看到它们（{ $keys }）。
 
 # draft
+placeholder_left = 此文件夹已不可用
+
+# draft
 placeholder_lens_empty = 此处没有符合{ $filter }的内容。前往其他文件夹和搜索时，筛选条件会一直保留，直到您在地址栏中将其移除。
 
 # draft
@@ -5373,6 +5376,9 @@ placeholder_reading_detail = 符合{ $filter }的文件会在读取后显示。
 
 # draft
 placeholder_reading_files = 正在读取 { $count } 个文件的详细信息…
+
+# draft
+placeholder_reopen_detail = 此文件夹就在其中，它恢复后会重新显示在这里。
 
 # draft
 placeholder_retry = 重试

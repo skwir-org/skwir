@@ -1452,6 +1452,15 @@ asks the direction.
   holding that server offers Eject (its invocation, asked of the place:
   the banner names no plugin). Leaving a location stops what opens or
   lists it; the server stays connected.
+- **A folder comes back with its volume (ADR-149).** A pane's folder
+  below a mount let go of says its drive or server went
+  (`Failure::Left`, Go Back); one deleted, that it no longer exists (Go
+  to the parent folder). Where a place not open now was at or above it
+  this run (`Place::reopen`), the pane says what that place says ("USB is
+  not mounted") and offers its button (Mount, Unlock, Connect), its
+  command given `pane` and `below`, what it does said in its place while
+  its owner works on it. Mounted by anyone, the folder shows again by
+  itself (`App::volumes_changed`): never ask the user to press F5 for it.
 - **A folder appears whole (ADR-120).** A pane goes to a folder at once
   (address, trail, an empty view, its files drawn meanwhile, below) and
   shows its entries together, sorted,

@@ -6,6 +6,7 @@
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, div, prelude::*, px};
+use skwir_core::command::Invocation;
 use skwir_core::location::{EmptyState, Failure, Unshown};
 use skwir_core::workspace::PaneId;
 
@@ -22,14 +23,63 @@ pub struct Placeholder {
     pub title: String,
     pub detail: String,
     /// Button label and the command it runs.
-    pub action: Option<(String, &'static str)>,
+    pub action: Option<(String, Invocation)>,
     pub problem: bool,
+}
+
+/// What brings back a folder a pane cannot show: the place it was on
+/// that is not open now (a volume not mounted, a server not connected),
+/// as it offers to open it again there (`Place::reopen`, ADR-149).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reopening {
+    pub title: Words,
+    pub label: Words,
+    /// What its button runs, the pane and the folder below given.
+    pub command: Invocation,
+    /// What its owner does to it now ("Mounting…"): said in place of the
+    /// button, which is not offered again meanwhile.
+    pub busy: Option<Words>,
 }
 
 /// A failure in the user's words, by its kind (`Listing::failure`). The
 /// system's message stays as the detail: it is what someone will search
-/// for.
-pub fn failure(kind: Failure, error: &Words) -> Placeholder {
+/// for. A folder on a place not open now says so, and offers to open it
+/// again (`reopen`); one whose volume was let go of while shown, with
+/// nothing to open it again, offers to leave it (`leave`: Back, else
+/// Home).
+pub fn failure(
+    kind: Failure,
+    error: &Words,
+    reopen: Option<Reopening>,
+    leave: Option<(Words, Invocation)>,
+) -> Placeholder {
+    let placeholder =
+        |title: Words, detail: String, action: Option<(Words, Invocation)>| Placeholder {
+            icon: "warning",
+            title: title.say(),
+            detail,
+            action: action.map(|(label, command)| (label.say(), command)),
+            problem: true,
+        };
+    if kind != Failure::Denied
+        && let Some(reopen) = reopen
+    {
+        let detail = match (&reopen.busy, kind) {
+            (Some(busy), _) => busy.say(),
+            // Why it could not be opened, the system's words.
+            (None, Failure::Other) => error.say(),
+            (None, _) => words!(
+                placeholder_reopen_detail = "This folder is on it, and shows here again once it is back.",
+                note = "Under \"… is not mounted\" or \"… is not connected\" in place of a folder's files: the folder shows again by itself once its drive or server is back, whoever mounts it."
+            )
+            .say(),
+        };
+        let action = reopen
+            .busy
+            .is_none()
+            .then_some((reopen.label, reopen.command));
+        return placeholder(reopen.title, detail, action);
+    }
     let (title, action) = match kind {
         Failure::Denied => (
             words!(placeholder_denied = "You don't have permission to open this folder"),
@@ -37,21 +87,54 @@ pub fn failure(kind: Failure, error: &Words) -> Placeholder {
         ),
         Failure::Missing => (
             words!(placeholder_gone = "This folder no longer exists"),
-            Some((words!(placeholder_up = "Go to the parent folder"), "up")),
+            Some((
+                words!(placeholder_up = "Go to the parent folder"),
+                Invocation::new("up"),
+            )),
+        ),
+        Failure::Left => (
+            words!(
+                placeholder_left = "This folder is no longer available",
+                note = "Shown in place of a folder's files when the drive or server it is on was unmounted or disconnected while it was shown; the reason follows."
+            ),
+            leave,
         ),
         Failure::Other => (
             words!(placeholder_failed = "This location could not be opened"),
-            Some((words!(placeholder_retry = "Try again"), "refresh")),
+            Some((
+                words!(placeholder_retry = "Try again"),
+                Invocation::new("refresh"),
+            )),
         ),
     };
-    let action = action.map(|(label, command): (Words, _)| (label.say(), command));
-    Placeholder {
-        icon: "warning",
-        title: title.say(),
-        detail: error.say(),
-        action,
-        problem: true,
-    }
+    placeholder(title, error.say(), action)
+}
+
+/// What brings back the folder at `path` that `pane` cannot show: the
+/// place nearest above it that offers to open it again (`Place::reopen`),
+/// its command given the pane and the folder below. From the places as
+/// the sidebar arranges them, read once each time they change.
+fn reopening(shell: &Shell, pane: PaneId, path: &std::path::Path) -> Option<Reopening> {
+    let places = shell.arranged_places();
+    let (place, reopen, below) = places
+        .iter()
+        .map(|arranged| &arranged.place)
+        .filter_map(|place| {
+            let reopen = place.reopen.as_ref()?;
+            let below = path.strip_prefix(&reopen.at).ok()?;
+            Some((place, reopen, below))
+        })
+        .max_by_key(|(_, reopen, _)| reopen.at.as_os_str().len())?;
+    Some(Reopening {
+        title: reopen.title.clone(),
+        label: reopen.label.clone(),
+        command: reopen
+            .command
+            .clone()
+            .with("pane", pane)
+            .with("below", skwir_core::os_path::PathArg::from(below)),
+        busy: place.busy.clone(),
+    })
 }
 
 /// The way back from a filter that leaves nothing.
@@ -110,7 +193,7 @@ pub fn program_filtered(filter: &str, all: Option<&str>) -> Placeholder {
         .say(),
         action: Some((
             words!(placeholder_show_all_files = "Show all files").say(),
-            "ui.chooser_filter",
+            Invocation::new("ui.chooser_filter"),
         )),
         problem: false,
     }
@@ -132,7 +215,7 @@ pub fn only_hidden(show_keys: Option<&str>) -> Placeholder {
         .say(),
         action: Some((
             words!(placeholder_show_hidden = "Show hidden files").say(),
-            "toggle_hidden",
+            Invocation::new("toggle_hidden"),
         )),
         problem: false,
     }
@@ -152,7 +235,7 @@ pub fn only_companions() -> Placeholder {
         .say(),
         action: Some((
             words!(placeholder_show_companions = "Show hidden and companion files").say(),
-            "show_companions",
+            Invocation::new("show_companions"),
         )),
         problem: false,
     }
@@ -193,7 +276,12 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
         return None;
     }
     if let (Some(kind), Some(error)) = (state.listing.failure(), state.listing.error()) {
-        return Some(failure(kind, error));
+        let reopen = state
+            .location()
+            .and_then(skwir_core::location::Location::path)
+            .and_then(|path| reopening(shell, pane, &path));
+        let leave = crate::loading::leaving(state.history_pos > 0);
+        return Some(failure(kind, error, reopen, leave));
     }
     if !state.listing.is_complete() {
         return None;
@@ -232,7 +320,7 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
                     note = "filter: what was typed in the address to filter the folder."
                 )
                 .say(),
-                action: Some((show_everything(), "filter")),
+                action: Some((show_everything(), Invocation::new("filter"))),
                 problem: false,
             });
         }
@@ -247,7 +335,7 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
                     filter = skwir_core::words::Name(filter.to_string())
                 )
                 .say(),
-                action: Some((show_everything(), "filter")),
+                action: Some((show_everything(), Invocation::new("filter"))),
                 problem: false,
             });
         }
@@ -271,7 +359,7 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
             icon: "search",
             title: words!(placeholder_filtered = "Hidden by filters").say(),
             detail: detail.say(),
-            action: Some((show_everything(), "filter")),
+            action: Some((show_everything(), Invocation::new("filter"))),
             problem: false,
         });
     }
@@ -371,7 +459,7 @@ pub fn render(
             )
             .mt_2()
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.run(command, serde_json::json!({}), window, cx);
+                this.run(&command.name, command.args.clone(), window, cx);
             })),
         );
     }
@@ -387,8 +475,15 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    use super::{EmptyState, empty_folder, empty_place, failure, program_filtered};
+    use super::{EmptyState, Reopening, empty_folder, empty_place, failure, program_filtered};
+    use skwir_core::command::Invocation;
+    use skwir_core::location::Failure;
     use skwir_core::words::Words;
+
+    /// A placeholder's button as its words and its command's name.
+    fn button(action: Option<&(String, Invocation)>) -> Option<(&str, &str)> {
+        action.map(|(label, command)| (label.as_str(), &*command.name))
+    }
 
     #[test]
     fn failures_read_as_sentences_and_keep_the_system_message() {
@@ -396,7 +491,10 @@ mod tests {
         // the system's.
         let of = |error: std::io::Error| {
             let error = skwir_core::ListingError::of_io(&error);
-            (failure(error.kind, &error.message), error.message)
+            (
+                failure(error.kind, &error.message, None, None),
+                error.message,
+            )
         };
         let (denied, said) = of(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         assert_eq!(
@@ -408,8 +506,8 @@ mod tests {
         // A folder gone, as this system says it.
         let (gone, said) = of(std::fs::metadata("/nowhere/it’s gone").unwrap_err());
         assert_eq!(
-            gone.action,
-            Some(("Go to the parent folder".to_owned(), "up")),
+            button(gone.action.as_ref()),
+            Some(("Go to the parent folder", "up")),
             "{said}"
         );
         #[cfg(unix)]
@@ -417,8 +515,8 @@ mod tests {
             // Too many open files; no space left on the device.
             let (other, said) = of(std::io::Error::from_raw_os_error(code));
             assert_eq!(
-                other.action,
-                Some(("Try again".to_owned(), "refresh")),
+                button(other.action.as_ref()),
+                Some(("Try again", "refresh")),
                 "{said}"
             );
         }
@@ -432,8 +530,63 @@ mod tests {
         let words =
             skwir_core::ListingError::new(Words::as_written("Could not connect to the server"));
         assert_eq!(
-            failure(words.kind, &words.message).action,
-            Some(("Try again".to_owned(), "refresh"))
+            button(
+                failure(words.kind, &words.message, None, None)
+                    .action
+                    .as_ref()
+            ),
+            Some(("Try again", "refresh"))
+        );
+    }
+
+    #[test]
+    fn a_folder_whose_volume_went_says_so_and_how_it_comes_back() {
+        // Its drive let go of while shown, nothing to mount it again with:
+        // said, the way out Back.
+        let left = skwir_core::ListingError::left(Words::as_written("The drive went."));
+        let back = Some((Words::as_written("Go Back"), Invocation::new("back")));
+        let said = failure(left.kind, &left.message, None, back.clone());
+        assert_eq!(said.title, "This folder is no longer available");
+        assert_eq!(said.detail, "The drive went.");
+        assert_eq!(button(said.action.as_ref()), Some(("Go Back", "back")));
+        // Its place offers to mount it again: its words, its button, the
+        // command as given (the pane and the folder below added by `of`).
+        let mount = Invocation::new("places.mount").with("device", "/dev/sdz1");
+        let reopen = Reopening {
+            title: Words::as_written("USB is not mounted"),
+            label: Words::as_written("Mount USB"),
+            command: mount.clone(),
+            busy: None,
+        };
+        for kind in [Failure::Left, Failure::Missing] {
+            let said = failure(kind, &left.message, Some(reopen.clone()), back.clone());
+            assert_eq!(said.title, "USB is not mounted");
+            assert_eq!(
+                said.detail,
+                "This folder is on it, and shows here again once it is back."
+            );
+            assert_eq!(said.action, Some(("Mount USB".to_owned(), mount.clone())));
+        }
+        // A connection lost says the system's words, the button the same.
+        let lost = skwir_core::ListingError::new(Words::as_written("not connected"));
+        let said = failure(lost.kind, &lost.message, Some(reopen.clone()), None);
+        assert_eq!(said.detail, "not connected");
+        assert_eq!(
+            button(said.action.as_ref()),
+            Some(("Mount USB", "places.mount"))
+        );
+        // While it mounts, what is done, and no button to press again.
+        let busy = Reopening {
+            busy: Some(Words::as_written("Mounting…")),
+            ..reopen.clone()
+        };
+        let said = failure(Failure::Left, &left.message, Some(busy), back);
+        assert_eq!((said.detail.as_str(), said.action), ("Mounting…", None));
+        // A folder refused stays refused: no volume to mount says otherwise.
+        let denied = failure(Failure::Denied, &left.message, Some(reopen), None);
+        assert_eq!(
+            denied.title,
+            "You don't have permission to open this folder"
         );
     }
 
@@ -460,8 +613,8 @@ mod tests {
         assert!(filtered.title.contains("Pictures"));
         assert!(filtered.detail.contains("All files"));
         assert_eq!(
-            filtered.action,
-            Some(("Show all files".to_owned(), "ui.chooser_filter"))
+            button(filtered.action.as_ref()),
+            Some(("Show all files", "ui.chooser_filter"))
         );
         // The program's own choice of every file stands for All files in
         // the bar (49426d87): the detail names it as the bar lists it.

@@ -520,7 +520,7 @@ impl PaneView for MapView {
                             note = "The button of the Map view's placeholder: look for pictures and tracks in the folders inside too."
                         )
                         .say(),
-                        "geo.search_subfolders",
+                        skwir_core::command::Invocation::new("geo.search_subfolders"),
                     )
                 }),
                 problem: false,

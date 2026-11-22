@@ -5552,6 +5552,9 @@ placeholder_hidden_show = Mostra i file nascosti per vederli.
 placeholder_hidden_show_keys = Mostra i file nascosti per vederli ({ $keys }).
 
 # draft
+placeholder_left = Questa cartella non è più disponibile
+
+# draft
 placeholder_lens_empty = Qui nulla è { $filter }. I filtri restano quando passi ad altre cartelle e ricerche, finché non li togli nella barra degli indirizzi.
 
 # draft
@@ -5586,6 +5589,9 @@ placeholder_reading_files = Lettura dei dettagli di { $count ->
         [one] un file
        *[other] { $count } file
     }…
+
+# draft
+placeholder_reopen_detail = Questa cartella si trova lì, e tornerà a essere mostrata qui appena sarà di nuovo disponibile.
 
 # draft
 placeholder_retry = Riprova

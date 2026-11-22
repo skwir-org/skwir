@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crossbeam_channel::Receiver;
@@ -81,7 +81,20 @@ struct Shared {
     /// hydrated) is marked with too, and what a rescan, which says nothing
     /// of it, tells again unmarked.
     writing: Mutex<std::collections::HashSet<std::ffi::OsString>>,
+    /// Where its listing keeps it: let go of from there once lost
+    /// ([`Shared::lose`]), so a refresh opens the folder again from its
+    /// path rather than list a directory that is gone.
+    slot: std::sync::Weak<Mutex<Option<Arc<Shared>>>>,
+    /// Whether it was lost, and how: 0 not, [`LOST_MISSING`] or
+    /// [`LOST_LEFT`] (its volume let go of, which a deletion told after
+    /// does not say over).
+    lost: std::sync::atomic::AtomicU8,
 }
+
+/// A folder lost as deleted ([`Shared::lose`]).
+const LOST_MISSING: u8 = 1;
+/// A folder lost with its volume ([`Shared::lose`], ADR-149).
+const LOST_LEFT: u8 = 2;
 
 /// The names of the listed entries, both ways, so a watcher event finds its
 /// entry without walking the directory.
@@ -282,8 +295,86 @@ pub struct PathLocation {
     ctx: OpenContext,
     tx: EventSink,
     shared: Arc<Mutex<Option<Arc<Shared>>>>,
-    opening: Arc<AtomicBool>,
+    opening: Arc<Mutex<Opening>>,
     rx: Receiver<ListingEvent>,
+}
+
+/// What a folder's listing does about opening it: whether an open is
+/// under way, and whether it opens again once done, with what was listed
+/// before to take out (`OpenLocation::reopen` asked meanwhile).
+#[derive(Default)]
+struct Opening {
+    under_way: bool,
+    again: bool,
+    previous: Vec<EntryId>,
+}
+
+/// Open the folder at `dir`, hold it in `slot` and list it: on a worker,
+/// in `lane`. `Ok` when cancelled.
+fn open_and_list(
+    dir: &Path,
+    ctx: &OpenContext,
+    tx: &EventSink,
+    slot: &Arc<Mutex<Option<Arc<Shared>>>>,
+    held: &std::sync::OnceLock<PathBuf>,
+    lane: Lane,
+    previous: Option<Vec<EntryId>>,
+) -> anyhow::Result<()> {
+    // Opening/stat-ing a sleeping disk and installing a watch are I/O.
+    // Publish the handle first, then stream entries on this worker.
+    let folder = Dir::open(dir)?;
+    if ctx.cancel.is_cancelled() {
+        return Ok(());
+    }
+    let id = folder.identity()?;
+    if ctx.cancel.is_cancelled() {
+        return Ok(());
+    }
+    let lane = if lane.is_shared() {
+        super::reach::of_device(id.dev).map_or(lane, |remote| remote.lane())
+    } else {
+        lane
+    };
+    // Where it is held, by the folder's path the system
+    // knows: `~/Music` a link into a drive is held there.
+    let at = held.get_or_init(|| folder.path_now().unwrap_or_else(|| dir.to_path_buf()));
+    let shared = Arc::new(Shared {
+        _held: Held::new(dir, at),
+        dir: RwLock::new(dir.to_path_buf()),
+        folder,
+        id,
+        names: Mutex::new(Names::default()),
+        listed: std::sync::atomic::AtomicBool::new(false),
+        tx: tx.clone(),
+        ctx: ctx.clone(),
+        watcher: Mutex::new(None),
+        lane,
+        changes: Mutex::new((None, false)),
+        writing: Mutex::new(std::collections::HashSet::new()),
+        slot: Arc::downgrade(slot),
+        lost: std::sync::atomic::AtomicU8::new(0),
+    });
+    // Watched before it is listed, so nothing changed
+    // meanwhile is missed. The watcher holds the listing
+    // weakly: closing it lets go of both.
+    let weak = Arc::downgrade(&shared);
+    match watch::watch(dir, Duration::from_millis(50), &ctx.cancel, move |c| {
+        if let Some(s) = weak.upgrade() {
+            s.changed(c);
+        }
+    }) {
+        Ok(watcher) => *shared.watcher.lock() = Some(watcher),
+        Err(error) => tracing::warn!("watch unavailable: {error}"),
+    }
+    {
+        let mut slot = slot.lock();
+        if ctx.cancel.is_cancelled() {
+            return Ok(());
+        }
+        *slot = Some(Arc::clone(&shared));
+    }
+    shared.list(&ctx.cancel, previous);
+    Ok(())
 }
 
 impl PathLocation {
@@ -297,16 +388,29 @@ impl PathLocation {
             tx,
             rx,
             shared: Arc::new(Mutex::new(None)),
-            opening: Arc::new(AtomicBool::new(false)),
+            opening: Arc::default(),
         });
         this.start_open();
         this
     }
 
     fn start_open(&self) {
-        if self.ctx.cancel.is_cancelled() || self.opening.swap(true, Ordering::AcqRel) {
-            return;
+        {
+            let mut opening = self.opening.lock();
+            if self.ctx.cancel.is_cancelled() || opening.under_way {
+                return;
+            }
+            opening.under_way = true;
         }
+        self.spawn_open(None);
+    }
+
+    /// Open the folder from its path and list it on a worker, in its
+    /// lane; `previous`, the entries a listing of it held before
+    /// (`reopen`), are taken out once it is listed, those it lists no
+    /// more. Asked to open again meanwhile (`Opening::again`), it does
+    /// once done: its path may lead elsewhere since it was opened.
+    fn spawn_open(&self, previous: Option<Vec<EntryId>>) {
         let dir = self.dir.clone();
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
@@ -322,66 +426,33 @@ impl PathLocation {
             "fs.open",
             ctx.cancel.clone(),
             move || {
-                let result = (|| -> anyhow::Result<()> {
-                    // Opening/stat-ing a sleeping disk and installing a watch are I/O.
-                    // Publish the handle first, then stream entries on this worker.
-                    let folder = Dir::open(&dir)?;
-                    if ctx.cancel.is_cancelled() {
-                        return Ok(());
-                    }
-                    let id = folder.identity()?;
-                    if ctx.cancel.is_cancelled() {
-                        return Ok(());
-                    }
-                    let lane = if lane.is_shared() {
-                        super::reach::of_device(id.dev).map_or(lane, |remote| remote.lane())
-                    } else {
-                        lane
-                    };
-                    // Where it is held, by the folder's path the system
-                    // knows: `~/Music` a link into a drive is held there.
-                    let at = held.get_or_init(|| folder.path_now().unwrap_or_else(|| dir.clone()));
-                    let shared = Arc::new(Shared {
-                        _held: Held::new(&dir, at),
-                        dir: RwLock::new(dir.clone()),
-                        folder,
-                        id,
-                        names: Mutex::new(Names::default()),
-                        listed: std::sync::atomic::AtomicBool::new(false),
-                        tx: tx.clone(),
-                        ctx: ctx.clone(),
-                        watcher: Mutex::new(None),
-                        lane,
-                        changes: Mutex::new((None, false)),
-                        writing: Mutex::new(std::collections::HashSet::new()),
-                    });
-                    // Watched before it is listed, so nothing changed
-                    // meanwhile is missed. The watcher holds the listing
-                    // weakly: closing it lets go of both.
-                    let weak = Arc::downgrade(&shared);
-                    match watch::watch(&dir, Duration::from_millis(50), &ctx.cancel, move |c| {
-                        if let Some(s) = weak.upgrade() {
-                            s.changed(c);
-                        }
-                    }) {
-                        Ok(watcher) => *shared.watcher.lock() = Some(watcher),
-                        Err(error) => tracing::warn!("watch unavailable: {error}"),
-                    }
+                let mut previous = previous;
+                loop {
+                    let result =
+                        open_and_list(&dir, &ctx, &tx, &slot, &held, lane, previous.take());
+                    if !ctx.cancel.is_cancelled()
+                        && let Err(error) = result
                     {
-                        let mut slot = slot.lock();
-                        if ctx.cancel.is_cancelled() {
-                            return Ok(());
-                        }
-                        *slot = Some(Arc::clone(&shared));
+                        tx.send(ListingEvent::Error(crate::ListingError::of(error)));
                     }
-                    shared.list(&ctx.cancel, None);
-                    Ok(())
-                })();
-                opening.store(false, Ordering::Release);
-                if !ctx.cancel.is_cancelled()
-                    && let Err(error) = result
-                {
-                    tx.send(ListingEvent::Error(crate::ListingError::of(error)));
+                    let mut state = opening.lock();
+                    if state.again && !ctx.cancel.is_cancelled() {
+                        state.again = false;
+                        let mut ids = std::mem::take(&mut state.previous);
+                        drop(state);
+                        // What it opened was another's folder by then.
+                        let opened = slot.lock().take();
+                        if let Some(opened) = opened {
+                            if opened.lost.swap(LOST_MISSING, Ordering::AcqRel) == 0 {
+                                ids.extend(opened.names.lock().ids());
+                            }
+                            let_go(&ctx, opened);
+                        }
+                        previous = (!ids.is_empty()).then_some(ids);
+                        continue;
+                    }
+                    *state = Opening::default();
+                    return;
                 }
             },
         );
@@ -477,15 +548,17 @@ impl Shared {
     /// `Removed` for entries that disappeared; the entries that stayed are
     /// stat-ed again afterwards, since the listing keeps their old metadata.
     fn list(self: &Arc<Self>, cancel: &CancelToken, previous: Option<Vec<EntryId>>) {
-        if cancel.is_cancelled() {
+        if cancel.is_cancelled() || self.is_lost() {
             return;
         }
         let first = previous.is_none();
         let mut dir = match self.folder.read() {
             Ok(d) => d,
             Err(e) => {
-                self.tx
-                    .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                if !self.is_lost() {
+                    self.tx
+                        .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                }
                 return;
             }
         };
@@ -500,14 +573,18 @@ impl Shared {
             let Some(ent) = dir.next() else {
                 break;
             };
-            if cancel.is_cancelled() {
+            // Lost meanwhile (`Shared::lose`, `reopen`): what it would
+            // send is no listing's any more.
+            if cancel.is_cancelled() || self.is_lost() {
                 return;
             }
             let ent = match ent {
                 Ok(e) => e,
                 Err(e) => {
-                    self.tx
-                        .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                    if !self.is_lost() {
+                        self.tx
+                            .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                    }
                     return;
                 }
             };
@@ -536,7 +613,7 @@ impl Shared {
                 }
             }
         }
-        if cancel.is_cancelled() {
+        if cancel.is_cancelled() || self.is_lost() {
             return;
         }
         if !batch.is_empty() && !self.send_as_now(ListingEvent::Added(batch)) {
@@ -606,6 +683,9 @@ impl Shared {
     }
 
     fn hydrate(&self, ids: &[EntryId]) {
+        if self.is_lost() {
+            return;
+        }
         let mut stated = Vec::with_capacity(ids.len());
         let (mut gone, mut unread) = (Vec::new(), Vec::new());
         for &id in ids {
@@ -701,17 +781,51 @@ impl Shared {
         self.folder.is_unlinked()
     }
 
-    fn lose_self(&self) {
-        let ids = std::mem::take(&mut *self.names.lock()).ids();
-        if !ids.is_empty() {
-            self.send_as_now(ListingEvent::Removed(ids));
-        }
-        self.tx.send(ListingEvent::Error(crate::ListingError::new(
-            crate::words!(
-                fs_folder_gone = "This folder was deleted or is no longer available.",
-                note = "Shown in place of a folder's files: the folder shown went away (deleted, or its drive or server let go)."
-            ),
+    fn lose_self(self: &Arc<Self>) {
+        self.lose(crate::ListingError::missing(crate::words!(
+            fs_folder_gone = "This folder was deleted or is no longer available.",
+            note = "Shown in place of a folder's files: the folder shown went away (deleted, or its drive or server let go)."
         )));
+    }
+
+    /// Whether it was lost ([`Shared::lose`]): nothing of it is sent any
+    /// more.
+    fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire) != 0
+    }
+
+    /// The folder is gone, or its volume was let go of: its entries go,
+    /// its listing fails with `error`, and its listing lets go of it, its
+    /// directory and its watch closed in the shared lane, so a refresh
+    /// opens the folder again from its path. Its volume gone is said over
+    /// a deletion told before, never the other way.
+    fn lose(self: &Arc<Self>, error: crate::ListingError) {
+        let rank = if error.kind == crate::location::Failure::Left {
+            LOST_LEFT
+        } else {
+            LOST_MISSING
+        };
+        let before = self.lost.fetch_max(rank, Ordering::AcqRel);
+        if before >= rank {
+            return;
+        }
+        if before == 0 {
+            let taken = self.slot.upgrade().and_then(|slot| {
+                let mut slot = slot.lock();
+                slot.as_ref()
+                    .is_some_and(|held| Arc::ptr_eq(held, self))
+                    .then(|| slot.take())
+                    .flatten()
+            });
+            if let Some(taken) = taken {
+                let_go(&self.ctx, taken);
+            }
+            let ids = std::mem::take(&mut *self.names.lock()).ids();
+            if !ids.is_empty() {
+                self.send_as_now(ListingEvent::Removed(ids));
+            }
+        }
+        self.tx.send(ListingEvent::Error(error));
     }
 
     /// Changes the watcher told, on its thread: handed to a worker.
@@ -749,6 +863,9 @@ impl Shared {
     }
 
     fn apply_changes(self: &Arc<Self>, c: watch::Changes) {
+        if self.is_lost() {
+            return;
+        }
         if c.deleted || (c.moved && !self.follow_self()) || self.is_unlinked() {
             self.lose_self();
             return;
@@ -1016,21 +1133,66 @@ impl OpenLocation for PathLocation {
         self.start_listing(previous);
     }
 
+    fn volume_gone(&self, error: crate::ListingError) {
+        let shared = self.shared.lock().clone();
+        match shared {
+            Some(shared) => shared.lose(error),
+            // Lost already, or never opened: said so all the same, which
+            // says more than a deletion told before.
+            None => {
+                self.tx.send(ListingEvent::Error(error));
+            }
+        }
+    }
+
+    /// Its path leads to another folder now (a mount made there): what it
+    /// held is let go of and the folder opened again from its path, the
+    /// entries it listed taken out as the new ones are listed (no empty
+    /// frame between).
+    fn reopen(&self) {
+        let previous = self.shared.lock().take().and_then(|held| {
+            // Nothing more of it is sent: what it lists is another's now.
+            let before = held.lost.swap(LOST_MISSING, Ordering::AcqRel);
+            let ids = (before == 0).then(|| held.names.lock().ids());
+            let_go(&self.ctx, held);
+            ids
+        });
+        {
+            let mut opening = self.opening.lock();
+            if self.ctx.cancel.is_cancelled() {
+                return;
+            }
+            // The open under way may have found the folder before: it
+            // opens again once done.
+            if opening.under_way {
+                opening.again = true;
+                opening.previous.extend(previous.into_iter().flatten());
+                return;
+            }
+            opening.under_way = true;
+        }
+        self.spawn_open(previous);
+    }
+
     fn close(&self) {
         self.ctx.cancel.cancel();
         if let Some(shared) = self.shared.lock().take() {
-            // Native watcher and directory descriptor cleanup stays off the
-            // UI, and out of the remote's lane: a server that stopped
-            // answering holds its lane, and closing reads nothing of it.
-            self.ctx.scheduler.spawn_in(
-                Lane::SHARED,
-                Priority::Background,
-                "fs.close",
-                CancelToken::new(),
-                move || drop(shared),
-            );
+            let_go(&self.ctx, shared);
         }
     }
+}
+
+/// Let go of a folder held open: its watcher and its directory closed off
+/// the UI, and out of the remote's lane: a server that stopped answering
+/// holds its lane, and closing reads nothing of it.
+fn let_go(ctx: &OpenContext, shared: Arc<Shared>) {
+    ctx.scheduler.spawn_in(
+        Lane::SHARED,
+        Priority::Background,
+        "fs.close",
+        CancelToken::new(),
+        move || drop(shared),
+    );
 }
 
 impl Drop for PathLocation {

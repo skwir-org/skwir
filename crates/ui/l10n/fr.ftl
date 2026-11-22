@@ -5544,6 +5544,9 @@ placeholder_hidden_show = Affichez les fichiers cachés pour les voir.
 placeholder_hidden_show_keys = Affichez les fichiers cachés pour les voir ({ $keys }).
 
 # draft
+placeholder_left = Ce dossier n’est plus disponible
+
+# draft
 placeholder_lens_empty = Rien ici ne correspond à { $filter }. Les filtres restent appliqués quand vous allez dans d’autres dossiers et recherches, jusqu’à ce que vous les retiriez dans la barre d’adresse.
 
 # draft
@@ -5578,6 +5581,9 @@ placeholder_reading_files = Lecture des détails de { $count ->
         [one] { $count } fichier
        *[other] { $count } fichiers
     }…
+
+# draft
+placeholder_reopen_detail = Ce dossier s’y trouve, et s’affichera de nouveau ici dès son retour.
 
 # draft
 placeholder_retry = Réessayer

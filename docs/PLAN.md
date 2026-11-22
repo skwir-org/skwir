@@ -1266,6 +1266,21 @@ windows (ADR-145, after what GTK, KDE, COSMIC Files and Windows do); a
 skwir the bus starts reaches no display until it is asked. Checks in
 `docs/STATUS-LOG.md` (2026-11-21).
 
+## A folder comes back with its volume (ADR-149, 2026-11-22)
+
+Asked by the user: a pane showing a folder that is not there because its
+volume is not mounted shows it again once the volume is mounted, only
+where the folder is under it. The panes follow the mounts (the table,
+and a bridge's folders a plugin publishes): at or below a mount made, by
+whoever, what a pane holds open is opened again from its path; below
+one let go of, it lets go of its directory (a drive pulled out stayed
+held) and says its drive or server went. A place not open now that was
+at or above it this run names itself in place of the files with its
+button (Mount, Unlock, Connect), which opens that folder once it is
+back. A folder deleted while shown no longer lists as empty on Try
+again: the listing lets go of what went. Checks in `docs/STATUS-LOG.md`
+(2026-11-22).
+
 ## Pictures Skwir reads itself (ADR-148, 2026-11-22)
 
 The second follow-up of ADR-146, on the user's answers: JPEG XL decoded
@@ -1354,6 +1369,15 @@ Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**A folder comes back with its volume** (ADR-149, built 2026-11-22).
+Left: a bridge's folder let go of (GVfs's, which no table lists) is not
+told, its pane failing only as it is read again; a folder deleted and
+made again at its path is not watched for; a mount let go of and made
+again within one settled change opens nothing again; a server typed in
+the address field has no place to offer Connect once disconnected;
+Windows (a drive's folder opened again as a window comes to the front)
+compiled only.
 
 **Pictures at the pixels they cover** (ADR-146, built 2026-11-21 and
 22). The leftovers built 2026-11-22 (ADR-146 amended): a JPEG's region

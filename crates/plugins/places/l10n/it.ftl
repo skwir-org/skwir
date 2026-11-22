@@ -171,6 +171,18 @@ places_rename_empty_address = Nome (vuoto: l’ultima parte del suo indirizzo)
 places_rename_empty_folder = Nome (vuoto: quello della cartella)
 
 # draft
+places_reopen_locked = { $name } è bloccato
+
+# draft
+places_reopen_mount = Monta { $name }
+
+# draft
+places_reopen_not_mounted = { $name } non è montato
+
+# draft
+places_reopen_unlock = Sblocca { $name }
+
+# draft
 places_select_one_folder = seleziona una sola cartella
 
 # draft

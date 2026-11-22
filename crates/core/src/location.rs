@@ -509,6 +509,21 @@ pub trait OpenLocation: Send + Sync {
     /// Re-list from scratch (emits `Removed` for gone entries, `Added` for new).
     fn refresh(&self);
 
+    /// The volume or server holding what it lists was let go of
+    /// (`App::volumes_changed`, ADR-149): it lets go of what it holds
+    /// open there (a folder's descriptor, which would keep a filesystem
+    /// unmounted lazily alive) and fails with `error`; `refresh` or
+    /// `reopen` opens it again from its path. Nothing by default.
+    fn volume_gone(&self, _error: ListingError) {}
+
+    /// A volume or server was mounted at or above where it lists
+    /// (`App::volumes_changed`, ADR-149): its path leads elsewhere now
+    /// (the mount's own folder), so it is opened again from it, what it
+    /// held open let go of. `refresh` by default.
+    fn reopen(&self) {
+        self.refresh();
+    }
+
     /// Stop listing, stat, and watching.
     fn close(&self);
 }
@@ -2961,6 +2976,10 @@ pub enum Failure {
     Denied,
     /// What it lists is not there, or not a folder.
     Missing,
+    /// The volume or server holding it was let go of while it was shown
+    /// (unmounted, its drive removed, its connection ended): it shows
+    /// again once one is mounted there (ADR-149).
+    Left,
     /// Anything else, a retry worth trying.
     Other,
 }
@@ -2970,6 +2989,24 @@ impl ListingError {
     pub fn new(message: impl Into<Words>) -> Self {
         ListingError {
             kind: Failure::Other,
+            message: message.into(),
+        }
+    }
+
+    /// What it lists is not there (a folder deleted while shown), said in
+    /// its provider's words.
+    pub fn missing(message: impl Into<Words>) -> Self {
+        ListingError {
+            kind: Failure::Missing,
+            message: message.into(),
+        }
+    }
+
+    /// The volume or server holding it was let go of (ADR-149), said in
+    /// the words of what saw it go.
+    pub fn left(message: impl Into<Words>) -> Self {
+        ListingError {
+            kind: Failure::Left,
             message: message.into(),
         }
     }

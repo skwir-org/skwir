@@ -2311,6 +2311,9 @@ registry_open_folder_with = Apri cartella con
 registry_open_with = Apri con
 
 # draft
+registry_reopen_not_below = { $path } non indica alcuna cartella all’interno di quella riaperta
+
+# draft
 registry_tags = Etichette
 
 # draft
@@ -3286,6 +3289,12 @@ vcs_new = Nuovo
 
 # draft
 vcs_staged = In stage
+
+# draft
+volumes_drive_gone = L’unità che contiene questa cartella è stata smontata o rimossa. La cartella tornerà a essere mostrata qui appena sarà montata.
+
+# draft
+volumes_server_gone = Il server che contiene questa cartella è stato disconnesso. La cartella tornerà a essere mostrata qui appena sarà di nuovo connesso.
 
 # draft
 workspace_no_tab = nessuna scheda di questo tipo

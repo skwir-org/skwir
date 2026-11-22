@@ -4823,6 +4823,9 @@ placeholder_hidden_show = Show hidden files to see them.
 # keys: the keys that show hidden files (Ctrl+H).
 placeholder_hidden_show_keys = Show hidden files to see them ({ $keys }).
 
+# Shown in place of a folder's files when the drive or server it is on was unmounted or disconnected while it was shown; the reason follows.
+placeholder_left = This folder is no longer available
+
 placeholder_lens_empty = Nothing here is { $filter }. The filters stay as you go to other folders and searches, until you take them off in the address.
 
 placeholder_looking = Looking in the folders here…
@@ -4851,6 +4854,9 @@ placeholder_reading_files = Reading the details of { $count ->
         [one] one file
        *[other] { $count } files
     }…
+
+# Under "… is not mounted" or "… is not connected" in place of a folder's files: the folder shows again by itself once its drive or server is back, whoever mounts it.
+placeholder_reopen_detail = This folder is on it, and shows here again once it is back.
 
 placeholder_retry = Try again
 

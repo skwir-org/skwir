@@ -93,6 +93,7 @@ pub mod testing;
 pub mod thumbs;
 pub mod tiles;
 pub mod vcs;
+mod volumes;
 pub mod walks;
 pub mod words;
 pub mod workspace;

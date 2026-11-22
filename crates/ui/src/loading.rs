@@ -275,6 +275,16 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
 /// Leave the location shown: back where the pane was, else home (a tab
 /// opened there, or kept there from the last run).
 fn leave(back: bool) -> Option<Way> {
+    leave_way(back)
+}
+
+/// [`leave`]'s words and command, for a pane's placeholder (a folder whose
+/// volume was let go of, ADR-149).
+pub(crate) fn leaving(back: bool) -> Option<(Words, Invocation)> {
+    leave_way(back).map(|way| (way.label, way.command))
+}
+
+fn leave_way(back: bool) -> Option<Way> {
     if back {
         return Some(Way {
             id: "back",

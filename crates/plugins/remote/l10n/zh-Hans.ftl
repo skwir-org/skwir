@@ -1140,6 +1140,15 @@ remote_refresh_description = 重新读取已挂载的内容以及各工具所知
 remote_remembered_data = 密码保存在密钥环中的服务器，按其地址
 
 # draft
+remote_reopen_connect = 连接到{ $name }
+
+# draft
+remote_reopen_lost = 与{ $name }的连接已断开
+
+# draft
+remote_reopen_not_connected = { $name }未连接
+
+# draft
 remote_rsync_between = rsync 在本机与服务器之间复制
 
 # draft

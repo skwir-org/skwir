@@ -1170,6 +1170,15 @@ remote_refresh_description = Relire ce qui est monté et les serveurs que connai
 remote_remembered_data = Les serveurs dont le mot de passe est conservé dans le trousseau, par leur adresse
 
 # draft
+remote_reopen_connect = Se connecter à { $name }
+
+# draft
+remote_reopen_lost = La connexion à { $name } est perdue
+
+# draft
+remote_reopen_not_connected = { $name } n’est pas connecté
+
+# draft
 remote_rsync_between = rsync copie entre cette machine et un serveur
 
 # draft

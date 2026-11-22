@@ -4542,6 +4542,17 @@ impl Pane {
         self.close_where(|o| &o.location == location)
     }
 
+    /// Every location it holds open: the one it shows, and those it keeps
+    /// beside it (its view's, the folders opened in place). What a volume
+    /// mounted or let go of reaches (`App::volumes_changed`, ADR-149).
+    pub(crate) fn held_open(&self) -> Vec<Arc<dyn OpenLocation>> {
+        self.open
+            .iter()
+            .cloned()
+            .chain(self.kept.iter().filter_map(|k| k.open.clone()))
+            .collect()
+    }
+
     /// What it holds open of `folders`: the folder it shows, those it
     /// keeps beside it and the one just left.
     pub(crate) fn open_in(&self, folders: &[PathBuf]) -> Vec<Arc<dyn OpenLocation>> {

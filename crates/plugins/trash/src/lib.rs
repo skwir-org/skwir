@@ -778,6 +778,14 @@ impl OpenLocation for TrashFolder {
         self.inner.refresh();
     }
 
+    fn volume_gone(&self, error: skwir_core::location::ListingError) {
+        self.inner.volume_gone(error);
+    }
+
+    fn reopen(&self) {
+        self.inner.reopen();
+    }
+
     fn close(&self) {
         self.inner.close();
         self.holder.release();

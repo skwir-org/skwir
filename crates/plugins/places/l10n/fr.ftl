@@ -169,6 +169,18 @@ places_rename_empty_address = Nom (vide : la fin de son adresse)
 places_rename_empty_folder = Nom (vide : celui du dossier)
 
 # draft
+places_reopen_locked = { $name } est verrouillé
+
+# draft
+places_reopen_mount = Monter { $name }
+
+# draft
+places_reopen_not_mounted = { $name } n’est pas monté
+
+# draft
+places_reopen_unlock = Déverrouiller { $name }
+
+# draft
 places_select_one_folder = sélectionnez un seul dossier
 
 # draft

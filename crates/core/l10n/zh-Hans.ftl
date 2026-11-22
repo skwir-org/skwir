@@ -2281,6 +2281,9 @@ registry_open_folder_with = 文件夹打开方式
 registry_open_with = 打开方式
 
 # draft
+registry_reopen_not_below = { $path }不是重新打开的文件夹中的文件夹
+
+# draft
 registry_tags = 标签
 
 # draft
@@ -3256,6 +3259,12 @@ vcs_new = 新增
 
 # draft
 vcs_staged = 已暂存
+
+# draft
+volumes_drive_gone = 存放此文件夹的磁盘已被卸载或移除。磁盘挂载后，此文件夹会重新显示在这里。
+
+# draft
+volumes_server_gone = 存放此文件夹的服务器已断开连接。重新连接后，此文件夹会重新显示在这里。
 
 # draft
 workspace_no_tab = 没有这个标签页

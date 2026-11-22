@@ -233,6 +233,43 @@ struct State {
     /// The devices plugged in each connector offers, mounted or not
     /// (ADR-096), as it last told.
     devices: HashMap<&'static str, Vec<Offered>>,
+    /// Where each server's mounts were this run, by the address each
+    /// mount is of: what a server's place offers to connect again once
+    /// it is not (`Place::reopen`, ADR-149). As few as the servers.
+    mounted_at: Vec<(Address, PathBuf)>,
+    /// The mounts' points last published as known (`Registry::remotes`):
+    /// one more is told to the core as mounted (`App::volumes_changed`),
+    /// the table not listing a bridge's folders.
+    known_points: Vec<PathBuf>,
+}
+
+/// What a pane whose folder was on the server `label` mounted at `at`
+/// offers (`Place::reopen`, ADR-149): to connect to `address` again, the
+/// folder opened below it. `lost`: still mounted, its connection lost.
+fn reopen(label: &Words, address: &Address, at: &Path, lost: bool) -> skwir_core::registry::Reopen {
+    let name = || words::Named(label.clone());
+    skwir_core::registry::Reopen {
+        at: at.to_path_buf(),
+        title: if lost {
+            words!(
+                remote_reopen_lost = "The connection to { $name } is lost",
+                name = name(),
+                note = "Shown in place of a folder's files when the connection to the server the folder is on was lost. name: the server, as the sidebar names it."
+            )
+        } else {
+            words!(
+                remote_reopen_not_connected = "{ $name } is not connected",
+                name = name(),
+                note = "Shown in place of a folder's files when the server the folder is on was disconnected. name: the server, as the sidebar names it."
+            )
+        },
+        label: words!(
+            remote_reopen_connect = "Connect to { $name }",
+            name = name(),
+            note = "The button in place of a folder's files whose server was disconnected: connect again and show the folder."
+        ),
+        command: Invocation::new("remote.connect").with("address", address.to_string()),
+    }
 }
 
 impl State {
@@ -1531,6 +1568,15 @@ impl Remotes {
             return;
         }
         let mounted = Arc::clone(&state.mounted);
+        // Where each server is mounted now, kept for when it is not.
+        for m in mounted.iter() {
+            if let Some(address) = &m.recognised.address {
+                state.mounted_at.retain(|(a, _)| a != address);
+                state
+                    .mounted_at
+                    .push((address.clone(), m.remote.point.clone()));
+            }
+        }
         // Read before what it words: a change after it publishes again.
         let proved = skwir_core::fs::reach::proved_changed();
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
@@ -1624,6 +1670,7 @@ impl Remotes {
                 ));
                 if let Some(address) = address {
                     place.activate = Some(Invocation::navigate(&address.location()));
+                    place.reopen = Some(reopen(&m.recognised.label, address, point, true));
                 }
             }
             place.busy = state
@@ -1732,6 +1779,13 @@ impl Remotes {
             let location = server.address.location();
             let mut place = Place::new(GROUP, server.label.clone(), "network-server", location);
             place.key = Some(format!("remote:{}", server.address));
+            // Mounted earlier this run: a folder shown there connects again.
+            place.reopen = state
+                .mounted_at
+                .iter()
+                .rev()
+                .find(|(address, _)| address.same_server(&server.address))
+                .map(|(address, at)| reopen(&server.label, address, at, false));
             place.menu.extend(forget_item(&server.address, &remembered));
             place.menu.extend(options_item(&server.address));
             place
@@ -1769,9 +1823,18 @@ impl Remotes {
             places.push(place);
         }
         state.proved_seen = proved;
+        let points: Vec<PathBuf> = known.iter().map(|k| k.point.clone()).collect();
+        let more = points
+            .iter()
+            .any(|point| !state.known_points.contains(point));
+        state.known_points = points;
         drop(state);
         app.registry.places.replace_owner(ID, places);
         app.registry.remotes.replace_owner(ID, known);
+        // A bridge's folder mounted, which no table says (ADR-149).
+        if more {
+            app.volumes_changed();
+        }
         app.wake();
     }
 }
@@ -2078,6 +2141,11 @@ struct ConnectArgs {
     /// Open it in a tab behind the one shown.
     #[serde(default)]
     tab: bool,
+    /// A folder below the address to open, by the names leading to it:
+    /// the one a pane could not show once its server was disconnected
+    /// (ADR-149), opened in place of that step.
+    #[serde(default)]
+    below: Option<PathArg>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -2350,10 +2418,21 @@ impl Plugin for RemotePlugin {
                 let address = Address::parse(args.address.trim())?;
                 let _ = &remotes;
                 let pane = app.pane_or_active(args.pane);
+                let below = args.below.map(PathArg::into_inner);
+                let location = match &below {
+                    Some(below) => skwir_core::remotes::address_below(
+                        &address.location(),
+                        skwir_core::registry::Reopen::below(below)?,
+                    ),
+                    None => address.location(),
+                };
                 if args.tab {
-                    app.new_tab(Some(pane), Some(address.location()), false)?;
+                    app.new_tab(Some(pane), Some(location), false)?;
+                } else if below.is_some() {
+                    // In place of the step its folder could not be shown in.
+                    app.navigate_in_place(pane, &location)?;
                 } else {
-                    app.navigate(pane, &address.location())?;
+                    app.navigate(pane, &location)?;
                 }
                 Ok(Outcome::Done)
             },
@@ -3741,6 +3820,30 @@ mod tests {
         let top = kept("NAS", "sftp://nas/");
         let place = super::as_mounted(mount_place(&m), &top, &m, b"", None, &[]);
         assert_eq!(place.location, Location::from_path("/run/m/nas"));
+    }
+
+    /// A server mounted earlier offers, from its place, to connect again
+    /// (ADR-149): the mount's own address, which `remote.connect` opens
+    /// below at the folder a pane could not show, there again once
+    /// connected. A connection lost says so.
+    #[test]
+    fn a_server_disconnected_offers_to_connect_again_where_it_was() {
+        let address = Address::parse("sftp://me@nas/srv").unwrap();
+        let label = Words::as_written("me@nas");
+        let reopen = super::reopen(&label, &address, Path::new("/run/m/nas"), false);
+        assert_eq!(reopen.at, Path::new("/run/m/nas"));
+        assert_eq!(&*reopen.command.name, "remote.connect");
+        assert_eq!(reopen.command.args["address"], "sftp://me@nas/srv");
+        assert!(reopen.title.english().ends_with(" is not connected"));
+        assert!(reopen.label.english().starts_with("Connect to "));
+        // As `remote.connect` opens it, given the folder below.
+        let below = skwir_core::registry::Reopen::below(Path::new("photos/it's été")).unwrap();
+        assert_eq!(
+            skwir_core::remotes::address_below(&address.location(), below).to_string(),
+            "sftp://me@nas/srv/photos/it's été"
+        );
+        let lost = super::reopen(&label, &address, Path::new("/run/m/nas"), true);
+        assert!(lost.title.english().starts_with("The connection to "));
     }
 
     /// A server whose mount was lost connects again in its own folder; one

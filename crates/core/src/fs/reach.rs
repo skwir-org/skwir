@@ -642,6 +642,30 @@ pub fn is_point(path: &Path) -> bool {
     table().remotes.iter().any(|r| r.point == path)
 }
 
+/// Every mount's point the table lists now, each with whether it is a
+/// network's: what tells the mounts made and let go of since a read
+/// before (`App::volumes_changed`, ADR-149). A point mounted on twice is
+/// listed twice. Where the system lists no table (Windows), the remotes
+/// of the folders programs mount in. From memory, read again when stale.
+pub fn points() -> Vec<(PathBuf, bool)> {
+    let table = table();
+    let remote: crate::hashing::Set<&Path> =
+        table.remotes.iter().map(|r| r.point.as_path()).collect();
+    let listed: crate::hashing::Set<&Path> = table.points.iter().map(PathBuf::as_path).collect();
+    table
+        .points
+        .iter()
+        .map(|point| (point.clone(), remote.contains(point.as_path())))
+        .chain(
+            table
+                .remotes
+                .iter()
+                .filter(|r| !listed.contains(r.point.as_path()))
+                .map(|r| (r.point.clone(), true)),
+        )
+        .collect()
+}
+
 /// Forget the table read: a mount was made or let go of here.
 pub fn changed() {
     *TABLE.lock() = None;

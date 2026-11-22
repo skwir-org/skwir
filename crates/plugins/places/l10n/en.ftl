@@ -140,6 +140,18 @@ places_rename_empty_address = Name (empty: its address's last part)
 # The empty field asking a folder's bookmark's new name: left empty, the bookmark shows the folder's own name.
 places_rename_empty_folder = Name (empty: the folder's own)
 
+# Shown in place of a folder's files when the encrypted volume the folder is on was locked again. name: the volume's name, as the sidebar shows it.
+places_reopen_locked = { $name } is locked
+
+# The button under "… is not mounted" in place of a folder's files: mount the volume and show the folder again.
+places_reopen_mount = Mount { $name }
+
+# Shown in place of a folder's files when the volume the folder is on is plugged in but not mounted. name: the volume's name, as the sidebar shows it.
+places_reopen_not_mounted = { $name } is not mounted
+
+# The button under "… is locked" in place of a folder's files: unlock and mount the volume, and show the folder again.
+places_reopen_unlock = Unlock { $name }
+
 # An error when several files are selected and one folder is to be bookmarked.
 places_select_one_folder = select one folder
 

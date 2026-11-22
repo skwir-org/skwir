@@ -545,6 +545,9 @@ pub struct App {
     shown: (parking_lot::Mutex<bool>, parking_lot::Condvar),
     /// The window that has the keyboard, if one has (`looked_at`).
     focused: parking_lot::Mutex<Option<WindowId>>,
+    /// The mounts as last seen, against which the next change of them is
+    /// told (`volumes_changed`, ADR-149).
+    pub(crate) volumes: crate::volumes::Seen,
     /// The tabs closed last, to reopen (`tab.reopen`).
     pub(crate) closed_tabs: parking_lot::Mutex<crate::tabs::Closed>,
     /// Self reference so background work can keep a `Weak<App>`.
@@ -654,6 +657,7 @@ impl App {
             front: parking_lot::Mutex::new(Vec::new()),
             shown: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
             focused: parking_lot::Mutex::new(None),
+            volumes: crate::volumes::Seen::default(),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
@@ -839,6 +843,8 @@ impl App {
         }
         crate::plugin::register(&app);
         crate::playing::register(&app);
+        // What the panes show comes and goes with its volume (ADR-149).
+        crate::volumes::follow(&app);
         if let Some(problem) = app.settings.take_problem() {
             app.notify(NotifyLevel::Warning, problem);
         }
@@ -2936,6 +2942,9 @@ impl App {
             return;
         }
         self.refresh_remote();
+        // No table tells a drive mounted there (ADR-149).
+        #[cfg(windows)]
+        self.reopen_missing();
         let weak = self.weak();
         self.scheduler.spawn(
             Priority::Normal,

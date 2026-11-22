@@ -2164,6 +2164,9 @@ registry_open_folder_with = Open Folder With
 # A submenu of a file's menu: the applications that open it.
 registry_open_with = Open With
 
+# Said to an agent or a script: the folder asked to be opened again below a volume or server brought back (below) leads out of it.
+registry_reopen_not_below = { $path } names no folder inside the one opened again
+
 # A submenu of a file's menu: its tags, each a check, and the tags editor.
 registry_tags = Tags
 
@@ -3070,6 +3073,12 @@ vcs_new = New
 
 # A file's state in Git: its changes are added for the next commit.
 vcs_staged = Staged
+
+# Shown in place of a folder's files when the drive it is on (a USB stick, a disk) was unmounted or pulled out while it was shown.
+volumes_drive_gone = The drive holding this folder was unmounted or removed. The folder shows here again once it is mounted.
+
+# Shown in place of a folder's files when the network server it is on was disconnected while it was shown.
+volumes_server_gone = The server holding this folder was disconnected. The folder shows here again once it is connected.
 
 # A tab asked for by id (by an agent, a script, a key) is not open.
 workspace_no_tab = no such tab

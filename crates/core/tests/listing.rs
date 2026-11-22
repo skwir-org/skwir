@@ -1771,6 +1771,87 @@ fn a_file_windows_hides_is_hidden() {
     assert_eq!(shown(true), [".dotted", "desktop.ini", "shown.txt"]);
 }
 
+/// A folder deleted while shown says it is not there, the way out its
+/// parent, and its listing lets go of the directory that went: made
+/// again, a refresh lists the new one, never the one deleted (ADR-149).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_folder_deleted_while_shown_is_listed_anew_once_made_again() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("it's deleted, été");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("old.txt"), "1").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    std::fs::remove_dir_all(&dir).unwrap();
+    wait_pane(&app, pane, |p| {
+        p.listing.failure() == Some(skwir_core::Failure::Missing) && p.listing.is_empty()
+    });
+    assert!(
+        skwir_core::fs::wait_let_go(&dir, Duration::from_secs(20)),
+        "the folder deleted is let go of"
+    );
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("new.txt"), "2").unwrap();
+    app.dispatch(&skwir_core::command::Invocation::new("refresh"))
+        .unwrap();
+    wait_pane(&app, pane, |p| {
+        p.listing.failure().is_none() && p.listing.find_by_name("new.txt".as_ref()).is_some()
+    });
+    let ws = app.workspace.read();
+    let listing = &ws.pane(pane).unwrap().listing;
+    assert!(listing.find_by_name("old.txt".as_ref()).is_none());
+}
+
+/// A folder opened again from its path (a mount made over it, ADR-149)
+/// shows what its path leads to now: here a link turned to another
+/// folder. What it listed before goes as the new is listed.
+#[cfg(unix)]
+#[test]
+fn a_folder_opened_again_shows_what_its_path_leads_to_now() {
+    let tmp = home_tempdir();
+    let (first, second) = (tmp.path().join("first"), tmp.path().join("second"));
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    std::fs::write(first.join("it's one.txt"), "1").unwrap();
+    std::fs::write(second.join("two.txt"), "2").unwrap();
+    let link = tmp.path().join("it leads, été");
+    std::os::unix::fs::symlink(&first, &link).unwrap();
+    let app = app(tmp.path());
+    let open = app.open_location(&Location::from_path(&link)).unwrap();
+    let events = open.events();
+    let until_complete = |names: &mut Vec<String>, gone: &mut usize| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match events.recv_timeout(left).expect("listed") {
+                ListingEvent::Added(entries) => names.extend(
+                    entries
+                        .iter()
+                        .map(|e| e.name.to_string_lossy().into_owned()),
+                ),
+                ListingEvent::Removed(ids) => *gone += ids.len(),
+                ListingEvent::Complete => return,
+                _ => {}
+            }
+        }
+    };
+    let (mut names, mut gone) = (Vec::new(), 0);
+    until_complete(&mut names, &mut gone);
+    assert_eq!(names, ["it's one.txt"]);
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&second, &link).unwrap();
+    open.reopen();
+    let (mut names, mut gone) = (Vec::new(), 0);
+    until_complete(&mut names, &mut gone);
+    assert_eq!(
+        (names.as_slice(), gone),
+        (["two.txt".to_owned()].as_slice(), 1)
+    );
+    open.close();
+}
+
 /// A folder shown is held open until its listing lets go of it, a moment
 /// after it is closed, on a worker: what unmounts a remote waits for that
 /// (`fs::wait_let_go`), as the system refuses to unmount a folder held.

@@ -2327,6 +2327,9 @@ registry_open_folder_with = Ouvrir le dossier avec
 registry_open_with = Ouvrir avec
 
 # draft
+registry_reopen_not_below = { $path } ne désigne aucun dossier à l’intérieur de celui qui est rouvert
+
+# draft
 registry_tags = Étiquettes
 
 # draft
@@ -3302,6 +3305,12 @@ vcs_new = Nouveau
 
 # draft
 vcs_staged = Indexé
+
+# draft
+volumes_drive_gone = Le disque qui contient ce dossier a été démonté ou retiré. Le dossier s’affichera de nouveau ici dès qu’il sera monté.
+
+# draft
+volumes_server_gone = Le serveur qui contient ce dossier a été déconnecté. Le dossier s’affichera de nouveau ici dès qu’il sera connecté.
 
 # draft
 workspace_no_tab = cet onglet n’existe pas

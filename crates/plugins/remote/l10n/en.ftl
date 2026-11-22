@@ -968,6 +968,15 @@ remote_refresh_description = Read again what is mounted and which servers the to
 
 remote_remembered_data = The servers whose password is kept in the keyring, by their address
 
+# The button in place of a folder's files whose server was disconnected: connect again and show the folder.
+remote_reopen_connect = Connect to { $name }
+
+# Shown in place of a folder's files when the connection to the server the folder is on was lost. name: the server, as the sidebar names it.
+remote_reopen_lost = The connection to { $name } is lost
+
+# Shown in place of a folder's files when the server the folder is on was disconnected. name: the server, as the sidebar names it.
+remote_reopen_not_connected = { $name } is not connected
+
 remote_rsync_between = rsync copies between this machine and a server
 
 # status: how rsync ended, as the system says it (exit status: 23); said: what rsync printed, in English.

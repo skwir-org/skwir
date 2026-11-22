@@ -120,6 +120,13 @@ ADR-077 (which revises ADR-021).
   folder's preview reads the file standing for it (its README, its cover:
   previews.md) as a thumbnail is made, by the rule and the file's size
   (`preview::reads_unasked`): it was asked for the folder, not the file.
+- **A server disconnected** (its mount let go of, by anyone) takes
+  the folders shown there with it, said so, their directories let go of;
+  connected again, they show again by themselves (ADR-149). Its place
+  offers Connect where a pane showed one of its folders this run
+  (`Place::reopen`, `remote.connect`'s `below`), a mount whose
+  connection is lost too. A bridge's folder published (GVfs's, which no
+  table lists) is told to the core as mounted (`App::volumes_changed`).
 - **Listings** are read again when the window comes back
   (`App::refresh_remote`, at most once in `REFRESHED_WITHIN`) and on F5:
   a server does not say what changed on it. What this machine changes

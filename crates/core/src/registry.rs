@@ -351,6 +351,49 @@ pub struct Place {
     /// none to say (a folder, a bookmark), or as it was kept (a saved
     /// search, a saved place and its filter).
     pub opens: Opens,
+    /// For a place not open now (a volume not mounted, a server not
+    /// connected): where its folder was when it last was, this run, and
+    /// how it is opened again there (ADR-149). A pane whose folder at or
+    /// below it cannot be shown offers it in place of its files.
+    pub reopen: Option<Reopen>,
+}
+
+/// How a place not open now is opened again where it last was
+/// (`Place::reopen`, ADR-149): what a pane whose folder was there says,
+/// and the button it offers.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Reopen {
+    /// Where its folder was the last time it was open.
+    pub at: std::path::PathBuf,
+    /// What a pane whose folder is there says of it ("USB is not
+    /// mounted"), said where it is drawn.
+    pub title: Words,
+    /// Its button ("Mount USB", "Connect to nas"), said where it is drawn.
+    pub label: Words,
+    /// What the button runs, given `pane` and `below`, the path below
+    /// `at` the pane shows: its owner opens that folder in the pane once
+    /// its own is back, in place of the step that could not show it.
+    pub command: Invocation,
+}
+
+impl Reopen {
+    /// `below` as the command of a reopen takes it: names leading down
+    /// from the folder brought back, refused otherwise (a root, `..`), so
+    /// what it opens stays inside that folder.
+    pub fn below(below: &std::path::Path) -> anyhow::Result<&std::path::Path> {
+        use std::path::Component;
+        anyhow::ensure!(
+            below
+                .components()
+                .all(|part| matches!(part, Component::Normal(_) | Component::CurDir)),
+            crate::words!(
+                registry_reopen_not_below = "{ $path } names no folder inside the one opened again",
+                path = crate::words::Arg::Path(below.display().to_string()),
+                note = "Said to an agent or a script: the folder asked to be opened again below a volume or server brought back (below) leads out of it."
+            )
+        );
+        Ok(below)
+    }
 }
 
 /// How a place is opened as to the pane's lens (ADR-109).
@@ -404,6 +447,7 @@ impl Place {
             rename: None,
             clicks: Vec::new(),
             opens: Opens::Lensed,
+            reopen: None,
         }
     }
 

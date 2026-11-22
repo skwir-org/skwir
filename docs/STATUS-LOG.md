@@ -22371,3 +22371,73 @@ against, is 1.12, without `heif_init` or the tiles' calls.
   artifacts passed.
 - **Not done**: the AppImage's helper on other distributions (CI's
   `package-try` roots); a phone's HEIC through the AppImage's window.
+
+
+## 2026-11-22: a folder comes back with its volume (ADR-149)
+
+Asked by the user: a pane showing a folder that is not there because its
+volume is not mounted should show it again once the volume is mounted (a
+middle click on it in the sidebar, say), only where the folder is under
+it. Built as proposed: the panes follow the mounts, whoever mounts.
+
+- **Core** (`volumes.rs`): `App::volumes_changed`, told by
+  `reach::follow` and by the remote plugin when it publishes a folder the
+  table does not list (a GVfs bridge's); the mounts seen against the last
+  sight (`reach::points`, a point mounted on twice counted twice); for
+  each location a pane holds open (shown, kept beside it; not a tab not
+  shown yet), `OpenLocation::reopen` at or below a mount made and
+  `volume_gone` below one let go of. `Failure::Left`; a folder deleted
+  while shown is `Missing` (was `Other`, Try again).
+- **The folder listing** lets go of its directory and watch once lost
+  (deleted or its volume gone), so a refresh opens the folder from its
+  path: Try again on a folder deleted and made again listed the old,
+  empty directory before. `reopen` opens from the path, the entries
+  before taken out as the new are listed; one asked while an open runs
+  is done once it ends (`Opening`).
+- **Places plugin**: an unmounted volume seen mounted this run offers
+  `Place::reopen` at that point (by its key), Mount or Unlock;
+  `places.mount`, `unlock` and `open_locked` take `below`, shown in place
+  of the step, read again where shown already. **Remote plugin**: a
+  server whose mount it saw this run, and a mount whose connection is
+  lost, offer Connect; `remote.connect` takes `below` (its address
+  below, `remotes::address_below`).
+- **Window** (`placeholder.rs`): the place nearest above a folder that
+  cannot be shown and offers to reopen it is named, with its button,
+  what it does while busy in its place; a folder whose volume went says
+  so, with Go Back or Go Home. The placeholder's button is an
+  invocation now.
+- **Checked**: rustfmt and clippy (`-D warnings`) on skwir-core,
+  skwir-ui, the places, remote, trash and query plugins and the binary;
+  clippy for Windows on those and for macOS on all but skwir-ui; `just
+  words` and `just words --check` (12 messages, drafted in French,
+  Italian and Chinese); tests of skwir-core, the four plugins, skwir-ui
+  (839) and the binary's `plugins_toggle` and `remote_folders`, all
+  green, in a memory-capped scope. New tests: `Change::between`, a pane
+  told its volume went and came (`act_on`), the same with real mounts in
+  a user and mount namespace (`tmpfs`, `mount --bind`, `umount -l`: the
+  pane missing, shown once mounted, lost with the descriptor let go of,
+  back), a folder deleted and made again listed anew on refresh, a folder
+  reopened through a link turned elsewhere, the places plugin's offer
+  and `below` refused outside the volume, the remote plugin's offer, the
+  placeholder's words and buttons.
+- **In the window** (debug build, Xvfb :87, a 64 MiB FAT image mounted
+  by udisks as `SKWIRBACK`, the test window on `photos, été` on it):
+  `udisksctl unmount` refused as busy (the folder held, as before);
+  `--force` (lazy, as udisks does a drive pulled out): the pane said
+  “SKWIRBACK” is not mounted with Mount “SKWIRBACK”, the window holding
+  no descriptor there; the button mounted it and the folder showed in
+  place, no step added; let go of again and mounted by `udisksctl mount`
+  in a terminal: the folder came back by itself with a file written
+  after the mount; the loop device deleted: "This folder is no longer
+  available", the drive's reason, Go Home.
+- **Also fixed**: `arriving`'s
+  `a_copy_waiting_stands_where_it_will_land_and_goes_once_landed` failed
+  once in a full run (`starting` read as its plan checked itself): it
+  waits for the run to hold at its held step now (30 of 30 alone before).
+- **Not done**: a GVfs bridge's folder let go of is not told (only one
+  published); a mount let go of and made again within one settled change
+  opens nothing again; a server typed in the address field and never kept
+  has no place to offer Connect; Windows (`reopen_missing` as a window
+  comes to the front) compiled only; no real server disconnected in the
+  window, the remote side covered by its unit test; `just release-check`
+  not run.

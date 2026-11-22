@@ -33,6 +33,7 @@ the others with no UI branch.
 | what an open location holds | `OpenLocation::holds` |
 | what its text typed goes on with | `LocationProvider::complete` (ADR-070) |
 | the folders opening it reads (an agent's call refused a private one) | `LocationProvider::folders_read`, `App::folders_read` |
+| what brings back a folder a pane cannot show (a volume to mount, a server to connect) | `Place::reopen` (ADR-149) |
 
 A folder is a location like the others: its trail is a `Trail`, its
 chevrons list `App::places_in`, and Shift+F5/F6 give the selection to the
@@ -135,6 +136,23 @@ and `notes.agree` are core `notes.*` commands.
   connects, then redirects to the mounted folder
   (`ListingEvent::Redirect`): the folder is the location, the address its
   name. [remote.md](remote.md) has the rest.
+
+## Volumes come and go (ADR-149)
+
+- What a pane holds open follows the mounts (`App::volumes_changed`,
+  told by `reach::follow` and by a plugin publishing a folder the table
+  does not list): at or below a mount made, by whoever, it is opened
+  again from its path (`OpenLocation::reopen`); below one let go of, it
+  lets go of what it holds there and fails as `Failure::Left`
+  (`OpenLocation::volume_gone`). A mount let go of never opens a folder
+  again. A location listing through another hands both on.
+- A folder's listing lost (deleted, its volume gone) lets go of its
+  directory: a refresh opens the folder again from its path, never lists
+  the descriptor of one that went.
+- A place offering to open a folder again (`Place::reopen`) says where
+  it was this run, nothing kept beyond it; its command takes `pane` and
+  `below` (names only, `Reopen::below`) and shows that folder in place of
+  the step that could not show it.
 
 ## Searches
 

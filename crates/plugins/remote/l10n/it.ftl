@@ -1166,6 +1166,15 @@ remote_refresh_description = Rilegge ciò che è montato e quali server conoscon
 remote_remembered_data = I server la cui password è conservata nel portachiavi, in base al loro indirizzo
 
 # draft
+remote_reopen_connect = Connetti a { $name }
+
+# draft
+remote_reopen_lost = La connessione a { $name } è persa
+
+# draft
+remote_reopen_not_connected = { $name } non è connesso
+
+# draft
 remote_rsync_between = rsync copia tra questa macchina e un server
 
 # draft

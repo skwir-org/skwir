@@ -374,6 +374,18 @@ impl OpenLocation for Within {
         }
     }
 
+    fn volume_gone(&self, error: skwir_core::location::ListingError) {
+        if let Some(inner) = self.shared.inner() {
+            inner.volume_gone(error);
+        }
+    }
+
+    fn reopen(&self) {
+        if let Some(inner) = self.shared.inner() {
+            inner.reopen();
+        }
+    }
+
     fn close(&self) {
         self.shared.lifetime.cancel();
         if let Some(inner) = self.shared.inner() {

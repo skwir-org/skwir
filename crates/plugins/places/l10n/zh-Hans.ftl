@@ -166,6 +166,18 @@ places_rename_empty_address = 名称（留空：使用其地址的最后一部�
 places_rename_empty_folder = 名称（留空：使用文件夹自身的名称）
 
 # draft
+places_reopen_locked = { $name }已锁定
+
+# draft
+places_reopen_mount = 挂载{ $name }
+
+# draft
+places_reopen_not_mounted = { $name }未挂载
+
+# draft
+places_reopen_unlock = 解锁{ $name }
+
+# draft
 places_select_one_folder = 请选择一个文件夹
 
 # draft
