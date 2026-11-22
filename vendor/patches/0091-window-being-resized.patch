@@ -1,0 +1,79 @@
+0091 window-being-resized: Window::is_being_resized: whether the user is resizing the window by dragging (Wayland's xdg_toplevel resizing state), so a size given meanwhile is told apart from one the compositor lays the window out at, whatever its tiled states say; false where the platform does not say
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 203c124..34de1bf 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -1448,6 +1448,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+             Decorations::Server => Tiling::default(),
+         }
+     }
++    /// Whether the user is resizing the window, dragging an edge or a corner: the size it is
++    /// given meanwhile is one they chose, not one the window manager laid it out at (Wayland's
++    /// `resizing` state). False where the platform does not say.
++    fn is_being_resized(&self) -> bool {
++        false
++    }
+     fn set_app_id(&mut self, _app_id: &str) {}
+     /// Say again what the window is for (`WindowParams::tag`): Wayland's
+     /// tag and description, X11's role. Ignored where unsupported.
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index b78cb6c..0c1b9c0 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -3231,6 +3231,14 @@ impl Window {
+         self.platform_window.tiling()
+     }
+ 
++    /// Returns whether the user is resizing the window, dragging an edge or a corner
++    /// (`PlatformWindow::is_being_resized`): a size it is given meanwhile, or by the change that
++    /// ends the drag, is one they chose, whatever [`Window::tiling`] says (a compositor may say
++    /// every window is tiled, floating or not). False where the platform does not say (X11).
++    pub fn is_being_resized(&self) -> bool {
++        self.platform_window.is_being_resized()
++    }
++
+     /// Returns whether this window is resizable.
+     pub fn is_resizable(&self) -> bool {
+         self.is_resizable
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index 7c6b23f..c3687b4 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -132,6 +132,9 @@ pub struct WaylandWindowState {
+     /// `Hidden` while the `xdg_toplevel` `suspended` state (xdg-shell v6) is set.
+     visibility: WindowVisibility,
+     tiling: Tiling,
++    /// While the compositor's last configure said the user is resizing the window
++    /// (`xdg_toplevel`'s `resizing` state: an interactive resize under way).
++    resizing: bool,
+     window_bounds: Bounds<Pixels>,
+     client: WaylandClientStatePtr,
+     handle: AnyWindowHandle,
+@@ -670,6 +673,7 @@ impl WaylandWindowState {
+             maximized: false,
+             visibility: WindowVisibility::Visible,
+             tiling: Tiling::default(),
++            resizing: false,
+             window_bounds: options.bounds,
+             in_progress_configure: None,
+             resize_throttle: false,
+@@ -1163,6 +1167,7 @@ impl WaylandWindowStatePtr {
+                     state.fullscreen = configure.fullscreen;
+                     state.maximized = configure.maximized;
+                     state.tiling = configure.tiling;
++                    state.resizing = configure.resizing;
+                     let visibility_changed = state.visibility != configure.visibility;
+                     state.visibility = configure.visibility;
+                     // Limit interactive resizes to once per vblank
+@@ -2269,6 +2274,10 @@ impl PlatformWindow for WaylandWindow {
+         self.borrow().tiling
+     }
+ 
++    fn is_being_resized(&self) -> bool {
++        self.borrow().resizing
++    }
++
+     fn window_decorations(&self) -> Decorations {
+         let state = self.borrow();
+         match state.decorations {

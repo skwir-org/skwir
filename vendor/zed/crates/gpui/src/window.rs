@@ -3231,6 +3231,14 @@ impl Window {
         self.platform_window.tiling()
     }
 
+    /// Returns whether the user is resizing the window, dragging an edge or a corner
+    /// (`PlatformWindow::is_being_resized`): a size it is given meanwhile, or by the change that
+    /// ends the drag, is one they chose, whatever [`Window::tiling`] says (a compositor may say
+    /// every window is tiled, floating or not). False where the platform does not say (X11).
+    pub fn is_being_resized(&self) -> bool {
+        self.platform_window.is_being_resized()
+    }
+
     /// Returns whether this window is resizable.
     pub fn is_resizable(&self) -> bool {
         self.is_resizable

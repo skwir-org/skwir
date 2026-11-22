@@ -1448,6 +1448,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
             Decorations::Server => Tiling::default(),
         }
     }
+    /// Whether the user is resizing the window, dragging an edge or a corner: the size it is
+    /// given meanwhile is one they chose, not one the window manager laid it out at (Wayland's
+    /// `resizing` state). False where the platform does not say.
+    fn is_being_resized(&self) -> bool {
+        false
+    }
     fn set_app_id(&mut self, _app_id: &str) {}
     /// Say again what the window is for (`WindowParams::tag`): Wayland's
     /// tag and description, X11's role. Ignored where unsupported.

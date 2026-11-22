@@ -123,6 +123,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0088-scroll-handle-direction` | `ScrollHandle::direction`: the direction the element a handle tracks was last laid out in, its own or inherited, which way its offset runs sideways (what `clamp_scroll_position` holds it to) | — |
 | `0089-window-tag` | `WindowOptions::tag` (`WindowTag`): what a window is for, named for the user's window rules: Wayland's xdg-toplevel-tag-v1 tag and its translated description, part of the first commit where the compositor offers the protocol; X11's `WM_WINDOW_ROLE`, for an ASCII tag (another takes the role back); said again by `Window::set_tag` (the description in another language), the platform told only what changed | — |
 | `0090-image-pieces` | An image larger than the atlas's largest texture is drawn in pieces (`PlatformAtlas::max_texture_side`), each filtered with the pixels beside it, so no seam shows; only the pieces that show are uploaded | — |
+| `0091-window-being-resized` | `Window::is_being_resized`: whether the user is resizing the window by dragging (Wayland's `resizing` state), so a size given meanwhile is told apart from one the compositor lays the window out at, whatever its tiled states say (Hyprland says every window is tiled); false where the platform does not say | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 

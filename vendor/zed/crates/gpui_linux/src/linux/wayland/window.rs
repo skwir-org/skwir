@@ -132,6 +132,9 @@ pub struct WaylandWindowState {
     /// `Hidden` while the `xdg_toplevel` `suspended` state (xdg-shell v6) is set.
     visibility: WindowVisibility,
     tiling: Tiling,
+    /// While the compositor's last configure said the user is resizing the window
+    /// (`xdg_toplevel`'s `resizing` state: an interactive resize under way).
+    resizing: bool,
     window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
@@ -670,6 +673,7 @@ impl WaylandWindowState {
             maximized: false,
             visibility: WindowVisibility::Visible,
             tiling: Tiling::default(),
+            resizing: false,
             window_bounds: options.bounds,
             in_progress_configure: None,
             resize_throttle: false,
@@ -1163,6 +1167,7 @@ impl WaylandWindowStatePtr {
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
+                    state.resizing = configure.resizing;
                     let visibility_changed = state.visibility != configure.visibility;
                     state.visibility = configure.visibility;
                     // Limit interactive resizes to once per vblank
@@ -2267,6 +2272,10 @@ impl PlatformWindow for WaylandWindow {
     fn tiling(&self) -> Tiling {
         // As the compositor configured it, server-side decorations or not.
         self.borrow().tiling
+    }
+
+    fn is_being_resized(&self) -> bool {
+        self.borrow().resizing
     }
 
     fn window_decorations(&self) -> Decorations {
