@@ -4423,7 +4423,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: data-url 0.3.2, idna 1.1.0, percent-encoding 2.3.2, url 2.5.8
+Used by: data-url 0.3.2, idna 1.1.0, percent-encoding 2.3.2, url 2.5.9
 
 Copyright (c) 2013-2025 The rust-url developers
 
@@ -5400,7 +5400,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: form_urlencoded 1.2.2
+Used by: form_urlencoded 1.2.3
 
 Copyright (c) 2013-2016 The rust-url developers
 
