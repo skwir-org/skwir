@@ -228,7 +228,8 @@ A name that says nothing is not a binary file.
   helper (`picture::Regional`), never by libheif's tiling as shown, which
   misplaces a turned picture's; what stands for a picture while it
   decodes is asked of `picture::stand_in` (a progressive JPEG's eighth,
-  a HEIF's thumbnail), never of one format's code. A drawing
+  a HEIF's thumbnail), and what a file carries that is as large as a
+  thumbnail asked of `picture::carried`, never of one format's code. A drawing
   (`thumb_providers::is_drawing`: SVG, plain or compressed) is drawn to
   the thumbnail's side, enlarged too, by the preview's inert path.
   Other `image/*` types and 3D models (`model/*`, and types the MIME

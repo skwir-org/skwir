@@ -10,7 +10,8 @@ as the user asked once it was measured: JPEG XL read in bands and a
 region alone, by a decoder of Skwir's own around jxl-oxide (decision 1);
 a photo of 24 megapixels or more had not been shown at all. Then, as the
 user chose once HEIC was measured: a HEIC's or an AVIF's region decoded
-from its tiles, and its thumbnail shown while it decodes (decision 3).
+from its tiles, and its thumbnail shown while it decodes and made into
+the grid's thumbnails (decision 3).
 
 ## Context
 
@@ -102,6 +103,12 @@ from its tiles, and its thumbnail shown while it decodes (decision 3).
      6): the one the file carries (320 px in the files measured), turned
      as the picture, decoded by the helper in 10 to 25 ms; none where it
      carries none, or where it is no smaller than what is asked.
+   - **It makes the grid's thumbnails** of a side it covers
+     (`picture::carried`, asked first by the image decoder's provider),
+     as the desktop's HEIF thumbnailers do: the whole is not decoded for
+     them. The helper gives none whose proportions are not the
+     picture's, within a pixel of rounding (another picture's, or the
+     picture's before it was cropped): the whole is decoded then.
 
 ## Alternatives
 

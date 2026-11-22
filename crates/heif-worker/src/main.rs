@@ -18,7 +18,7 @@
 //! pixels of its last (`image % tile`, 1.19 to 1.23), not by what of it
 //! lies past the picture, so a portrait photo's part came out shifted. `… thumbnail <most>` decodes the
 //! thumbnail the file carries, turned as it is shown, and prints its size,
-//! or `0 0 0` where it carries none. `--probe` and `--build` answer
+//! or `0 0 0` where it carries none, or one of other proportions. `--probe` and `--build` answer
 //! Skwir's settings and its failures (ADR-040, ADR-041). It asks nothing
 //! else of libheif newer than 1.13 (`heif_init`): Debian's, Ubuntu's and
 //! Fedora's have it.
@@ -546,7 +546,9 @@ impl Picture {
         Ok((size == shown).then_some((calls, tiling, turns)))
     }
 
-    /// The thumbnail it carries, turned as it is shown, if any.
+    /// The thumbnail it carries, turned as it is shown, if any: none where
+    /// its proportions are not the picture's, within a pixel of rounding
+    /// (another picture's, or the picture's before it was cropped).
     fn thumbnail(&self) -> anyhow::Result<Option<Pixels>> {
         let mut id = 0;
         // SAFETY: the handle is valid while `self` is; one ID asked, room
@@ -564,7 +566,18 @@ impl Picture {
         checked(&unsafe {
             heif_image_handle_get_thumbnail(self.handle, id, &raw mut thumbnail.0)
         })?;
-        let (_, _, alpha) = size_of(thumbnail.0);
+        let (width, height, alpha) = size_of(thumbnail.0);
+        let (own_width, own_height, _) = self.size();
+        let (across, down) = (
+            u64::from(width) * u64::from(own_height),
+            u64::from(height) * u64::from(own_width),
+        );
+        if width == 0
+            || height == 0
+            || across.abs_diff(down) > u64::from(own_width) + u64::from(own_height)
+        {
+            return Ok(None);
+        }
         let decoded = decode(thumbnail.0, alpha)?;
         let plane = decoded.plane(channels(alpha))?;
         let mut pixels = Vec::with_capacity(plane.row_bytes * plane.height);

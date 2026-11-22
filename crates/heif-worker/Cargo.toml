@@ -15,6 +15,7 @@ anyhow.workspace = true
 
 [dev-dependencies]
 image.workspace = true
+skwir-core.workspace = true
 skwir-platform.workspace = true
 
 [lints]

@@ -9528,6 +9528,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "image",
+ "skwir-core",
  "skwir-platform",
 ]
 

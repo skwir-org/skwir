@@ -285,6 +285,15 @@ impl ThumbnailProvider for ImageDecoder {
             crate::picture::open_typed(path, mime.as_deref())
                 .with_context(|| format!("open {}", path.display()))
         };
+        // A HEIF's or an AVIF's own thumbnail, where it is as large as
+        // asked (ADR-148 amended): its whole is never decoded then. One
+        // that fails to decode leaves it to the whole.
+        if let Ok(Some(carried)) = crate::picture::carried(open()?, req.size.pixels()) {
+            if cancel.is_cancelled() {
+                return Ok(None);
+            }
+            return Ok(Some(fit(carried, req.size.pixels())));
+        }
         let (w, h) = open()?.into_dimensions()?;
         anyhow::ensure!(
             u64::from(w) * u64::from(h) <= MAX_PIXELS,

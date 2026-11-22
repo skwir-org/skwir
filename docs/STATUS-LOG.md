@@ -22248,3 +22248,24 @@ as a portrait one (its EXIF Orientation 6, which `heif-enc` writes as
 - **Not done**: a HEIC from a real phone; the thumbnail for the grid's
   thumbnails (asked only for the preview); a libheif older than 1.19
   tried.
+
+## 2026-11-22: a HEIC's grid thumbnails from the one it carries (ADR-148 amended)
+
+Asked by the user after the entry above. The image decoder's provider
+asks `picture::carried` first: a HEIF's or an AVIF's own thumbnail, where
+it is at least the side asked (the grid's 128 or 256 from the 320 px one
+an iPhone-like file carries), shrunk to it; else the whole, as before.
+The helper gives none whose proportions are not the picture's within a
+pixel of rounding (no fixture carries such a one).
+
+- **Measured**: the helper's thumbnail run took 9–15 ms where the whole
+  took 0.5–1.6 s (the entry above). In the window (debug build, Xvfb, a
+  fresh cache, the folder of three HEICs and a JPEG XL): the three HEIC
+  thumbnails in 313–353 ms each, drawn by 3 s, the portrait upright,
+  where the run before this change took 10.6–23.4 s for them; the JPEG
+  XL's, still its whole, 24.7 s unoptimized.
+- **Tests**: `a_heic_s_grid_thumbnail_is_made_from_the_one_it_carries`
+  (what is carried as large as asked, or none; turned; the provider's
+  128 px thumbnail equal to the carried one to the pixel); the tiled
+  fixture made again carrying 128 × 84. Clippy for Linux, Windows and
+  macOS; the helper's (11) and the platform's (587) tests.

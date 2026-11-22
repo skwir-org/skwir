@@ -158,6 +158,29 @@ pub fn stand_in<R: BufRead + Seek>(
     if reader.format() == Some(ImageFormat::Jpeg) {
         return progressive_eighth(reader, side, threads);
     }
+    Ok(
+        heif_thumbnail(reader)?
+            .filter(|thumbnail| thumbnail.width().max(thumbnail.height()) < side),
+    )
+}
+
+/// The picture a file carries beside its own, where it is at least `side`
+/// on its longer side, turned as the picture is shown: a HEIF's or an
+/// AVIF's thumbnail, decoded by the helper (ADR-148 amended), what a
+/// thumbnail of that side is made from in some 15 ms where the whole took
+/// most of a second. `None` for any other picture, or where it carries
+/// none so large.
+pub fn carried<R: BufRead + Seek>(
+    reader: ImageReader<R>,
+    side: u32,
+) -> ImageResult<Option<DynamicImage>> {
+    Ok(heif_thumbnail(reader)?
+        .filter(|thumbnail| thumbnail.width().max(thumbnail.height()) >= side))
+}
+
+/// The thumbnail a HEIF or an AVIF carries (`heif::thumbnail`); `None`
+/// for any other picture.
+fn heif_thumbnail<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<Option<DynamicImage>> {
     if reader.format().is_some() {
         return Ok(None);
     }
@@ -165,8 +188,7 @@ pub fn stand_in<R: BufRead + Seek>(
     if !crate::heif::starts(inner.fill_buf()?) {
         return Ok(None);
     }
-    Ok(crate::heif::thumbnail(inner)?
-        .filter(|thumbnail| thumbnail.width().max(thumbnail.height()) < side))
+    crate::heif::thumbnail(inner)
 }
 
 /// A progressive JPEG's eighth, turned (ADR-146, 6): its DC scans alone,

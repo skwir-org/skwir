@@ -215,9 +215,9 @@ fn a_heic_s_thumbnail_stands_in_for_it() {
         .unwrap()
     };
     let thumbnail = stand_in("synthetic-tiles.heic", 1000).unwrap();
-    assert_eq!((thumbnail.width(), thumbnail.height()), (96, 64));
+    assert_eq!((thumbnail.width(), thumbnail.height()), (128, 84));
     assert!(
-        stand_in("synthetic-tiles.heic", 96).is_none(),
+        stand_in("synthetic-tiles.heic", 128).is_none(),
         "not smaller"
     );
     let turned = stand_in("synthetic-turned-tiles.heic", 1000)
@@ -294,4 +294,52 @@ fn a_heic_region_is_cut_as_shown_however_it_is_turned() {
             );
         }
     }
+}
+
+/// The thumbnail a HEIC carries makes the grid's thumbnails of a side it
+/// covers (ADR-148 amended): its whole is not decoded for them.
+#[test]
+fn a_heic_s_grid_thumbnail_is_made_from_the_one_it_carries() {
+    use skwir_core::thumbs::ThumbnailProvider;
+    taught();
+    let carried = |name: &str, side: u32| {
+        picture::carried(picture::open(&fixture(name)).unwrap(), side).unwrap()
+    };
+    // 384 × 256, carrying 128 × 84.
+    let thumbnail = carried("synthetic-tiles.heic", 128).unwrap();
+    assert_eq!((thumbnail.width(), thumbnail.height()), (128, 84));
+    assert!(
+        carried("synthetic-tiles.heic", 129).is_none(),
+        "smaller than asked"
+    );
+    assert!(
+        carried("synthetic-gradient.heic", 16).is_none(),
+        "it carries none"
+    );
+    let turned = carried("synthetic-turned-tiles.heic", 96).unwrap();
+    assert_eq!(
+        (turned.width(), turned.height()),
+        (64, 96),
+        "turned as shown"
+    );
+    // The image decoder's thumbnail at the grid's smallest side, 128: the
+    // one carried, to the pixel.
+    let path = fixture("synthetic-tiles.heic");
+    let request = skwir_core::thumbs::ThumbRequest {
+        entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
+        mime: Some("image/heic".into()),
+        mtime: None,
+        size: skwir_core::thumbs::ThumbSize::Normal,
+    };
+    let decoder = skwir_platform::thumb_providers::ImageDecoder;
+    assert!(decoder.accepts(&request));
+    let made = decoder
+        .thumbnail(&request, &skwir_core::cancel::CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!((made.width, made.height), (128, 84));
+    assert!(
+        *made.rgba == *thumbnail.to_rgba8().into_raw(),
+        "not the carried one"
+    );
 }
