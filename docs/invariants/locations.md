@@ -33,7 +33,7 @@ the others with no UI branch.
 | what an open location holds | `OpenLocation::holds` |
 | what its text typed goes on with | `LocationProvider::complete` (ADR-070) |
 | the folders opening it reads (an agent's call refused a private one) | `LocationProvider::folders_read`, `App::folders_read` |
-| what brings back a folder a pane cannot show (a volume to mount, a server to connect) | `Place::reopen` (ADR-149) |
+| what brings back a folder a pane cannot show (a volume to mount, a server to connect) | `Registry::reopens` (ADR-149) |
 
 A folder is a location like the others: its trail is a `Trail`, its
 chevrons list `App::places_in`, and Shift+F5/F6 give the selection to the
@@ -145,14 +145,26 @@ and `notes.agree` are core `notes.*` commands.
   again from its path (`OpenLocation::reopen`); below one let go of, it
   lets go of what it holds there and fails as `Failure::Left`
   (`OpenLocation::volume_gone`). A mount let go of never opens a folder
-  again. A location listing through another hands both on.
+  again. Before Skwir lets go of a volume, or another program announces
+  it does (`App::release`), what can be read by its path from then on
+  holds nothing there (`OpenLocation::hold_nothing`) and stays shown;
+  what cannot goes home, or closes beside the folder shown. A location
+  listing through another hands all three on.
 - A folder's listing lost (deleted, its volume gone) lets go of its
   directory: a refresh opens the folder again from its path, never lists
-  the descriptor of one that went.
-- A place offering to open a folder again (`Place::reopen`) says where
-  it was this run, nothing kept beyond it; its command takes `pane` and
-  `below` (names only, `Reopen::below`) and shows that folder in place of
-  the step that could not show it.
+  the descriptor of one that went. A listing kept beside the one shown
+  (the folder just left, a column) that failed is never shown again as
+  it was: what goes to it opens it anew (`Pane::take_kept`, what it was
+  told drained first). A location that redirected (an address connected)
+  is spent as the pane follows it (`App::follow_redirect`): never kept,
+  so an address asked again connects again.
+- An offer to open a folder again (`Registry::reopens`, by the volume's
+  or the server's owner) says where it was this run, nothing kept beyond
+  it; its command takes `pane` and `below` (names only, `Reopen::below`)
+  and shows that folder in place of the step that could not show it.
+- A folder on a volume the user may let go of (`fs::volume::lets_go`) is
+  held by nothing between reads (`Folder::ByPath`): see
+  [views.md](views.md), "A folder that moves".
 
 ## Searches
 

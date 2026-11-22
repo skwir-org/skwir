@@ -419,7 +419,7 @@ remote_device_not_mounted = Non montato. Fai clic per montarlo e aprirlo.
 remote_disconnect = Disconnetti
 
 # draft
-remote_disconnect_description = Rilascia una cartella remota: ciò che la mostra torna alla Cartella personale
+remote_disconnect_description = Rilascia una cartella remota: ciò che la mostra lo dice, e la mostra di nuovo una volta riconnessa
 
 # draft
 remote_disconnected = Disconnesso da { $name }
@@ -1512,15 +1512,6 @@ remote_tool_unknown = Skwir non conosce lo strumento che l’ha montato
 
 # draft
 remote_tools_failed = { $failures }
-
-# draft
-remote_under_way = { $count ->
-        [1] { $actions } è in corso lì
-       *[other] { $actions } sono in corso lì
-    }
-
-# draft
-remote_under_way_title = { $title }
 
 # draft
 remote_unfinished_data = I remote di rclone che Skwir ha iniziato a configurare e non ha finito, in base al nome

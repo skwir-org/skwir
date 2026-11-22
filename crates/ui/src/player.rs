@@ -631,6 +631,9 @@ pub struct PlayerState {
     /// The volume's slider, the panel's popup's or the dock's
     /// (`media::volume_control`).
     pub volume: crate::media::Volume,
+    /// What the volumes about to be let go of last moved with
+    /// (`App::letting_go_now`): what plays from one ends.
+    letting_seen: u64,
     /// Whether anything was published, to say once that nothing plays.
     published: bool,
     /// The previewed track that has actually played. Selecting a song is not
@@ -768,6 +771,7 @@ impl Default for PlayerState {
             queue_tx,
             queue_rx,
             published: false,
+            letting_seen: 0,
             engaged: None,
             seen: SeenPlaying::default(),
             height: crate::dock::COMPACT,
@@ -2104,6 +2108,22 @@ impl Shell {
     pub fn sync_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for image in self.player.retired.drain(..) {
             cx.drop_image(image, Some(window));
+        }
+        // What plays from a volume about to be let go of ends, as at its
+        // end: the file it holds open would keep the volume busy (ADR-149).
+        let (_, version) = self.app.letting_go_now();
+        if self.player.letting_seen != version {
+            self.player.letting_seen = version;
+            if let Some(path) = self
+                .player
+                .pinned
+                .as_ref()
+                .filter(|pinned| !pinned.ended && self.app.letting_go(&pinned.path))
+                .map(|pinned| pinned.path.clone())
+            {
+                let went = HashMap::from([(path, None)]);
+                self.pin_follows(&went, None, window, cx);
+            }
         }
         while let Ok((track, file, image)) = self.player.cover_rx.try_recv() {
             if let Some((wanted, cover)) = &mut self.player.cover

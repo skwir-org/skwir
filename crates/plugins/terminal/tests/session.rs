@@ -156,6 +156,50 @@ fn what_is_typed_runs_and_the_shell_and_the_pane_follow_each_other() {
     drop(app);
 }
 
+/// A shell in a folder of a volume about to be let go of leaves it for the
+/// folder given, following or not, and the pane is not told it moved
+/// (ADR-149, amended); one elsewhere stays.
+#[test]
+fn a_shell_on_a_volume_let_go_of_leaves_it() {
+    let tmp = home_tempdir();
+    let root = skwir_core::os_path::canonical(tmp.path()).unwrap();
+    let volume = root.join("a drive");
+    let inside = volume.join("it's inside");
+    let home = root.join("home");
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let (app, _plugin) = app(&root);
+    app.settings
+        .set("terminal.follow", toml::Value::Boolean(false));
+    let shell = Shell::open(&app, &inside);
+    // Its prompt up, so what is typed is echoed once.
+    shell.type_line("echo ready");
+    shell.until("the shell in its folder, ready", |s| {
+        s.cwd.as_deref() == Some(inside.as_path()) && text(s).lines().any(|line| line == "ready")
+    });
+    // Elsewhere: nothing typed.
+    shell.session.send(Input::Leave {
+        below: root.join("another drive"),
+        to: home.clone(),
+    });
+    shell.session.send(Input::Leave {
+        below: volume.clone(),
+        to: home.clone(),
+    });
+    shell.type_line("echo left");
+    let screen = shell.until("the shell gone home", |s| {
+        s.cwd.as_deref() == Some(home.as_path()) && text(s).lines().any(|line| line == "left")
+    });
+    assert_eq!(screen.moved, 0, "the pane stays where it is");
+    assert_eq!(
+        text(&screen).matches(" cd '").count(),
+        1,
+        "one cd typed:\n{}",
+        text(&screen)
+    );
+    drop(app);
+}
+
 #[test]
 fn the_shell_ends_on_exit_and_disabling_hangs_up_on_it() {
     let tmp = home_tempdir();

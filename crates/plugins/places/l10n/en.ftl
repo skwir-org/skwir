@@ -169,6 +169,9 @@ places_unbookmark_this_folder = Remove from bookmarks
 # The bookmark's name, as the sidebar showed it.
 places_unbookmarked = Removed { $name } from bookmarks
 
+# An action's title (copy 3 items to USB), quoted.
+places_under_way_title = { $title }
+
 places_unlock = Unlock volume
 
 # The button of the question asking a volume's passphrase.
@@ -200,6 +203,15 @@ places_unmount_description = Detach a removable volume through udisks so it can 
 
 # The volume's label; the error: why, as the system said it.
 places_unmount_failed = { $name } was not unmounted: { $error }
+
+# Another program unmounts a drive while Skwir copies to it (or moves, deletes there): volume: the drive's name; actions: what Skwir does there. Its button cancels them.
+places_unmount_held = { $volume } is being unmounted, but { $count ->
+        [1] { $actions } is still under way on it
+       *[other] { $actions } are still under way on it
+    }
+
+# The button of "… is being unmounted, but … is still under way on it": cancel what Skwir does on the drive.
+places_unmount_held_cancel = Cancel
 
 # The volume's label; the error: why the system could not write it.
 places_unmount_unwritten = { $name } was not unmounted: not everything could be written to it ({ $error })

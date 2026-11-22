@@ -3005,6 +3005,19 @@ impl Shell {
         } else {
             self.here(code, window, cx)
         };
+        // On a volume about to be let go of: nothing of it is read
+        // meanwhile, and what was read lets go (a document's helper, what
+        // plays), as its file would keep the volume busy (ADR-149). Shown
+        // again once that ends where the volume stays.
+        let letting = current
+            .as_ref()
+            .is_some_and(|(_, key, ..)| self.app.letting_go(&key.path));
+        let current = if letting {
+            self.let_ahead_go(window, cx);
+            None
+        } else {
+            current
+        };
         let Some((seen, key, version, entry)) = current else {
             self.exit_fullscreen(window, cx);
             self.cancel_preview(window, cx);

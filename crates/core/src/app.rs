@@ -200,6 +200,11 @@ pub struct SecretAnswer {
     pub remember: bool,
 }
 
+/// How long what shows a file on a volume about to be let go of lets go
+/// of it (`App::release`): past it, where the volume stayed (its unmount
+/// refused), it is shown again.
+pub const LETTING_GO: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// An answer not to be kept: what a script or a test answers.
 impl From<String> for SecretAnswer {
     fn from(text: String) -> Self {
@@ -548,6 +553,9 @@ pub struct App {
     /// The mounts as last seen, against which the next change of them is
     /// told (`volumes_changed`, ADR-149).
     pub(crate) volumes: crate::volumes::Seen,
+    /// The volumes about to be let go of, each until when, and what moves
+    /// as one is announced or ends (`release`, `letting_go`).
+    letting: parking_lot::Mutex<(Vec<(PathBuf, std::time::Instant)>, u64)>,
     /// The tabs closed last, to reopen (`tab.reopen`).
     pub(crate) closed_tabs: parking_lot::Mutex<crate::tabs::Closed>,
     /// Self reference so background work can keep a `Weak<App>`.
@@ -658,6 +666,7 @@ impl App {
             shown: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
             focused: parking_lot::Mutex::new(None),
             volumes: crate::volumes::Seen::default(),
+            letting: parking_lot::Mutex::new((Vec::new(), 0)),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
@@ -3819,37 +3828,127 @@ impl App {
         }
     }
 
-    /// Let go of everything under `path` before its volume is unmounted: a
-    /// pane that shows a folder there goes to `to`, and every folder there
-    /// that a pane keeps beside the one it shows, opened in place or just
-    /// left, closes. An open listing holds its directory, and the kernel
-    /// refuses to unmount a volume anything holds. The listings let go of
-    /// their directories on a worker, a moment later; a dormant pane holds
-    /// nothing.
+    /// Let go of everything under `path` before its volume is unmounted
+    /// (ADR-149, amended), by Skwir or by another program that announced
+    /// it: an open listing holds its directory, and the kernel refuses to
+    /// unmount a volume anything holds. What a pane holds there that can
+    /// be read by its path from now on (a folder's listing,
+    /// `OpenLocation::hold_nothing`) stays shown, saying so once the volume
+    /// goes and coming back with it; what cannot goes: a pane showing it to
+    /// `to`, a folder kept beside the one shown or opened in place closes.
+    /// The windows let go of what shows a file there (a document's or an
+    /// archive's helper, what plays, the terminal's shell) for a while
+    /// (`letting_go`). The listings let go of their directories on a
+    /// worker, a moment later; a dormant pane holds nothing.
     pub fn release(&self, path: &Path, to: &Location) -> anyhow::Result<()> {
+        let under = |open: &Arc<dyn crate::location::OpenLocation>| {
+            open.holds()
+                .map(Path::to_path_buf)
+                .or_else(|| open.location().path())
+                .is_some_and(|held| held.starts_with(path))
+        };
         // Whatever its scheme: a trashed folder there is listed by the
         // folder's own listing (`OpenLocation::holds`).
-        let showing: Vec<PaneId> = self
-            .workspace
-            .read()
-            .panes()
-            .iter()
-            .filter(|p| {
-                p.open
-                    .as_ref()
-                    .and_then(|open| open.holds())
-                    .is_some_and(|held| held.starts_with(path))
-            })
-            .map(|p| p.id)
+        let (shown, kept): (Vec<_>, Vec<_>) = {
+            let ws = self.workspace.read();
+            let shown = ws
+                .panes()
+                .iter()
+                .filter_map(|p| Some((p.id, p.open.clone()?)))
+                .filter(|(_, open)| under(open))
+                .collect();
+            let kept = ws
+                .panes()
+                .iter()
+                .flat_map(|p| {
+                    p.held_open()
+                        .into_iter()
+                        .filter(|open| {
+                            under(open) && p.open.as_ref().is_none_or(|o| !Arc::ptr_eq(o, open))
+                        })
+                        .map(move |open| (p.id, open))
+                })
+                .collect();
+            (shown, kept)
+        };
+        // Outside the lock: a location's own code.
+        for (pane, open) in shown {
+            if !open.hold_nothing() {
+                self.navigate(pane, to)?;
+            }
+        }
+        let closing: Vec<(PaneId, Location)> = kept
+            .into_iter()
+            .filter(|(_, open)| !open.hold_nothing())
+            .map(|(pane, open)| (pane, open.location().clone()))
             .collect();
-        for pane in showing {
-            self.navigate(pane, to)?;
+        {
+            let mut ws = self.workspace.write();
+            for p in ws.panes_mut() {
+                let gone: Vec<&Location> = closing
+                    .iter()
+                    .filter(|(pane, _)| *pane == p.id)
+                    .map(|(_, location)| location)
+                    .collect();
+                p.release_left_under(path, |location| gone.contains(&location));
+            }
         }
-        for p in self.workspace.write().panes_mut() {
-            p.release_under(path);
-        }
+        self.announce_letting_go(path);
         self.wake();
         Ok(())
+    }
+
+    /// Say that the volume at `point` is about to be let go of: for
+    /// [`LETTING_GO`], what shows a file there lets go of it (`letting_go`),
+    /// and the windows are woken then, to show again what they let go of
+    /// where the volume stayed (its unmount refused).
+    fn announce_letting_go(&self, point: &Path) {
+        let until = std::time::Instant::now() + LETTING_GO;
+        {
+            let mut letting = self.letting.lock();
+            letting
+                .0
+                .retain(|(at, ends)| at != point && *ends > std::time::Instant::now());
+            letting.0.push((point.to_path_buf(), until));
+            letting.1 += 1;
+        }
+        let weak = self.weak();
+        let _ = std::thread::Builder::new()
+            .name("skwir-letting-go".into())
+            .spawn(move || {
+                std::thread::sleep(LETTING_GO);
+                if let Some(app) = weak.upgrade() {
+                    app.letting.lock().1 += 1;
+                    app.wake();
+                }
+            });
+    }
+
+    /// Whether `path` is on a volume about to be let go of (`release`):
+    /// nothing of it is read to be shown meanwhile.
+    pub fn letting_go(&self, path: &Path) -> bool {
+        let now = std::time::Instant::now();
+        self.letting
+            .lock()
+            .0
+            .iter()
+            .any(|(point, until)| *until > now && path.starts_with(point))
+    }
+
+    /// The volumes about to be let go of (`release`), and what moves as
+    /// one is announced or ends: what the windows compare.
+    pub fn letting_go_now(&self) -> (Vec<PathBuf>, u64) {
+        let now = std::time::Instant::now();
+        let letting = self.letting.lock();
+        (
+            letting
+                .0
+                .iter()
+                .filter(|(_, until)| *until > now)
+                .map(|(point, _)| point.clone())
+                .collect(),
+            letting.1,
+        )
     }
 
     /// Open or close folders of the tree of what a search found, when
@@ -4048,6 +4147,13 @@ pub struct PaneArg {
     /// The pane to act on; the active pane when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<PaneId>,
+}
+
+/// `cancel_in`: the folder whose actions are cancelled.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CancelInArgs {
+    /// A folder: the actions that touch it or what it holds are cancelled.
+    pub folder: crate::os_path::PathArg,
 }
 
 /// `filter`: what the names shown must hold.
@@ -6155,6 +6261,23 @@ mod builtin {
             |a, app| Ok(Outcome::Plan(Plan::from_data(&a.plan, &app.ops)?)),
         )
         .plans();
+
+        c.register::<CancelInArgs, _>(
+            "core",
+            Topic::Files,
+            "cancel_in",
+            words!(
+                app_cancel_in = "Cancel what runs in a folder",
+                note = "An action's name: cancel the copies, moves and other actions that touch a folder (a drive about to be unmounted)."
+            ),
+            words!(
+                app_cancel_in_description = "Cancel the actions running or waiting that touch a folder or what it holds; what they did stays done, and can be undone"
+            ),
+            |a, app| {
+                app.executor.cancel_under(&a.folder);
+                Ok(Outcome::Done)
+            },
+        );
 
         c.register::<UndoArgs, _>(
             "core", Topic::Files,

@@ -420,6 +420,11 @@ app_back = Back
 
 app_back_description = Go to the previous location
 
+# An action's name: cancel the copies, moves and other actions that touch a folder (a drive about to be unmounted).
+app_cancel_in = Cancel what runs in a folder
+
+app_cancel_in_description = Cancel the actions running or waiting that touch a folder or what it holds; what they did stays done, and can be undone
+
 # An action's name, for scripts and agents.
 app_commands = List commands
 
@@ -1152,6 +1157,15 @@ exec_redo_held_for_good = { $title } cannot be redone: { $other }, undone after 
 
 # Why an action of a chain of undos was left (its title is not known any more): an undo before it stopped. why: what stopped. Begins in lower case.
 exec_that_not_undone = that action was not undone: { $why }
+
+# Why a drive or a server is not let go of (unmounted, disconnected): actions: the titles of what Skwir does there.
+exec_under_way = { $count ->
+        [1] { $actions } is under way there
+       *[other] { $actions } are under way there
+    }
+
+# An action's title (copy 3 items to Docs), quoted.
+exec_under_way_title = { $title }
 
 # What an undo is called while the action it takes back is not known yet. Begins in lower case: said inside other words too.
 exec_undo = undo

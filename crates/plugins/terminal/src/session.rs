@@ -626,6 +626,16 @@ impl Worker {
                 }
                 false
             }
+            Input::Leave { below, to } => {
+                if self.family.is_some()
+                    && self.shell_has_terminal()
+                    && self.shell_dir().is_some_and(|dir| dir.starts_with(&below))
+                    && let Some(dir) = self.follow.leave_to(to)
+                {
+                    self.type_cd(&dir);
+                }
+                false
+            }
             Input::Palette(palette) => {
                 *self.shared.palette.lock() = palette;
                 false

@@ -28,6 +28,9 @@ struct Snapshot {
     places: Vec<std::sync::Arc<str>>,
     /// Who knows of the remotes mounted (ADR-077), alike.
     remotes: Vec<std::sync::Arc<str>>,
+    /// Who offers to open again a volume or a server not open now
+    /// (ADR-149), alike: what was mounted this run.
+    reopens: Vec<std::sync::Arc<str>>,
     /// What the address field offers (ADR-098), by who offers it.
     suggesters: Vec<std::sync::Arc<str>>,
     /// What reads the words typed over a folder (the query plugin).
@@ -99,6 +102,7 @@ fn snapshot(app: &App) -> Snapshot {
         property_sources: app.registry.property_sources.all().len(),
         places: app.registry.places.owners(),
         remotes: app.registry.remotes.owners(),
+        reopens: app.registry.reopens.owners(),
         suggesters: app.registry.suggesters.owners(),
         filter_readers: app.registry.filter_readers.owners(),
         sorters: app.registry.sorters.owners(),
@@ -185,6 +189,14 @@ fn every_plugin_disables_without_a_trace_and_re_enables() {
             again.remotes
         );
         again.remotes.clone_from(&enabled.remotes);
+        // What it offers to connect again follows those mounts alike
+        // (ADR-149): its own alone.
+        assert!(
+            again.reopens.iter().all(|owner| &**owner == id),
+            "{id}: reopens offered by another owner: {:?}",
+            again.reopens
+        );
+        again.reopens.clone_from(&enabled.reopens);
         assert_eq!(
             again, enabled,
             "{id} re-enable must restore its contributions"

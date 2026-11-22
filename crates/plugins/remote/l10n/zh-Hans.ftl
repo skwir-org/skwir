@@ -410,7 +410,7 @@ remote_device_not_mounted = 未挂载。点击以挂载并打开。
 remote_disconnect = 断开连接
 
 # draft
-remote_disconnect_description = 断开远程文件夹：正在显示它的窗格将返回主文件夹
+remote_disconnect_description = 断开远程文件夹：正在显示它的窗格会说明这一点，并在重新连接后再次显示它
 
 # draft
 remote_disconnected = 已断开与{ $name }的连接
@@ -1483,12 +1483,6 @@ remote_tool_unknown = Skwir 不知道挂载它的工具
 
 # draft
 remote_tools_failed = { $failures }
-
-# draft
-remote_under_way = 那里仍有操作正在进行：{ $actions }
-
-# draft
-remote_under_way_title = { $title }
 
 # draft
 remote_unfinished_data = Skwir 开始设置但未完成的 rclone 远程，按名称

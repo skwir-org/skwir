@@ -199,6 +199,9 @@ places_unbookmark_this_folder = 从书签中移除
 places_unbookmarked = 已将{ $name }从书签中移除
 
 # draft
+places_under_way_title = { $title }
+
+# draft
 places_unlock = 解锁卷
 
 # draft
@@ -233,6 +236,12 @@ places_unmount_description = 通过 udisks 卸下可移动卷，以便将其拔�
 
 # draft
 places_unmount_failed = 未能卸载{ $name }：{ $error }
+
+# draft
+places_unmount_held = 正在卸载{ $volume }，但其上仍有操作正在进行：{ $actions }
+
+# draft
+places_unmount_held_cancel = 取消
 
 # draft
 places_unmount_unwritten = 未能卸载{ $name }：并非所有内容都已写入其中（{ $error }）

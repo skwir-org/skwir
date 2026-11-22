@@ -272,3 +272,104 @@ fn what_arrives_is_read_with_its_notes_and_dated_as_its_file_will_be() {
     held.open();
     assert!(until(&app, &dest, <[Arriving]>::is_empty).is_empty());
 }
+
+/// An action under way on a folder keeps its volume from being let go of,
+/// named (Eject, Disconnect: `Executor::refuse_under_way`), and Cancel
+/// there (`cancel_in`, a toast's when another program unmounts it) stops
+/// it, nothing under way any more (ADR-149, amended).
+#[test]
+fn an_action_under_way_on_a_volume_is_named_and_cancelled_there() {
+    let tmp = home_tempdir();
+    let from = tmp.path().join("from");
+    std::fs::create_dir_all(&from).unwrap();
+    std::fs::write(from.join("it's copied.txt"), b"c").unwrap();
+    let drive = tmp.path().join("a drive");
+    std::fs::create_dir_all(&drive).unwrap();
+    let app = app(&tmp.path().join("state"));
+    let held = Held::new();
+    let plan = Plan::with_steps(
+        Words::as_written("Copy “it's copied.txt” to a drive"),
+        vec![
+            Box::new(held.clone()),
+            Box::new(Copy::from_settings(
+                EntryRef::from_path(from.join("it's copied.txt")).unwrap(),
+                drive.clone(),
+                &app.settings,
+            )),
+        ],
+    );
+    app.executor.execute(plan, CancelToken::new());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !held.holds() {
+        assert!(Instant::now() < deadline, "the run never began");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let refused = app.executor.refuse_under_way(&drive).unwrap_err();
+    assert!(
+        refused.to_string().contains("is under way there"),
+        "{refused}"
+    );
+    // (The held step says nothing of what it touches: it touches
+    // everything, elsewhere too.)
+    app.dispatch(&Invocation::with_args(
+        "cancel_in",
+        &serde_json::json!({ "folder": drive }),
+    ))
+    .unwrap();
+    held.open();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.executor.is_busy() {
+        assert!(Instant::now() < deadline, "still under way");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.executor.refuse_under_way(&drive).is_ok());
+    // Stopped by its own token, as Cancel stops it: what came after the
+    // held step was not done.
+    assert!(
+        !drive.join("it's copied.txt").exists(),
+        "the copy was cancelled, not run"
+    );
+}
+
+/// A copy of many files cancelled in its folder by `cancel_in` (a toast's
+/// Cancel when another program unmounts the drive it copies to) stops:
+/// what it had not copied stays where it was (ADR-149, amended).
+#[test]
+fn a_copy_cancelled_in_its_folder_stops() {
+    let tmp = home_tempdir();
+    let from = tmp.path().join("many, été");
+    std::fs::create_dir_all(&from).unwrap();
+    let names: Vec<std::path::PathBuf> = (0..3000)
+        .map(|i| {
+            let path = from.join(format!("it's {i}.txt"));
+            std::fs::write(&path, vec![b'x'; 64]).unwrap();
+            path
+        })
+        .collect();
+    let drive = tmp.path().join("a drive");
+    std::fs::create_dir_all(&drive).unwrap();
+    let app = app(&tmp.path().join("state"));
+    let plan = plan(
+        &app,
+        "copy",
+        serde_json::json!({ "entries": names, "dest": drive }),
+    );
+    app.executor.execute(plan, CancelToken::new());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while app.executor.under_way_in(&drive).is_empty() {
+        assert!(Instant::now() < deadline, "never under way");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    app.dispatch(&Invocation::with_args(
+        "cancel_in",
+        &serde_json::json!({ "folder": drive }),
+    ))
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while app.executor.is_busy() {
+        assert!(Instant::now() < deadline, "never stopped");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let copied = std::fs::read_dir(&drive).unwrap().count();
+    assert!(copied < names.len(), "stopped before the end: {copied}");
+}

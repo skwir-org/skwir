@@ -1454,13 +1454,22 @@ asks the direction.
   lists it; the server stays connected.
 - **A folder comes back with its volume (ADR-149).** A pane's folder
   below a mount let go of says its drive or server went
-  (`Failure::Left`, Go Back); one deleted, that it no longer exists (Go
-  to the parent folder). Where a place not open now was at or above it
-  this run (`Place::reopen`), the pane says what that place says ("USB is
-  not mounted") and offers its button (Mount, Unlock, Connect), its
-  command given `pane` and `below`, what it does said in its place while
-  its owner works on it. Mounted by anyone, the folder shows again by
-  itself (`App::volumes_changed`): never ask the user to press F5 for it.
+  (`Failure::Left`, Go Home); one deleted, that it no longer exists (Go
+  to the parent folder). Where a volume or server not open now was at or
+  above it this run (`Registry::reopens`), the pane says what its owner
+  says ("USB is not mounted") and offers its button (Mount, Unlock,
+  Connect), its command given `pane` and `below`, then Go Home; what its
+  owner does said in its button's place meanwhile. Mounted by anyone, the
+  folder shows again by itself (`App::volumes_changed`): never ask the
+  user to press F5 for it. Skwir's own Eject and Disconnect leave the
+  panes where they are (`App::release`), as another program's does.
+- **What shows a file on a volume about to be let go of lets go of it**
+  (`App::letting_go`, for `LETTING_GO`: Skwir's Eject, another program's
+  announced unmount): the preview reads nothing there and closes what
+  read it (a document's helper), the player ends what it plays from
+  there as at its end, a terminal shell there goes home (`Input::Leave`,
+  following or not). What the windows show again where the volume
+  stays (its unmount refused) once that ends.
 - **A folder appears whole (ADR-120).** A pane goes to a folder at once
   (address, trail, an empty view, its files drawn meanwhile, below) and
   shows its entries together, sorted,
@@ -2558,6 +2567,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - The session's threads parse, build screens (at most one per 8 ms) and
   wake the app; the UI thread only compares a revision. The shell starts
   on a worker.
+- A shell in a folder of a volume about to be let go of goes home, its
+  prompt shown, following the pane or not (`Input::Leave`, ADR-149
+  amended): its folder would keep the volume busy. Typed as the
+  plugin's, so the pane does not follow it there; a program running
+  there keeps it, and the unmount is refused.
 - With the keyboard, every root binding is shadowed (`NoAction` in the
   `Terminal` context, built by `keymap::install`), every one that names
   no place (`keymap::names_no_place`: the root's flags, `planning`,

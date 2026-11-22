@@ -216,7 +216,8 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     assert!(done.error.is_none(), "{:?}", done.error);
     assert!(!served_root.join("sub folder/hello.txt").exists());
 
-    // Eject: what showed it goes home, the mount and its folder go.
+    // Eject: what showed it stays, saying its server went once it is let
+    // go of (ADR-149, amended); the mount and its folder go.
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
         &serde_json::json!({ "path": remote.point }),
@@ -228,8 +229,13 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     assert!(
         app.pane_location(pane)
             .and_then(|l| l.path())
-            .is_none_or(|p| !p.starts_with(&remote.point))
+            .is_some_and(|p| p.starts_with(&remote.point)),
+        "it stays where it was"
     );
+    until(&app, 30, "it says its server went", || {
+        app.workspace.read().pane(pane).unwrap().listing.failure()
+            == Some(skwir_core::Failure::Left)
+    });
     until(&app, 10, "its mount point removed", || {
         !remote.point.exists()
     });

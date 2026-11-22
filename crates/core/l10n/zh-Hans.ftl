@@ -463,6 +463,12 @@ app_back = 后退
 app_back_description = 转到上一个位置
 
 # draft
+app_cancel_in = 取消文件夹中正在进行的操作
+
+# draft
+app_cancel_in_description = 取消涉及某个文件夹或其内容的正在进行或等待中的操作；已完成的部分保持不变，并且可以撤销
+
+# draft
 app_commands = 列出命令
 
 # draft
@@ -1238,6 +1244,12 @@ exec_redo_held_for_good = 无法重做{ $title }：在它之后撤销的{ $other
 
 # draft
 exec_that_not_undone = 该操作未撤销：{ $why }
+
+# draft
+exec_under_way = 那里仍有操作正在进行：{ $actions }
+
+# draft
+exec_under_way_title = { $title }
 
 # draft
 exec_undo = 撤销

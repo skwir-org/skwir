@@ -198,9 +198,10 @@ fn held_under(dir: &Path) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// Before a volume is unmounted, skwir lets go of it: a pane showing a
-/// folder there goes elsewhere, and the folders it opened in place or kept
-/// there close, until nothing of the process holds the volume.
+/// Before a volume is unmounted, skwir lets go of it (ADR-149, amended):
+/// a pane showing a folder there stays, and so do the folders it opened in
+/// place, each reading by its path from then on, until nothing of the
+/// process holds the volume.
 #[cfg(target_os = "linux")]
 #[test]
 fn released_folders_hold_nothing_open() {
@@ -222,15 +223,24 @@ fn released_folders_hold_nothing_open() {
 
     app.release(&volume, &Location::from_path(&elsewhere))
         .unwrap();
-    wait(&app, pane, |p| {
-        p.listing.is_complete() && p.location().and_then(Location::path) == Some(elsewhere.clone())
-    });
     {
         let ws = app.workspace.read();
         let p = ws.pane(pane).unwrap();
-        assert!(p.expanded().is_empty());
-        assert!(!p.keeps_any(), "the folder left is not kept");
+        assert_eq!(
+            p.location().and_then(Location::path),
+            Some(volume.clone()),
+            "it stays where it is"
+        );
+        assert!(
+            !p.expanded().is_empty(),
+            "what it opened in place stays open"
+        );
     }
+    // A file made there meanwhile is listed all the same: read by its path.
+    std::fs::write(volume.join("made after.txt"), "1").unwrap();
+    wait(&app, pane, |p| {
+        p.listing.find_by_name("made after.txt".as_ref()).is_some()
+    });
     // Listings close their folders on a worker.
     let deadline = Instant::now() + Duration::from_secs(5);
     while !held_under(&volume).is_empty() {

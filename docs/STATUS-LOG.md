@@ -22441,3 +22441,78 @@ it. Built as proposed: the panes follow the mounts, whoever mounts.
   comes to the front) compiled only; no real server disconnected in the
   window, the remote side covered by its unit test; `just release-check`
   not run.
+
+
+## 2026-11-22: ADR-149 amended (Eject in place, held by nothing, unmounts announced)
+
+Asked by the user once other file managers were read (most go home on
+an unmount, or close the tab; only Nautilus holds the folder shown, as
+Skwir did, and an unmount by another program is then refused as busy):
+leave the panes in place on Skwir's own Eject and Disconnect, with Go
+Home beside Mount or Connect; hold nothing of a volume the user may let
+go of; let go first of what another program announces it unmounts,
+naming Skwir's own work there with Cancel; Eject naming that work; a
+server typed in the address field offering Connect; a GVfs folder let
+go of told.
+
+- **Core**: `App::release` asks what it holds there to hold nothing
+  (`OpenLocation::hold_nothing`) and navigates only what cannot;
+  `App::letting_go` (10 s, `LETTING_GO`) for the windows. A folder on a
+  volume `fs::volume::lets_go` names (a remote, a removable drive, one
+  under `/run/media`, `/media`, macOS's `/Volumes`) is read by its path
+  (`Folder::ByPath`), followed when renamed within its folder by its
+  identity. `Executor::refuse_under_way` (shared by Eject and
+  Disconnect), `cancel_under` and the `cancel_in` command.
+  `Registry::reopens` replaces `Place::reopen`. GVfs folders gone while
+  the remote plugin is on are told as let go of.
+- **Found by the remote folders' tests** (a pane no longer sent home
+  showed them): a kept listing that failed was shown again as it was
+  (`Pane::take_kept` now drains it and opens anew), and an address's
+  location that redirected stayed kept and was taken again by the next
+  connect, which then never connected (`App::follow_redirect` closes
+  it). Both were there before, hidden by the pane going home.
+- **Window**: the placeholder's buttons are a list (Mount or Connect,
+  then Go Home); the preview reads nothing on a volume let go of and lets
+  go of its helpers, the player ends what it plays from there, the
+  terminal's shell goes home (`Input::Leave`, following or not).
+- **Platform**: `places::follow_unmounts` listens on the session bus to
+  GIO's `MountPreUnmount` (gvfs's `org.gtk.Private.RemoteVolumeMonitor`,
+  the mount's root URI) and Solid's `teardownRequested`
+  (`/org/kde/solid/Device_<udi>`, `org.kde.Solid.Device`), both read in
+  their sources (gvfs's `dbus-interfaces.xml` and
+  `gvfsudisks2mount.c`, Solid's `ifaces/device.cpp`).
+- **Checked**: rustfmt, clippy `-D warnings` on the nine crates touched,
+  for Windows and for macOS (but skwir-ui) too; `just words --check`;
+  2776 tests of those crates and the binary's `plugins_toggle` and
+  `remote_folders` (47, against rclone servers), green. New tests: a
+  folder held by nothing (pretended remote: renamed in its folder
+  followed, moved elsewhere gone), a plain unmount never refused in a
+  mount namespace, `release` leaving panes in place, the terminal
+  leaving a volume, GIO's and Solid's notices decoded, `cancel_in`
+  stopping a copy of 3000 files, a lost folder left opened anew going
+  back, the placeholder's two buttons.
+- **In a window** (debug build, Xvfb, a FAT image udisks mounts, the
+  terminal panel open in its folder): Eject from the sidebar unmounted
+  it, the shell went home first, the pane stayed with “SKWIRBACK” is not
+  mounted, Mount and Go Home; Mount showed the folder; a plain
+  `udisksctl unmount` from outside, the folder shown, succeeded; with the
+  shell on the drive a plain unmount was refused, GIO's notice (sent on
+  the test bus with `gdbus emit --session`) moved the shell home, and the
+  same unmount succeeded; during a paste of 3000 files the notice showed
+  "“SKWIRBACK” is being unmounted, but “copy 3,000 items to SKWIRBACK”
+  is still under way on it", whose Cancel stopped the copy (the first
+  build cancelled the wrong token, which `under_way_in` reads: fixed
+  with the test that a copy stops); Eject during a copy said it is under
+  way there.
+- **SFTP in a window** (OpenSSH's sshd, SFTP only, on 127.0.0.1 as the
+  user; ssh's home a fixture through `nss_wrapper`, so the real `~/.ssh`
+  was never read nor written; the address typed, never kept): Disconnect
+  left the pane with “skwirsftp” is not connected, Connect to
+  “skwirsftp” and Go Home, the shell gone home; Connect showed the
+  folder in place; a plain `fusermount3 -u` from outside succeeded; the
+  server killed with sshfs still mounted showed nothing, and F5 an
+  input/output error beside the old files, with no Connect (left in the
+  plan).
+- **Not done**: a server dying under sshfs (above); unasked reads
+  (thumbnails, sizes) not held back while a volume is let go of;
+  Windows and macOS compiled only; `just release-check` not run.

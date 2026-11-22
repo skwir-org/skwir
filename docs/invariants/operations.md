@@ -712,9 +712,16 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   refused is forgotten once another served (`passphrases.rs`). Forget
   Passphrase is on the volume's place, locked or mounted. The plugin's
   data notes the UUIDs alone.
-- **Unmount.** First `App::release` lets go of everything under the mount
-  point (panes there go home; kept or opened folders close), since the
-  kernel refuses to unmount a busy volume. Then `places::flush` (`syncfs`)
+- **Unmount.** Refused while an action of Skwir's is under way there,
+  naming it (`Executor::refuse_under_way`; `force` cuts it). Then
+  `App::release` lets go of everything under the mount point, since the
+  kernel refuses to unmount a busy volume: what can read by its path
+  holds nothing and stays shown (ADR-149, amended), what cannot goes home
+  or closes, and the windows let go of the files they show there. What
+  another program announces it unmounts (GIO, Solid:
+  `places::follow_unmounts`) is let go of the same way; Skwir's actions
+  there are then named in a toast with Cancel (`cancel_in`), never cut
+  unasked. Then `places::flush` (`syncfs`)
   writes it out while still mounted: the kernel drops the mount from
   mountinfo as the unmount begins, before writing, so the row would look
   unmounted while the drive is written. The row stays busy under the

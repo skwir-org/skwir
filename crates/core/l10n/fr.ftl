@@ -467,6 +467,12 @@ app_back = Précédent
 app_back_description = Aller à l’emplacement précédent
 
 # draft
+app_cancel_in = Annuler ce qui s’exécute dans un dossier
+
+# draft
+app_cancel_in_description = Annuler les actions en cours ou en attente qui touchent un dossier ou ce qu’il contient ; ce qu’elles ont fait reste fait, et peut être défait
+
+# draft
 app_commands = Lister les commandes
 
 # draft
@@ -1249,6 +1255,16 @@ exec_redo_held_for_good = { $title } ne peut pas être rétabli : { $other }, a
 
 # draft
 exec_that_not_undone = cette action n’a pas été annulée : { $why }
+
+# draft
+exec_under_way = { $count ->
+        [1] { $actions } y est en cours
+        [one] { $actions } y est en cours
+       *[other] { $actions } y sont en cours
+    }
+
+# draft
+exec_under_way_title = { $title }
 
 # draft
 exec_undo = annuler

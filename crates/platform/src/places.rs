@@ -533,6 +533,158 @@ pub fn flush(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Call `told` with the mount points of each volume another program says
+/// it is about to unmount, on the session bus, until `stop` (ADR-149,
+/// amended): GIO's volume monitor before an unmount through it (GNOME's
+/// Eject, Nautilus, `gio mount -u`: `MountPreUnmount`, the mount's root a
+/// `file://` URI), KDE's Solid before a teardown (Dolphin, the device
+/// notifier: `teardownRequested`, the device's udi in its object path).
+/// On a thread of its own, connecting again when the session's bus is;
+/// `told` takes each at once and hands what may wait to a worker. What
+/// unmounts without saying so (`udisksctl`, udiskie) is not told. Linux
+/// only; elsewhere nothing is told. Whether it follows.
+pub fn follow_unmounts(stop: &CancelToken, told: impl Fn(Vec<PathBuf>) + Send + 'static) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let stop = stop.clone();
+        std::thread::Builder::new()
+            .name("skwir-unmounts".into())
+            .spawn(move || {
+                crate::bus::keep(crate::bus::session, &stop, |bus| {
+                    let rules = [
+                        ("org.gtk.Private.RemoteVolumeMonitor", "MountPreUnmount"),
+                        ("org.kde.Solid.Device", "teardownRequested"),
+                    ]
+                    .into_iter()
+                    .filter_map(|(interface, member)| {
+                        zbus::MatchRule::builder()
+                            .msg_type(zbus::message::Type::Signal)
+                            .interface(interface)
+                            .and_then(|rule| rule.member(member))
+                            .map(zbus::match_rule::Builder::build)
+                            .ok()
+                    })
+                    .collect();
+                    crate::bus::listen(
+                        bus,
+                        rules,
+                        &stop,
+                        || {},
+                        |message| {
+                            let points = announced(message);
+                            tracing::debug!(?points, "an unmount announced");
+                            if !points.is_empty() {
+                                told(points);
+                            }
+                        },
+                    );
+                });
+            })
+            .is_ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (stop, told);
+        false
+    }
+}
+
+/// The mount points a notice of an unmount names: GIO's mount's root,
+/// a `file://` URI; Solid's device, by the mounts of its block device or
+/// of what it holds unlocked.
+#[cfg(target_os = "linux")]
+fn announced(message: &zbus::Message) -> Vec<PathBuf> {
+    type Mount = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        bool,
+        String,
+        Vec<String>,
+        String,
+        std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    );
+    let header = message.header();
+    match header.member().map(zbus::names::MemberName::as_str) {
+        Some("MountPreUnmount") => message
+            .body()
+            .deserialize::<(String, String, Mount)>()
+            .ok()
+            .and_then(|(_, _, mount)| crate::uri::local_path_of(&mount.5))
+            .into_iter()
+            .collect(),
+        Some("teardownRequested") => header
+            .path()
+            .and_then(|path| solid_block(path.as_str()))
+            .map(|block| points_of_block(&block))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// The block device (`sdb1`, `dm-3`) Solid's object path for a device
+/// names: `/org/kde/solid/Device_` and its udi, `_` escaping each byte
+/// other than a letter, a digit and `.~-`; a udisks udi
+/// (`/org/freedesktop/UDisks2/block_devices/sdb1`) ends with the device's
+/// name, escaped as udisks escapes it (`dm_2d3`).
+#[cfg(target_os = "linux")]
+fn solid_block(path: &str) -> Option<String> {
+    fn unescape(text: &str) -> Option<String> {
+        let bytes = text.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut at = 0;
+        while at < bytes.len() {
+            if bytes[at] == b'_' {
+                let hex = text.get(at + 1..at + 3)?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                at += 3;
+            } else {
+                out.push(bytes[at]);
+                at += 1;
+            }
+        }
+        String::from_utf8(out).ok()
+    }
+    let udi = unescape(path.strip_prefix("/org/kde/solid/Device_")?)?;
+    let name = udi.strip_prefix("/org/freedesktop/UDisks2/block_devices/")?;
+    unescape(name).filter(|name| !name.is_empty() && !name.contains('/'))
+}
+
+/// Where `block`'s filesystem is mounted, or the filesystem of what it
+/// holds unlocked (a LUKS container's): sysfs's `slaves` and the mount
+/// table, both in memory.
+#[cfg(target_os = "linux")]
+fn points_of_block(block: &str) -> Vec<PathBuf> {
+    let Ok(text) = std::fs::read("/proc/self/mountinfo") else {
+        return Vec::new();
+    };
+    skwir_core::fs::volume::mountinfo(&text)
+        .into_iter()
+        .filter(|mounted| {
+            // A device's alone: no other source is a path to follow.
+            if !mounted.source.as_encoded_bytes().starts_with(b"/dev/") {
+                return false;
+            }
+            let Some(name) = std::fs::canonicalize(&mounted.source)
+                .ok()
+                .and_then(|device| Some(device.strip_prefix("/dev").ok()?.to_path_buf()))
+            else {
+                return false;
+            };
+            name.as_os_str() == block
+                || Path::new("/sys/class/block")
+                    .join(&name)
+                    .join("slaves")
+                    .join(block)
+                    .exists()
+        })
+        .map(|mounted| mounted.point)
+        .collect()
+}
+
 /// Unmount, then lock the container under it if there is one, so the volume
 /// is safe to unplug and asks for its passphrase next time. Blocks: worker only.
 pub fn unmount(source: &str) -> anyhow::Result<()> {
@@ -1153,7 +1305,7 @@ pub fn parse_mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mount> {
                     .unwrap_or_default(),
             )
         };
-        let udisks = mountpoint.starts_with("/run/media") || mountpoint.starts_with("/media");
+        let udisks = skwir_core::fs::volume::user_mounted(&mountpoint);
         out.push(Mount {
             label,
             path: mountpoint,
@@ -1431,6 +1583,71 @@ mod apfs {
 
 #[cfg(test)]
 mod tests {
+
+    /// GIO's notice of an unmount names the mount by its root, a `file://`
+    /// URI: its folder is told, whatever bytes it holds; a server's (an
+    /// `sftp://` root) is none of a drive's.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unmount_gio_announces_names_its_folder() {
+        let notice = |root: &str| {
+            let mount = (
+                "0x1",
+                "USB stick",
+                "",
+                "",
+                "",
+                root,
+                true,
+                "",
+                Vec::<String>::new(),
+                "",
+                std::collections::HashMap::<String, zbus::zvariant::Value>::new(),
+            );
+            let message = zbus::Message::signal(
+                "/org/gtk/Private/RemoteVolumeMonitor",
+                "org.gtk.Private.RemoteVolumeMonitor",
+                "MountPreUnmount",
+            )
+            .unwrap()
+            .build(&("org.gtk.vfs.UDisks2VolumeMonitor", "0x1", mount))
+            .unwrap();
+            super::announced(&message)
+        };
+        assert_eq!(
+            notice("file:///run/media/example/USB%20stick%2C%20%C3%A9t%C3%A9"),
+            [PathBuf::from("/run/media/example/USB stick, été")]
+        );
+        assert!(notice("sftp://example.com/").is_empty());
+    }
+
+    /// Solid names the device whose teardown it announces by its udi,
+    /// escaped twice: by Solid in its object path, by udisks in its own.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_teardown_solid_announces_names_its_block_device() {
+        assert_eq!(
+            super::solid_block(
+                "/org/kde/solid/Device__2Forg_2Ffreedesktop_2FUDisks2_2Fblock_5Fdevices_2Fsdb1"
+            )
+            .as_deref(),
+            Some("sdb1")
+        );
+        assert_eq!(
+            super::solid_block(
+                "/org/kde/solid/Device__2Forg_2Ffreedesktop_2FUDisks2_2Fblock_5Fdevices_2Fdm_5F2d3"
+            )
+            .as_deref(),
+            Some("dm-3")
+        );
+        // Another backend's device, or a path cut short, names none.
+        assert_eq!(
+            super::solid_block("/org/kde/solid/Device__2Ffstab_2Fnas"),
+            None
+        );
+        assert_eq!(super::solid_block("/org/kde/solid/Device__2"), None);
+        assert_eq!(super::solid_block("/org/kde/other"), None);
+    }
     /// What `diskutil apfs list -plist` answers, cut to what is read: a
     /// Mac's own container (its system, its data, unlocked) and a drive's,
     /// one volume locked, one not encrypted. Synthetic names and UUIDs, in

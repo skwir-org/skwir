@@ -4593,33 +4593,24 @@ impl Pane {
         shown.chain(kept).collect()
     }
 
-    /// Let go of the folders under `path` it keeps beside the one shown,
-    /// has opened in place or has just left: their volume is about to be
-    /// unmounted. Each closes as it drops.
-    pub(crate) fn release_under(&mut self, path: &Path) {
-        // What each holds open (`OpenLocation::holds`), whatever its
-        // scheme: a trashed folder opened in place is listed by its own.
-        let under = |k: &Kept| {
+    /// Before the volume at `path` is unmounted (`App::release`): close the
+    /// folders kept beside the one shown or opened in place that `gone`
+    /// names (they could not hold nothing), and forget the folder just
+    /// left there, which is only drawn.
+    pub(crate) fn release_left_under(&mut self, path: &Path, gone: impl Fn(&Location) -> bool) {
+        self.close_where(|o| gone(&o.location));
+        self.kept.retain(|k| !gone(&k.location));
+        let left_there = self.left.as_ref().is_some_and(|k| {
             k.open
                 .as_ref()
                 .and_then(|open| open.holds())
                 .or(k.path.as_deref())
                 .is_some_and(|p| p.starts_with(path))
-        };
-        let held: Vec<Location> = self
-            .kept
-            .iter()
-            .filter(|k| under(k))
-            .map(|k| k.location.clone())
-            .collect();
-        self.close_where(|o| {
-            held.contains(&o.location) || o.location.path().is_some_and(|p| p.starts_with(path))
         });
-        if self.left.as_ref().is_some_and(under) {
+        if left_there {
             self.left = None;
+            self.drawn_left = None;
         }
-        self.drawn_left = None;
-        self.kept.retain(|k| !under(k));
         self.opened_moved();
     }
 

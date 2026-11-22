@@ -204,6 +204,9 @@ places_unbookmark_this_folder = Rimuovi dai segnalibri
 places_unbookmarked = { $name } rimosso dai segnalibri
 
 # draft
+places_under_way_title = { $title }
+
+# draft
 places_unlock = Sblocca volume
 
 # draft
@@ -238,6 +241,15 @@ places_unmount_description = Scollega un volume rimovibile tramite udisks in mod
 
 # draft
 places_unmount_failed = { $name } non è stato smontato: { $error }
+
+# draft
+places_unmount_held = { $volume } sta per essere smontato, ma { $count ->
+        [1] { $actions } è ancora in corso lì
+       *[other] { $actions } sono ancora in corso lì
+    }
+
+# draft
+places_unmount_held_cancel = Annulla
 
 # draft
 places_unmount_unwritten = { $name } non è stato smontato: non è stato possibile scrivere tutto al suo interno ({ $error })

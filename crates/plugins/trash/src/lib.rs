@@ -786,6 +786,10 @@ impl OpenLocation for TrashFolder {
         self.inner.reopen();
     }
 
+    fn hold_nothing(&self) -> bool {
+        self.inner.hold_nothing()
+    }
+
     fn close(&self) {
         self.inner.close();
         self.holder.release();

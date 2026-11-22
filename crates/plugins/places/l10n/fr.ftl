@@ -202,6 +202,9 @@ places_unbookmark_this_folder = Retirer des signets
 places_unbookmarked = { $name } retiré des signets
 
 # draft
+places_under_way_title = { $title }
+
+# draft
 places_unlock = Déverrouiller un volume
 
 # draft
@@ -236,6 +239,16 @@ places_unmount_description = Détacher un volume amovible par udisks pour pouvoi
 
 # draft
 places_unmount_failed = { $name } n’a pas été démonté : { $error }
+
+# draft
+places_unmount_held = { $volume } est en cours de démontage, mais { $count ->
+        [1] { $actions } y est encore en cours
+        [one] { $actions } y est encore en cours
+       *[other] { $actions } y sont encore en cours
+    }
+
+# draft
+places_unmount_held_cancel = Annuler
 
 # draft
 places_unmount_unwritten = { $name } n’a pas été démonté : tout n’a pas pu y être écrit ({ $error })

@@ -29,6 +29,27 @@ const PLUGGED: [&str; 5] = ["usb", "ieee1394", "firewire", "pcmcia", "ccw"];
 #[cfg(target_os = "linux")]
 const LAYERS: u8 = 8;
 
+/// Whether the volume holding `path` is one the user may let go of while
+/// Skwir shows it, whose unmount nothing of Skwir's may refuse as busy
+/// (ADR-149, amended): a remote, one mounted for the user
+/// ([`user_mounted`]) or a drive that can be unplugged ([`is_removable`]).
+/// Reads the table in memory, and sysfs: on a worker.
+pub fn lets_go(path: &Path) -> bool {
+    crate::fs::reach::of(path).is_some()
+        || crate::fs::reach::volume_of(path).is_some_and(|point| user_mounted(&point))
+        || is_removable(path)
+}
+
+/// Whether `point` is where the system mounts what the user mounts and
+/// lets go of: udisks' folders (`/run/media/<user>`, `/media/<user>`),
+/// macOS's `/Volumes`. By its text alone.
+pub fn user_mounted(point: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        return point.starts_with("/Volumes") && point != Path::new("/Volumes");
+    }
+    point.starts_with("/run/media") || point.starts_with("/media")
+}
+
 /// Whether `path` is on a drive the user can unplug: one whose disk says it
 /// is removable, or sits on USB, Firewire, PCMCIA or an SD card, through any
 /// device mapper (LUKS) or RAID layer. Reads sysfs: on a worker. A

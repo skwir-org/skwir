@@ -280,6 +280,14 @@ pub enum Input {
     /// The pane shows this folder: change to it, if the shell has the
     /// terminal and is not there already. Ignored when following is off.
     Follow(PathBuf),
+    /// The volume at `below` is about to be let go of (`App::release`,
+    /// ADR-149 amended): a shell in a folder there, with the terminal,
+    /// changes to `to`, following or not, as the shell's folder would keep
+    /// the volume busy. Not followed by the pane.
+    Leave {
+        below: PathBuf,
+        to: PathBuf,
+    },
     Palette(Palette),
     /// Whether the panel shows the session. Hidden, it publishes a screen
     /// only for what the window must act on (the shell ending, or going

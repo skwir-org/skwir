@@ -513,7 +513,7 @@ impl PaneView for MapView {
                     note = "Under the Map view's placeholder where no file of the folder has a place on the earth."
                 )
                 .say(),
-                action: folder.then(|| {
+                actions: folder.then(|| {
                     (
                         skwir_core::words!(
                             map_view_search_subfolders = "Search the subfolders",
@@ -522,7 +522,9 @@ impl PaneView for MapView {
                         .say(),
                         skwir_core::command::Invocation::new("geo.search_subfolders"),
                     )
-                }),
+                })
+                .into_iter()
+                .collect(),
                 problem: false,
             };
             let focus = shell.ui().placeholder_focus.clone();

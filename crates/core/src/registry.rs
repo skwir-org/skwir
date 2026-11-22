@@ -167,6 +167,11 @@ impl<T: Clone> Contributions<T> {
     /// The first answer `f` gives, asked of each in order under the read
     /// lock, nothing cloned: for what is asked per entry of a listing
     /// (whether a name is a companion). `f` must not reach this registry.
+    /// Every contribution with its owner.
+    pub fn all_owned(&self) -> Vec<(Arc<str>, T)> {
+        self.items.read().clone()
+    }
+
     pub fn find_map<R>(&self, f: impl FnMut(&T) -> Option<R>) -> Option<R> {
         self.items.read().iter().map(|(_, t)| t).find_map(f)
     }
@@ -351,16 +356,11 @@ pub struct Place {
     /// none to say (a folder, a bookmark), or as it was kept (a saved
     /// search, a saved place and its filter).
     pub opens: Opens,
-    /// For a place not open now (a volume not mounted, a server not
-    /// connected): where its folder was when it last was, this run, and
-    /// how it is opened again there (ADR-149). A pane whose folder at or
-    /// below it cannot be shown offers it in place of its files.
-    pub reopen: Option<Reopen>,
 }
 
-/// How a place not open now is opened again where it last was
-/// (`Place::reopen`, ADR-149): what a pane whose folder was there says,
-/// and the button it offers.
+/// How a volume or a server not open now is opened again where it last
+/// was, this run (`Registry::reopens`, ADR-149): what a pane whose folder
+/// was there says, and the button it offers.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Reopen {
     /// Where its folder was the last time it was open.
@@ -374,6 +374,9 @@ pub struct Reopen {
     /// `at` the pane shows: its owner opens that folder in the pane once
     /// its own is back, in place of the step that could not show it.
     pub command: Invocation,
+    /// What its owner does to it now ("Mounting…"): said in place of the
+    /// button, which is not offered meanwhile.
+    pub busy: Option<Words>,
 }
 
 impl Reopen {
@@ -447,7 +450,6 @@ impl Place {
             rename: None,
             clicks: Vec::new(),
             opens: Opens::Lensed,
-            reopen: None,
         }
     }
 
@@ -1279,6 +1281,10 @@ pub struct Registry {
     /// What plugins know of the remotes mounted (ADR-077): each one's
     /// address, name and thumbnails, by its mount point.
     pub remotes: Contributions<crate::fs::reach::Known>,
+    /// The volumes and servers not open now that were this run, each with
+    /// how it is opened again where it was (ADR-149): what a pane whose
+    /// folder was there offers in place of its files.
+    pub reopens: Contributions<Reopen>,
     /// What the address field offers as it is typed in (ADR-098).
     pub suggesters: Contributions<crate::suggest::Suggester>,
     /// What reads the words typed over a folder into a test (ADR-098, the
@@ -1315,6 +1321,7 @@ impl Default for Registry {
             keepers: Contributions::gated(Arc::clone(&gate)),
             aspects: Contributions::gated(Arc::clone(&gate)),
             remotes: Contributions::gated(Arc::clone(&gate)),
+            reopens: Contributions::gated(Arc::clone(&gate)),
             suggesters: Contributions::gated(Arc::clone(&gate)),
             filter_readers: Contributions::gated(Arc::clone(&gate)),
             sorters: Contributions::gated(Arc::clone(&gate)),
@@ -1397,6 +1404,7 @@ impl Registry {
         self.keepers.remove_owner(owner);
         self.aspects.remove_owner(owner);
         self.remotes.remove_owner(owner);
+        self.reopens.remove_owner(owner);
         self.suggesters.remove_owner(owner);
         self.filter_readers.remove_owner(owner);
         self.sorters.remove_owner(owner);

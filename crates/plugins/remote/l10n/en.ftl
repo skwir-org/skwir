@@ -344,7 +344,7 @@ remote_device_not_mounted = Not mounted. Click to mount and open it.
 
 remote_disconnect = Disconnect
 
-remote_disconnect_description = Let go of a remote folder: what shows it goes home
+remote_disconnect_description = Let go of a remote folder: what shows it says so, and shows it again once connected
 
 # name: a remote folder's, as its place names it.
 remote_disconnected = Disconnected from { $name }
@@ -1235,15 +1235,6 @@ remote_tool_unknown = Skwir does not know the tool that mounted it
 
 # Why a server was not reached, after Could not connect to …: what each tool tried could not do (remote_tool_failed), a list (sshfs: the server refused the login and rclone: the server's name was not found).
 remote_tools_failed = { $failures }
-
-# Why a remote folder is not let go of: actions: the titles of what Skwir does there.
-remote_under_way = { $count ->
-        [1] { $actions } is under way there
-       *[other] { $actions } are under way there
-    }
-
-# An action's title (copy 3 items to Docs), quoted.
-remote_under_way_title = { $title }
 
 remote_unfinished_data = The remotes of rclone's Skwir began to set up and did not finish, by name
 

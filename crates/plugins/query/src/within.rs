@@ -386,6 +386,10 @@ impl OpenLocation for Within {
         }
     }
 
+    fn hold_nothing(&self) -> bool {
+        self.shared.inner().is_none_or(|inner| inner.hold_nothing())
+    }
+
     fn close(&self) {
         self.shared.lifetime.cancel();
         if let Some(inner) = self.shared.inner() {

@@ -31,9 +31,10 @@ struct Mounts {
     /// whether one is a network's.
     table: hashing::Map<PathBuf, Point>,
     /// The folders a plugin knows mounted that the table does not list
-    /// (a GVfs bridge's): only ever told as mounted, as a plugin turned
-    /// off lets go of what it knows, not of the mounts.
-    known: hashing::Set<PathBuf>,
+    /// (a GVfs bridge's), each with that plugin: one it no longer knows
+    /// is let go of only while it is on, as a plugin turned off lets go
+    /// of what it knows, not of the mounts.
+    known: hashing::Map<PathBuf, std::sync::Arc<str>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -54,10 +55,10 @@ impl Mounts {
         let known = app
             .registry
             .remotes
-            .all()
+            .all_owned()
             .into_iter()
-            .map(|known| known.point)
-            .filter(|point| !table.contains_key(point))
+            .map(|(owner, known)| (known.point, owner))
+            .filter(|(point, _)| !table.contains_key(point))
             .collect();
         Mounts { table, known }
     }
@@ -73,7 +74,9 @@ struct Change {
 }
 
 impl Change {
-    fn between(before: &Mounts, now: &Mounts) -> Self {
+    /// What changed from `before` to `now`; `on` says whether a plugin is
+    /// on still.
+    fn between(before: &Mounts, now: &Mounts, on: impl Fn(&str) -> bool) -> Self {
         let mut change = Change::default();
         for (point, seen) in &now.table {
             if before
@@ -89,9 +92,16 @@ impl Change {
                 change.gone.insert(point.clone(), seen.remote);
             }
         }
-        for point in &now.known {
-            if !before.known.contains(point) && !before.table.contains_key(point) {
+        for point in now.known.keys() {
+            if !before.known.contains_key(point) && !before.table.contains_key(point) {
                 change.made.insert(point.clone());
+            }
+        }
+        // A bridge's folder its plugin knows no more while it is on: let go
+        // of (GVfs disconnected it), a network's.
+        for (point, owner) in &before.known {
+            if !now.known.contains_key(point) && !now.table.contains_key(point) && on(owner) {
+                change.gone.insert(point.clone(), true);
             }
         }
         change
@@ -194,7 +204,10 @@ impl App {
     fn see_volumes(&self) {
         let mut seen = self.volumes.0.lock();
         let now = Mounts::now(self);
-        let change = seen.as_ref().map(|before| Change::between(before, &now));
+        let gate = self.registry.gate();
+        let change = seen
+            .as_ref()
+            .map(|before| Change::between(before, &now, |owner| gate.is_open(owner)));
         *seen = Some(now);
         let Some(change) = change.filter(|change| !change.is_empty()) else {
             return;
@@ -267,13 +280,17 @@ mod tests {
                 .iter()
                 .map(|&(point, mounts, remote)| (PathBuf::from(point), Point { mounts, remote }))
                 .collect(),
-            known: known.iter().map(PathBuf::from).collect(),
+            known: known
+                .iter()
+                .map(|point| (PathBuf::from(point), std::sync::Arc::from("remote")))
+                .collect(),
         }
     }
 
     /// What changed is what holds more mounts than before and what holds
     /// fewer: a mount stacked on a point is one made, one of two let go of
-    /// one gone; a folder a plugin knows mounted is only ever made.
+    /// one gone; a folder a plugin knows mounted, made, and gone only while
+    /// that plugin is on.
     #[test]
     fn a_change_is_what_was_mounted_and_what_was_let_go_of() {
         let before = mounts(
@@ -292,7 +309,7 @@ mod tests {
             ],
             &["/run/user/1/gvfs/sftp:host=b"],
         );
-        let change = Change::between(&before, &now);
+        let change = Change::between(&before, &now, |_| true);
         let mut made: Vec<_> = change.made.iter().cloned().collect();
         made.sort();
         assert_eq!(
@@ -303,8 +320,19 @@ mod tests {
                 "/run/user/1/gvfs/sftp:host=b".into()
             ]
         );
-        assert_eq!(change.gone.len(), 1);
+        assert_eq!(change.gone.len(), 2);
         assert_eq!(change.gone.get(Path::new("/media/u/usb")), Some(&false));
+        // A bridge's folder its plugin knows no more, a network's: let go
+        // of while the plugin is on, never as it is turned off.
+        assert_eq!(
+            change.gone.get(Path::new("/run/user/1/gvfs/sftp:host=a")),
+            Some(&true)
+        );
+        let off = Change::between(&before, &now, |_| false);
+        assert!(
+            !off.gone
+                .contains_key(Path::new("/run/user/1/gvfs/sftp:host=a"))
+        );
         // Below a mount made or gone, by the path's text alone.
         assert!(change.made_over(Path::new("/media/u/disk/it's here/été")));
         assert!(change.made_over(Path::new("/media/u/disk")));
@@ -315,9 +343,9 @@ mod tests {
         );
         assert_eq!(change.gone_from(Path::new("/media/u/usbs")), None);
         // Let go of the other way: a server's going says so.
-        let back = Change::between(&now, &before);
+        let back = Change::between(&now, &before, |_| true);
         assert_eq!(back.gone_from(Path::new("/mnt/nas/a")), Some(true));
-        assert!(Change::between(&now, &now).is_empty());
+        assert!(Change::between(&now, &now, |_| true).is_empty());
     }
 
     fn wait(app: &App, pane: PaneId, what: &str, done: impl Fn(&crate::workspace::Pane) -> bool) {
@@ -403,7 +431,60 @@ mod tests {
             crate::testing::as_root_in_a_namespace(
                 "volumes::tests::a_folder_on_a_mount_goes_and_comes_back_with_it",
             );
+            crate::testing::as_root_in_a_namespace(
+                "volumes::tests::a_folder_the_user_may_let_go_of_never_refuses_its_unmount",
+            );
         }
+    }
+
+    /// A folder shown on a volume the user may let go of (here a remote,
+    /// as pretended) is held by nothing: a plain unmount by another
+    /// program, which asks the system and nothing else, is not refused as
+    /// busy, and the pane says its volume went (ADR-149, amended). Does
+    /// nothing outside its namespace.
+    #[cfg(target_os = "linux")]
+    #[test]
+    // Tests' own, on Linux: no console window to keep away.
+    #[allow(clippy::disallowed_methods)]
+    fn a_folder_the_user_may_let_go_of_never_refuses_its_unmount() {
+        use std::process::Command;
+        if !crate::testing::in_namespace() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let point = tmp.path().join("a server's folder");
+        std::fs::create_dir(&point).unwrap();
+        assert!(
+            Command::new("mount")
+                .args(["-t", "tmpfs", "skwir-test"])
+                .arg(&point)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let shown = point.join("it's shown");
+        std::fs::create_dir(&shown).unwrap();
+        std::fs::write(shown.join("a.txt"), "a").unwrap();
+        crate::fs::reach::pretend_remote(&point);
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while app.volumes.0.lock().is_none() {
+            assert!(Instant::now() < deadline, "the mounts were never seen");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let pane = show(&app, &shown);
+        wait(&app, pane, "listed", |p| named(p, "a.txt"));
+        assert!(
+            Command::new("umount")
+                .arg(&point)
+                .status()
+                .unwrap()
+                .success(),
+            "refused as busy"
+        );
+        wait(&app, pane, "said gone", |p| {
+            p.listing.failure() == Some(Failure::Left)
+        });
     }
 
     /// The mounts as the system makes and lets go of them, told by its

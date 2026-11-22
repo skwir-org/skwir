@@ -122,11 +122,14 @@ ADR-077 (which revises ADR-021).
   (`preview::reads_unasked`): it was asked for the folder, not the file.
 - **A server disconnected** (its mount let go of, by anyone) takes
   the folders shown there with it, said so, their directories let go of;
-  connected again, they show again by themselves (ADR-149). Its place
-  offers Connect where a pane showed one of its folders this run
-  (`Place::reopen`, `remote.connect`'s `below`), a mount whose
-  connection is lost too. A bridge's folder published (GVfs's, which no
-  table lists) is told to the core as mounted (`App::volumes_changed`).
+  connected again, they show again by themselves (ADR-149). A pane
+  that showed one of its folders offers Connect, a server kept or typed
+  in the address field alike (`Registry::reopens`, `remote.connect`'s
+  `below`), a mount whose connection is lost too. The bridge's folders
+  published (GVfs's, which no table lists) are told to the core as they
+  change (`App::volumes_changed`): one published no more while the
+  plugin is on is let go of. A remote's folder is held by nothing
+  between reads (ADR-149, amended).
 - **Listings** are read again when the window comes back
   (`App::refresh_remote`, at most once in `REFRESHED_WITHIN`) and on F5:
   a server does not say what changed on it. What this machine changes
@@ -746,7 +749,8 @@ ADR-077 (which revises ADR-021).
   is under way there (`Executor::under_way_in`, by its footprint; one
   cancelled is not), naming it, before anything is left and again just
   before the unmount; `force` (an agent's, a script's) cuts it too. It
-  first leaves the folders shown there (`App::release`), then waits, ten
+  first lets go of the folders shown there, which stay, saying so once
+  it is let go of (`App::release`, ADR-149 amended), then waits, ten
   seconds at most, until their listings let go of them (closed a moment
   later on a worker, `fs::wait_let_go`) and the remote's lane runs
   nothing: until then the system refuses the unmount as busy. It stops

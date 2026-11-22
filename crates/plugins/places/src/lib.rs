@@ -161,10 +161,14 @@ fn mark_busy(places: &mut [Place], busy: &[Busy], cleartext: &[Cleartext]) {
 
 /// Note where each volume of `places` is mounted (`mounted_at`, by its
 /// key), and offer each one not mounted that was this run to be mounted
-/// again there (`Place::reopen`, ADR-149): a pane whose folder was on it
-/// offers its button, which mounts it and opens that folder again.
-fn offer_reopen(places: &mut [Place], mounted_at: &mut std::collections::HashMap<String, PathBuf>) {
-    for place in places.iter() {
+/// again there (`Registry::reopens`, ADR-149): a pane whose folder was on
+/// it offers its button, which mounts it and opens that folder again;
+/// what its place says while it is mounted (`busy`) in its stead.
+fn offer_reopen(
+    places: &[Place],
+    mounted_at: &mut std::collections::HashMap<String, PathBuf>,
+) -> Vec<skwir_core::registry::Reopen> {
+    for place in places {
         if place.group != skwir_core::registry::groups::DEVICES.id || place.activate.is_some() {
             continue;
         }
@@ -172,6 +176,7 @@ fn offer_reopen(places: &mut [Place], mounted_at: &mut std::collections::HashMap
             mounted_at.insert(key.clone(), path);
         }
     }
+    let mut reopens = Vec::new();
     for place in places {
         let (Some(activate), Some(at)) = (
             &place.activate,
@@ -208,13 +213,15 @@ fn offer_reopen(places: &mut [Place], mounted_at: &mut std::collections::HashMap
                 ),
             )
         };
-        place.reopen = Some(skwir_core::registry::Reopen {
+        reopens.push(skwir_core::registry::Reopen {
             at: at.clone(),
             title,
             label,
             command: activate.clone(),
+            busy: place.busy.clone(),
         });
     }
+    reopens
 }
 
 /// Forget Passphrase on the place of each volume whose passphrase Skwir
@@ -647,9 +654,10 @@ impl Places {
             publisher.cleartext = cleartext;
         }
         mark_busy(&mut places, &publisher.busy, &publisher.cleartext);
-        offer_reopen(&mut places, &mut publisher.mounted_at);
+        let reopens = offer_reopen(&places, &mut publisher.mounted_at);
         publisher.shown.clone_from(&places);
         app.registry.places.replace_owner(ID, places);
+        app.registry.reopens.replace_owner_if_changed(ID, reopens);
         drop(guard);
         app.wake();
     }
@@ -680,8 +688,11 @@ impl Places {
         });
         let mut places = std::mem::take(&mut publisher.shown);
         mark_busy(&mut places, &publisher.busy, &publisher.cleartext);
+        // What its place says it does, said where a pane offers it too.
+        let reopens = offer_reopen(&places, &mut publisher.mounted_at);
         publisher.shown.clone_from(&places);
         app.registry.places.replace_owner(ID, places);
+        app.registry.reopens.replace_owner_if_changed(ID, reopens);
         drop(publisher);
         app.wake();
     }
@@ -1179,6 +1190,7 @@ impl PlacesPlugin {
         #[cfg(not(windows))]
         if let Some(lifetime) = self.places.0.lock().lifetime.clone() {
             self.follow_mounts(app, &lifetime);
+            follow_unmounts(app, &lifetime);
         }
         // The bookmarks' folder holds other settings: only the file counts
         // (writers replace it, so its name is among the event's paths).
@@ -1253,11 +1265,97 @@ impl PlacesPlugin {
     }
 }
 
+/// Why the volume `name` was not unmounted: `error`, as the system or
+/// Skwir said it.
+fn not_unmounted(name: Name, error: anyhow::Error) -> Words {
+    words!(
+        places_unmount_failed = "{ $name } was not unmounted: { $error }",
+        name = name,
+        error = error,
+        note = "The volume's label; the error: why, as the system said it."
+    )
+}
+
+/// Follow what other programs say they are about to unmount (GIO's
+/// volume monitor, KDE's Solid: `places::follow_unmounts`) and let go of
+/// it first, on a worker (`App::release`, ADR-149 amended): what shows it
+/// stays, reading it by its path. Skwir's own actions there hold it still
+/// and are named, with Cancel: the unmount would be refused as busy.
+#[cfg(not(windows))]
+fn follow_unmounts(app: &App, lifetime: &CancelToken) {
+    let (weak, jobs) = (app.weak(), lifetime.clone());
+    skwir_platform::places::follow_unmounts(lifetime, move |points| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        let weak = app.weak();
+        app.scheduler.spawn(
+            Priority::Visible,
+            "places-unmount-told",
+            jobs.child(),
+            move || {
+                let Some(app) = weak.upgrade() else {
+                    return;
+                };
+                let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
+                for point in points {
+                    tracing::debug!(?point, "let go of before another program unmounts it");
+                    if let Err(error) = app.release(&point, &Location::from_path(&home)) {
+                        tracing::debug!(?point, "not let go of before its unmount: {error:#}");
+                    }
+                    let named: Vec<Words> = app
+                        .executor
+                        .under_way_in(&point)
+                        .into_iter()
+                        .map(|title| {
+                            words!(
+                                places_under_way_title = "{ $title }",
+                                title = skwir_core::words::Named(title),
+                                note = "An action's title (copy 3 items to USB), quoted."
+                            )
+                        })
+                        .collect();
+                    if named.is_empty() {
+                        continue;
+                    }
+                    app.notify_from(
+                        ID,
+                        NotifyLevel::Warning,
+                        words!(
+                            places_unmount_held = "{ $volume } is being unmounted, but { $count ->
+                                [1] { $actions } is still under way on it
+                               *[other] { $actions } are still under way on it
+                            }",
+                            volume = Name::of(&point),
+                            count = named.len(),
+                            actions = skwir_core::words::List::and(named),
+                            note = "Another program unmounts a drive while Skwir copies to it (or moves, deletes there): volume: the drive's name; actions: what Skwir does there. Its button cancels them."
+                        ),
+                        vec![skwir_core::app::NotifyAction {
+                            label: words!(
+                                places_unmount_held_cancel = "Cancel",
+                                note = "The button of \"… is being unmounted, but … is still under way on it\": cancel what Skwir does on the drive."
+                            ),
+                            command: Invocation::new("cancel_in")
+                                .with("folder", PathArg::from(point.as_path())),
+                            answers: true,
+                        }],
+                    );
+                }
+            },
+        );
+    });
+}
+
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct PathArgs {
     /// A volume's mount point.
     #[serde(default)]
     path: Option<PathArg>,
+    /// Unmount it even while Skwir's own actions are under way there
+    /// (a copy to it), which are cut.
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1888,6 +1986,16 @@ impl Plugin for PlacesPlugin {
                             places_not_removable = "not a removable volume"
                         ))
                     })?;
+                // Skwir's own work there is named, not cut, unless asked
+                // (an agent's, a script's `force`): the system would refuse
+                // the unmount as busy all the same.
+                if !args.force {
+                    app.executor
+                        .refuse_under_way(&mount.path)
+                        .map_err(|error| {
+                            anyhow::Error::from(not_unmounted(Name::of(&mount.path), error))
+                        })?;
+                }
                 let this = places.clone();
                 let location = Location::from_path(&mount.path);
                 places.start_busy_as(
@@ -1899,8 +2007,9 @@ impl Plugin for PlacesPlugin {
                         note = "A volume's place in the sidebar while it is being unmounted."
                     ),
                 );
-                // Nothing of skwir's may hold the volume: a pane showing it
-                // goes home, the folders kept there close.
+                // Nothing of skwir's may hold the volume: what shows it
+                // stays, reading it by its path, and says so once it is
+                // unmounted (ADR-149, amended).
                 let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
                 app.release(&mount.path, &Location::from_path(home))?;
                 let lifetime = places.lifetime();
@@ -1959,15 +2068,7 @@ impl Plugin for PlacesPlugin {
                                 note = "The volume's label."
                             ),
                         ),
-                        Err(error) => app.notify(
-                            NotifyLevel::Error,
-                            words!(
-                                places_unmount_failed = "{ $name } was not unmounted: { $error }",
-                                name = named(),
-                                error = error,
-                                note = "The volume's label; the error: why, as the system said it."
-                            ),
-                        ),
+                        Err(error) => app.notify(NotifyLevel::Error, not_unmounted(named(), error)),
                     }
                 });
                 Ok(Outcome::Done)
@@ -2924,15 +3025,18 @@ mod tests {
             )
         };
         let mut at = std::collections::HashMap::new();
-        let mut places = vec![mounted("volume:1111", "/run/media/me/it's USB")];
-        offer_reopen(&mut places, &mut at);
-        assert!(places[0].reopen.is_none(), "mounted: nothing to offer");
-        let mut places = vec![
+        let places = vec![mounted("volume:1111", "/run/media/me/it's USB")];
+        assert!(
+            offer_reopen(&places, &mut at).is_empty(),
+            "mounted: nothing to offer"
+        );
+        let places = vec![
             unmounted("volume:1111", "places.mount"),
             unmounted("volume:2222", "places.mount"),
         ];
-        offer_reopen(&mut places, &mut at);
-        let reopen = places[0].reopen.as_ref().expect("offered");
+        let reopens = offer_reopen(&places, &mut at);
+        assert_eq!(reopens.len(), 1, "never seen mounted: none");
+        let reopen = &reopens[0];
         assert_eq!(reopen.at, Path::new("/run/media/me/it's USB"));
         assert_eq!(&*reopen.command.name, "places.mount");
         assert_eq!(reopen.command.args["device"], "/dev/sdz1");
@@ -2942,11 +3046,15 @@ mod tests {
             reopen.label.english()
         );
         assert!(reopen.title.english().ends_with(" is not mounted"));
-        assert!(places[1].reopen.is_none(), "never seen mounted");
         let mut locked = vec![unmounted("volume:1111", "places.open_locked")];
-        offer_reopen(&mut locked, &mut at);
-        let reopen = locked[0].reopen.as_ref().expect("offered");
-        assert!(reopen.label.english().starts_with("Unlock "));
+        locked[0].busy = Some(Words::as_written("Unlocking…"));
+        let reopens = offer_reopen(&locked, &mut at);
+        assert!(reopens[0].label.english().starts_with("Unlock "));
+        // What its place says it does, said in its stead.
+        assert_eq!(
+            reopens[0].busy.as_ref().map(Words::english).as_deref(),
+            Some("Unlocking…")
+        );
         // What it opens is inside it.
         for out in ["../elsewhere", "/etc", "a/../../b"] {
             assert!(

@@ -463,6 +463,12 @@ app_back = Indietro
 app_back_description = Vai alla posizione precedente
 
 # draft
+app_cancel_in = Annulla ciò che è in corso in una cartella
+
+# draft
+app_cancel_in_description = Annulla le azioni in corso o in attesa che riguardano una cartella o ciò che contiene; ciò che hanno fatto resta fatto, e può essere annullato
+
+# draft
 app_commands = Elenca comandi
 
 # draft
@@ -1241,6 +1247,15 @@ exec_redo_held_for_good = { $title } non può essere ripetuto: { $other }, annul
 
 # draft
 exec_that_not_undone = quell’azione non è stata annullata: { $why }
+
+# draft
+exec_under_way = { $count ->
+        [1] { $actions } è in corso lì
+       *[other] { $actions } sono in corso lì
+    }
+
+# draft
+exec_under_way_title = { $title }
 
 # draft
 exec_undo = annulla

@@ -60,6 +60,9 @@ pub struct TerminalState {
     provider_revision: u64,
     /// The folder the session was last told the pane shows.
     followed: Option<PathBuf>,
+    /// What the volumes about to be let go of last moved with
+    /// (`App::letting_go_now`): a shell there is told to leave once each.
+    letting_seen: u64,
     palette: Option<Palette>,
     /// Whether the session was told the panel shows it (`Input::Shown`).
     shown: Option<bool>,
@@ -81,6 +84,7 @@ impl TerminalState {
             moved: 0,
             provider_revision: 0,
             followed: None,
+            letting_seen: 0,
             palette: None,
             shown: None,
             grid: Rc::default(),
@@ -387,6 +391,20 @@ impl Shell {
         {
             self.terminal.followed = Some(dir.clone());
             session.send(Input::Follow(dir));
+        }
+        // A shell in a folder of a volume about to be let go of leaves it,
+        // following or not: it would keep the volume busy (ADR-149).
+        let (letting, version) = self.app.letting_go_now();
+        if self.terminal.letting_seen != version {
+            self.terminal.letting_seen = version;
+            if let Some(home) = skwir_core::os_path::home() {
+                for below in letting {
+                    session.send(Input::Leave {
+                        below,
+                        to: home.clone(),
+                    });
+                }
+            }
         }
         // Hidden (F4), a session running a build publishes no screen, so
         // its output no longer has the window draw at every one.

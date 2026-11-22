@@ -276,7 +276,12 @@ around the views is in [shell.md](shell.md).
   folder goes there (`App::pane_dir`), a folder opened in place under its
   new name, with what is open inside it (`Pane::follow_moves`: a watch
   sees only its own folder move). The folder shown is not followed when a
-  folder above it moves: nothing watches its parents.
+  folder above it moves: nothing watches its parents. On a volume the
+  user may let go of (`fs::volume::lets_go`: a removable drive, one
+  mounted for the user, a remote), a folder is held by nothing between
+  reads, so no unmount is refused because of it (ADR-149, amended): it is
+  followed only when renamed within its folder, found there by its
+  identity; moved elsewhere it is gone.
 - **A search laid out as a tree (ADR-127)** is the tree view's own
   (`PaneView::lays_found_out_as_tree`): the flat order stays the source
   (`Pane::flat_order`) and `Pane::order` reads the tree a worker made of

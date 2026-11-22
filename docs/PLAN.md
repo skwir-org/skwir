@@ -1281,6 +1281,19 @@ back. A folder deleted while shown no longer lists as empty on Try
 again: the listing lets go of what went. Checks in `docs/STATUS-LOG.md`
 (2026-11-22).
 
+Amended that evening, once other file managers were read (most go home
+or close the tab; only Nautilus holds the folder shown, as Skwir did):
+Skwir's own Eject and Disconnect leave the panes in place, with Mount
+or Connect and Go Home; a folder on a removable drive, one mounted for
+the user or a remote is held by nothing between reads, so no unmount is
+refused because of it; what GNOME (GIO) and KDE (Solid) announce they
+unmount is let go of first, the preview's helpers, the player and the
+terminal's shell included, Skwir's own copies there named in a toast
+with Cancel (`cancel_in`); Eject names that work instead of blaming
+another program; a server typed in the address field offers Connect;
+a GVfs folder let go of is told. Checks in `docs/STATUS-LOG.md`
+(2026-11-22, second entry).
+
 ## Pictures Skwir reads itself (ADR-148, 2026-11-22)
 
 The second follow-up of ADR-146, on the user's answers: JPEG XL decoded
@@ -1370,14 +1383,21 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**A folder comes back with its volume** (ADR-149, built 2026-11-22).
-Left: a bridge's folder let go of (GVfs's, which no table lists) is not
-told, its pane failing only as it is read again; a folder deleted and
-made again at its path is not watched for; a mount let go of and made
-again within one settled change opens nothing again; a server typed in
-the address field has no place to offer Connect once disconnected;
-Windows (a drive's folder opened again as a window comes to the front)
-compiled only.
+**A folder comes back with its volume** (ADR-149, built and amended
+2026-11-22). Left: a folder deleted and made again at its path is not
+watched for; a mount let go of and made again within one settled change
+opens nothing again; what unmounts without announcing it (`udisksctl`,
+udiskie) finds a preview's helper, the player or the terminal's shell
+still holding a file there (a listing no longer); Windows (a drive's
+folder opened again as a window comes to the front) and macOS
+(`/Volumes` read by path) compiled only, and neither follows another
+program's unmount; a removable drive on Windows still held while shown;
+thumbnails and folder sizes read there unasked are not held back while
+a volume is let go of; a server that dies under sshfs (which keeps its
+mount, `reconnect`) is not told: the pane shows its files as they were,
+and F5 says an input/output error beside them with no Connect (the
+remote plugin's "connection lost" is asked only as the window comes
+back, and its offer shows only in place of an empty listing).
 
 **Pictures at the pixels they cover** (ADR-146, built 2026-11-21 and
 22). The leftovers built 2026-11-22 (ADR-146 amended): a JPEG's region

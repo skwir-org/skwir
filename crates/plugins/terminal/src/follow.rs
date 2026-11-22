@@ -160,6 +160,13 @@ impl Follow {
         self.type_cd(dir)
     }
 
+    /// The shell leaves its folder for `dir`, its volume about to be let
+    /// go of: typed as the plugin's, so the pane does not follow it there.
+    pub fn leave_to(&mut self, dir: PathBuf) -> Option<PathBuf> {
+        self.wanted = None;
+        self.type_cd(dir)
+    }
+
     fn type_cd(&mut self, dir: PathBuf) -> Option<PathBuf> {
         if self.typed.back() == Some(&dir) {
             return None;

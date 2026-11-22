@@ -54,12 +54,11 @@ impl LocationProvider for PathProvider {
 }
 
 struct Shared {
-    /// Counted among the folders held open until it goes ([`wait_let_go`]).
-    _held: Held,
     /// Where the directory is now: it follows the directory when it moves.
     dir: RwLock<PathBuf>,
-    /// The directory held open: names are stat-ed relative to it.
-    folder: Dir,
+    /// The directory, held open or opened for each read: names are
+    /// stat-ed relative to it.
+    folder: RwLock<Folder>,
     /// The folder's own file: with each name, what its entries are told
     /// apart by (`EntryId::in_folder`); its device, theirs until stat-ed.
     id: FileId,
@@ -89,6 +88,38 @@ struct Shared {
     /// [`LOST_LEFT`] (its volume let go of, which a deletion told after
     /// does not say over).
     lost: std::sync::atomic::AtomicU8,
+}
+
+/// How a folder listed is held (ADR-149, amended).
+enum Folder {
+    /// Held open, counted among the folders held ([`wait_let_go`]):
+    /// followed wherever it moves on its volume.
+    Held(Arc<(Dir, Held)>),
+    /// Opened for each read, nothing of it held between: on a volume the
+    /// user may let go of while it is shown (`fs::volume::lets_go`: a
+    /// removable drive, one mounted for the user, a remote), or one whose
+    /// unmount was announced (`OpenLocation::hold_nothing`), whose
+    /// unmount nothing of Skwir's refuses as busy. Followed only when
+    /// renamed within its folder, found there by its identity (which its
+    /// watch, holding no mount, keeps the system from forgetting).
+    ByPath,
+}
+
+/// The folder as one read finds it: the one held, or opened from its path
+/// for this read alone, counted among the folders held meanwhile.
+enum Opened {
+    Held(Arc<(Dir, Held)>),
+    Now { dir: Dir, _held: Held },
+}
+
+impl std::ops::Deref for Opened {
+    type Target = Dir;
+    fn deref(&self) -> &Dir {
+        match self {
+            Opened::Held(held) => &held.0,
+            Opened::Now { dir, .. } => dir,
+        }
+    }
 }
 
 /// A folder lost as deleted ([`Shared::lose`]).
@@ -338,10 +369,16 @@ fn open_and_list(
     // Where it is held, by the folder's path the system
     // knows: `~/Music` a link into a drive is held there.
     let at = held.get_or_init(|| folder.path_now().unwrap_or_else(|| dir.to_path_buf()));
+    // A volume the user may let go of is never held between reads
+    // (ADR-149, amended): an unmount by any program finds it free.
+    let folder = if lane.is_shared() && !super::volume::lets_go(at) {
+        Folder::Held(Arc::new((folder, Held::new(dir, at))))
+    } else {
+        Folder::ByPath
+    };
     let shared = Arc::new(Shared {
-        _held: Held::new(dir, at),
         dir: RwLock::new(dir.to_path_buf()),
-        folder,
+        folder: RwLock::new(folder),
         id,
         names: Mutex::new(Names::default()),
         listed: std::sync::atomic::AtomicBool::new(false),
@@ -552,7 +589,17 @@ impl Shared {
             return;
         }
         let first = previous.is_none();
-        let mut dir = match self.folder.read() {
+        let folder = match self.opened() {
+            Ok(folder) => folder,
+            Err(e) => {
+                if !self.is_lost() {
+                    self.tx
+                        .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                }
+                return;
+            }
+        };
+        let mut dir = match folder.read() {
             Ok(d) => d,
             Err(e) => {
                 if !self.is_lost() {
@@ -568,7 +615,7 @@ impl Shared {
         // numbered anew since (sshfs, once the kernel forgot it).
         let mut replaced: Vec<EntryId> = Vec::new();
         // What tells the folder's made-up numbers apart, as its stats do.
-        let mount = self.folder.mount().unwrap_or(0);
+        let mount = folder.mount().unwrap_or(0);
         while !cancel.is_cancelled() {
             let Some(ent) = dir.next() else {
                 break;
@@ -603,7 +650,7 @@ impl Shared {
             // a folder decides where it sorts, and rows off screen are not
             // hydrated.
             if entry.is_link() {
-                entry.target = crate::fs::stat::follow(&self.folder, entry.name.as_os_str());
+                entry.target = crate::fs::stat::follow(&folder, entry.name.as_os_str());
             }
             batch.push(entry);
             if batch.len() >= self.ctx.batch_size {
@@ -686,6 +733,21 @@ impl Shared {
         if self.is_lost() {
             return;
         }
+        // Not there to read now (its volume going): answered, its rows as
+        // listed.
+        let Ok(folder) = self.opened() else {
+            let unread: Vec<EntryId> = {
+                let names = self.names.lock();
+                ids.iter()
+                    .copied()
+                    .filter(|id| names.by_id.contains_key(id))
+                    .collect()
+            };
+            if !unread.is_empty() {
+                self.send_as_now(ListingEvent::Unreadable(unread));
+            }
+            return;
+        };
         let mut stated = Vec::with_capacity(ids.len());
         let (mut gone, mut unread) = (Vec::new(), Vec::new());
         for &id in ids {
@@ -696,7 +758,7 @@ impl Shared {
                 continue;
             };
             let mut e = Entry::new(id, name, EntryKind::Unknown);
-            match stat_entry_as(&self.folder, &mut e) {
+            match stat_entry_as(&folder, &mut e) {
                 Stated::Found => {
                     // Written still as the watcher last said: a stat of it
                     // says so too, rather than drop its mark until told.
@@ -761,7 +823,15 @@ impl Shared {
     /// (`ListingEvent::Moved`). A directory that is gone empties the
     /// listing.
     fn follow_self(&self) -> bool {
-        let Some(now) = self.folder.path_now() else {
+        let held = match &*self.folder.read() {
+            Folder::Held(held) => Some(Arc::clone(held)),
+            Folder::ByPath => None,
+        };
+        let now = match held {
+            Some(held) => held.0.path_now(),
+            None => self.renamed_to(),
+        };
+        let Some(now) = now else {
             return false;
         };
         let before = self.dir();
@@ -778,7 +848,67 @@ impl Shared {
     /// removed directory has no links left; its children's removal is the
     /// event that brings us here.
     fn is_unlinked(&self) -> bool {
-        self.folder.is_unlinked()
+        let held = match &*self.folder.read() {
+            Folder::Held(held) => Some(Arc::clone(held)),
+            Folder::ByPath => None,
+        };
+        match held {
+            Some(held) => held.0.is_unlinked(),
+            // Read by its path: another folder there now, or none, is this
+            // one gone.
+            None => match Dir::open(&self.dir()).and_then(|dir| dir.identity()) {
+                Ok(id) => id != self.id,
+                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+            },
+        }
+    }
+
+    /// The folder as a read finds it: the one held, or opened from its
+    /// path now.
+    fn opened(&self) -> std::io::Result<Opened> {
+        if let Folder::Held(held) = &*self.folder.read() {
+            return Ok(Opened::Held(Arc::clone(held)));
+        }
+        let dir = self.dir();
+        let opened = Dir::open(&dir)?;
+        let held = Held::new(&dir, &dir);
+        Ok(Opened::Now {
+            dir: opened,
+            _held: held,
+        })
+    }
+
+    /// Where a folder read by its path went when it moved: the folder of
+    /// its folder of the same identity, renamed within it; `None` where
+    /// none is (moved elsewhere, removed).
+    fn renamed_to(&self) -> Option<PathBuf> {
+        let before = self.dir();
+        let parent = Dir::open(before.parent()?).ok()?;
+        let mut names = parent.read().ok()?;
+        names.find_map(|ent| {
+            let ent = ent.ok()?;
+            if !matches!(ent.kind, EntryKind::Directory | EntryKind::Unknown) {
+                return None;
+            }
+            let mut e = Entry::new(EntryId::UNKNOWN, ent.name.clone(), EntryKind::Unknown);
+            (stat_entry_as(&parent, &mut e) == Stated::Found && e.file() == self.id)
+                .then(|| before.with_file_name(&ent.name))
+        })
+    }
+
+    /// Hold nothing of it from now on: its volume is about to be let go
+    /// of (ADR-149, amended). What it held closes in the shared lane.
+    fn hold_nothing(&self) {
+        let before = std::mem::replace(&mut *self.folder.write(), Folder::ByPath);
+        if let Folder::Held(held) = before {
+            self.ctx.scheduler.spawn_in(
+                Lane::SHARED,
+                Priority::Background,
+                "fs.close",
+                CancelToken::new(),
+                move || drop(held),
+            );
+        }
     }
 
     fn lose_self(self: &Arc<Self>) {
@@ -912,12 +1042,17 @@ impl Shared {
             .filter_map(|n| self.ctx.companions.owner(n))
             .collect();
         names.extend(owners);
+        let Ok(folder) = self.opened() else {
+            // Not there to read now: its watch or the mounts say what
+            // comes next.
+            return;
+        };
         for name in names {
             if self.ctx.cancel.is_cancelled() {
                 return;
             }
             let mut e = Entry::new(EntryId::UNKNOWN, name.clone(), EntryKind::Unknown);
-            let stated = stat_entry_as(&self.folder, &mut e);
+            let stated = stat_entry_as(&folder, &mut e);
             if stated == Stated::Unread {
                 // There, unread: what is listed of it stays.
                 continue;
@@ -1145,6 +1280,13 @@ impl OpenLocation for PathLocation {
         }
     }
 
+    fn hold_nothing(&self) -> bool {
+        if let Some(shared) = self.shared.lock().clone() {
+            shared.hold_nothing();
+        }
+        true
+    }
+
     /// Its path leads to another folder now (a mount made there): what it
     /// held is let go of and the folder opened again from its path, the
     /// entries it listed taken out as the new ones are listed (no empty
@@ -1204,6 +1346,71 @@ impl Drop for PathLocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The events of `open` until one `done` says ends them, 20 s at most.
+    #[cfg(target_os = "linux")]
+    fn until(
+        open: &Arc<dyn crate::location::OpenLocation>,
+        done: impl Fn(&ListingEvent) -> bool,
+    ) -> Vec<ListingEvent> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut seen = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = open.events().recv_timeout(left).expect("told in time");
+            let end = done(&event);
+            seen.push(event);
+            if end {
+                return seen;
+            }
+        }
+    }
+
+    /// A folder on a volume the user may let go of (here a remote, as
+    /// pretended) is read by its path, held between reads by nothing
+    /// that would refuse its unmount (ADR-149, amended); renamed within
+    /// its folder it is found there by its identity and followed, what is
+    /// made in it after told all the same; moved elsewhere, it is gone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_folder_the_user_may_let_go_of_is_held_by_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let volume = tmp.path().join("a server");
+        let shown = volume.join("it's shown, été");
+        std::fs::create_dir_all(&shown).unwrap();
+        std::fs::write(shown.join("a.txt"), "a").unwrap();
+        crate::fs::reach::pretend_remote(&volume);
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = app.open_location(&Location::from_path(&shown)).unwrap();
+        until(&open, |e| matches!(e, ListingEvent::Complete));
+        assert!(
+            wait_let_go(&volume, Duration::from_secs(20)),
+            "nothing of it held between reads"
+        );
+        // Renamed within its folder: followed.
+        let renamed = volume.join("renamed, l'été");
+        std::fs::rename(&shown, &renamed).unwrap();
+        let moved = until(&open, |e| matches!(e, ListingEvent::Moved(_)));
+        assert!(
+            matches!(moved.last(), Some(ListingEvent::Moved(to)) if *to == renamed),
+            "{moved:?}"
+        );
+        std::fs::write(renamed.join("b.txt"), "b").unwrap();
+        until(
+            &open,
+            |e| matches!(e, ListingEvent::Added(added) if added.iter().any(|e| e.name == "b.txt")),
+        );
+        // Moved elsewhere: not followed, gone.
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::rename(&renamed, elsewhere.join("it")).unwrap();
+        let gone = until(&open, |e| matches!(e, ListingEvent::Error(_)));
+        assert!(
+            matches!(gone.last(), Some(ListingEvent::Error(e)) if e.kind == crate::location::Failure::Missing),
+            "{gone:?}"
+        );
+        open.close();
+    }
 
     #[test]
     fn a_name_listed_anew_leaves_no_row_beside_it() {

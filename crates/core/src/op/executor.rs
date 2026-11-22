@@ -3084,6 +3084,85 @@ impl Executor {
         running.chain(waiting).collect()
     }
 
+    /// Refused while actions of Skwir's are under way at or below `tree`
+    /// ([`Executor::under_way_in`]), named: letting go of the volume there
+    /// (Eject, Disconnect) would cut them.
+    pub fn refuse_under_way(&self, tree: &Path) -> anyhow::Result<()> {
+        let named: Vec<Words> = self
+            .under_way_in(tree)
+            .into_iter()
+            .map(|title| {
+                crate::words!(
+                    exec_under_way_title = "{ $title }",
+                    title = crate::words::Named(title),
+                    note = "An action's title (copy 3 items to Docs), quoted."
+                )
+            })
+            .collect();
+        match named.len() {
+            0 => Ok(()),
+            count => anyhow::bail!(crate::words!(
+                exec_under_way = "{ $count ->
+                    [1] { $actions } is under way there
+                   *[other] { $actions } are under way there
+                }",
+                count = count,
+                actions = crate::words::List::and(named),
+                note = "Why a drive or a server is not let go of (unmounted, disconnected): actions: the titles of what Skwir does there."
+            )),
+        }
+    }
+
+    /// Cancel the actions under way that touch something at or below
+    /// `tree` ([`Executor::under_way_in`]): those running stop after their
+    /// current file, those waiting end at once, what they applied staying
+    /// applied and journaled. How many were cancelled.
+    pub fn cancel_under(&self, tree: &Path) -> usize {
+        // Those running stop as Cancel stops them (`Executor::cancel`):
+        // by the plan's own token.
+        let running: Vec<PlanId> = {
+            let lane = self.lane.lock();
+            lane.started
+                .iter()
+                .filter(|begun| !begun.cancel.is_cancelled() && begun.footprint.touches(tree))
+                .filter_map(|begun| begun.plan)
+                .collect()
+        };
+        let mut cancelled = running
+            .into_iter()
+            .filter(|plan| self.cancel(*plan))
+            .count();
+        let waiting = {
+            let mut lane = self.lane.lock();
+            let waiting = lane
+                .queue
+                .iter()
+                .filter(|job| !job.cancel.is_cancelled())
+                .filter(|job| match (&job.footprint, &job.work) {
+                    (Some(footprint), _) => footprint.touches(tree),
+                    (None, Work::Execute { plan, .. }) => plan.steps.iter().any(|step| {
+                        let change = step.describe();
+                        change.paths().any(|path| path.starts_with(tree))
+                    }),
+                    (None, Work::Replay(..)) => false,
+                })
+                .map(|job| job.cancel.cancel())
+                .count();
+            if waiting > 0 {
+                lane.version += 1;
+            }
+            waiting
+        };
+        cancelled += waiting;
+        if waiting > 0 {
+            self.dispatch_elsewhere();
+        }
+        if cancelled > 0 {
+            self.wake();
+        }
+        cancelled
+    }
+
     /// Whether a plan, an undo or a redo runs or waits its turn, a stopped
     /// one being handed over to be retried included.
     pub fn is_busy(&self) -> bool {

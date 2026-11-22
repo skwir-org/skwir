@@ -234,18 +234,20 @@ struct State {
     /// (ADR-096), as it last told.
     devices: HashMap<&'static str, Vec<Offered>>,
     /// Where each server's mounts were this run, by the address each
-    /// mount is of: what a server's place offers to connect again once
-    /// it is not (`Place::reopen`, ADR-149). As few as the servers.
-    mounted_at: Vec<(Address, PathBuf)>,
+    /// mount is of, with what it was called: what a pane whose folder was
+    /// there offers to connect again once it is not, a server kept or one
+    /// typed in the address field alike (`Registry::reopens`, ADR-149). As
+    /// few as the servers connected.
+    mounted_at: Vec<(Address, PathBuf, Words)>,
     /// The mounts' points last published as known (`Registry::remotes`):
-    /// one more is told to the core as mounted (`App::volumes_changed`),
+    /// one more or one fewer is told to the core (`App::volumes_changed`),
     /// the table not listing a bridge's folders.
     known_points: Vec<PathBuf>,
 }
 
 /// What a pane whose folder was on the server `label` mounted at `at`
-/// offers (`Place::reopen`, ADR-149): to connect to `address` again, the
-/// folder opened below it. `lost`: still mounted, its connection lost.
+/// offers (`Registry::reopens`, ADR-149): to connect to `address` again,
+/// the folder opened below it. `lost`: still mounted, its connection lost.
 fn reopen(label: &Words, address: &Address, at: &Path, lost: bool) -> skwir_core::registry::Reopen {
     let name = || words::Named(label.clone());
     skwir_core::registry::Reopen {
@@ -269,6 +271,7 @@ fn reopen(label: &Words, address: &Address, at: &Path, lost: bool) -> skwir_core
             note = "The button in place of a folder's files whose server was disconnected: connect again and show the folder."
         ),
         command: Invocation::new("remote.connect").with("address", address.to_string()),
+        busy: None,
     }
 }
 
@@ -1571,12 +1574,33 @@ impl Remotes {
         // Where each server is mounted now, kept for when it is not.
         for m in mounted.iter() {
             if let Some(address) = &m.recognised.address {
-                state.mounted_at.retain(|(a, _)| a != address);
-                state
-                    .mounted_at
-                    .push((address.clone(), m.remote.point.clone()));
+                state.mounted_at.retain(|(a, ..)| a != address);
+                state.mounted_at.push((
+                    address.clone(),
+                    m.remote.point.clone(),
+                    m.recognised.label.clone(),
+                ));
             }
         }
+        // Each mounted earlier this run that is not now offers to connect
+        // again; a mount whose connection is lost, too.
+        let mut reopens: Vec<skwir_core::registry::Reopen> = state
+            .mounted_at
+            .iter()
+            .filter(|(address, ..)| {
+                !mounted
+                    .iter()
+                    .any(|m| m.recognised.address.as_ref() == Some(address))
+            })
+            .map(|(address, at, label)| reopen(label, address, at, false))
+            .collect();
+        reopens.extend(mounted.iter().filter_map(|m| {
+            let address = m.recognised.address.as_ref()?;
+            state
+                .lost
+                .contains(&m.remote.point)
+                .then(|| reopen(&m.recognised.label, address, &m.remote.point, true))
+        }));
         // Read before what it words: a change after it publishes again.
         let proved = skwir_core::fs::reach::proved_changed();
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
@@ -1670,7 +1694,6 @@ impl Remotes {
                 ));
                 if let Some(address) = address {
                     place.activate = Some(Invocation::navigate(&address.location()));
-                    place.reopen = Some(reopen(&m.recognised.label, address, point, true));
                 }
             }
             place.busy = state
@@ -1779,13 +1802,6 @@ impl Remotes {
             let location = server.address.location();
             let mut place = Place::new(GROUP, server.label.clone(), "network-server", location);
             place.key = Some(format!("remote:{}", server.address));
-            // Mounted earlier this run: a folder shown there connects again.
-            place.reopen = state
-                .mounted_at
-                .iter()
-                .rev()
-                .find(|(address, _)| address.same_server(&server.address))
-                .map(|(address, at)| reopen(&server.label, address, at, false));
             place.menu.extend(forget_item(&server.address, &remembered));
             place.menu.extend(options_item(&server.address));
             place
@@ -1824,15 +1840,15 @@ impl Remotes {
         }
         state.proved_seen = proved;
         let points: Vec<PathBuf> = known.iter().map(|k| k.point.clone()).collect();
-        let more = points
-            .iter()
-            .any(|point| !state.known_points.contains(point));
+        let moved = points != state.known_points;
         state.known_points = points;
         drop(state);
         app.registry.places.replace_owner(ID, places);
         app.registry.remotes.replace_owner(ID, known);
-        // A bridge's folder mounted, which no table says (ADR-149).
-        if more {
+        app.registry.reopens.replace_owner_if_changed(ID, reopens);
+        // A bridge's folder mounted or let go of, which no table says
+        // (ADR-149).
+        if moved {
             app.volumes_changed();
         }
         app.wake();
@@ -2445,7 +2461,7 @@ impl Plugin for RemotePlugin {
             words!(remote_disconnect = "Disconnect"),
             words!(
                 remote_disconnect_description =
-                    "Let go of a remote folder: what shows it goes home"
+                    "Let go of a remote folder: what shows it says so, and shows it again once connected"
             ),
             move |args, app| {
                 remotes.disconnect(app, &args.path.into_inner(), args.force)?;
@@ -2902,34 +2918,10 @@ fn listed(items: Vec<Words>) -> skwir_core::words::Arg {
 }
 
 /// Refused while actions of Skwir's are under way at or below `point`
-/// (`Executor::under_way_in`), named: letting go of the mount would cut
-/// them.
+/// (`Executor::refuse_under_way`), named: letting go of the mount would
+/// cut them.
 fn under_way(app: &App, point: &Path) -> anyhow::Result<()> {
-    let named: Vec<Words> = app
-        .executor
-        .under_way_in(point)
-        .into_iter()
-        .map(|title| {
-            words!(
-                remote_under_way_title = "{ $title }",
-                title = skwir_core::words::Named(title),
-                note = "An action's title (copy 3 items to Docs), quoted."
-            )
-        })
-        .collect();
-    match named.len() {
-        0 => Ok(()),
-        count => anyhow::bail!(words!(
-            remote_under_way = "{ $count ->
-                [1] { $actions } is under way there
-               *[other] { $actions } are under way there
-            }",
-            count = count,
-            actions = listed(named),
-            note = "Why a remote folder is not let go of: actions: the titles of what Skwir \
-                    does there."
-        )),
-    }
+    app.executor.refuse_under_way(point)
 }
 
 /// How long a question waits between looks at whether its connection was
