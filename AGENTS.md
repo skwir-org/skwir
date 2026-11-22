@@ -368,6 +368,10 @@ working in an area, also read that area's rules (see
     `[start, end)` is `modified>=start modified<end`.
   - When changing date behaviour, test boundary instants explicitly, with
     an explicit calendar (`lang::parse_in`).
+  - The user's time zone is `skwir_core::locale::zone()`, the system's
+    unless a test sets one (`locale::set_zone`); clippy refuses
+    `TimeZone::system()` elsewhere. A test never sets `TZ`: jiff keeps
+    the zone it read for minutes, so a later `TZ` is not seen.
 - **Types (ADR-037).** Read types only through `skwir_platform::mime`:
   the system's own registry first, the desktop's database behind it. On
   Linux they are one; on macOS (UTType) and Windows (the registry's

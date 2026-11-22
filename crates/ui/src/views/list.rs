@@ -1458,7 +1458,7 @@ fn on_the_clock(clock: u64) -> Option<std::time::SystemTime> {
         0,
     )
     .ok()?;
-    let zoned = civil.to_zoned(jiff::tz::TimeZone::system()).ok()?;
+    let zoned = civil.to_zoned(skwir_core::locale::zone()).ok()?;
     Some(std::time::SystemTime::from(zoned.timestamp()))
 }
 

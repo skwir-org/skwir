@@ -46,7 +46,7 @@ fn local(t: SystemTime, format: &str) -> String {
     jiff::Timestamp::try_from(t).map_or_else(
         |_| "—".into(),
         |ts| {
-            ts.to_zoned(jiff::tz::TimeZone::system())
+            ts.to_zoned(skwir_core::locale::zone())
                 .strftime(format)
                 .to_string()
         },
@@ -360,11 +360,7 @@ mod tests {
     fn friendly_dates_are_relative_to_the_day_not_the_minute() {
         // The dates' locale British, the zone UTC: what the English below
         // writes (a US locale writes "Today 9:05 AM").
-        // SAFETY: a test of its own process (nextest), before threads read TZ.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("TZ", "UTC");
-        }
+        skwir_core::locale::set_zone(Some(jiff::tz::TimeZone::UTC));
         skwir_core::locale::set_formats(None, Some("en-GB".into()));
         let tz = jiff::tz::TimeZone::UTC;
         let now = jiff::civil::date(2026, 9, 20)

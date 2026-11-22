@@ -35,7 +35,7 @@ impl Calendar {
     /// The user's: the system's time zone and the locale's first weekday.
     pub fn system() -> Calendar {
         Calendar {
-            tz: TimeZone::system(),
+            tz: skwir_core::locale::zone(),
             week_start: week_start(),
         }
     }

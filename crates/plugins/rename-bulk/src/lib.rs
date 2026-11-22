@@ -430,7 +430,7 @@ fn render(
                         let ts = jiff::Timestamp::try_from(t).map_err(|e| {
                             BulkRenameError::Template(Words::as_written(e.to_string()))
                         })?;
-                        let zoned = ts.to_zoned(jiff::tz::TimeZone::system());
+                        let zoned = ts.to_zoned(skwir_core::locale::zone());
                         // `strftime(..).to_string()` would panic on a
                         // format it cannot write; this says why instead.
                         let s = jiff::fmt::strtime::format(fmt, &zoned).map_err(|e| {

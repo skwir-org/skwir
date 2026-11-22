@@ -174,7 +174,7 @@ fn read(trash: &Path, top: Option<&Path>) -> Vec<trash::TrashItem> {
 /// skipped it.
 fn local_seconds(date: &str) -> Option<i64> {
     let local = jiff::civil::DateTime::strptime("%Y-%m-%dT%H:%M:%S", date).ok()?;
-    let zoned = jiff::tz::TimeZone::system().to_ambiguous_zoned(local);
+    let zoned = crate::locale::zone().to_ambiguous_zoned(local);
     if matches!(zoned.offset(), jiff::tz::AmbiguousOffset::Gap { .. }) {
         return None;
     }
@@ -190,11 +190,9 @@ mod tests {
     /// where they skipped it, nothing for what is not that form.
     #[test]
     fn a_deletion_date_is_read_as_a_local_time() {
-        // SAFETY: a test of its own process (nextest), before threads read TZ.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("TZ", "Europe/Paris");
-        }
+        crate::locale::set_zone(Some(
+            jiff::tz::TimeZone::get("Europe/Paris").expect("the zone database knows Europe/Paris"),
+        ));
         // 2026-07-01 12:00 is 10:00 UTC (summer time).
         assert_eq!(local_seconds("2026-07-01T12:00:00"), Some(1_782_900_000));
         // The clocks went back at 03:00 on 2026-10-25: 02:30 came twice,

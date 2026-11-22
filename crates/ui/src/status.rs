@@ -697,11 +697,7 @@ mod tests {
         // The zone UTC: what the English below writes. The moment is an
         // argument of the words, said in English's own formats (a 12-hour
         // time), whatever the window's locale.
-        // SAFETY: a test of its own process (nextest), before threads read TZ.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("TZ", "UTC");
-        }
+        skwir_core::locale::set_zone(Some(jiff::tz::TimeZone::UTC));
         let now = jiff::Timestamp::from_second(1_800_000_007)
             .unwrap()
             .to_zoned(jiff::tz::TimeZone::UTC);

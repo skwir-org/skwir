@@ -508,12 +508,7 @@ mod tests {
     /// locale, or as ISO 8601 where the dates setting says so.
     #[test]
     fn a_commit_s_date_is_written_as_the_files_are() {
-        // SAFETY: nextest runs each test in a process of its own, and this
-        // one starts no thread before.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("TZ", "UTC");
-        }
+        skwir_core::locale::set_zone(Some(jiff::tz::TimeZone::UTC));
         skwir_core::locale::set_formats(None, Some("en-GB".into()));
         assert_eq!(when(1_700_000_000), "14 Nov 2023, 22:13");
         skwir_core::locale::set_iso_dates(true);

@@ -1503,11 +1503,7 @@ fn the_size_units_move_what_is_said() {
 #[test]
 fn moments_are_written_as_the_locale_writes_dates() {
     // 2024-03-12 14:02:05 UTC, written in UTC.
-    // SAFETY: a test of its own process, before any thread reads TZ.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("TZ", "UTC");
-    }
+    crate::locale::set_zone(Some(jiff::tz::TimeZone::UTC));
     let at = |shape| super::Moment {
         at: 1_710_252_125,
         shape,
@@ -1544,11 +1540,10 @@ fn moments_are_written_as_the_locale_writes_dates() {
 #[test]
 fn periods_are_written_on_the_calendar_that_counts_them() {
     // Fourteen hours ahead of UTC: noon there is still the day given.
-    // SAFETY: a test of its own process, before any thread reads TZ.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("TZ", "Pacific/Kiritimati");
-    }
+    crate::locale::set_zone(Some(
+        jiff::tz::TimeZone::get("Pacific/Kiritimati")
+            .expect("the zone database knows Pacific/Kiritimati"),
+    ));
     let on = |shape| super::Moment::on(2024, 3, 1, shape).unwrap();
     let en = |shape| dates::written("en", on(shape));
     assert_eq!(en(super::Shape::Date), "Mar 1, 2024");
@@ -1661,11 +1656,7 @@ fn a_sentence_is_cut_around_several_arguments() {
 #[test]
 fn dates_are_written_as_iso_where_the_setting_says_so() {
     use super::{Moment, Shape};
-    // SAFETY: a test of its own process, before any thread reads TZ.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("TZ", "UTC");
-    }
+    crate::locale::set_zone(Some(jiff::tz::TimeZone::UTC));
     crate::locale::set_formats(None, Some("en-GB".into()));
     let on = |shape| Moment::on(2026, 3, 12, shape).expect("a day there is");
     assert_eq!(on(Shape::Date).said(), "12 Mar 2026");
@@ -1700,11 +1691,7 @@ fn dates_are_written_as_iso_where_the_setting_says_so() {
 fn the_desktop_s_hours_outweigh_the_locale_s() {
     use super::{Moment, Shape};
     use crate::locale::{Hours, set_formats, set_hours};
-    // SAFETY: a test of its own process, before any thread reads TZ.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("TZ", "UTC");
-    }
+    crate::locale::set_zone(Some(jiff::tz::TimeZone::UTC));
     let two = Moment {
         at: 1_710_252_125,
         shape: Shape::Time,

@@ -52,6 +52,8 @@ struct Languages {
     /// Dates written as ISO 8601 writes them, whatever the locale (the
     /// window's dates setting, `ui.date_format`).
     iso_dates: bool,
+    /// The time zone moments are said in, `None` for the system's.
+    zone: Option<jiff::tz::TimeZone>,
 }
 
 /// Moves whenever what is said would change, for what keeps what it read
@@ -72,6 +74,7 @@ static LANGUAGES: RwLock<Languages> = RwLock::new(Languages {
     dates: None,
     hours: None,
     iso_dates: false,
+    zone: None,
 });
 
 /// How a time's hours are written, where the desktop says so apart from
@@ -103,6 +106,30 @@ pub fn set_iso_dates(iso: bool) {
         kept.iso_dates = iso;
         moved();
     }
+}
+
+/// The time zone moments are said and days counted in, `None` for the
+/// system's, which the program never changes. A test of dates says its
+/// zone here, never in the `TZ` variable: the system's zone is kept a few
+/// minutes once read (jiff's cache), so a variable set after a read is not
+/// seen, and what the test says depends on the machine's zone.
+pub fn set_zone(zone: Option<jiff::tz::TimeZone>) {
+    let mut kept = LANGUAGES.write();
+    if kept.zone != zone {
+        kept.zone = zone;
+        moved();
+    }
+}
+
+/// The time zone moments are said and days counted in: the one set, else
+/// the system's. Every reader of the user's zone asks here: words'
+/// moments, the Trash's dates, `skwir_platform::calendar::Calendar::system`,
+/// the window's and the plugins' dates.
+// The one reader of the system's zone (clippy.toml).
+#[allow(clippy::disallowed_methods)]
+pub fn zone() -> jiff::tz::TimeZone {
+    let set = LANGUAGES.read().zone.clone();
+    set.unwrap_or_else(jiff::tz::TimeZone::system)
 }
 
 /// What words say moved, beside the languages and their formats (the size

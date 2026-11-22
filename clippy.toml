@@ -11,6 +11,12 @@ doc-valid-idents = ["GVfs", "WebDAV", "BitLocker", "LXQt", "JetBrains", "RaTeX",
 # (ADR-074), so a console program started otherwise opens one of its own.
 # Exceptions are allowed where they stand, with the reason: tests, run
 # from a console; build scripts; helpers, whose own console is unseen.
+#
+# The user's time zone is read from skwir_core::locale::zone alone, which
+# a test sets (`locale::set_zone`): the system's zone read elsewhere is
+# the machine's whatever the test said, and the `TZ` variable is not seen
+# once jiff has read it (its cache keeps the zone for minutes).
 disallowed-methods = [
     { path = "std::process::Command::new", reason = "make it with skwir_platform::process::command: on Windows a program started otherwise opens a console window" },
+    { path = "jiff::tz::TimeZone::system", reason = "read the user's zone with skwir_core::locale::zone, which a test sets with locale::set_zone" },
 ]
