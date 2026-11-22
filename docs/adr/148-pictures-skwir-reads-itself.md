@@ -5,7 +5,10 @@ ADR-146, that HEIC, AVIF, JPEG XL and camera raw files be shown at the
 pixels they cover too; chose a libheif helper for HEIC and AVIF, the
 embedded JPEG for raw files, jxl-oxide for JPEG XL). Built on Linux
 that night; the helper in Debian's, Fedora's, Arch's and Nix's packages,
-not yet in the AppImage (decision 3).
+not yet in the AppImage (decision 3). Amended the next day (2026-11-22),
+as the user asked once it was measured: JPEG XL read in bands and a
+region alone, by a decoder of Skwir's own around jxl-oxide (decision 1);
+a photo of 24 megapixels or more had not been shown at all.
 
 ## Context
 
@@ -27,8 +30,23 @@ not yet in the AppImage (decision 3).
    guesses a picture's format, and as the program starts): whatever reads
    a picture through `image` reads one, its size, a decode shrunk, a
    region, a thumbnail, a comic's page. `image/jxl` is among the types
-   Skwir decodes (`thumb_providers::decodes`). It is decoded whole: no
-   reduced scale yet.
+   Skwir decodes (`thumb_providers::decodes`). The hook is Skwir's own
+   decoder (`jxl::Decoder`, amended), around jxl-oxide's:
+   - **Read in bands of rows**, as tall as what the decode may hold
+     allows (`image`'s limits: 512 MiB by default, less what the picture
+     holds in eight bits), in multiples of a group's 256 rows. jxl-oxide
+     draws a frame in 32-bit floats, about 24 bytes a pixel: decoded
+     whole, a photo of 24 megapixels held 635 MiB and failed within
+     `image`'s limits, so it was not shown at all. In bands it holds
+     400 MiB at 24 megapixels, 500 at 45, in about the same time: a
+     tenth more, at most a fifth but once (each band decodes again the
+     groups beside it, which its filters read).
+   - **A region is read alone** (`Decoder::cut`, `picture::decode_region`):
+     the groups it covers and those beside them, at full size, the only
+     scale it is decoded at.
+   - **Turned once**: jxl-oxide turns the pixels as the codestream says,
+     and the EXIF Orientation a JPEG converted keeps beside it is not
+     read again (`image` read it and turned such a picture twice).
 2. **A camera's raw file is shown by the largest JPEG it carries**
    (`raw::embedded_jpeg`): the camera's own picture of its sensor, full
    size in most raw files, as file managers and image viewers show it.
@@ -80,10 +98,12 @@ not yet in the AppImage (decision 3).
 - A raw file without a JPEG of its own (rare: a DNG written without a
   preview) shows nothing of Skwir's; its type is listed only where its
   container carries one.
-- A large JPEG XL decodes whole each time it is asked smaller (no reduced
-  scale in jxl-oxide's decoder through `image`), and so does a HEIC or an
-  AVIF, in a helper started for its size and again for its pixels: an
-  iPhone's photo of 12 megapixels is some 50 MB written and read in
-  memory.
-- A picture of these formats past the preview's bound decodes whole for
-  its region, as a PNG does.
+- A large JPEG XL decodes all its bands each time it is asked smaller
+  (no reduced scale in jxl-oxide's decoder through `image`, its eighth
+  not asked apart), holding the picture's eight bits whole; a HEIC or an
+  AVIF decodes whole, in a helper started for its size and again for its
+  pixels: an iPhone's photo of 12 megapixels is some 50 MB written and
+  read in memory.
+- Past the preview's bound, a JPEG XL decodes its region alone (2000 ×
+  1600 of 45 megapixels in 150 to 320 ms, where the whole took 1.8 s or
+  more); a HEIC or an AVIF decodes whole for its region, as a PNG does.

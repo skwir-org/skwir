@@ -22138,3 +22138,62 @@ The third track of the night, as the user chose.
 - **Not done**: a band's columns (it is the picture's width); a
   progressive JPEG's coefficients still the whole picture's; a 4K screen
   of its own size.
+
+## 2026-11-22: JPEG XL in bands and its regions alone (ADR-148 amended)
+
+Asked by the user after ADR-148: whether a part of a JPEG XL or a HEIC
+should be decoded alone, measured first. Fixtures made on this machine
+from the synthetic 24- and 45-megapixel JPEGs of ADR-146 (6000 × 4000,
+8192 × 5464): each as a lossy JPEG XL (`cjxl -d 1 -e 7`), as one
+converted from the JPEG without loss, and as a HEIC of 512 px tiles with
+a thumbnail (`heif-enc --cut-tiles 512 -t 320 -q 50`). Measured in
+release by a scratch program against `image` 0.25.10 and jxl-oxide
+0.12.6 (`jxl.rs` itself, included by its path, for the decoder built),
+each case a process of its own, its peak its `VmHWM`, glibc's malloc,
+three rounds alternated on a machine at a load of 2 to 7.
+
+- **A JPEG XL of 24 megapixels or more was not shown**: decoded whole
+  within `image`'s default limits (512 MiB, less the picture's eight
+  bits), as `picture::whole` reads one, jxl-oxide failed to allocate its
+  frame of 32-bit floats, at 24 megapixels as at 45. Without limits the
+  whole took 0.74–1.56 s at a peak of 635 MiB (24 megapixels), 1.8–2.7 s
+  at 1.19 GiB (45). The 4000 × 3000 file the window was checked with the
+  night before fitted.
+- **A turned JPEG XL was turned twice**: a JPEG of 300 × 200 with an EXIF
+  Orientation of 6, converted by `cjxl` either way, is 200 × 300 by its
+  codestream, which jxl-oxide applies, and `image`'s decoder read the
+  EXIF's again.
+- **`jxl::Decoder`**, Skwir's own around jxl-oxide's, taught to `image`
+  in its place: read in bands as tall as the limits allow (12 bytes a
+  sample counted: a band of 16.8 megapixels failed within 378 MB, one of
+  12.3 passed within 440, and the planes it failed on were the band's
+  rows and 8 more, four bytes a sample), in multiples of 256 rows; a
+  region alone (`cut`); no orientation of its own. Decoded through it
+  within the default limits: 24 megapixels 0.77–1.22 s at 365–403 MiB,
+  45 megapixels 1.8–2.3 s at 403–512 MiB (once 3.7 s, the machine
+  loaded); a region of 2000 × 1600 in the middle 124–202 ms at about
+  100–120 MiB (24 megapixels), 152–323 ms at about 110 (45). Bands of a
+  fixed 512 or 768 rows had cost up to half as much again at 45
+  megapixels (each band decodes the groups beside it again).
+- **HEIC, measured, not changed**: the helper (`target/debug`, libheif
+  1.23 with libde265; not isolated) decodes 24 megapixels in 460 ms at a
+  peak of 154 MiB, 45 in 855 ms at 279 MiB; its run for the size takes
+  6 ms; libheif's thumbnailer gives the 320 px thumbnail the file carries
+  in 21–29 ms. libheif's call for a tile alone
+  (`heif_image_handle_decode_image_tile`) is in 1.19.8, checked in its
+  library.
+- **Tests**: `jxl::tests::a_jpeg_xl_in_bands_is_its_whole` (a 640 × 1300
+  plasma, bands of a group and regions equal to the whole to the bit),
+  `a_band_is_as_tall_as_what_may_be_held`;
+  `picture::tests::a_turned_jpeg_xl_is_turned_once` (its size, its
+  pixels and a region as shown), `a_jpeg_xl_region_is_decoded_alone`.
+- **The thumbnails plugin's words**: what stops working without
+  ImageMagick names Photoshop and GIMP images and some raw files, no
+  longer JPEG XL; its setting's description says it reads the raw files
+  Skwir does not, and HEIC and AVIF where Skwir's helper is not
+  installed. French, Italian and Chinese drafted again, drafts still.
+- **Not done**: the window not tried with the new decoder (its paths are
+  `picture::whole` and `decode_region`, which the tests take); a JPEG
+  XL's eighth as a picture shown first; a lossless (modular) JPEG XL not
+  measured; HEIC tiles and its thumbnail shown first, left for the
+  user's answer.

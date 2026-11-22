@@ -1276,7 +1276,10 @@ then read as a JPEG is; HEIC and AVIF by libheif in a helper of its own,
 installed, a package of its own on Debian and Fedora, in Arch's `skwir`,
 a flag of Nix's package. Each is then held at the pixels it covers, read
 ahead and kept, thumbnails included. Checks in `docs/STATUS-LOG.md`
-(2026-11-22).
+(2026-11-22). Amended the next day, once measured: a JPEG XL of 24
+megapixels or more was not shown at all (jxl-oxide's frame in floats
+past `image`'s limit) and a turned one was turned twice; it is now read
+in bands and a region alone, by a decoder of Skwir's own, turned once.
 
 ## A page shows what it covers (ADR-147, 2026-11-22)
 
@@ -1367,21 +1370,22 @@ of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
 against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
 time).
 - *HEIC, HEIF, AVIF, JPEG XL and camera raw files* (built as ADR-148,
-  2026-11-22). Left: JPEG XL decoded whole each time (jxl-oxide decodes
-  a region, and its progressive passes could stand in first, as a JPEG's
-  eighth does, neither asked through `image`); a HEIC decoded whole by
-  the helper, in a run for its size and another for its pixels (an
-  iPhone's is stored as 512 px tiles, which libheif decodes one by one:
-  a region, or a size asked once, would save most of it); the helper in
-  the AppImage (Ubuntu 22.04's libheif is 1.12, without `heif_init`: a
-  newer one bundled with libde265 and dav1d as plugins beside it);
-  Windows' WIC and macOS's ImageIO for HEIC and AVIF; a raw file whose
-  JPEG hides in its maker note (Olympus's ORF), Canon's CRW, Sigma's
-  X3F; a raw file never tried from a real camera (synthetic containers
-  laid out as each maker's are), the AVIF decoder never tried on Debian's
-  split plugins; the `thumbnails` plugin's words still name JPEG XL among
-  what stops working without ImageMagick (a message changed is one for
-  every catalog, left for the words' next pass).
+  2026-11-22; JPEG XL in bands and its regions alone, amended the same
+  day). Left: a JPEG XL decoded at full size for every view (its eighth,
+  which the format stores first, could stand in as a JPEG's does; shrunk
+  band by band, it would not hold its eight bits whole); a HEIC decoded
+  whole by the helper for its regions too, 855 ms and 279 MiB for 45
+  megapixels (an iPhone's is stored as 512 px tiles, which libheif 1.19
+  decodes one by one, Ubuntu 24.04's being 1.17: looked up as the helper
+  starts, a region would decode a tenth of them), and nothing shown
+  before it (the thumbnail a HEIC carries came out in 25 ms; the run for
+  its size costs 6 ms, not worth saving); the helper in the AppImage
+  (Ubuntu 22.04's libheif is 1.12, without `heif_init`: a newer one
+  bundled with libde265 and dav1d as plugins beside it); Windows' WIC
+  and macOS's ImageIO for HEIC and AVIF; a raw file whose JPEG hides in
+  its maker note (Olympus's ORF), Canon's CRW, Sigma's X3F; a raw file
+  never tried from a real camera (synthetic containers laid out as each
+  maker's are), the AVIF decoder never tried on Debian's split plugins.
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not

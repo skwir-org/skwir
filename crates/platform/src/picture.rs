@@ -40,7 +40,7 @@ pub fn open_typed<S: FileSource + ?Sized>(
 }
 
 /// The formats Skwir decodes beside `image`'s own, taught to it once
-/// (ADR-148): JPEG XL through jxl-oxide's decoding hook, HEIC and AVIF
+/// (ADR-148): JPEG XL by jxl-oxide, in bands (`jxl`), HEIC and AVIF
 /// through the libheif helper where it is installed (`heif`), so whatever reads
 /// a picture through `image` (its size, a reduced decode, a region, a
 /// thumbnail, a comic's page) reads one. Asked by every entry point that
@@ -48,7 +48,7 @@ pub fn open_typed<S: FileSource + ?Sized>(
 pub fn formats() {
     static TAUGHT: std::sync::Once = std::sync::Once::new();
     TAUGHT.call_once(|| {
-        jxl_oxide::integration::register_image_decoding_hook();
+        crate::jxl::register();
         crate::heif::register();
     });
 }
@@ -224,21 +224,29 @@ pub fn decode_region<R: BufRead + Seek>(
     side: u32,
     threads: Threads,
 ) -> ImageResult<DynamicImage> {
-    // A JPEG's rows around the region alone; any other picture whole.
-    let band = if reader.format() == Some(ImageFormat::Jpeg) {
-        let mut inner = reader.into_inner();
+    // A JPEG's rows around the region alone, a JPEG XL's region alone; any
+    // other picture whole.
+    let format = reader.format();
+    let mut inner = reader.into_inner();
+    let band = if format == Some(ImageFormat::Jpeg) {
         match jpeg_band(&mut inner, own, region, side, threads, REDUCED_BYTES)? {
             Some(band) => band,
             None => Band::whole(whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?),
         }
+    } else if format.is_none() && crate::jxl::starts(inner.fill_buf()?) {
+        jxl_region(inner, own, region)?
     } else {
+        let reader = match format {
+            Some(format) => ImageReader::with_format(inner, format),
+            None => ImageReader::new(inner).with_guessed_format()?,
+        };
         Band::whole(whole(reader)?)
     };
     let (decoded, orientation) = (band.image, band.orientation);
     let longer = own.0.max(own.1).max(1);
     // Where the region lies in the pixels as stored, then in those decoded
     // (the whole picture at the scale decoded, `band.size`), then in the
-    // band of its rows held.
+    // band held.
     let [left, top, width, height] = stored_region(region, own, orientation);
     let stored = turned(own.0, own.1, orientation);
     let (across, down) = (
@@ -247,16 +255,17 @@ pub fn decode_region<R: BufRead + Seek>(
     );
     let from = |at: u32, scale: f64, most: u32| ((f64::from(at) * scale).floor() as u32).min(most);
     let to = |at: u32, scale: f64, most: u32| ((f64::from(at) * scale).ceil() as u32).min(most);
+    let columns = band.left..band.left + decoded.width();
     let rows = band.top..band.top + decoded.height();
     let (x0, y0) = (
-        from(left, across, decoded.width()),
+        from(left, across, columns.end).clamp(columns.start, columns.end.saturating_sub(1)),
         from(top, down, rows.end).clamp(rows.start, rows.end.saturating_sub(1)),
     );
     let (x1, y1) = (
-        to(left + width, across, decoded.width()).max(x0 + 1),
+        to(left + width, across, columns.end).max(x0 + 1),
         to(top + height, down, rows.end).max(y0 + 1),
     );
-    let mut cut = decoded.crop_imm(x0, y0 - rows.start, x1 - x0, y1 - y0);
+    let mut cut = decoded.crop_imm(x0 - columns.start, y0 - rows.start, x1 - x0, y1 - y0);
     cut.apply_orientation(orientation);
     // Its size where the whole's longer side is `side`, never larger than
     // what was cut.
@@ -400,11 +409,12 @@ fn reduced<R: std::io::Read>(jpeg: &mut jpeg_decoder::Decoder<R>, side: u32) -> 
     })
 }
 
-/// What a region is cut from (`decode_region`): rows of the picture
-/// decoded at a scale, from `top`, of the whole's `size` at that scale,
-/// and how to turn it.
+/// What a region is cut from (`decode_region`): part of the picture
+/// decoded at a scale, from `left` and `top`, of the whole's `size` at that
+/// scale, and how to turn it.
 struct Band {
     image: DynamicImage,
+    left: u32,
     top: u32,
     size: (u32, u32),
     orientation: Orientation,
@@ -416,10 +426,46 @@ impl Band {
         Band {
             size: (image.width(), image.height()),
             image,
+            left: 0,
             top: 0,
             orientation,
         }
     }
+}
+
+/// The region of a JPEG XL a zoom shows, decoded alone (`jxl::Decoder::cut`:
+/// the groups it covers and those beside them) at its full size, the only
+/// one it is decoded at, as it is shown (`own`): jxl-oxide turns it.
+fn jxl_region<R: BufRead + Seek>(
+    reader: R,
+    own: (u32, u32),
+    region: [u32; 4],
+) -> ImageResult<Band> {
+    let mut decoder = crate::jxl::Decoder::new(reader)?;
+    let size = decoder.dimensions();
+    // In its pixels, should what was shown be of another size.
+    let (across, down) = (
+        f64::from(size.0) / f64::from(own.0.max(1)),
+        f64::from(size.1) / f64::from(own.1.max(1)),
+    );
+    let [x, y, width, height] = region;
+    let at = |at: u32, scale: f64| (f64::from(at) * scale).floor() as u32;
+    let end = |at: u32, scale: f64| (f64::from(at) * scale).ceil() as u32;
+    let (left, top) = (at(x, across), at(y, down));
+    decoder.cut([
+        left,
+        top,
+        end(x + width, across).saturating_sub(left),
+        end(y + height, down).saturating_sub(top),
+    ]);
+    let [left, top, ..] = decoder.region();
+    Ok(Band {
+        image: encoded(within(decoder, image::Limits::default())?),
+        left,
+        top,
+        size,
+        orientation: Orientation::NoTransforms,
+    })
 }
 
 /// The rows of a JPEG a region of it shows, decoded alone (ADR-146
@@ -499,6 +545,7 @@ fn jpeg_band<R: BufRead + Seek>(
         };
         Some(Band {
             image,
+            left: 0,
             top: u32::from(band_top),
             size: (width, u32::from(height)),
             orientation,
@@ -1242,6 +1289,68 @@ mod tests {
         assert!(r > 180 && b < 80, "the top is red: {r} {b}");
         let [r, _, b] = fitted.get_pixel(24, 30).0;
         assert!(r < 80 && b > 180, "the bottom is blue: {r} {b}");
+    }
+
+    /// A JPEG XL turned by its codestream, whose EXIF says so too (a JPEG
+    /// converted): turned once, its size as it is shown.
+    #[test]
+    fn a_turned_jpeg_xl_is_turned_once() {
+        const JXL: &[u8] = include_bytes!("../testdata/synthetic-turned.jxl");
+        formats();
+        let reader = || {
+            ImageReader::new(Cursor::new(JXL))
+                .with_guessed_format()
+                .unwrap()
+        };
+        // 300 × 200 as stored, red at the top and blue at the bottom,
+        // turned a quarter clockwise (EXIF Orientation 6): red on the right.
+        assert_eq!(size(reader()).unwrap(), (200, 300));
+        let shown = decode(reader(), image::Limits::default())
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(shown.dimensions(), (200, 300));
+        let [r, _, b] = shown.get_pixel(190, 150).0;
+        assert!(r > 200 && b < 60, "the right is red: {r} {b}");
+        let [r, _, b] = shown.get_pixel(10, 150).0;
+        assert!(r < 60 && b > 200, "the left is blue: {r} {b}");
+        // A region of it, as it is shown.
+        let right = decode_region(
+            reader(),
+            (200, 300),
+            [150, 0, 50, 300],
+            300,
+            Threads::Caller,
+        )
+        .unwrap()
+        .to_rgb8();
+        assert_eq!(right.dimensions(), (50, 300));
+        let [r, _, b] = right.get_pixel(40, 150).0;
+        assert!(r > 200 && b < 60, "the right is red: {r} {b}");
+    }
+
+    /// A JPEG XL's region is decoded alone (`jxl::Decoder::cut`), as the
+    /// whole decoded and cut, wherever it lies.
+    #[test]
+    fn a_jpeg_xl_region_is_decoded_alone() {
+        const JXL: &[u8] = include_bytes!("../testdata/synthetic-plasma.jxl");
+        formats();
+        let reader = || {
+            ImageReader::new(Cursor::new(JXL))
+                .with_guessed_format()
+                .unwrap()
+        };
+        let whole = decode(reader(), image::Limits::default())
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(whole.dimensions(), (640, 1300));
+        for region in [[0, 0, 100, 40], [300, 250, 200, 600], [520, 1100, 120, 200]] {
+            let cut = decode_region(reader(), (640, 1300), region, 1300, Threads::Caller)
+                .unwrap()
+                .to_rgb8();
+            let [x, y, width, height] = region;
+            let expected = image::imageops::crop_imm(&whole, x, y, width, height).to_image();
+            assert!(cut == expected, "{region:?} differs");
+        }
     }
 
     /// What may be held of a picture is counted in pixels: a square one at

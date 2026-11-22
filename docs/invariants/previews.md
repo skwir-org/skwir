@@ -210,7 +210,11 @@ A name that says nothing is not a binary file.
   type there, which keeps the fallback away. Beside `image`'s own
   formats (ADR-148): JPEG XL through jxl-oxide, taught to `image` once by
   its decoding hook (`picture::formats`, which every entry point that
-  guesses a picture's format calls, and the program as it starts); a
+  guesses a picture's format calls, and the program as it starts) as a
+  decoder of Skwir's own (`jxl::Decoder`): it reads in bands as tall as
+  the decode's limits allow, never jxl-oxide's whole frame of floats, a
+  region alone (`picture::decode_region`), and never the EXIF
+  Orientation, jxl-oxide having turned the pixels by the codestream's; a
   camera's raw file of the types `raw::is_raw` lists, by the largest JPEG
   it carries (`raw::embedded_jpeg`, its Orientation written in where the
   JPEG says none), read wherever the type is known

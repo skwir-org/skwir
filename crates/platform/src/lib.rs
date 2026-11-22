@@ -64,6 +64,7 @@ pub mod http;
 #[cfg(target_os = "linux")]
 mod icon_theme;
 pub mod icons;
+mod jxl;
 #[cfg(target_os = "linux")]
 mod kde_scheme;
 pub mod keyfile;
