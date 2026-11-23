@@ -99,6 +99,7 @@ fn a_helper_that_cannot_run_is_left_out() {
 }
 
 /// A folder of this test's own, under the tests' cache (never `/tmp`).
+#[cfg(unix)]
 fn tempfile_folder() -> PathBuf {
     let cache = std::env::var_os("XDG_CACHE_HOME").map_or_else(std::env::temp_dir, PathBuf::from);
     let folder = cache.join(format!("heif-helper-{}", std::process::id()));
