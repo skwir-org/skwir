@@ -3696,7 +3696,7 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   skwird on demand where it is installed.
   - **The copies, made 2026-11-23:** `vendor/skwird-protocol` and
     `vendor/skwird-client`, by skwird's `tools/vendor-client` (from
-    40f7f87, again from accc113), outside the workspace, `skwird-client`
+    40f7f87, again from accc113, then 94a6d65), outside the workspace, `skwird-client`
     in `[workspace.dependencies]`. Built alone with Skwir's toolchain and
     lockfile, their tests green, compiled for Windows and macOS. Nothing
     takes them yet. skwird's session gave, at accc113, the client's
@@ -3743,9 +3743,15 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
 - **E. Kept live** (ADR-150, 6): the list on the plugin's settings page
   (Your folders and Bookmarks followed, each switched; Added by you;
   rows ticked, a followed row unticked kept by its path), each row's
-  state, the share's use once skwird's `watching` says it (asked
-  2026-11-23: each folder's state, the folders it takes, the share and
-  its use, and whether the order Skwir registers in decides); the
+  state and the share's use, as skwird's `watching` says them since its
+  7bc7d8b (copied at 94a6d65): each folder live since a time or why not
+  (the share spent before it, the system's limit, a failed watch, not
+  covered, missing, pending), the folders it takes, the kept folder
+  holding it, and the share (`used`, `size`; none at the system
+  service). The share fills in the order folders were kept, a `watch`'s
+  `remove` first, then its `add` in order: Skwir sends its folders in
+  their order, and moves one ahead by taking back those after it and
+  adding them again after it; the
   differences sent, what skwird lists that the settings no longer name
   taken back at each connection; dimmed with the system service; the
   command and the context menu's `Keep live for searches` (1xx, beside

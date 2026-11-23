@@ -34,7 +34,11 @@
 < {"id":9,"excluded":{"folders":["/home/user/.local/share/vault"]}}
 # A client wants a folder live: changes in it heard, applied as they come.
 > {"id":12,"watch":{"add":["/home/user/Documents"],"remove":[]}}
-< {"id":12,"watching":{"folders":["/home/user/Documents"]}}
+< {"id":12,"watching":{"folders":[{"path":"/home/user/Documents","state":{"live":{"sec":1795000200,"nsec":0}},"folders":1204}],"share":{"used":1204,"size":131072}}}
+# The share fills in the order folders were kept: one that does not fit
+# is checked, and says why; one inside another kept takes no watch.
+> {"id":14,"watch":{"add":["/home/user/Projects","/home/user/Documents/letters"],"remove":[]}}
+< {"id":14,"watching":{"folders":[{"path":"/home/user/Documents","state":{"live":{"sec":1795000200,"nsec":0}},"folders":1204},{"path":"/home/user/Projects","state":{"not_live":"share"},"folders":250000},{"path":"/home/user/Documents/letters","state":{"live":{"sec":1795000200,"nsec":0}},"folders":12,"within":"/home/user/Documents"}],"share":{"used":131072,"size":131072}}}
 > {"id":13,"coverage":{"root":"/home/user/Documents"}}
 < {"id":13,"coverage":{"names":{"live":{"sec":1795000200,"nsec":0}},"attrs":{"live":{"sec":1795000200,"nsec":0}}}}
 # An error answers any request.

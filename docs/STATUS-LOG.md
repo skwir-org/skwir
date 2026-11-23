@@ -22916,3 +22916,15 @@ ADR-150's points 1, 2, 4 and 5, built the same day as decided.
 - **Left:** sizes and times are not asked of an index yet (a link's are
   its target's, which an index does not hold); the tags index's
   coverage in the same words.
+
+## 2026-11-23: skwird's client copied at 94a6d65
+
+skwird's session answered the request of the same day: `watch` answers
+`Watching` (each folder kept, live since a time or why not, the folders
+it takes, the kept folder holding it; the share's `used` and `size`,
+none at the system service), the share filled in the order folders were
+kept. A breaking change to protocol 0; nothing in Skwir reads it yet
+(step E will). `tools/vendor-client` now keeps each copy's
+`README.skwir.md`. Checked as before, in a crate of its own with
+Skwir's lockfile, offline: the copies' five tests green, `cargo check`
+for Windows and macOS clean, clippy silent.

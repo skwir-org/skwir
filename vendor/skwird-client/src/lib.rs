@@ -465,16 +465,17 @@ impl Client {
         }
     }
 
-    /// Want `add` live, take back `remove`: what this client wants live,
-    /// after. A folder past the engine's share of watches is checked,
-    /// not live: its coverage says which.
-    pub fn watch(&mut self, add: &[&Path], remove: &[&Path]) -> Result<Vec<PathBuf>, Error> {
+    /// Take back `remove`, then want `add` live: each folder this client
+    /// keeps live after, in the order the engine's share fills in, live or
+    /// why not, and the share. A folder past the share is checked, not
+    /// live.
+    pub fn watch(&mut self, add: &[&Path], remove: &[&Path]) -> Result<protocol::Watching, Error> {
         let id = self.ask(Ask::Watch {
             add: add.iter().map(|p| WirePath::of(p)).collect(),
             remove: remove.iter().map(|p| WirePath::of(p)).collect(),
         })?;
         match self.answer(id)? {
-            Answer::Watching { folders } => Ok(folders.iter().map(WirePath::to_path).collect()),
+            Answer::Watching(watching) => Ok(watching),
             _ => Err(Error::Unexpected),
         }
     }
@@ -555,9 +556,12 @@ mod tests {
         assert_eq!(absolute(Some(OsString::new())), None);
         assert_eq!(absolute(Some("state".into())), None);
         assert_eq!(absolute(Some("./state".into())), None);
-        assert_eq!(
-            absolute(Some("/home/someone/.local/state".into())),
-            Some(PathBuf::from("/home/someone/.local/state"))
-        );
+        // Absolute as each system has it.
+        let state = if cfg!(windows) {
+            r"C:\Users\someone\state"
+        } else {
+            "/home/someone/.local/state"
+        };
+        assert_eq!(absolute(Some(state.into())), Some(PathBuf::from(state)));
     }
 }

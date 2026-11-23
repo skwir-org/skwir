@@ -6,13 +6,14 @@
 //! the longest root holding the path asked (`outside` for none); `query`
 //! with the entries given below the root asked, a name matched as a
 //! substring after lowercasing (globs are not its); `changes` as too old;
-//! `exclude` and `watch` with what was asked. Made `silent`, it says hello
-//! and then nothing, as an engine that hangs: for a client's test of
-//! giving up on a call.
+//! `exclude` with what was asked; `watch` as the script says, or each
+//! folder asked live since the epoch, with no share. Made `silent`, it
+//! says hello and then nothing, as an engine that hangs: for a client's
+//! test of giving up on a call.
 
 use std::path::PathBuf;
 
-use skwird_protocol::{Coverage, Entry};
+use skwird_protocol::{Coverage, Entry, Watching};
 
 /// What the fake engine answers.
 #[derive(Clone, Debug, Default)]
@@ -23,6 +24,8 @@ pub struct Script {
     pub entries: Vec<Entry>,
     /// Say hello, then answer nothing more.
     pub silent: bool,
+    /// What every `watch` is answered, if given.
+    pub watching: Option<Watching>,
 }
 
 /// A fake engine serving until dropped.
@@ -109,7 +112,20 @@ mod imp {
             Ask::Cancel { .. } => Ok(()),
             Ask::Changes { .. } => say(Answer::TooOld {}),
             Ask::Exclude { add, .. } => say(Answer::Excluded { folders: add }),
-            Ask::Watch { add, .. } => say(Answer::Watching { folders: add }),
+            Ask::Watch { add, .. } => say(Answer::Watching(
+                script.watching.clone().unwrap_or(wire::Watching {
+                    folders: add
+                        .into_iter()
+                        .map(|path| wire::Kept {
+                            path,
+                            state: wire::Keeping::Live(wire::Instant { sec: 0, nsec: 0 }),
+                            folders: None,
+                            within: None,
+                        })
+                        .collect(),
+                    share: None,
+                }),
+            )),
         }
     }
 
@@ -219,6 +235,7 @@ mod tests {
                 entry("/home/user/notes.txt"),
             ],
             silent: false,
+            watching: None,
         };
         let fake = Fake::start(dir.join("socket"), script).unwrap();
         let mut c = Client::connect(&Find {

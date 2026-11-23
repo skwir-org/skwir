@@ -287,7 +287,10 @@ pub enum Ask {
     },
     /// Folders the client wants live (phase 2): kept for it across
     /// restarts, as its exclusions are. A client removes only what it
-    /// added.
+    /// added. `remove` applies first, then `add`, in its order, after what
+    /// is kept: the engine's share fills in the order folders were kept,
+    /// so a client puts one ahead of others by removing them and adding
+    /// them again after it.
     Watch {
         #[serde(default)]
         add: Vec<WirePath>,
@@ -377,10 +380,78 @@ pub enum Answer {
         folders: Vec<WirePath>,
     },
     /// The folders this client wants live, after its `watch`.
-    Watching {
-        folders: Vec<WirePath>,
-    },
+    Watching(Watching),
     Error(Failure),
+}
+
+/// What a client keeps live, after its `watch`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Watching {
+    /// This client's folders, in the order it kept them: the order the
+    /// share fills in. At the system service, which keeps none, the
+    /// folders asked.
+    pub folders: Vec<Kept>,
+    /// The engine's share of watches, every client's folders in it: none
+    /// at the system service, which hears every folder with none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<Share>,
+}
+
+/// A folder kept live, as the engine holds it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Kept {
+    /// As the client asked it.
+    pub path: WirePath,
+    pub state: Keeping,
+    /// The folders below it, itself among them, as the index holds them:
+    /// the watches it takes. None until the index holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folders: Option<u64>,
+    /// The folder kept live, by any client, that holds it: it takes no
+    /// watch of its own, and is live as that one is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<WirePath>,
+}
+
+/// Whether a folder kept live is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Keeping {
+    /// Every change below it heard since then.
+    Live(Instant),
+    /// Checked instead, for this reason.
+    NotLive(NotLive),
+}
+
+/// Why a folder kept live is not: it is checked instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotLive {
+    /// The engine's share of watches was spent by the folders kept before
+    /// it. It is tried again when a folder kept is let go of.
+    Share,
+    /// The system's limit of watches is reached: other programs hold the
+    /// rest.
+    WatchLimit,
+    /// A watch failed, with this error number.
+    Failed(i32),
+    /// It is not covered, for this reason: outside every root, excluded,
+    /// a mount, a network mount.
+    NotCovered(Why),
+    /// No folder of the index is there: tried again at each check.
+    Missing,
+    /// Not live yet: its root is being opened, or an overflow lost what it
+    /// heard until the check after.
+    Pending,
+}
+
+/// A share of watches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Share {
+    /// The watches every client's folders hold.
+    pub used: u64,
+    /// The most the engine holds: its share of the user's limit.
+    pub size: u64,
 }
 
 /// Write `message` as one line.
