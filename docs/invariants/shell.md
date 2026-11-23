@@ -2579,7 +2579,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   prompt shown, following the pane or not (`Input::Leave`, ADR-149
   amended): its folder would keep the volume busy. Typed as the
   plugin's, so the pane does not follow it there; a program running
-  there keeps it, and the unmount is refused.
+  there keeps it, and the unmount is refused. A shell following the pane
+  is never sent to a folder about to be let go of, nor to one the pane
+  cannot show (a `cd` there fails, or waits for a server): it follows the
+  pane there again once the pane shows it, the volume stayed or mounted
+  again.
 - With the keyboard, every root binding is shadowed (`NoAction` in the
   `Terminal` context, built by `keymap::install`), every one that names
   no place (`keymap::names_no_place`: the root's flags, `planning`,

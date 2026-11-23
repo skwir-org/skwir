@@ -386,11 +386,24 @@ impl Shell {
             self.terminal.screen = screen;
             cx.notify();
         }
-        if let Ok(dir) = self.app.pane_dir(self.pane)
-            && self.terminal.followed.as_ref() != Some(&dir)
-        {
-            self.terminal.followed = Some(dir.clone());
-            session.send(Input::Follow(dir));
+        if let Ok(dir) = self.app.pane_dir(self.pane) {
+            // Not to a folder about to be let go of, which the shell would
+            // hold, nor to one the pane cannot show (its volume gone), where
+            // a `cd` fails: followed again once the pane shows it, the
+            // shell gone home meanwhile (ADR-149).
+            let shows = !self.app.letting_go(&dir)
+                && self
+                    .app
+                    .workspace
+                    .read()
+                    .pane(self.pane)
+                    .is_none_or(|pane| pane.listing.error().is_none() || !pane.listing.is_empty());
+            if !shows {
+                self.terminal.followed = None;
+            } else if self.terminal.followed.as_ref() != Some(&dir) {
+                self.terminal.followed = Some(dir.clone());
+                session.send(Input::Follow(dir));
+            }
         }
         // A shell in a folder of a volume about to be let go of leaves it,
         // following or not: it would keep the volume busy (ADR-149).
