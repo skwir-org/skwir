@@ -131,6 +131,29 @@ fn a_phone_kmtpd_holds_is_a_folder_until_unplugged() {
     std::fs::remove_file(storage.join("DCIM/new é.txt")).unwrap();
     assert!(phone.file("/DCIM/new é.txt").is_none());
 
+    // An exchange of two names (`mv --exchange`, Skwir's own swap) is
+    // refused, as MTP swaps nothing: both stay as they were, never one
+    // deleted for the other renamed onto it.
+    std::fs::write(storage.join("DCIM/other é.txt"), b"another").unwrap();
+    let exchanged = rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        &picture,
+        rustix::fs::CWD,
+        storage.join("DCIM/other é.txt"),
+        rustix::fs::RenameFlags::EXCHANGE,
+    )
+    .unwrap_err();
+    assert_eq!(exchanged, rustix::io::Errno::INVAL);
+    assert_eq!(
+        phone.file("/DCIM/It's 1.jpg").as_deref(),
+        Some(&b"a picture"[..])
+    );
+    assert_eq!(
+        phone.file("/DCIM/other é.txt").as_deref(),
+        Some(&b"another"[..])
+    );
+    std::fs::remove_file(storage.join("DCIM/other é.txt")).unwrap();
+
     // What MTP cannot do is refused: a move between folders (a copy is
     // written where it goes), times and modes (the phone stamps).
     let moved = std::fs::rename(picture.clone(), storage.join("It's 1.jpg")).unwrap_err();

@@ -652,6 +652,10 @@ impl Filesystem for Phone {
         _owner: Option<fuser::Owner>,
         reply: ReplyEmpty,
     ) {
+        if let Some(refused) = refused_rename(flags) {
+            reply.error(refused);
+            return;
+        }
         // The phone renames within a folder alone: copies are made where
         // they go (ADR-083).
         if parent != newparent {
@@ -688,8 +692,6 @@ impl Filesystem for Phone {
                 kmtpd::delete(&self.bus, self.storage(index), &target.path)?;
                 state.forget(index, &target.path);
                 state.entry(parent.0, &renamed_to, false);
-            } else if !flags.is_empty() && !flags.contains(RenameFlags::RENAME_NOREPLACE) {
-                return Err(io::ErrorKind::InvalidInput.into());
             }
             if node.on_phone {
                 kmtpd::rename(&self.bus, self.storage(index), &node.path, &renamed_to)?;
@@ -1137,9 +1139,37 @@ fn watch(udi: &str) {
     }
 }
 
+/// Why a rename asked with `flags` is refused before anything is done:
+/// the phone (MTP) swaps nothing and leaves no whiteout, so an exchange
+/// (`mv --exchange`, Skwir's own swap of two names) or a whiteout is
+/// refused as fuser asks a filesystem to refuse what it does not do
+/// (`EINVAL`), never done as a rename onto the other name, which deleted
+/// it from the phone and said it was done. Only `RENAME_NOREPLACE` is
+/// taken.
+fn refused_rename(flags: RenameFlags) -> Option<Errno> {
+    (!flags.difference(RenameFlags::RENAME_NOREPLACE).is_empty()).then_some(Errno::EINVAL)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A rename that would exchange the two names, or leave a whiteout, is
+    /// refused before the phone is asked anything: what it would delete
+    /// stays. A plain rename, or one that replaces nothing, is done.
+    #[test]
+    fn an_exchange_or_a_whiteout_is_refused() {
+        for flags in [
+            RenameFlags::RENAME_EXCHANGE,
+            RenameFlags::RENAME_WHITEOUT,
+            RenameFlags::RENAME_EXCHANGE | RenameFlags::RENAME_NOREPLACE,
+            RenameFlags::from_bits_retain(1 << 20),
+        ] {
+            assert_eq!(refused_rename(flags), Some(Errno::EINVAL), "{flags:?}");
+        }
+        assert_eq!(refused_rename(RenameFlags::empty()), None);
+        assert_eq!(refused_rename(RenameFlags::RENAME_NOREPLACE), None);
+    }
 
     #[test]
     fn storages_have_distinct_names() {
