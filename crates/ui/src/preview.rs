@@ -234,6 +234,10 @@ pub(crate) struct Ahead {
     version: Version,
     cancel: CancelToken,
     slot: Arc<parking_lot::Mutex<AheadSlot>>,
+    /// What its worker read of the file: the preview's once the step takes
+    /// it (`PreviewState::hold`), so the picture decoded again where it is
+    /// (settled, zoomed, its region) never reads the file twice (ADR-101).
+    held: HeldSlot,
 }
 
 impl Ahead {
@@ -1641,21 +1645,28 @@ impl PreviewState {
         // The one asked for is taken back before the one left is kept in
         // its place: flipping between two keeps both.
         let back = crate::held_before::take(content, modified);
-        if let Some((entry, at, slot)) = self.held.take()
-            && let Some(held) = slot.get()
-            && !(entry == *content && at == modified)
-        {
-            crate::held_before::keep(entry, at, held);
-        }
-        if whole {
-            crate::held_before::let_go();
-        }
         let slot = match back {
             Some(held) if held.keeps() == keeps => HeldSlot::holding(content.clone(), held),
             _ => HeldSlot::copying(keeps, Some(scratch)),
         };
-        self.held = Some((content.clone(), modified, slot.clone()));
+        self.hold(content, modified, slot.clone());
+        if whole {
+            crate::held_before::let_go();
+        }
         slot
+    }
+
+    /// `slot` is what is read of `content`, the file shown, as it is at
+    /// `modified` (a request's, or what a picture read ahead read): the file
+    /// shown before is kept a minute (`held_before`).
+    fn hold(&mut self, content: &EntryRef, modified: Option<SystemTime>, slot: HeldSlot) {
+        if let Some((entry, at, before)) = self.held.take()
+            && let Some(held) = before.get()
+            && !(entry == *content && at == modified)
+        {
+            crate::held_before::keep(entry, at, held);
+        }
+        self.held = Some((content.clone(), modified, slot));
     }
 
     /// Let go of what was read of the files shown (ADR-101): the panel
@@ -4865,6 +4876,8 @@ impl Shell {
         }
         let lane = skwir_core::fs::reach::lane(&content.path);
         let mime = mime.to_string();
+        // As a request's would, kept to be the preview's (`take_ahead`).
+        let held = HeldSlot::default();
         let request = PreviewRequest {
             entry: content,
             mime: Some(mime.clone()),
@@ -4873,7 +4886,7 @@ impl Shell {
             max_side: IMAGE_MAX_SIDE,
             text_size: None,
             fit: None,
-            held: HeldSlot::default(),
+            held: held.clone(),
         };
         let slot = Arc::new(parking_lot::Mutex::new(AheadSlot::Asking));
         let previews = Arc::clone(&self.app.previews);
@@ -4988,6 +5001,7 @@ impl Shell {
             version,
             cancel,
             slot,
+            held,
         });
     }
 
@@ -5103,10 +5117,18 @@ impl Shell {
         let generation = self.preview.generation;
         // Read ahead as a file is first looked at: quick, as it would show.
         self.preview.asked = skwir_core::inspection::InspectRequest::default();
+        // What its worker read is the file shown's once taken: a picture
+        // decoded again where it is reads it from there.
+        let hold = |preview: &mut PreviewState| {
+            if let Some(content) = &key.content {
+                preview.hold(content, ahead.version.modified, ahead.held.clone());
+            }
+        };
         let mut slot = ahead.slot.lock();
         match std::mem::replace(&mut *slot, AheadSlot::Done) {
             AheadSlot::Read { content, .. } => {
                 drop(slot);
+                hold(&mut self.preview);
                 tracing::debug!("picture read ahead shown");
                 // Fitted in its room, as a file first looked at is.
                 self.preview.picture_side = 0;
@@ -5131,6 +5153,7 @@ impl Shell {
                     tx: self.preview.tx.clone(),
                 };
                 drop(slot);
+                hold(&mut self.preview);
                 tracing::debug!(
                     stand_in = stand.is_some(),
                     "picture read ahead taken while decoding"
