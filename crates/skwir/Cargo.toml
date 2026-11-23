@@ -63,6 +63,7 @@ skwir-plugin-checksums.workspace = true
 skwir-plugin-print.workspace = true
 skwir-plugin-shrink.workspace = true
 skwir-plugin-updates.workspace = true
+skwir-plugin-skwird.workspace = true
 skwir-plugin-control.workspace = true
 skwir-extend.workspace = true
 skwir-plugin-structured-data.workspace = true
@@ -116,6 +117,9 @@ djvu-rs.workspace = true
 lopdf = { version = "0.47", default-features = false }
 # Pictures written to be made smaller (the shrink plugin's tests).
 image = { workspace = true, features = ["png", "jpeg"] }
+# skwird's fake engine, which a search asks in place of a real one
+# (ADR-150).
+skwird-client.workspace = true
 
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }

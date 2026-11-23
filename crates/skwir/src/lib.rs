@@ -31,6 +31,8 @@ fn built_in() -> Vec<Arc<dyn Plugin>> {
         Arc::new(skwir_plugin_thumbnails::ThumbnailsPlugin::default()),
         // Phase 4 power features, each a plugin with a runtime toggle.
         Arc::new(skwir_plugin_query::QueryPlugin::default()),
+        // skwird's index of names, which searches ask first (ADR-150).
+        Arc::new(skwir_plugin_skwird::SkwirdPlugin::default()),
         Arc::new(skwir_plugin_shelf::ShelfPlugin::default()),
         Arc::new(skwir_plugin_rename_bulk::RenameBulkPlugin),
         Arc::new(skwir_plugin_edit_as_buffer::EditAsBufferPlugin::default()),

@@ -22928,3 +22928,58 @@ kept. A breaking change to protocol 0; nothing in Skwir reads it yet
 `README.skwir.md`. Checked as before, in a crate of its own with
 Skwir's lockfile, offline: the copies' five tests green, `cargo check`
 for Windows and macOS clean, clippy silent.
+
+## 2026-11-23: the skwird plugin (ADR-150, step B)
+
+ADR-150's point 3: skwird's index, asked by searches, as a plugin of its
+own behind step A's seam.
+
+- **The plugin.** `crates/plugins/skwird` (`skwir-plugin-skwird`, id
+  `skwird`, built in after the query plugin; capability: starts
+  programs; requirement: `skwird`, or the system service's socket). Its
+  index opens a connection a search: the system service, the user's
+  engine, then one started where skwird is installed (ADR-050), the XDG
+  folders given as Skwir reads them. Its call is stopped where the
+  search's token is cancelled, `SILENCE` (60 s) a backstop longer than a
+  first build. Coverage, sync and answers in core's words (to the
+  nanosecond; an instant before 1970 too); one name asked, the longest,
+  and the kinds, links among them; sizes and times not asked (step D).
+  The Secrets folders kept from agents (365 built-in entries, their
+  folders through `Rule::listed`) kept out of the index by `exclude`,
+  once a run and again when the settings or the variables their paths
+  start from change, those kept before and no longer wanted taken back;
+  an engine busy or failing is asked again at the next search. Errors
+  are logged by kind, never with a path. No setting (the plugin's switch
+  turns it off; Kept live's page is step E's).
+- **In core.** `CancelToken::on_cancel`: a hook run once where a token
+  or an ancestor is cancelled (at once if it was), never after its
+  guard is dropped, pruned like the signals; what ends a call blocked on
+  a socket, with no thread waiting for the token (AGENTS.md says so).
+  `AppConfig::index_services` and `App::index_services`: false for
+  `AppConfig::ephemeral`, so a headless test asks none of the machine's
+  engines and starts none, whatever the machine runs (AGENTS.md too).
+- **Notices.** `tools/package/notices.py` told Skwir's own crates by a
+  name starting `skwir`, which would have counted skwird's copies as
+  Skwir's code under its licence: it asks the workspace's members now.
+  The four `skwir` packages' notices gain skwird-client and
+  skwird-protocol under MIT ("The skwird authors"); nothing else moved.
+- **Checked:** the plugin's seven tests against the client's fake engine
+  (coverage, sync and a query answered in core's words; the query as
+  skwird takes it; no engine is no index, nor in a test's app; a search
+  given up on stops its call on a silent engine at once, not after 60 s;
+  instants; the Secrets folders of the shipped list; `exclude` sent);
+  `crates/skwir/tests/skwird_search.rs` through `query.search`: answered
+  from the fake's index, its hole walked, a name gone since left out,
+  what it names not and no hole holds not looked for, `entries` saying
+  `index` live, then the plugin turned off and the search walking; a
+  test's app asking no engine; `CancelToken::on_cancel`'s test;
+  `plugins_toggle` and `search_hints`. rustfmt; clippy `-D warnings` on
+  skwir-core, skwir-plugin-skwird, skwir-plugin-query and skwir;
+  `tools/words/extract.py --check`; `just deny`; `just notices`. Not
+  run: `just release-check`; a search in a window through a real engine
+  and a screen reader (the step's end, next); `check-cross` (the client
+  answers no engine off Unix, its copies checked for Windows and macOS
+  before).
+- **Asked of skwird's session:** that an engine's first build not hold a
+  client's `coverage` (6 to 20 s on the user's home, longer than the
+  walk), answering "not covered: unread" meanwhile.

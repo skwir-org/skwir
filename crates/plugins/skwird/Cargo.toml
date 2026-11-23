@@ -1,0 +1,20 @@
+[package]
+name = "skwir-plugin-skwird"
+description = "skwir plugin: searches answered from skwird's index of names, where it proves it covers them"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+skwird-client.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

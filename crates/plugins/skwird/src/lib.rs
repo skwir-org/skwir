@@ -1,0 +1,437 @@
+//! skwird's index of names (ADR-050, ADR-150): a names index behind core's
+//! seam (`skwir_core::names`), which a search asks whether it covers its
+//! root. skwird is a project of its own: Skwir speaks its protocol through
+//! the client it copies (`vendor/skwird-client`), never links its engine,
+//! and walks wherever it does not answer.
+//!
+//! Each search opens a connection of its own, at its first ask and never
+//! at start (ADR-128, ADR-141), and gives it up through the client's
+//! `Stopper` once the search's token is cancelled; none is kept between
+//! searches, so an engine started on demand ends a minute after the last
+//! one. Every error is no engine, and the search walks. The Secrets folders
+//! (ADR-125) are kept out of the index through `exclude`, once a run and
+//! again once the exclusions change.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Weak};
+use std::time::{Duration, SystemTime};
+
+use parking_lot::Mutex;
+use skwir_core::app::App;
+use skwir_core::cancel::{CancelToken, OnCancel};
+use skwir_core::coverage::{Coverage, Hole, Proof, Why};
+use skwir_core::entry::EntryKind;
+use skwir_core::exclusions::{BUILTIN, Catalog, Role, Rule};
+use skwir_core::names::{Answer, NameIndex, Opened, Query, Session};
+use skwir_core::permissions::{Capabilities, Capability};
+use skwir_core::plugin::{Category, Plugin, Requirement};
+use skwir_core::words::Words;
+use skwird_client::protocol;
+use skwird_client::{Client, Error, Find};
+
+pub const ID: &str = "skwird";
+
+/// The name skwird keeps this client's registrations by.
+const CLIENT: &str = "skwir";
+
+/// The longest the engine may say nothing while a search waits on it, past
+/// which the search walks: a backstop, longer than a first build of the
+/// user's home (6 to 20 s, saying nothing meanwhile). A search given up on
+/// stops its call at once, through its token.
+const SILENCE: Duration = Duration::from_secs(60);
+
+/// What answered, said where the answer is (`RestsOn::by`).
+pub fn by() -> Words {
+    skwir_core::words!(
+        skwird_index = "skwird's index",
+        note = "What a search's answer rests on, said in its footer's tooltip: the index skwird keeps of every file's name. skwird is a program's name, as written."
+    )
+}
+
+/// The plugin: skwird's engines, asked by searches.
+#[derive(Default)]
+pub struct SkwirdPlugin {
+    /// The engine asked in place of the machine's, none started: a test's
+    /// fake, or a check's real engine.
+    socket: Option<PathBuf>,
+}
+
+impl SkwirdPlugin {
+    /// The plugin asking the engine at `socket` alone, and starting none.
+    pub fn at(socket: PathBuf) -> Self {
+        SkwirdPlugin {
+            socket: Some(socket),
+        }
+    }
+}
+
+impl Plugin for SkwirdPlugin {
+    fn id(&self) -> &'static str {
+        ID
+    }
+
+    fn title(&self) -> Words {
+        skwir_core::words!(
+            skwird_plugin_title = "skwird's index of names",
+            note = "A plugin's name on the Plugins page. skwird is a program's name, as written."
+        )
+    }
+
+    fn description(&self) -> Words {
+        skwir_core::words!(
+            skwird_plugin_description = "Searches answered from skwird's index of every file's name where it proves it is current, rather than by looking through every folder",
+            note = "What a plugin does, under its name on the Plugins page."
+        )
+    }
+
+    fn category(&self) -> Category {
+        Category::Browsing
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        // It starts skwird's engine where none runs.
+        Capabilities::of(&[Capability::Programs])
+    }
+
+    fn requirements(&self) -> Vec<Requirement> {
+        vec![Requirement::new(
+            "skwird",
+            skwir_core::words!(
+                skwird_needs = "Searches answered from its index of names",
+                note = "On the Plugins page, what needs skwird, a program the user installs."
+            ),
+            || {
+                skwir_core::os_path::find_program("skwird").is_some()
+                    || skwird_client::system_socket().exists()
+            },
+        )]
+    }
+
+    fn register(&self, app: &App) {
+        let engines = match &self.socket {
+            Some(socket) => Engines::At(socket.clone()),
+            None if app.index_services() => Engines::Machine,
+            None => Engines::None,
+        };
+        app.names.register(
+            ID,
+            Arc::new(Index {
+                app: app.weak(),
+                engines,
+                secrets: Mutex::default(),
+            }),
+        );
+    }
+}
+
+/// Which engines a search asks.
+#[derive(Clone, Debug)]
+enum Engines {
+    /// The machine's: the system service, then the user's engine, then one
+    /// started where skwird is installed.
+    Machine,
+    /// The engine at this socket alone, none started.
+    At(PathBuf),
+    /// None: a headless test's app (`App::index_services`).
+    None,
+}
+
+/// skwird as a names index.
+struct Index {
+    app: Weak<App>,
+    engines: Engines,
+    /// The Secrets folders this run kept out of the index, and what they
+    /// were made from.
+    secrets: Mutex<Option<Secrets>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Secrets {
+    /// The settings' revision and the environment's generation they were
+    /// made from (`App::left_out` keys its rule alike).
+    from: (u64, u64),
+    folders: Vec<PathBuf>,
+}
+
+impl Index {
+    /// How to find an engine, or none where none may be asked.
+    fn find(&self) -> Option<Find> {
+        let mut find = Find::new(CLIENT);
+        find.silence = Some(SILENCE);
+        // Where the client looks, and where an engine it starts serves and
+        // logs: the XDG folders as Skwir reads them.
+        find.runtime = skwir_core::xdg::runtime_dir();
+        find.state = skwir_core::xdg::state_home();
+        match &self.engines {
+            Engines::Machine => {}
+            Engines::At(socket) => {
+                find.socket = Some(socket.clone());
+                find.start = None;
+            }
+            Engines::None => return None,
+        }
+        Some(find)
+    }
+
+    /// Keep the Secrets folders out of the index (ADR-125, ADR-150 3),
+    /// once this run and again once the exclusions or the variables their
+    /// paths start from change. Best effort: an engine busy or failing is
+    /// asked again at the next search.
+    fn keep_secrets_out(&self, client: &mut Client) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let from = (
+            app.settings.revision(),
+            skwir_core::environment::generation(),
+        );
+        if self.secrets.lock().as_ref().is_some_and(|s| s.from == from) {
+            return;
+        }
+        let catalog = Catalog::of(&app.settings);
+        skwir_core::environment::want(&catalog.variables());
+        let folders = secret_folders(&catalog);
+        // Asked outside the lock: an engine may take its time.
+        if keep_out(client, &folders) {
+            *self.secrets.lock() = Some(Secrets { from, folders });
+        }
+    }
+}
+
+impl NameIndex for Index {
+    fn id(&self) -> &'static str {
+        ID
+    }
+
+    fn by(&self) -> Words {
+        by()
+    }
+
+    fn syncs(&self) -> bool {
+        true
+    }
+
+    fn open(&self, root: &Path, cancel: &CancelToken) -> Option<Opened> {
+        let find = self.find()?;
+        if cancel.is_cancelled() {
+            return None;
+        }
+        let mut client = Client::connect(&find)
+            .map_err(|e| said("connect", &e))
+            .ok()?;
+        let stopper = client.stopper().map_err(|e| said("stopper", &e)).ok()?;
+        let stop = cancel.on_cancel(move || stopper.stop());
+        self.keep_secrets_out(&mut client);
+        let coverage = client
+            .coverage(root)
+            .map_err(|e| said("coverage", &e))
+            .ok()?;
+        Some(Opened {
+            coverage: coverage_of(coverage),
+            session: Box::new(Asking {
+                client,
+                root: root.to_path_buf(),
+                _stop: stop,
+            }),
+        })
+    }
+}
+
+/// One search's connection.
+struct Asking {
+    client: Client,
+    root: PathBuf,
+    /// Stops the connection's call once the search is given up on.
+    _stop: OnCancel,
+}
+
+impl Session for Asking {
+    fn sync(&mut self) -> Option<Coverage> {
+        self.client
+            .sync(&self.root)
+            .map_err(|e| said("sync", &e))
+            .ok()
+            .map(coverage_of)
+    }
+
+    fn query(&mut self, q: &Query, each: &mut dyn FnMut(Vec<PathBuf>) -> bool) -> Option<Answer> {
+        let done = self
+            .client
+            .query(&query_of(q), |entries| {
+                each(entries.iter().map(|e| e.path.to_path()).collect())
+            })
+            .map_err(|e| said("query", &e))
+            .ok()?;
+        (!done.cancelled).then(|| Answer {
+            coverage: coverage_of(done.coverage),
+            truncated: done.truncated,
+        })
+    }
+}
+
+/// What failed, logged without a path or a name: what a call to skwird
+/// came to.
+fn said(call: &'static str, error: &Error) {
+    let kind = match error {
+        Error::NoEngine(_) => "no engine".to_owned(),
+        Error::Version => "another protocol".to_owned(),
+        Error::Engine(failure) => format!("engine: {}", failure.what),
+        Error::Unexpected => "unexpected answer".to_owned(),
+        Error::Stopped => "stopped".to_owned(),
+        Error::Silent(_) => "silent".to_owned(),
+        Error::Io(e) => format!("{:?}", e.kind()),
+    };
+    tracing::debug!(call, error = kind, "skwird did not answer");
+}
+
+/// What the search asks, as skwird takes it: one name, the longest (likely
+/// naming the fewest files; the search checks the others), and the kinds.
+/// Sizes and times are not asked yet: a link's are its target's in a
+/// search, which skwird does not hold (`docs/PLAN.md`, step D).
+fn query_of(q: &Query) -> protocol::Query {
+    protocol::Query {
+        root: protocol::WirePath::of(&q.root),
+        name: q
+            .names
+            .iter()
+            .max_by_key(|n| n.text.chars().count())
+            .map(|n| protocol::NameTerm {
+                how: protocol::Match::Skwir,
+                text: n.text.clone(),
+                case_sensitive: n.case_sensitive,
+            }),
+        kinds: q.kinds.as_ref().map(|kinds| {
+            let asked: HashSet<protocol::Kind> = kinds.iter().map(|k| kind_of(*k)).collect();
+            [
+                protocol::Kind::File,
+                protocol::Kind::Folder,
+                protocol::Kind::Link,
+                protocol::Kind::Other,
+            ]
+            .into_iter()
+            .filter(|k| asked.contains(k))
+            .collect()
+        }),
+        size: None,
+        mtime: None,
+        limit: None,
+    }
+}
+
+fn kind_of(kind: EntryKind) -> protocol::Kind {
+    match kind {
+        EntryKind::File => protocol::Kind::File,
+        EntryKind::Directory => protocol::Kind::Folder,
+        EntryKind::Symlink => protocol::Kind::Link,
+        EntryKind::Fifo
+        | EntryKind::Socket
+        | EntryKind::CharDevice
+        | EntryKind::BlockDevice
+        | EntryKind::Unknown => protocol::Kind::Other,
+    }
+}
+
+fn coverage_of(coverage: protocol::Coverage) -> Coverage {
+    Coverage {
+        names: proof_of(coverage.names),
+        attrs: proof_of(coverage.attrs),
+        holes: coverage
+            .holes
+            .into_iter()
+            .map(|hole| Hole {
+                path: hole.path.to_path(),
+                why: why_of(hole.why),
+            })
+            .collect(),
+    }
+}
+
+fn proof_of(proof: protocol::Proof) -> Proof {
+    match proof {
+        protocol::Proof::Live(since) => Proof::Live {
+            since: time_of(since),
+        },
+        protocol::Proof::Checked(at) => Proof::Checked { at: time_of(at) },
+        protocol::Proof::AsOf(at) => Proof::AsOf {
+            at: Some(time_of(at)),
+        },
+        protocol::Proof::NotCovered(why) => Proof::NotCovered(why_of(why)),
+    }
+}
+
+fn why_of(why: protocol::Why) -> Why {
+    match why {
+        protocol::Why::Outside => Why::Outside,
+        protocol::Why::Excluded => Why::Excluded,
+        protocol::Why::Private => Why::Private,
+        protocol::Why::Denied => Why::Denied,
+        protocol::Why::Failed(errno) => Why::Failed(errno),
+        protocol::Why::CutShort(errno) => Why::CutShort(errno),
+        protocol::Why::Gone => Why::Gone,
+        protocol::Why::Replaced => Why::Replaced,
+        protocol::Why::Mount => Why::Mount,
+        protocol::Why::NetworkMount => Why::NetworkMount,
+        protocol::Why::Snapshot => Why::Snapshot,
+        protocol::Why::Unread => Why::Unread,
+        protocol::Why::WatchLimit => Why::WatchLimit,
+    }
+}
+
+/// An instant of the protocol's (seconds and nanoseconds since 1970, which
+/// may be before it) as the system's; one it cannot hold, 1970.
+fn time_of(at: protocol::Instant) -> SystemTime {
+    let nanos = Duration::from_nanos(u64::from(at.nsec));
+    match u64::try_from(at.sec) {
+        Ok(after) => SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(after) + nanos),
+        Err(_) => SystemTime::UNIX_EPOCH
+            .checked_sub(Duration::from_secs(at.sec.unsigned_abs()))
+            .and_then(|t| t.checked_add(nanos)),
+    }
+    .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// The folders the Secrets entries kept from agents name (ADR-125),
+/// absolute and each once: what skwird is asked to keep out of its index.
+/// Names and patterns stay Skwir's to filter, as skwird takes folders only.
+fn secret_folders(catalog: &Catalog) -> Vec<PathBuf> {
+    let secrets = format!("{BUILTIN}secrets");
+    let rule = Rule::of(
+        catalog
+            .kept_from(Role::Agents)
+            .filter(|e| e.category == secrets)
+            .map(|e| &e.matcher),
+    );
+    let mut folders: Vec<PathBuf> = rule
+        .listed()
+        .iter()
+        .filter(|p| p.is_absolute())
+        .cloned()
+        .collect();
+    folders.sort();
+    folders.dedup();
+    folders
+}
+
+/// Make what this client keeps out of skwird's index `folders`, those it
+/// kept before and no longer wants taken back: whether skwird took it.
+fn keep_out(client: &mut Client, folders: &[PathBuf]) -> bool {
+    let add: Vec<&Path> = folders.iter().map(PathBuf::as_path).collect();
+    let Ok(kept) = client.exclude(&add, &[]).map_err(|e| said("exclude", &e)) else {
+        return false;
+    };
+    let wanted: HashSet<&Path> = add.iter().copied().collect();
+    let stale: Vec<&Path> = kept
+        .iter()
+        .map(PathBuf::as_path)
+        .filter(|p| !wanted.contains(p))
+        .collect();
+    stale.is_empty()
+        || client
+            .exclude(&[], &stale)
+            .map_err(|e| said("exclude", &e))
+            .is_ok()
+}
+
+#[cfg(all(test, unix))]
+mod tests;

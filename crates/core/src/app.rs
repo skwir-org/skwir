@@ -303,6 +303,11 @@ pub struct AppConfig {
     /// for: always, but in a test that holds its workers to prove work
     /// waits (`Scheduler::without_stand_ins`).
     pub stand_ins: bool,
+    /// Whether the machine's index services are asked (skwird's system
+    /// service and a user's engine, ADR-150): always, but in a headless
+    /// test, which must find what a walk finds whatever this machine runs,
+    /// and start no engine (`App::index_services`).
+    pub index_services: bool,
     /// Entries per `Added` event.
     pub batch_size: usize,
 }
@@ -316,6 +321,7 @@ impl Default for AppConfig {
             data_path: Settings::default_data_path(),
             workers: 0,
             stand_ins: true,
+            index_services: true,
             batch_size: 1024,
         }
     }
@@ -331,6 +337,7 @@ impl AppConfig {
             data_path: None,
             workers: 0,
             stand_ins: true,
+            index_services: false,
             batch_size: 1024,
         }
     }
@@ -592,6 +599,9 @@ pub struct App {
     /// What the wakes since the UI last took them are for (`take_woken`).
     woken: Arc<parking_lot::Mutex<Woken>>,
     batch_size: usize,
+    /// Whether the machine's index services are asked
+    /// (`AppConfig::index_services`).
+    index_services: bool,
     /// Cancelled on drop: stops every background task started by this app.
     lifetime: CancelToken,
 }
@@ -687,6 +697,7 @@ impl App {
             waker: Arc::default(),
             woken: Arc::default(),
             batch_size: config.batch_size,
+            index_services: config.index_services,
             lifetime,
         });
         app.register_provider("core", Arc::new(PathProvider));
@@ -998,6 +1009,14 @@ impl App {
     /// A token that fires when the app is dropped.
     pub fn lifetime(&self) -> &CancelToken {
         &self.lifetime
+    }
+
+    /// Whether the machine's index services may be asked (skwird's system
+    /// service, a user's engine, ADR-150): never by a headless test's app
+    /// (`AppConfig::ephemeral`), which finds what a walk finds whatever the
+    /// machine runs, and starts no engine.
+    pub fn index_services(&self) -> bool {
+        self.index_services
     }
 
     /// Install the UI wake hook: called (from any thread) whenever listing or

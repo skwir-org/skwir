@@ -505,7 +505,11 @@ working in an area, also read that area's rules (see
   there (thumbnails, read-ahead, walks below a root, Usage) follows
   `docs/invariants/remote.md`.
 - **Cancellation.** The scheduler skips cancelled jobs before they start;
-  running jobs check their token themselves. Use child tokens for work
+  running jobs check their token themselves; a call blocked where no
+  token is looked at (a read on a socket) is ended by
+  `CancelToken::on_cancel`, a hook run where the token is cancelled that
+  must not block (a socket shut down), never by a thread waiting for the
+  token. Use child tokens for work
   tied to the app or an open location, and cancel superseded requests.
   Accept only results for the current request (e.g. the generation check
   in `crates/ui/src/preview.rs`): cancellation alone does not keep stale
@@ -747,7 +751,9 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
   dir under `~/.cache/skwir-tests/`, never `/tmp` (tmpfs) and never real
   user files.
 - Use `AppConfig::ephemeral` for headless tests so settings and cache
-  writes stay isolated. Await listing completion or events with a
+  writes stay isolated, and no index service of the machine's is asked
+  (`App::index_services`: a test finds what a walk finds whatever the
+  machine runs, and starts no engine). Await listing completion or events with a
   deadline, never fixed sleeps (`crates/core/tests/common/mod.rs` has
   examples).
 - A test that mounts a remote names it apart from every other test's

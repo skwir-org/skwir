@@ -21,6 +21,39 @@ struct Inner {
     /// [`CancelSignal`] leaves nothing to notify and is pruned on the next
     /// subscription, so long-lived tokens do not accumulate dead entries.
     signals: Mutex<Vec<Weak<Sender<()>>>>,
+    /// What runs when this token or a descendant is cancelled
+    /// ([`CancelToken::on_cancel`]), weak as the signals are.
+    hooks: Mutex<Vec<Weak<Hook>>>,
+}
+
+/// What [`CancelToken::on_cancel`] runs, once.
+struct Hook {
+    ran: AtomicBool,
+    run: Box<dyn Fn() + Send + Sync>,
+}
+
+impl std::fmt::Debug for Hook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hook")
+            .field("ran", &self.ran)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Hook {
+    fn fire(&self) {
+        if !self.ran.swap(true, Ordering::AcqRel) {
+            (self.run)();
+        }
+    }
+}
+
+/// A hook registered with [`CancelToken::on_cancel`]: it runs while this is
+/// held; dropped, it is let go of and never runs.
+#[derive(Debug)]
+#[must_use = "a hook dropped is let go of at once"]
+pub struct OnCancel {
+    _hook: Arc<Hook>,
 }
 
 /// A wakeable cancellation notification for threads that block in a
@@ -54,6 +87,7 @@ impl CancelToken {
                 parent: Some(self.clone()),
                 other_parent: None,
                 signals: Mutex::default(),
+                hooks: Mutex::default(),
             }),
         }
     }
@@ -67,6 +101,7 @@ impl CancelToken {
                 parent: Some(self.clone()),
                 other_parent: Some(other.clone()),
                 signals: Mutex::default(),
+                hooks: Mutex::default(),
             }),
         }
     }
@@ -79,6 +114,11 @@ impl CancelToken {
         let signals = std::mem::take(&mut *self.inner.signals.lock());
         for signal in signals.iter().filter_map(Weak::upgrade) {
             let _ = signal.try_send(());
+        }
+        // Run outside the lock: a hook may cancel or subscribe in turn.
+        let hooks = std::mem::take(&mut *self.inner.hooks.lock());
+        for hook in hooks.iter().filter_map(Weak::upgrade) {
+            hook.fire();
         }
     }
 
@@ -109,6 +149,38 @@ impl CancelToken {
         CancelSignal {
             receiver,
             _sender: sender,
+        }
+    }
+
+    /// Run `hook` once when this token or an ancestor is cancelled, at once
+    /// if it already was, on the thread that cancels it: it must not block
+    /// (a socket shut down, a flag set). For a call blocked where no token
+    /// is looked at, a read on a socket: the hook makes it return. Runs
+    /// while the [`OnCancel`] is held.
+    pub fn on_cancel(&self, hook: impl Fn() + Send + Sync + 'static) -> OnCancel {
+        let hook = Arc::new(Hook {
+            ran: AtomicBool::new(false),
+            run: Box::new(hook),
+        });
+        self.hook(&Arc::downgrade(&hook));
+        if self.is_cancelled() {
+            hook.fire();
+        }
+        OnCancel { _hook: hook }
+    }
+
+    /// Register a hook on this token and every ancestor, pruning those let
+    /// go of.
+    fn hook(&self, hook: &Weak<Hook>) {
+        let mut hooks = self.inner.hooks.lock();
+        hooks.retain(|h| h.strong_count() > 0);
+        hooks.push(hook.clone());
+        drop(hooks);
+        for parent in [&self.inner.parent, &self.inner.other_parent]
+            .into_iter()
+            .flatten()
+        {
+            parent.hook(hook);
         }
     }
 
@@ -170,6 +242,43 @@ mod tests {
         // Already-cancelled tokens signal immediately; a sibling stays quiet.
         assert!(child.subscribe().receiver().try_recv().is_ok());
         assert!(request.subscribe().receiver().try_recv().is_err());
+    }
+
+    #[test]
+    fn a_hook_runs_once_where_the_token_is_cancelled_while_it_is_held() {
+        use std::sync::atomic::AtomicUsize;
+        let ran = Arc::new(AtomicUsize::new(0));
+        let counting = || {
+            let ran = Arc::clone(&ran);
+            move || {
+                ran.fetch_add(1, Ordering::SeqCst);
+            }
+        };
+        let request = CancelToken::new();
+        let plugin = CancelToken::new();
+        let child = request.linked(&plugin).child();
+        let held = child.on_cancel(counting());
+        assert_eq!(ran.load(Ordering::SeqCst), 0, "not cancelled yet");
+        plugin.cancel();
+        assert_eq!(ran.load(Ordering::SeqCst), 1, "by an ancestor");
+        child.cancel();
+        request.cancel();
+        assert_eq!(ran.load(Ordering::SeqCst), 1, "once");
+        drop(held);
+        // Already cancelled: at once.
+        let at_once = child.on_cancel(counting());
+        assert_eq!(ran.load(Ordering::SeqCst), 2);
+        drop(at_once);
+        // Let go of: never, and pruned from a long-lived token.
+        let app = CancelToken::new();
+        for _ in 0..64 {
+            drop(app.child().on_cancel(counting()));
+        }
+        let kept = app.on_cancel(counting());
+        assert_eq!(app.inner.hooks.lock().len(), 1);
+        drop(kept);
+        app.cancel();
+        assert_eq!(ran.load(Ordering::SeqCst), 2, "a hook let go of never runs");
     }
 
     #[test]

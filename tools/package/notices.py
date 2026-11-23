@@ -184,12 +184,25 @@ def katex_fonts():
             (fonts / "OFL.txt").read_text().rstrip("\n"), ""]
 
 
+@functools.cache
+def own():
+    """The names of skwir's own crates: its workspace's members, told by
+    what they are, never by how a name starts (skwird's client and
+    protocol, copied in vendor/, start as skwir's do and are another
+    project's, under their own licence)."""
+    run = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--no-deps"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    )
+    return {package["name"] for package in json.loads(run.stdout)["packages"]}
+
+
 def notices(package, programs, target):
     merged = {}
     for program in programs:
         for key, crates in licences(program, target).items():
             merged.setdefault(key, set()).update(crates)
-    ours = {c for crates in merged.values() for c in crates if c.split()[0].startswith("skwir")}
+    ours = {c for crates in merged.values() for c in crates if c.split()[0] in own()}
     out = [
         f"Third-party software in {package}",
         "",
