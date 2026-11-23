@@ -316,13 +316,16 @@ fn an_action_under_way_on_a_volume_is_named_and_cancelled_there() {
         &serde_json::json!({ "folder": drive }),
     ))
     .unwrap();
+    // Cancelled, it is named no more, but it runs on, holding the drive,
+    // until it ends: what an unmount by force waits for.
+    assert!(app.executor.refuse_under_way(&drive).is_ok());
+    assert!(app.executor.runs_in(&drive), "it holds the drive still");
     held.open();
     let deadline = Instant::now() + Duration::from_secs(10);
-    while app.executor.is_busy() {
-        assert!(Instant::now() < deadline, "still under way");
+    while app.executor.runs_in(&drive) || app.executor.is_busy() {
+        assert!(Instant::now() < deadline, "still running");
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(app.executor.refuse_under_way(&drive).is_ok());
     // Stopped by its own token, as Cancel stops it: what came after the
     // held step was not done.
     assert!(
