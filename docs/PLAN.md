@@ -3787,8 +3787,8 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     leftover): *built 2026-11-23*: `size:` and `modified:` asked where an
     index holds them live (`names::Query::as_covered`), by name and kind
     elsewhere; links asked `unfiltered` (skwird e8c14a6), stat-ed by the
-    search. Not checked against a real engine yet (`just skwird-check`
-    has no dated case).
+    search; checked against a real engine (`just skwird-check`, a dated
+    search of a root kept live, answered from the index).
   - **D3, Usage from skwird's folder totals:** a `totals` message
     skwird's session designs and builds after its phase 4 step 7 (shape
     agreed 2026-11-23: each child's subtree totals, by extension, nlink
@@ -3799,8 +3799,11 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     check reads only the folders the journal names where it is every
     change (skwird's `complete`, fd4334d), and walks elsewhere. Left: its
     coverage said in A's words (the search's `covered_by_an_index` still
-    asks a yes or no of the hints), and a check against a real engine
-    (`just skwird-check` has no tags case).
+    asks a yes or no of the hints). Checked against a real engine
+    (`just skwird-check`): its journal tells a tag set as an attribute
+    alone where the folder is live, says it is every change, and names a
+    folder removed by the device and inode a stat says; the tag place's
+    count itself was not run against it.
   - **D5, the journal through the seam:** *built 2026-11-23*
     (`Session::changes`, `names::Mark`, `Journal`, `NameIndex::follow`);
     the harvest's enumeration and its use of it wait for Phase 7 itself

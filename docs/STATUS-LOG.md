@@ -23386,3 +23386,15 @@ time. skwird's journal now stands in where it is every change.
 - **Not checked:** against a real engine (`just skwird-check` has no
   tags case), and the tags index's coverage said in the seam's words
   (left in PLAN).
+
+## 2026-11-23: D2 and D4 against a real engine; the whole workspace for Windows and macOS
+
+- **`just skwird-check`'s engine tests** (skwird's program built after
+  fd4334d), two added: a dated search with no name (`modified>=2030-01-01
+  type:file`) of a root kept live is answered from the index, the old file
+  left out; skwird's journal, followed through the plugin, tells a tag
+  set as an extended attribute alone (`Changed`), says it is every
+  change, and names a folder removed by the device and inode a stat gave
+  before (what the tags index keys its folders by). 4 of 4 pass. Not run:
+  the window part of the recipe, nor a tag place's count against it.
+- **`just check-cross`** over D1, D2, D4 and D5: clean.

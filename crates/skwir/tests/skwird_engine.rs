@@ -229,3 +229,87 @@ fn a_folder_skwird_keeps_out_is_walked() {
     assert_eq!(found, set(&["report.txt", "kept out/report inside.txt"]));
     assert!(rests_on.is_some(), "answered by skwird, its hole walked");
 }
+
+/// Sizes and times are asked of a real engine where it holds them live
+/// (ADR-150, 14): a dated search with no name, the root kept live, is
+/// answered from its index, the date tested on what it names.
+#[test]
+#[ignore = "needs a real skwird: `just skwird-check`"]
+fn a_dated_search_is_answered_where_a_real_engine_holds_times_live() {
+    let (_dir, root) = fixture(&["new report.txt", "old report.txt", "docs/new notes.txt"]);
+    for (name, secs) in [
+        ("new report.txt", 1_900_000_000),
+        ("old report.txt", 1_000_000_000),
+        ("docs/new notes.txt", 1_900_000_000),
+    ] {
+        std::fs::File::options()
+            .write(true)
+            .open(root.join(name))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(secs))
+            .unwrap();
+    }
+    let engine = Engine::start(&root, &[]);
+    engine.watch(&root);
+    let state = tempfile::tempdir().unwrap();
+    let app = app(state.path(), &engine);
+    let (found, rests_on) = search(&app, "modified>=2030-01-01 type:file", &root);
+    assert_eq!(found, set(&["new report.txt", "docs/new notes.txt"]));
+    assert!(
+        matches!(rests_on.map(|r| r.proof), Some(Proof::Live { .. })),
+        "answered from the index"
+    );
+}
+
+/// A real engine's journal, followed through the plugin (ADR-150, 15),
+/// tells a tag set as an attribute alone where the folder is live, says
+/// it is every change, and names a folder removed by the device and inode
+/// a stat says: what the tags index keys its folders by.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs a real skwird: `just skwird-check`"]
+fn a_real_engines_journal_tells_a_tag_set_where_the_folder_is_live() {
+    use skwir_core::names::{Change, Since};
+    use std::os::unix::fs::MetadataExt;
+    let (_dir, root) = fixture(&["tagged.txt", "gone/inside.txt"]);
+    let engine = Engine::start(&root, &[]);
+    engine.watch(&root);
+    let state = tempfile::tempdir().unwrap();
+    let app = app(state.path(), &engine);
+    let cancel = skwir_core::cancel::CancelToken::new();
+    let (index, opened) = app.names.follow(&root, None, &cancel).expect("followed");
+    assert_eq!(index.id(), skwir_plugin_skwird::ID);
+    let mut session = opened.session;
+    let Some(Since::Journal(now)) = session.changes(None) else {
+        panic!("a mark from now");
+    };
+    assert!(now.changes.is_empty());
+    let gone = std::fs::metadata(root.join("gone")).unwrap();
+    skwir_core::fs::xattr::set(root.join("tagged.txt"), "user.xdg.tags", b"work").unwrap();
+    std::fs::remove_dir_all(root.join("gone")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let Some(Since::Journal(journal)) = session.changes(Some(&now.mark)) else {
+            panic!("a journal from the mark");
+        };
+        let tagged = journal
+            .changes
+            .iter()
+            .any(|c| matches!(c, Change::Changed(n) if n.path == root.join("tagged.txt")));
+        let removed = journal.changes.iter().find_map(|c| match c {
+            Change::Removed(n) if n.path == root.join("gone") => Some(n.id),
+            _ => None,
+        });
+        if tagged && let Some(id) = removed {
+            assert!(journal.complete(), "live all along: every change");
+            assert_eq!(id, Some((gone.dev(), gone.ino())));
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the journal told the tag and the removal: {:?}",
+            journal.changes
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
