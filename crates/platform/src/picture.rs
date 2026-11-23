@@ -660,7 +660,8 @@ fn jpeg_reduced<R: BufRead + Seek>(
         .map_err(image::ImageError::IoError)?;
     let decoded = (|| {
         let mut jpeg = jpeg_decoder::Decoder::new(&mut *reader);
-        jpeg.set_max_decoding_buffer_size(usize::try_from(REDUCED_BYTES).ok()?);
+        // The caller's bound, as `holds` is weighed against it below.
+        jpeg.set_max_decoding_buffer_size(usize::try_from(bytes).ok()?);
         jpeg.set_worker_threads(threads == Threads::Components);
         // Told before a pixel is decoded: one `image` reads otherwise, or
         // too large, is decoded once, whole.
