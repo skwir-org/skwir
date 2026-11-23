@@ -154,6 +154,35 @@ pub(crate) fn rows(chosen: &Chosen, offered: &Offered) -> Vec<Row> {
     rows
 }
 
+/// What to send skwird so that the folders this client keeps (`have`, in
+/// the order skwird keeps them, which is the order its share fills in)
+/// become `wanted`, in its order: what is no longer wanted taken back; of
+/// the rest, the longest run that already stands as `wanted` begins kept,
+/// and everything after it taken back and added again in order (skwird
+/// takes back first, then adds, after what it keeps). A folder moved ahead
+/// costs skwird a check of the folders sent again; nothing is sent where
+/// the order holds.
+pub(crate) fn sent<'a>(
+    have: &'a [PathBuf],
+    wanted: &'a [PathBuf],
+) -> (Vec<&'a Path>, Vec<&'a Path>) {
+    let want: HashSet<&PathBuf> = wanted.iter().collect();
+    let kept: Vec<&PathBuf> = have.iter().filter(|path| want.contains(path)).collect();
+    let standing = kept
+        .iter()
+        .zip(wanted)
+        .take_while(|(kept, wanted)| **kept == *wanted)
+        .count();
+    let mut remove: Vec<&Path> = have
+        .iter()
+        .filter(|path| !want.contains(path))
+        .map(PathBuf::as_path)
+        .collect();
+    remove.extend(kept[standing..].iter().map(|path| path.as_path()));
+    let add = wanted[standing..].iter().map(PathBuf::as_path).collect();
+    (add, remove)
+}
+
 /// What skwird last said of this client's folders.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Said {
@@ -322,18 +351,8 @@ impl Kept {
             );
             return;
         };
-        let have: HashSet<PathBuf> = now.folders.iter().map(|k| k.path.to_path()).collect();
-        let want: HashSet<&PathBuf> = wanted.iter().collect();
-        let add: Vec<&Path> = wanted
-            .iter()
-            .filter(|path| !have.contains(*path))
-            .map(PathBuf::as_path)
-            .collect();
-        let remove: Vec<&Path> = have
-            .iter()
-            .filter(|path| !want.contains(path))
-            .map(PathBuf::as_path)
-            .collect();
+        let have: Vec<PathBuf> = now.folders.iter().map(|k| k.path.to_path()).collect();
+        let (add, remove) = sent(&have, &wanted);
         let answer = if add.is_empty() && remove.is_empty() {
             now
         } else {
@@ -928,6 +947,49 @@ mod tests {
                 ("/h/wip", Source::Bookmarks, true, false),
             ]
         );
+    }
+
+    /// The share fills in the order skwird keeps a client's folders: what
+    /// is sent keeps the list's order, sending nothing where it holds.
+    #[test]
+    fn what_is_sent_keeps_the_list_s_order() {
+        let p = |names: &[&str]| -> Vec<PathBuf> { names.iter().map(PathBuf::from).collect() };
+        let shown = |(add, remove): (Vec<&Path>, Vec<&Path>)| {
+            let names = |list: Vec<&Path>| -> Vec<String> {
+                list.iter().map(|p| p.display().to_string()).collect()
+            };
+            (names(add), names(remove))
+        };
+        let none: Vec<String> = Vec::new();
+        // Holding: nothing sent.
+        assert_eq!(
+            shown(sent(&p(&["a", "b"]), &p(&["a", "b"]))),
+            (none.clone(), none.clone())
+        );
+        // New at the end: added after.
+        assert_eq!(
+            shown(sent(&p(&["a"]), &p(&["a", "b"]))),
+            (vec!["b".into()], none.clone())
+        );
+        // New in the middle: what follows it sent again, after it.
+        assert_eq!(
+            shown(sent(&p(&["a", "c"]), &p(&["a", "b", "c"]))),
+            (vec!["b".into(), "c".into()], vec!["c".into()])
+        );
+        // Moved ahead: from where the order breaks.
+        assert_eq!(
+            shown(sent(&p(&["a", "b", "c"]), &p(&["c", "a", "b"]))),
+            (
+                vec!["c".into(), "a".into(), "b".into()],
+                vec!["a".into(), "b".into(), "c".into()]
+            )
+        );
+        // No longer wanted: taken back, the order of the rest kept.
+        assert_eq!(
+            shown(sent(&p(&["a", "x", "b"]), &p(&["a", "b"]))),
+            (none.clone(), vec!["x".into()])
+        );
+        assert_eq!(shown(sent(&p(&[]), &p(&[]))), (none.clone(), none));
     }
 
     #[test]

@@ -3802,10 +3802,9 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   `skwird.kept`, its commands, sent at each connection, the menu's
   entry); part 6, checked in the release window through a real engine
   (`tools/test/skwird_window.py`: the groups, ticks, states and switches
-  heard, a folder added, the menu's entry ticked, the share said). Left:
-  the order the share fills in is kept for folders added together, not
-  for one moved ahead later (skwird's way, removing and adding again, is
-  not used yet).
+  heard, a folder added, the menu's entry ticked, the share said). The
+  share's order kept for a folder moved ahead too (`kept::sent`: from
+  where the order breaks, taken back and added again).
 - **F. `just skwird-check`** (ADR-150, 7 and 11): the plugin's tests against a
   real `skwird` (on the `PATH`, or `SKWIRD`), and the window's check,
   failing where there is none; into `release-check` once skwird is

@@ -23233,3 +23233,19 @@ Index page, read over AT-SPI.
 - **Checked:** `SKWIRD=<skwird 58609b2> just skwird-check` green (its
   two engine tests and the window's twelve steps); rustfmt and clippy
   `-D warnings` on skwir-ui; the settings dialog's tests; the catalogs.
+
+## 2026-11-23: Kept live keeps the share's order for a folder moved ahead
+
+skwird fills a client's share in the order it keeps the client's
+folders, a `watch` taking back first and adding after. Kept live sent
+only the differences, so a folder new in the middle of the list (a
+desktop's folder made, a bookmark moved up) went to the end of the share.
+`kept::sent` now keeps the longest run of what skwird keeps that already
+stands as the list does, takes back the rest and adds it again in order;
+nothing is sent where the order holds. Checked: its test (holding, new at
+the end, new in the middle, moved ahead, no longer wanted, empty), the
+plugin's eleven tests, rustfmt and clippy `-D warnings`.
+
+Met on the way: the disk filled (218 MB left), `target/` grown by the
+day's builds; `just prune` freed 57 GB (78.5 GiB of unused units and
+17.5 GiB of incremental sessions, uncompressed).
