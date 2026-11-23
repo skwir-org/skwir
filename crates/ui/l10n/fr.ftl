@@ -3142,6 +3142,15 @@ exclusions_holding = contenant { $file }
 exclusions_holding_placeholder = .nosearch, CACHEDIR.TAG
 
 # draft
+exclusions_index = Ce que les recherches laissent de côté, qu’un index leur réponde ou non : { $count ->
+        [one] { $count } exclusion
+       *[other] { $count } exclusions
+    }. Vos Secrets sont tenus hors des index auxquels Skwir peut les signaler.
+
+# draft
+exclusions_index_open = Exclusions…
+
+# draft
 exclusions_keep_private = Garder privés
 
 # draft
@@ -6683,6 +6692,9 @@ records_filter_label = Filtrer la liste
 records_found_of = { $found } sur { $count }
 
 # draft
+records_group_count = { $count }
+
+# draft
 records_keyring_asking = Interrogation du trousseau…
 
 # draft
@@ -7059,6 +7071,9 @@ settings_activity_unfold_description = Le temps que dure une action que vous ave
 
 # draft
 settings_activity_unfold_description_more = Jusque-là, et pour tout ce qui va plus vite, le bandeau de la barre d’état indique où elle en est.
+
+# draft
+settings_add_folder_choose = Ajouter
 
 # draft
 settings_after_restart = S’applique au redémarrage
@@ -7569,10 +7584,13 @@ settings_intro_appearance = L’apparence de Skwir.
 settings_intro_changed = Chaque paramètre qui diffère de sa valeur par défaut et chaque module activé ou désactivé par rapport à Skwir tel qu’il est livré, chacun avec son moyen d’y revenir.
 
 # draft
-settings_intro_exclusions = Les fichiers et dossiers que Skwir laisse de côté : dans les recherches, le décompte des étiquettes et la chronologie, sous le dossier où ils cherchent, et dans ce que voient les agents, les modules externes à Skwir et les modèles d’IA. Les exclusions de Skwir sont rangées par catégories, chacune avec son interrupteur ; cochez ou décochez chacune, ou ajoutez les vôtres.
+settings_intro_exclusions = Les fichiers et dossiers que Skwir laisse de côté : dans les recherches, le décompte des étiquettes et la chronologie, sous le dossier où ils cherchent, et dans ce que voient les agents, les modules externes à Skwir et les modèles d’IA. Les exclusions de Skwir sont rangées par catégories, chacune avec son interrupteur ; cochez ou décochez chacune, ou ajoutez les vôtres. Vos Secrets sont aussi tenus hors des index auxquels Skwir peut les signaler (Index).
 
 # draft
 settings_intro_general = La langue que parle Skwir, ce qu’il fait au démarrage et des dossiers qu’ouvrent d’autres programmes, des onglets, de la vue divisée et de l’adresse, de ce que vous glissez-déposez, et pendant qu’une action s’exécute. Les modifications s’appliquent dès que vous les faites.
+
+# draft
+settings_intro_index = Ce qui rend les recherches rapides : un index qui indique quels fichiers portent un nom donné, là où il prouve qu’il est à jour, et quels dossiers il tient à jour à mesure qu’ils changent. Là où aucun index ne répond, une recherche parcourt chaque dossier.
 
 # draft
 settings_intro_keyboard = Chaque action et ses touches, regroupées selon l’endroit où elles agissent. Cliquez sur une touche pour la changer, ou sur + pour en ajouter une : les vôtres y remplacent celles de Skwir sur les mêmes touches.
@@ -7997,6 +8015,9 @@ settings_title_exclusions = Exclusions
 settings_title_general = Général
 
 # draft
+settings_title_index = Index
+
+# draft
 settings_title_keyboard = Clavier
 
 # draft
@@ -8285,7 +8306,7 @@ sizes_step = { $step } %
 status_and = { $said }, { $fact }
 
 # draft
-status_as_of = à jour : { $when }
+status_as_of = index mis à jour : { $when }
 
 # draft
 status_as_of_index = selon { $index }
@@ -8295,6 +8316,12 @@ status_as_of_index_tip = Résultats tirés de { $index }, dont on ne peut pas sa
 
 # draft
 status_as_of_tip = Résultats tirés de { $index } (dernière mise à jour : { $when }) : ce qui a été créé, renommé ou supprimé depuis n’apparaît pas dans cette réponse.
+
+# draft
+status_checked = index vérifié : { $when }
+
+# draft
+status_checked_tip = Résultats tirés de { $index }, dont le contenu a été comparé à celui des dossiers (vérification : { $when }).
 
 # draft
 status_copied = { $count ->
@@ -8334,6 +8361,12 @@ status_items = { $count ->
 
 # draft
 status_items_weigh = { $items } · { $size }
+
+# draft
+status_live = index à jour
+
+# draft
+status_live_tip = Résultats tirés de { $index }, qui suit chaque modification : cette réponse montre les fichiers tels qu’ils sont maintenant.
 
 # draft
 status_loading = Chargement…

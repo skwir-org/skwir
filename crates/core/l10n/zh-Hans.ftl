@@ -496,7 +496,7 @@ app_destination_path = 目标必须是路径
 app_entries = 列出项目
 
 # draft
-app_entries_description = 窗格所显示的内容，按其顺序（已排序、已筛选，含就地展开的文件夹）；或指定 `location` 时，列出某个文件夹所含的内容而不显示它：每个项目的 ID、名称、路径、kind（文件、文件夹或链接）、大小和修改时间（自 1970 年起的秒数），以及是否已选中；从 `offset` 起，至多 `limit` 个。`complete: false`：列表仍在加载，请再次询问。`as_of`（若有）：此回答来自某个索引截至其上次更新时的内容（`by` 说明是哪个索引，`updated` 说明何时更新，以自 1970 年起的秒数表示），因此此后新建、重命名或删除的文件不在其中。`excluded`（若有）：搜索在起点之下跳过了多少文件和文件夹（设置 › 排除项中排除的文件夹、缓存、回收站、网络文件夹）；在搜索中写 `excluded:yes` 则也会遍历这些文件夹
+app_entries_description = 窗格所显示的内容，按其顺序（已排序、已筛选，含就地展开的文件夹）；或指定 `location` 时，列出某个文件夹所含的内容而不显示它：每个项目的 ID、名称、路径、kind（文件、文件夹或链接）、大小和修改时间（自 1970 年起的秒数），以及是否已选中；从 `offset` 起，至多 `limit` 个。`complete: false`：列表仍在加载，请再次询问。`index`（若有）：此回答由某个索引给出（`by` 说明是哪个索引；`proof` 说明其得到证实的程度：`live` 即文件当前的实际状态，`checked` 即已于 `at` 时与其文件夹核对，`as_of` 即截至 `at` 时的内容，因此此后新建、重命名或删除的文件不在其中；`at` 以自 1970 年起的秒数表示）。`as_of`（若有）：此回答来自某个索引截至其上次更新时的内容（`by` 说明是哪个索引，`updated` 说明何时更新，以自 1970 年起的秒数表示）。`excluded`（若有）：搜索在起点之下跳过了多少文件和文件夹（设置 › 排除项中排除的文件夹、缓存、回收站、网络文件夹）；在搜索中写 `excluded:yes` 则也会遍历这些文件夹
 
 # draft
 app_expand = 展开文件夹
@@ -2608,6 +2608,9 @@ settings_section_maps = 地图
 
 # draft
 settings_section_models_3d = 3D 模型
+
+# draft
+settings_section_names_index = 文件名索引
 
 # draft
 settings_section_opening_addresses = 打开地址

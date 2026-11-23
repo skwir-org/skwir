@@ -3152,6 +3152,15 @@ exclusions_holding = che contiene { $file }
 exclusions_holding_placeholder = .nosearch, CACHEDIR.TAG
 
 # draft
+exclusions_index = Ciò che le ricerche lasciano fuori, che risponda un indice o no: { $count ->
+        [one] { $count } esclusione
+       *[other] { $count } esclusioni
+    }. I tuoi segreti restano fuori dagli indici a cui Skwir può chiederlo.
+
+# draft
+exclusions_index_open = Esclusioni…
+
+# draft
 exclusions_keep_private = Mantieni privato
 
 # draft
@@ -6690,6 +6699,9 @@ records_filter_label = Filtra l’elenco
 records_found_of = { $found } di { $count }
 
 # draft
+records_group_count = { $count }
+
+# draft
 records_keyring_asking = Richiesta al portachiavi…
 
 # draft
@@ -7069,6 +7081,9 @@ settings_activity_unfold_description = Per quanto tempo gira un’azione richies
 
 # draft
 settings_activity_unfold_description_more = Fino ad allora, e per ciò che è più rapido, la striscia del piè di finestra mostra come procede.
+
+# draft
+settings_add_folder_choose = Aggiungi
 
 # draft
 settings_after_restart = Si applica dopo il riavvio
@@ -7579,10 +7594,13 @@ settings_intro_appearance = Come appare Skwir.
 settings_intro_changed = Ogni impostazione che differisce dal valore predefinito e ogni plugin attivato o disattivato rispetto a come viene fornito Skwir, ciascuno con la sua via del ritorno.
 
 # draft
-settings_intro_exclusions = I file e le cartelle che Skwir lascia fuori: dalle ricerche, dai conteggi delle etichette e dalla linea temporale sotto la cartella in cui guardano, e da ciò che vedono agenti, plugin esterni a Skwir e modelli. Quelle di Skwir sono in categorie, ciascuna con il proprio interruttore; spunta o deseleziona ogni voce, o aggiungi le tue.
+settings_intro_exclusions = I file e le cartelle che Skwir lascia fuori: dalle ricerche, dai conteggi delle etichette e dalla linea temporale sotto la cartella in cui guardano, e da ciò che vedono agenti, plugin esterni a Skwir e modelli. Quelle di Skwir sono in categorie, ciascuna con il proprio interruttore; spunta o deseleziona ogni voce, o aggiungi le tue. Anche gli indici a cui Skwir può chiederlo tengono fuori i tuoi segreti (Indice).
 
 # draft
 settings_intro_general = La lingua che parla Skwir, cosa fa all’avvio e con le cartelle che altri programmi aprono, con le schede, la divisione e l’indirizzo, con ciò che trascini e rilasci, e mentre un’azione è in corso. Le modifiche hanno effetto man mano che le fai.
+
+# draft
+settings_intro_index = Ciò che rende veloci le ricerche: un indice che dice quali file hanno un dato nome, dove dimostra di essere aggiornato, e quali cartelle tiene aggiornate man mano che cambiano. Dove nessun indice risponde, una ricerca guarda in ogni cartella.
 
 # draft
 settings_intro_keyboard = Ogni azione e i suoi tasti, raggruppati per dove funzionano. Fai clic su un tasto per cambiarlo, o su + per aggiungerne uno: i tuoi sostituiscono quelli di Skwir sugli stessi tasti in quel contesto.
@@ -8007,6 +8025,9 @@ settings_title_exclusions = Esclusioni
 settings_title_general = Generale
 
 # draft
+settings_title_index = Indice
+
+# draft
 settings_title_keyboard = Tastiera
 
 # draft
@@ -8291,16 +8312,22 @@ sizes_step = { $step }%
 status_and = { $said }, { $fact }
 
 # draft
-status_as_of = aggiornato a { $when }
+status_as_of = indice aggiornato a { $when }
 
 # draft
 status_as_of_index = secondo { $index }
 
 # draft
-status_as_of_index_tip = Trovato in { $index }, di cui non si conosce l’ultimo aggiornamento: ciò che è stato creato, rinominato o rimosso da allora non è in questa risposta.
+status_as_of_index_tip = Ha risposto { $index }, di cui non si conosce l’ultimo aggiornamento: ciò che è stato creato, rinominato o rimosso da allora non è in questa risposta.
 
 # draft
-status_as_of_tip = Trovato in { $index }, aggiornato l’ultima volta { $when }: ciò che è stato creato, rinominato o rimosso da allora non è in questa risposta.
+status_as_of_tip = Ha risposto { $index }, aggiornato l’ultima volta { $when }: ciò che è stato creato, rinominato o rimosso da allora non è in questa risposta.
+
+# draft
+status_checked = indice verificato { $when }
+
+# draft
+status_checked_tip = Ha risposto { $index }, che ha confrontato ciò che sapeva con le cartelle il { $when }.
 
 # draft
 status_copied = { $count ->
@@ -8340,6 +8367,12 @@ status_items = { $count ->
 
 # draft
 status_items_weigh = { $items } · { $size }
+
+# draft
+status_live = indice in tempo reale
+
+# draft
+status_live_tip = Ha risposto { $index }, che segue ogni modifica: questa risposta mostra i file come sono ora.
 
 # draft
 status_loading = Caricamento…

@@ -530,6 +530,21 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
         source: include_str!("../../plugins/shrink/l10n/zh-Hans.ftl"),
     },
     skwir_core::words::Shipped {
+        domain: "skwir-plugin-skwird",
+        language: "fr",
+        source: include_str!("../../plugins/skwird/l10n/fr.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-skwird",
+        language: "it",
+        source: include_str!("../../plugins/skwird/l10n/it.ftl"),
+    },
+    skwir_core::words::Shipped {
+        domain: "skwir-plugin-skwird",
+        language: "zh-Hans",
+        source: include_str!("../../plugins/skwird/l10n/zh-Hans.ftl"),
+    },
+    skwir_core::words::Shipped {
         domain: "skwir-plugin-structured-data",
         language: "fr",
         source: include_str!("../../plugins/structured-data/l10n/fr.ftl"),
@@ -734,7 +749,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "fr",
         messages: 7_062,
-        translated: 7_001,
+        translated: 7_062,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "Français",
@@ -742,7 +757,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "it",
         messages: 7_062,
-        translated: 7_001,
+        translated: 7_062,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "Italiano",
@@ -750,7 +765,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "zh-Hans",
         messages: 7_062,
-        translated: 7_001,
+        translated: 7_062,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
         name: "简体中文",

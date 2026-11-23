@@ -23249,3 +23249,33 @@ plugin's eleven tests, rustfmt and clippy `-D warnings`.
 Met on the way: the disk filled (218 MB left), `target/` grown by the
 day's builds; `just prune` freed 57 GB (78.5 GiB of unused units and
 17.5 GiB of incremental sessions, uncompressed).
+
+## 2026-11-23: the index's words drafted in French, Italian and Simplified Chinese
+
+What steps A, B and E added (61 messages a language: the skwird plugin's
+50, the ui's 10, core's 1) and the 3 whose English changed
+(`status_as_of`, `settings_intro_exclusions`, `app_entries_description`),
+drafted by three subagents (a language each, from its glossary and the
+English's notes, one table of terms for the three), each marked `#
+draft`; the plugin's catalogs are new files. Each glossary gained the
+arc's terms (index, kept live, live, up to date, checked, watches, the
+share, the engine, the system service), marked drafted.
+
+- **Choices worth a reviewer's look:** French puts the footer's moment
+  after a colon ("index vérifié : …"), as its other dated footers do;
+  Chinese says 您, as its glossary has it, not the table's 你; Italian's
+  live footer is "indice in tempo reale", apart from "indice aggiornato
+  a …" (as of). "Secrets", the Exclusions category, stays as written in
+  every language: the list's texts have no catalogs yet (as before).
+- **Fixed on the way:** Italian's two existing "as of" tooltips read
+  "Trovato in il database di plocate"; now "Ha risposto { $index }, …",
+  as the new ones say.
+- **Checked:** each translator's own comparison with the English (ids,
+  arguments, order, no duplicates, `# draft`); `just words` (each
+  language 100% of 7,062 messages translated, 0% reviewed, offered as a
+  draft); `extract.py --check` and `--release` green; skwir-core's
+  catalog and words tests (51), among them every catalog against its
+  English and a plugin's catalogs coming and going with it;
+  `plugins_toggle`.
+- **Also checked since step E:** `just check-cross` (clippy for Windows
+  and macOS, the whole workspace) green.

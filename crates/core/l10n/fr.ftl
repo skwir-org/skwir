@@ -500,7 +500,7 @@ app_destination_path = la destination doit être un chemin
 app_entries = Lister les éléments
 
 # draft
-app_entries_description = Ce qu’affiche un panneau, dans son ordre (trié, filtré, avec les dossiers ouverts sur place), ou avec `location` ce que contient un dossier, listé sans l’afficher : l’identifiant, le nom, le chemin, la nature, la taille et la date de modification (en secondes depuis 1970) de chaque élément, et s’il est sélectionné ; à partir de `offset`, au plus `limit`. `complete: false` : la liste arrivait encore, redemandez. `as_of`, quand il est présent : la réponse est celle d’un index à sa dernière mise à jour (`by` dit lequel, `updated` quand, en secondes depuis 1970), si bien qu’un fichier créé, renommé ou supprimé depuis n’y est pas. `excluded`, quand il est présent : combien de fichiers et de dossiers sous la racine la recherche a passés (les dossiers écartés dans Paramètres › Exclusions, caches, corbeille, dossiers réseau) ; `excluded:yes` dans la recherche parcourt aussi ces dossiers
+app_entries_description = Ce qu’affiche un panneau, dans son ordre (trié, filtré, avec les dossiers ouverts sur place), ou avec `location` ce que contient un dossier, listé sans l’afficher : l’identifiant, le nom, le chemin, la nature, la taille et la date de modification (en secondes depuis 1970) de chaque élément, et s’il est sélectionné ; à partir de `offset`, au plus `limit`. `complete: false` : la liste arrivait encore, redemandez. `index`, quand il est présent : un index a donné la réponse (`by` dit lequel ; `proof` jusqu’où elle est prouvée : `live`, les fichiers tels qu’ils sont, `checked`, l’index comparé à ses dossiers au moment `at`, ou `as_of`, l’index tel qu’il était au moment `at`, si bien qu’un fichier créé, renommé ou supprimé depuis n’y est pas ; `at` en secondes depuis 1970). `as_of`, quand il est présent : la réponse est celle d’un index à sa dernière mise à jour (`by` dit lequel, `updated` quand, en secondes depuis 1970). `excluded`, quand il est présent : combien de fichiers et de dossiers sous la racine la recherche a passés (les dossiers écartés dans Paramètres › Exclusions, caches, corbeille, dossiers réseau) ; `excluded:yes` dans la recherche parcourt aussi ces dossiers
 
 # draft
 app_expand = Déplier le dossier
@@ -2658,6 +2658,9 @@ settings_section_maps = Cartes
 
 # draft
 settings_section_models_3d = Modèles 3D
+
+# draft
+settings_section_names_index = Index des noms
 
 # draft
 settings_section_opening_addresses = Ouverture des adresses

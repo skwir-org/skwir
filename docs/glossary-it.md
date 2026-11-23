@@ -129,6 +129,18 @@ line), which a sentence naming a place reads.
 | search / filter | ricerca / filtro | |
 | saved search | ricerca salvata | |
 | Quick filters | filtri rapidi | |
+| index (of names, that answers searches) | indice, indice dei nomi | « l’indice di skwird », said with its article where it is an argument; the settings page is « Indice »; drafted 2026-11-23 |
+| keep live, kept live | seguire in tempo reale, seguita in tempo reale | the Index page's list is « Seguite in tempo reale »; the menu's entry « Segui in tempo reale per le ricerche »; drafted 2026-11-23 |
+| live / not live (a folder's state) | in tempo reale / non in tempo reale | drafted 2026-11-23 |
+| up to date (an index) | aggiornato | an index as of a moment « indice aggiornato a … »; the footer's live index « indice in tempo reale », apart from it; drafted 2026-11-23 |
+| checked (an index compared with its folders) | verificato | the footer's « indice verificato … »; drafted 2026-11-23 |
+| watch (what the system watches a folder with) | monitoraggio | « i monitoraggi del sistema », as Usage's « Monitoraggio in tempo reale »; drafted 2026-11-23 |
+| share (of the watches skwird may use) | quota | « la quota di monitoraggi »; drafted 2026-11-23 |
+| engine (skwird's) | motore | « un motore di skwird », as a reader's engine is a « motore »; drafted 2026-11-23 |
+| system service | servizio di sistema | « il servizio di sistema di skwird »; drafted 2026-11-23 |
+| Your folders (the desktop's: Documents, Pictures…) | Le tue cartelle | a group of the folders kept live; drafted 2026-11-23 |
+| Added by you | Aggiunte da te | agrees with what it heads (cartelle); drafted 2026-11-23 |
+| tick / untick (a row's box) | spuntare / deselezionare | « spunta o deseleziona », as the Exclusions page says it; drafted 2026-11-23 |
 | Shelf | Mensola | Skwir's place for what waits to be pasted: « sulla Mensola » |
 | bookmark | segnalibro | |
 | Recent | Recenti | |

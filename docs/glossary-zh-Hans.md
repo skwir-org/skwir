@@ -123,6 +123,14 @@ attribute (`tools/words/grammar` has no `zh-Hans` line).
 | search / filter | 搜索 / 筛选 | |
 | saved search | 已保存的搜索 | |
 | Quick filters | 快速筛选 | |
+| index (that answers names); the index of names | 索引；文件名索引 | drafted 2026-11-23; 「skwird 的索引」; the settings page Index, 「索引」 |
+| keep live; kept live; Kept live (the list) | 实时跟踪；已实时跟踪；实时跟踪 | drafted 2026-11-23; 「未实时跟踪」 for not kept live |
+| live / not live (a folder's state) | 实时 / 非实时 | drafted 2026-11-23 |
+| up to date (the index); checked (compared with the folders) | 最新；已核对 | drafted 2026-11-23; the footer, after its count: 「索引已是最新」「索引已于 { $when } 核对」「索引截至 { $when }」 |
+| watch (what the system watches folders with); share (of the watches skwird may use) | 监视项；份额 | drafted 2026-11-23 |
+| engine (skwird's); system service | 引擎；系统服务 | drafted 2026-11-23; 「skwird 引擎」 |
+| Your folders (the desktop's: Documents, Pictures…); Added by you | 您的文件夹；由您添加 | drafted 2026-11-23; 您, as Writing says, and as 由您更改 |
+| tick (a row's box) | 勾选 | drafted 2026-11-23; 「取消勾选」 for untick, as the Exclusions page says |
 | Shelf | 暂存架 | Skwir's place for what waits to be pasted |
 | bookmark | 书签 | |
 | Recent | 最近使用 | |

@@ -130,6 +130,18 @@ line, drafted 2026-11-18), which a sentence naming a place reads.
 | search / filter | recherche / filtre | |
 | saved search | recherche enregistrée | |
 | Quick filters | filtres rapides | |
+| index (of names, that answers searches) | index (m.), index des noms | « l’index de skwird »; the settings page is « Index »; drafted 2026-11-23 |
+| keep live, kept live | suivre en direct, suivi en direct | the Index page's list is « Suivis en direct »; the menu's entry « Suivre en direct pour les recherches »; drafted 2026-11-23 |
+| live / not live (a folder's state) | en direct / pas en direct | drafted 2026-11-23 |
+| up to date (an index) | à jour | the footer's « index à jour »; an index as of a moment « index mis à jour : … »; drafted 2026-11-23 |
+| checked (an index compared with its folders) | vérifié | the footer's « index vérifié : … »; drafted 2026-11-23 |
+| watch (what the system watches a folder with) | surveillance | « les surveillances du système »; drafted 2026-11-23 |
+| share (of the watches skwird may use) | part | « la part de surveillances »; drafted 2026-11-23 |
+| engine (skwird's) | moteur | « un moteur de skwird », as a reader's engine is a « moteur »; drafted 2026-11-23 |
+| system service | service système | « le service système de skwird »; drafted 2026-11-23 |
+| Your folders (the desktop's: Documents, Pictures…) | Vos dossiers | a group of the folders kept live; drafted 2026-11-23 |
+| Added by you | Ajoutés par vous | agrees with what it heads: « Ajoutée par vous » on an exclusion; drafted 2026-11-23 |
+| tick / untick (a row's box) | cocher / décocher | drafted 2026-11-23 |
 | Shelf | Étagère | Skwir's place for what waits to be pasted; a place's name: capital É, « l’Étagère », « sur l’Étagère » |
 | bookmark | signet | GNOME; Dolphin says « marque-page » |
 | Recent | Récents | |

@@ -3006,6 +3006,12 @@ exclusions_holding = 包含 { $file }
 exclusions_holding_placeholder = .nosearch, CACHEDIR.TAG
 
 # draft
+exclusions_index = 搜索所排除的内容，无论由谁作答：{ $count } 个排除项。Skwir 能够告知的索引会将您的机密信息排除在外。
+
+# draft
+exclusions_index_open = 排除项…
+
+# draft
 exclusions_keep_private = 保持私密
 
 # draft
@@ -6431,6 +6437,9 @@ records_filter_label = 筛选列表
 records_found_of = { $found } / { $count }
 
 # draft
+records_group_count = { $count }
+
+# draft
 records_keyring_asking = 正在请求密钥环…
 
 # draft
@@ -6795,6 +6804,9 @@ settings_activity_unfold_description = 您执行的操作运行多长时间后�
 
 # draft
 settings_activity_unfold_description_more = 在此之前，以及对于更快完成的操作，底栏的活动条会显示其进展。
+
+# draft
+settings_add_folder_choose = 添加
 
 # draft
 settings_after_restart = 重启后生效
@@ -7293,10 +7305,13 @@ settings_intro_appearance = Skwir 的外观。
 settings_intro_changed = 与默认值不同的每项设置，以及相对于 Skwir 的默认状态被开启或关闭的每个插件，各自附有恢复的方式。
 
 # draft
-settings_intro_exclusions = Skwir 排除的文件和文件夹：在所查找文件夹之下的搜索、标签计数和时间线不包含它们，智能体、外部插件和模型也看不到它们。Skwir 自带的排除项分为若干类别，各有开关；可逐一勾选或取消勾选，或添加您自己的排除项。
+settings_intro_exclusions = Skwir 排除的文件和文件夹：在所查找文件夹之下的搜索、标签计数和时间线不包含它们，智能体、外部插件和模型也看不到它们。Skwir 自带的排除项分为若干类别，各有开关；可逐一勾选或取消勾选，或添加您自己的排除项。Skwir 能够告知的索引也会将您的机密信息排除在外（见“索引”页面）。
 
 # draft
 settings_intro_general = Skwir 使用的语言，以及它在启动时、对其他程序打开的文件夹、对标签页、分屏和地址、对您拖放的内容、以及在操作运行时的行为。更改即时生效。
+
+# draft
+settings_intro_index = 让搜索变快的内容：一个索引，它在能证明自己为最新之处回答哪些文件具有某个名称；以及它随文件夹的变化而保持最新的那些文件夹。没有索引作答之处，搜索会查找每个文件夹。
 
 # draft
 settings_intro_keyboard = 所有操作及其按键，按起作用的位置分组。单击一个按键可更改它，单击 + 可添加按键：在同一位置，您设置的按键会取代 Skwir 在相同按键上的设置。
@@ -7718,6 +7733,9 @@ settings_title_exclusions = 排除项
 settings_title_general = 常规
 
 # draft
+settings_title_index = 索引
+
+# draft
 settings_title_keyboard = 键盘
 
 # draft
@@ -7997,7 +8015,7 @@ sizes_step = { $step }%
 status_and = { $said }，{ $fact }
 
 # draft
-status_as_of = 截至 { $when }
+status_as_of = 索引截至 { $when }
 
 # draft
 status_as_of_index = 依据 { $index }
@@ -8007,6 +8025,12 @@ status_as_of_index_tip = 在 { $index } 中找到，其最后更新时间无法�
 
 # draft
 status_as_of_tip = 在 { $index } 中找到，最后更新于 { $when }：此后新建、重命名或移除的内容不在此结果中。
+
+# draft
+status_checked = 索引已于 { $when } 核对
+
+# draft
+status_checked_tip = 在 { $index } 中找到，它已于 { $when } 将所知内容与文件夹核对。
 
 # draft
 status_copied = 已复制 { $count } 个项目
@@ -8031,6 +8055,12 @@ status_items = { $count } 个项目
 
 # draft
 status_items_weigh = { $items } · { $size }
+
+# draft
+status_live = 索引已是最新
+
+# draft
+status_live_tip = 在 { $index } 中找到，它会跟踪每一次更改：此结果即文件当前的状态。
 
 # draft
 status_loading = 正在加载…

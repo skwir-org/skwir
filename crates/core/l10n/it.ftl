@@ -496,7 +496,7 @@ app_destination_path = la destinazione deve essere un percorso
 app_entries = Elenca voci
 
 # draft
-app_entries_description = Ciò che mostra un riquadro, nel suo ordine (ordinato, filtrato, con le cartelle aperte sul posto), oppure con `location` ciò che contiene una cartella, elencato senza mostrarla: id, nome, percorso, genere, dimensione e data di modifica (secondi dal 1970) di ogni voce, e se è selezionata; a partire da `offset`, al massimo `limit`. `complete: false`: l’elenco stava ancora arrivando, chiedi di nuovo. `as_of`, se presente: la risposta è quella di un indice all’ultimo aggiornamento (`by` dice quale, `updated` quando, in secondi dal 1970), quindi un file creato, rinominato o rimosso da allora non vi compare. `excluded`, se presente: quanti file e cartelle sotto la radice la ricerca ha saltato (le cartelle escluse in Impostazioni › Esclusioni, cache, cestino, cartelle di rete); `excluded:yes` nella ricerca attraversa anche quelle cartelle
+app_entries_description = Ciò che mostra un riquadro, nel suo ordine (ordinato, filtrato, con le cartelle aperte sul posto), oppure con `location` ciò che contiene una cartella, elencato senza mostrarla: id, nome, percorso, genere, dimensione e data di modifica (secondi dal 1970) di ogni voce, e se è selezionata; a partire da `offset`, al massimo `limit`. `complete: false`: l’elenco stava ancora arrivando, chiedi di nuovo. `index`, se presente: la risposta l’ha data un indice (`by` dice quale; `proof` fin dove è provata: `live`, i file come sono, `checked`, confrontata con le sue cartelle all’istante `at`, oppure `as_of`, aggiornata all’istante `at`, quindi un file creato, rinominato o rimosso da allora non vi compare; `at` in secondi dal 1970). `as_of`, se presente: la risposta è quella di un indice all’ultimo aggiornamento (`by` dice quale, `updated` quando, in secondi dal 1970). `excluded`, se presente: quanti file e cartelle sotto la radice la ricerca ha saltato (le cartelle escluse in Impostazioni › Esclusioni, cache, cestino, cartelle di rete); `excluded:yes` nella ricerca attraversa anche quelle cartelle
 
 # draft
 app_expand = Espandi cartella
@@ -2641,6 +2641,9 @@ settings_section_maps = Mappe
 
 # draft
 settings_section_models_3d = Modelli 3D
+
+# draft
+settings_section_names_index = Indice dei nomi
 
 # draft
 settings_section_opening_addresses = Indirizzi di apertura
