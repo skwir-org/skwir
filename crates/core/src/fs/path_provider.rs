@@ -65,6 +65,8 @@ struct Shared {
     names: Mutex<Names>,
     /// Every name of the folder is in `names`: a batch can ask them.
     listed: std::sync::atomic::AtomicBool,
+    /// Never sent on directly: through [`Shared::send`], which refuses
+    /// once it is lost (and by [`Shared::lose`], under the same lock).
     tx: EventSink,
     ctx: OpenContext,
     watcher: Mutex<Option<watch::WatchHandle>>,
@@ -84,9 +86,11 @@ struct Shared {
     /// ([`Shared::lose`]), so a refresh opens the folder again from its
     /// path rather than list a directory that is gone.
     slot: std::sync::Weak<Mutex<Option<Arc<Shared>>>>,
-    /// Whether it was lost, and how: 0 not, [`LOST_MISSING`] or
-    /// [`LOST_LEFT`] (its volume let go of, which a deletion told after
-    /// does not say over).
+    /// Whether it was lost, and how: [`LISTED`] not, [`HANDED_ON`],
+    /// [`LOST_MISSING`] or [`LOST_LEFT`] (its volume let go of, which a
+    /// deletion told after does not say over). Changed only under the
+    /// names' lock, which every event it sends is sent under
+    /// ([`Shared::send`]): nothing it sends reaches its listing once lost.
     lost: std::sync::atomic::AtomicU8,
 }
 
@@ -122,10 +126,15 @@ impl std::ops::Deref for Opened {
     }
 }
 
+/// A folder listed, not lost ([`Shared::lost`]).
+const LISTED: u8 = 0;
+/// A folder handed on to the listing that opened its path again
+/// ([`Shared::hand_on`]): its rows are that one's, and it says nothing more.
+const HANDED_ON: u8 = 1;
 /// A folder lost as deleted ([`Shared::lose`]).
-const LOST_MISSING: u8 = 1;
+const LOST_MISSING: u8 = 2;
 /// A folder lost with its volume ([`Shared::lose`], ADR-149).
-const LOST_LEFT: u8 = 2;
+const LOST_LEFT: u8 = 3;
 
 /// The names of the listed entries, both ways, so a watcher event finds its
 /// entry without walking the directory.
@@ -255,7 +264,7 @@ fn gone_after(
 /// `event` as `names` holds it now: an entry no longer the one its name
 /// holds is not added (nor updated), an id that is again is not removed,
 /// and a rename whose ends changed since is what is left of it. Sent under
-/// the names' lock (`Shared::send_as_now`), each worker's events leave in
+/// the names' lock (`Shared::send`), each worker's events leave in
 /// the order of what it did to the names, whatever order the workers end
 /// in.
 fn as_now(names: &Names, event: ListingEvent) -> Vec<ListingEvent> {
@@ -389,7 +398,7 @@ fn open_and_list(
         changes: Mutex::new((None, false)),
         writing: Mutex::new(std::collections::HashSet::new()),
         slot: Arc::downgrade(slot),
-        lost: std::sync::atomic::AtomicU8::new(0),
+        lost: std::sync::atomic::AtomicU8::new(LISTED),
     });
     // Watched before it is listed, so nothing changed
     // meanwhile is missed. The watcher holds the listing
@@ -480,9 +489,7 @@ impl PathLocation {
                         // What it opened was another's folder by then.
                         let opened = slot.lock().take();
                         if let Some(opened) = opened {
-                            if opened.lost.swap(LOST_MISSING, Ordering::AcqRel) == 0 {
-                                ids.extend(opened.names.lock().ids());
-                            }
+                            ids.extend(opened.hand_on().into_iter().flatten());
                             let_go(&ctx, opened);
                         }
                         previous = (!ids.is_empty()).then_some(ids);
@@ -563,15 +570,23 @@ pub fn wait_let_go(path: &Path, at_most: Duration) -> bool {
 }
 
 impl Shared {
-    /// Send what an entry event says, as the names hold it now, under
-    /// their lock (`as_now`). The listing, the watcher's changes and
-    /// hydration run at once (two at a time in a remote's lane): each
-    /// changes the names under the lock and sends after, so without it one
-    /// worker's events could reach the pane after another's that changed
-    /// the names later, and a name keep two rows where a FUSE program
-    /// numbers its file anew (sshfs). False when no one listens.
-    fn send_as_now(&self, event: ListingEvent) -> bool {
+    /// Send what an event says, as the names hold it now, under their
+    /// lock (`as_now`), unless it was lost: every event of a folder listed
+    /// goes through here, and what loses it ([`Shared::lose`],
+    /// [`Shared::hand_on`]) does so under the same lock, so nothing it
+    /// sends (a `Complete` after the stats a listing makes first, an entry
+    /// a change found) reaches its listing after it was lost, nor says
+    /// over why. The listing, the watcher's changes and hydration run at
+    /// once (two at a time in a remote's lane): each changes the names
+    /// under the lock and sends after, so without it one worker's events
+    /// could reach the pane after another's that changed the names later,
+    /// and a name keep two rows where a FUSE program numbers its file anew
+    /// (sshfs). False when no one listens, or once it is lost.
+    fn send(&self, event: ListingEvent) -> bool {
         let names = self.names.lock();
+        if self.is_lost() {
+            return false;
+        }
         as_now(&names, event)
             .into_iter()
             .all(|event| self.tx.send(event))
@@ -592,20 +607,14 @@ impl Shared {
         let folder = match self.opened() {
             Ok(folder) => folder,
             Err(e) => {
-                if !self.is_lost() {
-                    self.tx
-                        .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
-                }
+                self.send(ListingEvent::Error(crate::ListingError::of_io(&e)));
                 return;
             }
         };
         let mut dir = match folder.read() {
             Ok(d) => d,
             Err(e) => {
-                if !self.is_lost() {
-                    self.tx
-                        .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
-                }
+                self.send(ListingEvent::Error(crate::ListingError::of_io(&e)));
                 return;
             }
         };
@@ -628,10 +637,7 @@ impl Shared {
             let ent = match ent {
                 Ok(e) => e,
                 Err(e) => {
-                    if !self.is_lost() {
-                        self.tx
-                            .send(ListingEvent::Error(crate::ListingError::of_io(&e)));
-                    }
+                    self.send(ListingEvent::Error(crate::ListingError::of_io(&e)));
                     return;
                 }
             };
@@ -655,7 +661,7 @@ impl Shared {
             batch.push(entry);
             if batch.len() >= self.ctx.batch_size {
                 let full = std::mem::replace(&mut batch, Vec::with_capacity(self.ctx.batch_size));
-                if !self.send_as_now(ListingEvent::Added(full)) {
+                if !self.send(ListingEvent::Added(full)) {
                     return;
                 }
             }
@@ -663,7 +669,7 @@ impl Shared {
         if cancel.is_cancelled() || self.is_lost() {
             return;
         }
-        if !batch.is_empty() && !self.send_as_now(ListingEvent::Added(batch)) {
+        if !batch.is_empty() && !self.send(ListingEvent::Added(batch)) {
             return;
         }
         let (kept, gone) = gone_after(previous, &seen, replaced);
@@ -681,7 +687,7 @@ impl Shared {
                 names.remove_id(*id);
             }
             drop(names);
-            self.send_as_now(ListingEvent::Removed(gone));
+            self.send(ListingEvent::Removed(gone));
         }
         self.listed
             .store(true, std::sync::atomic::Ordering::Release);
@@ -698,7 +704,7 @@ impl Shared {
                 self.hydrate(chunk);
             }
         }
-        self.tx.send(ListingEvent::Complete);
+        self.send(ListingEvent::Complete);
         if !stayed.is_empty() {
             let s = Arc::clone(self);
             self.ctx.scheduler.spawn_in(
@@ -744,7 +750,7 @@ impl Shared {
                     .collect()
             };
             if !unread.is_empty() {
-                self.send_as_now(ListingEvent::Unreadable(unread));
+                self.send(ListingEvent::Unreadable(unread));
             }
             return;
         };
@@ -800,19 +806,19 @@ impl Shared {
         let dir = self.dir();
         if !updated.is_empty() {
             self.fill(&dir, &mut updated);
-            self.send_as_now(ListingEvent::Updated(updated));
+            self.send(ListingEvent::Updated(updated));
         }
         if !gone.is_empty() {
-            self.send_as_now(ListingEvent::Removed(gone));
+            self.send(ListingEvent::Removed(gone));
         }
         if !unread.is_empty() {
-            self.send_as_now(ListingEvent::Unreadable(unread));
+            self.send(ListingEvent::Unreadable(unread));
         }
         // The row under the name is the file found there, in its place
         // and its selection.
         if !rekeyed.is_empty() {
             self.fill(&dir, &mut rekeyed);
-            self.send_as_now(ListingEvent::Renamed(
+            self.send(ListingEvent::Renamed(
                 stale.into_iter().zip(rekeyed).collect(),
             ));
         }
@@ -838,7 +844,7 @@ impl Shared {
         let now = spelled_as(&before, now);
         if now != before {
             self.dir.write().clone_from(&now);
-            self.tx.send(ListingEvent::Moved(now));
+            self.send(ListingEvent::Moved(now));
         }
         true
     }
@@ -918,28 +924,43 @@ impl Shared {
         )));
     }
 
-    /// Whether it was lost ([`Shared::lose`]): nothing of it is sent any
-    /// more.
+    /// Whether it was lost ([`Shared::lose`]) or handed on
+    /// ([`Shared::hand_on`]): nothing of it is sent any more.
     fn is_lost(&self) -> bool {
-        self.lost.load(Ordering::Acquire) != 0
+        self.lost.load(Ordering::Acquire) != LISTED
     }
 
     /// The folder is gone, or its volume was let go of: its entries go,
     /// its listing fails with `error`, and its listing lets go of it, its
     /// directory and its watch closed in the shared lane, so a refresh
     /// opens the folder again from its path. Its volume gone is said over
-    /// a deletion told before, never the other way.
+    /// a deletion told before, never the other way; one handed on says
+    /// nothing. Said under the names' lock, as every event it sends
+    /// ([`Shared::send`]): what another worker sends after is refused, and
+    /// two losses told at once leave the stronger last.
     fn lose(self: &Arc<Self>, error: crate::ListingError) {
         let rank = if error.kind == crate::location::Failure::Left {
             LOST_LEFT
         } else {
             LOST_MISSING
         };
-        let before = self.lost.fetch_max(rank, Ordering::AcqRel);
-        if before >= rank {
-            return;
-        }
-        if before == 0 {
+        let first = {
+            let mut names = self.names.lock();
+            let before = self.lost.load(Ordering::Acquire);
+            if before == HANDED_ON || before >= rank {
+                return;
+            }
+            self.lost.store(rank, Ordering::Release);
+            if before == LISTED {
+                let ids = std::mem::take(&mut *names).ids();
+                if !ids.is_empty() {
+                    self.tx.send(ListingEvent::Removed(ids));
+                }
+            }
+            self.tx.send(ListingEvent::Error(error));
+            before == LISTED
+        };
+        if first {
             let taken = self.slot.upgrade().and_then(|slot| {
                 let mut slot = slot.lock();
                 slot.as_ref()
@@ -950,12 +971,21 @@ impl Shared {
             if let Some(taken) = taken {
                 let_go(&self.ctx, taken);
             }
-            let ids = std::mem::take(&mut *self.names.lock()).ids();
-            if !ids.is_empty() {
-                self.send_as_now(ListingEvent::Removed(ids));
-            }
         }
-        self.tx.send(ListingEvent::Error(error));
+    }
+
+    /// Hand it on to the listing that opens its path again
+    /// (`OpenLocation::reopen`): nothing more of it is sent, under the
+    /// lock every event it sends is sent under. The entries it listed, for
+    /// the next listing to take out those it lists no more; `None` when it
+    /// was lost before, its entries gone with it.
+    fn hand_on(&self) -> Option<Vec<EntryId>> {
+        let names = self.names.lock();
+        if self.is_lost() {
+            return None;
+        }
+        self.lost.store(HANDED_ON, Ordering::Release);
+        Some(names.ids())
     }
 
     /// Changes the watcher told, on its thread: handed to a worker.
@@ -1001,7 +1031,7 @@ impl Shared {
             return;
         }
         if c.itself {
-            self.tx.send(ListingEvent::Changed);
+            self.send(ListingEvent::Changed);
         }
         if c.rescan {
             let prev = self.names.lock().ids();
@@ -1079,18 +1109,18 @@ impl Shared {
         }
         let (removed, mut renamed, mut added) = pair_changes(removed, added, replaced);
         if !removed.is_empty() {
-            self.send_as_now(ListingEvent::Removed(removed));
+            self.send(ListingEvent::Removed(removed));
         }
         // Changed entries arrive stat-ed; give providers their turn so
         // fields such as tags survive the update.
         if !renamed.is_empty() {
             let (olds, mut news): (Vec<EntryId>, Vec<Entry>) = renamed.drain(..).unzip();
             self.fill(&self.dir(), &mut news);
-            self.send_as_now(ListingEvent::Renamed(olds.into_iter().zip(news).collect()));
+            self.send(ListingEvent::Renamed(olds.into_iter().zip(news).collect()));
         }
         if !added.is_empty() {
             self.fill(&self.dir(), &mut added);
-            self.send_as_now(ListingEvent::Added(added));
+            self.send(ListingEvent::Added(added));
         }
     }
 }
@@ -1292,10 +1322,10 @@ impl OpenLocation for PathLocation {
     /// entries it listed taken out as the new ones are listed (no empty
     /// frame between).
     fn reopen(&self) {
-        let previous = self.shared.lock().take().and_then(|held| {
+        let held = self.shared.lock().take();
+        let previous = held.and_then(|held| {
             // Nothing more of it is sent: what it lists is another's now.
-            let before = held.lost.swap(LOST_MISSING, Ordering::AcqRel);
-            let ids = (before == 0).then(|| held.names.lock().ids());
+            let ids = held.hand_on();
             let_go(&self.ctx, held);
             ids
         });
@@ -1364,6 +1394,106 @@ mod tests {
                 return seen;
             }
         }
+    }
+
+    /// `dir` opened as a pane opens it, the listing itself at hand.
+    fn opened_here(app: &crate::App, dir: &Path, reads_metadata: bool) -> Arc<PathLocation> {
+        let ctx = OpenContext {
+            scheduler: app.scheduler.clone(),
+            cancel: CancelToken::new(),
+            batch_size: 64,
+            waker: None,
+            metadata: Arc::clone(&app.metadata),
+            fields: Arc::clone(&app.fields),
+            hints: Arc::clone(&app.hints),
+            companions: Arc::clone(&app.companions),
+            hidden_shown: false,
+            reads_metadata,
+        };
+        PathLocation::open(Location::from_path(dir), dir.to_path_buf(), ctx)
+    }
+
+    /// The events `rx` holds until one `done` says ends them, 20 s at most.
+    fn events_until(
+        rx: &Receiver<ListingEvent>,
+        done: impl Fn(&ListingEvent) -> bool,
+    ) -> Vec<ListingEvent> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut seen = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = rx.recv_timeout(left).expect("told in time");
+            let end = done(&event);
+            seen.push(event);
+            if end {
+                return seen;
+            }
+        }
+    }
+
+    /// A folder lost says nothing more (ADR-149): what a worker of it
+    /// still sends after (the `Complete` a first listing sends once it
+    /// stat-ed every entry, an entry a change found) is refused, never
+    /// saying over why it was lost; its volume gone says over a deletion
+    /// told before, never the other way; one handed on to the listing that
+    /// opened its path again says nothing at all.
+    #[test]
+    fn a_folder_lost_says_nothing_more() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("it's lost, été");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = opened_here(&app, &dir, true);
+        events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        let shared = open.shared.lock().clone().expect("listed");
+
+        shared.lose(crate::ListingError::missing(
+            crate::words::Words::as_written("deleted"),
+        ));
+        shared.lose(crate::ListingError::left(crate::words::Words::as_written(
+            "unmounted",
+        )));
+        shared.lose(crate::ListingError::missing(
+            crate::words::Words::as_written("deleted, told after"),
+        ));
+        assert!(!shared.send(ListingEvent::Complete), "refused once lost");
+        assert!(!shared.send(ListingEvent::Added(vec![Entry::new(
+            EntryId::UNKNOWN,
+            "late.txt",
+            EntryKind::File,
+        )])));
+        let told: Vec<ListingEvent> = open.rx.try_iter().collect();
+        let kinds: Vec<_> = told
+            .iter()
+            .filter_map(|e| match e {
+                ListingEvent::Error(error) => Some(error.kind),
+                ListingEvent::Complete | ListingEvent::Added(_) => panic!("told after: {e:?}"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                crate::location::Failure::Missing,
+                crate::location::Failure::Left
+            ]
+        );
+        assert!(matches!(told.first(), Some(ListingEvent::Removed(ids)) if ids.len() == 1));
+        assert!(open.shared.lock().is_none(), "let go of by its listing");
+
+        // Handed on: nothing more, not even a loss.
+        let again = opened_here(&app, &dir, false);
+        events_until(&again.rx, |e| matches!(e, ListingEvent::Complete));
+        let shared = again.shared.lock().clone().expect("listed");
+        assert_eq!(shared.hand_on().map(|ids| ids.len()), Some(1));
+        shared.lose(crate::ListingError::left(crate::words::Words::as_written(
+            "unmounted",
+        )));
+        assert!(!shared.send(ListingEvent::Complete));
+        assert!(again.rx.try_iter().next().is_none(), "nothing said");
+        open.close();
+        again.close();
     }
 
     /// A folder on a volume the user may let go of (here a remote, as
