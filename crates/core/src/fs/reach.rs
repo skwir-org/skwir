@@ -696,36 +696,35 @@ pub fn on_demand(path: &Path) -> bool {
 }
 
 /// [`on_demand`] in `points`, deepest first: the point holding `path`
-/// holds an automount point, or the next point above it is one (an
-/// indirect map's: `/net/host` below `/net`, `/misc/cd` below `/misc`).
-/// So a table in memory that still lists the mount just let go of answers
-/// as one read again after it would, whose deepest point holding `path`
-/// is the map's: never a share expired taken for a folder deleted.
+/// holds an automount point (a direct one's: systemd stacks the
+/// filesystem on its autofs), or the next point above it holds one alone
+/// (an indirect map's: `/net/host` below `/net`, `/misc/cd` below
+/// `/misc`). So a table in memory that still lists the mount just let go
+/// of answers as one read again after it would, whose deepest point
+/// holding `path` is the map's: never a share expired taken for a folder
+/// deleted. Below a direct point, what holds something else too, a mount
+/// is someone's own (a stick mounted in a folder systemd automounts), not
+/// the automounter's.
 fn on_demand_in(points: &[Mount], path: &Path) -> bool {
-    let mut holding = points.iter().filter(|mount| path.starts_with(&mount.point));
-    let Some(first) = holding.next() else {
+    let holding: Vec<&Mount> = points
+        .iter()
+        .filter(|mount| path.starts_with(&mount.point))
+        .collect();
+    let Some(own) = holding.first().map(|mount| &mount.point) else {
         return false;
     };
-    if first.on_demand {
+    let (at_own, above): (Vec<&Mount>, Vec<&Mount>) =
+        holding.iter().partition(|mount| mount.point == *own);
+    if at_own.iter().any(|mount| mount.on_demand) {
         return true;
     }
-    let own = &first.point;
-    let mut above = None;
-    for mount in holding {
-        if mount.point == *own {
-            if mount.on_demand {
-                return true;
-            }
-        } else if above.is_none_or(|point| point == &mount.point) {
-            above = Some(&mount.point);
-            if mount.on_demand {
-                return true;
-            }
-        } else {
-            break;
-        }
-    }
-    false
+    let Some(next) = above.first().map(|mount| &mount.point) else {
+        return false;
+    };
+    above
+        .iter()
+        .take_while(|mount| mount.point == *next)
+        .all(|mount| mount.on_demand)
 }
 
 /// The automount points a test says hold the paths below them
@@ -1722,7 +1721,8 @@ mod tests {
     /// in memory: a share mounted on an automount point, one an indirect
     /// map mounted below its point (listed still, a moment after the
     /// automounter let it go, or not), never a drive mounted below a folder
-    /// that is no automount point.
+    /// that is no automount point, nor below a direct automount point,
+    /// whose own filesystem is mounted on it.
     #[test]
     fn what_is_mounted_on_demand_is_told_by_the_table() {
         let table = |mounts: &[(&str, &str)]| {
@@ -1744,6 +1744,9 @@ mod tests {
             ("/media", "tmpfs"),
             ("/media/u/USB", "vfat"),
             ("/net/host/deeper", "nfs4"),
+            ("/data", "autofs"),
+            ("/data", "ext4"),
+            ("/data/usb", "vfat"),
         ]);
         for path in [
             "/misc/cd/it's a track.flac",
@@ -1751,6 +1754,7 @@ mod tests {
             "/net/host/share, été",
             "/mnt/nas/photos",
             "/mnt/nas",
+            "/data/it's there",
         ] {
             assert!(on_demand_in(&mounted, Path::new(path)), "{path}");
         }
@@ -1759,6 +1763,9 @@ mod tests {
             "/media/u/USB/photos",
             "/net/host/deeper/x",
             "/miscellaneous",
+            // Below a direct automount point, what is mounted there is
+            // someone's own: a stick, not the automounter's.
+            "/data/usb/photos",
         ] {
             assert!(!on_demand_in(&mounted, Path::new(path)), "{path}");
         }

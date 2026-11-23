@@ -76,19 +76,39 @@ struct Point {
     remote: bool,
     /// One is an automount point (`reach::Mount::on_demand`).
     on_demand: bool,
+    /// One is not: an automount point with its filesystem mounted on it
+    /// (systemd's direct automount), where one holding nothing but
+    /// automount points is an indirect map's (`/net`).
+    other: bool,
+}
+
+impl Point {
+    /// An indirect map's point: automount points alone, what is mounted
+    /// below it the automounter's.
+    fn is_map(&self) -> bool {
+        self.on_demand && !self.other
+    }
 }
 
 impl Mounts {
     /// Whether what is at `point` is mounted on demand: it holds an
-    /// automount point, or the deepest point above it is one (an indirect
-    /// map's, `/net`). A mount there let go of is the automounter's, after
-    /// a while unused, which is no volume going: looked up again, it is
-    /// mounted again (`systemd`'s `x-systemd.idle-timeout`, autofs's).
+    /// automount point (a direct one's), or the deepest point above it
+    /// holds automount points alone (an indirect map's, `/net`). A mount
+    /// there let go of is the automounter's, after a while unused, which is
+    /// no volume going: looked up again, it is mounted again (`systemd`'s
+    /// `x-systemd.idle-timeout`, autofs's). Below a direct point, which
+    /// holds its own filesystem too, a mount is someone's own (a stick
+    /// mounted in a folder systemd automounts): its going is a volume's, as
+    /// `reach::on_demand` says too.
     fn on_demand(&self, point: &Path) -> bool {
+        if self.table.get(point).is_some_and(|own| own.on_demand) {
+            return true;
+        }
         point
             .ancestors()
+            .skip(1)
             .find_map(|at| self.table.get(at))
-            .is_some_and(|seen| seen.on_demand)
+            .is_some_and(Point::is_map)
     }
 
     /// What is mounted now, read from memory.
@@ -99,6 +119,7 @@ impl Mounts {
             seen.mounts.insert(mount.id);
             seen.remote |= mount.remote;
             seen.on_demand |= mount.on_demand;
+            seen.other |= !mount.on_demand;
         }
         let known = app
             .registry
@@ -367,6 +388,7 @@ mod tests {
             table: table
                 .iter()
                 .map(|&(point, mounts, remote)| {
+                    let other = !mounts.is_empty();
                     let mounts = mounts.iter().copied().collect();
                     let on_demand = false;
                     (
@@ -375,6 +397,7 @@ mod tests {
                             mounts,
                             remote,
                             on_demand,
+                            other,
                         },
                     )
                 })
@@ -465,17 +488,19 @@ mod tests {
             .get_mut(Path::new("/mnt/nas"))
             .unwrap()
             .on_demand = true;
-        automounted
-            .table
-            .get_mut(Path::new("/net"))
-            .unwrap()
-            .on_demand = true;
+        // An indirect map's point holds its autofs alone.
+        let map = |point: &mut Point| {
+            point.on_demand = true;
+            point.other = false;
+        };
+        map(automounted.table.get_mut(Path::new("/net")).unwrap());
         automounted.table.insert(
             "/net/host".into(),
             Point {
                 mounts: [5].into_iter().collect(),
                 remote: true,
                 on_demand: false,
+                other: true,
             },
         );
         let mut expired = mounts(
@@ -491,12 +516,28 @@ mod tests {
             .get_mut(Path::new("/mnt/nas"))
             .unwrap()
             .on_demand = true;
-        expired.table.get_mut(Path::new("/net")).unwrap().on_demand = true;
+        map(expired.table.get_mut(Path::new("/net")).unwrap());
         assert!(
             Change::between(&automounted, &expired, |_| true)
                 .gone
                 .is_empty()
         );
+        // A stick mounted in a folder systemd automounts (a direct point,
+        // its own filesystem stacked on its autofs) and taken out: a volume
+        // gone, not the automounter's.
+        let mut stick = mounts(
+            &[
+                ("/", &[1], false),
+                ("/data", &[6, 7], false),
+                ("/data/usb", &[8], false),
+            ],
+            &[],
+        );
+        stick.table.get_mut(Path::new("/data")).unwrap().on_demand = true;
+        let mut out = mounts(&[("/", &[1], false), ("/data", &[6, 7], false)], &[]);
+        out.table.get_mut(Path::new("/data")).unwrap().on_demand = true;
+        let change = Change::between(&stick, &out, |_| true);
+        assert_eq!(change.gone.get(Path::new("/data/usb")), Some(&false));
         let stopped = mounts(&[("/", &[1], false)], &[]);
         let change = Change::between(&expired, &stopped, |_| true);
         assert!(change.gone.contains_key(Path::new("/mnt/nas")));
