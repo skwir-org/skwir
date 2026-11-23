@@ -341,34 +341,50 @@ pub struct PathLocation {
 
 /// What a folder's listing does about opening it: whether an open is
 /// under way, and whether it opens again once done, with what was listed
-/// before to take out (`OpenLocation::reopen` asked meanwhile).
+/// before to take out (`OpenLocation::reopen` asked meanwhile); and what
+/// was decided of its volume, which an open under way is held to as it
+/// ends, as the folder it opened is (ADR-149).
 #[derive(Default)]
 struct Opening {
     under_way: bool,
     again: bool,
     previous: Vec<EntryId>,
+    /// Its volume is about to be let go of (`OpenLocation::hold_nothing`):
+    /// every folder it opens from then on is read by its path, one an open
+    /// under way finds too, until a volume is mounted there again
+    /// (`reopen`).
+    hold_nothing: bool,
+    /// Its volume was let go of (`OpenLocation::volume_gone`): what an
+    /// open under way finds is lost at once, saying this, and what it
+    /// fails with says this instead. Forgotten as it is asked to open again
+    /// (a refresh, a volume mounted there).
+    gone: Option<crate::ListingError>,
 }
 
-/// Open the folder at `dir`, hold it in `slot` and list it: on a worker,
-/// in `lane`. `Ok` when cancelled.
-fn open_and_list(
+/// Open the folder at `dir` and hold it in `slot`, for its listing to
+/// list: on a worker, in `lane`. Held to what `opening` decided of its
+/// volume meanwhile (`hold_nothing`, `gone`), looked at once it is in
+/// `slot`, as what decides looks at `slot` once it decided: one of the two
+/// sees the other, and an open under way never holds a volume let go of
+/// nor shows a folder of one gone. `None` when cancelled.
+fn open_folder(
     dir: &Path,
     ctx: &OpenContext,
     tx: &EventSink,
     slot: &Arc<Mutex<Option<Arc<Shared>>>>,
+    opening: &Mutex<Opening>,
     held: &std::sync::OnceLock<PathBuf>,
     lane: Lane,
-    previous: Option<Vec<EntryId>>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Arc<Shared>>> {
     // Opening/stat-ing a sleeping disk and installing a watch are I/O.
     // Publish the handle first, then stream entries on this worker.
     let folder = Dir::open(dir)?;
     if ctx.cancel.is_cancelled() {
-        return Ok(());
+        return Ok(None);
     }
     let id = folder.identity()?;
     if ctx.cancel.is_cancelled() {
-        return Ok(());
+        return Ok(None);
     }
     let lane = if lane.is_shared() {
         super::reach::of_device(id.dev).map_or(lane, |remote| remote.lane())
@@ -379,8 +395,10 @@ fn open_and_list(
     // knows: `~/Music` a link into a drive is held there.
     let at = held.get_or_init(|| folder.path_now().unwrap_or_else(|| dir.to_path_buf()));
     // A volume the user may let go of is never held between reads
-    // (ADR-149, amended): an unmount by any program finds it free.
-    let folder = if lane.is_shared() && !super::volume::lets_go(at) {
+    // (ADR-149, amended): an unmount by any program finds it free. Nor one
+    // about to be let go of.
+    let hold_nothing = opening.lock().hold_nothing;
+    let folder = if lane.is_shared() && !hold_nothing && !super::volume::lets_go(at) {
         Folder::Held(Arc::new((folder, Held::new(dir, at))))
     } else {
         Folder::ByPath
@@ -415,12 +433,22 @@ fn open_and_list(
     {
         let mut slot = slot.lock();
         if ctx.cancel.is_cancelled() {
-            return Ok(());
+            return Ok(None);
         }
         *slot = Some(Arc::clone(&shared));
     }
-    shared.list(&ctx.cancel, previous);
-    Ok(())
+    // Decided while it opened: held to it now.
+    let (hold_nothing, gone) = {
+        let opening = opening.lock();
+        (opening.hold_nothing, opening.gone.clone())
+    };
+    if hold_nothing {
+        shared.hold_nothing();
+    }
+    if let Some(gone) = gone {
+        shared.lose(gone);
+    }
+    Ok(Some(shared))
 }
 
 impl PathLocation {
@@ -447,6 +475,8 @@ impl PathLocation {
                 return;
             }
             opening.under_way = true;
+            // Asked anew: what is at its path now is what it shows.
+            opening.gone = None;
         }
         self.spawn_open(None);
     }
@@ -474,12 +504,33 @@ impl PathLocation {
             move || {
                 let mut previous = previous;
                 loop {
-                    let result =
-                        open_and_list(&dir, &ctx, &tx, &slot, &held, lane, previous.take());
-                    if !ctx.cancel.is_cancelled()
-                        && let Err(error) = result
-                    {
-                        tx.send(ListingEvent::Error(crate::ListingError::of(error)));
+                    match open_folder(&dir, &ctx, &tx, &slot, &opening, &held, lane) {
+                        Ok(Some(shared)) if !shared.is_lost() => {
+                            shared.list(&ctx.cancel, previous.take());
+                        }
+                        // Lost as it opened (its volume gone meanwhile):
+                        // what was listed before goes with it.
+                        Ok(Some(_)) => {
+                            if let Some(ids) = previous.take() {
+                                tx.send(ListingEvent::Removed(ids));
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            if !ctx.cancel.is_cancelled() {
+                                // What was listed before is not there any
+                                // more: never left beside the failure.
+                                if let Some(ids) = previous.take() {
+                                    tx.send(ListingEvent::Removed(ids));
+                                }
+                                // Its volume gone says over what the open
+                                // met after.
+                                let gone = opening.lock().gone.clone();
+                                tx.send(ListingEvent::Error(
+                                    gone.unwrap_or_else(|| crate::ListingError::of(error)),
+                                ));
+                            }
+                        }
                     }
                     let mut state = opening.lock();
                     if state.again && !ctx.cancel.is_cancelled() {
@@ -495,7 +546,9 @@ impl PathLocation {
                         previous = (!ids.is_empty()).then_some(ids);
                         continue;
                     }
-                    *state = Opening::default();
+                    // What was decided of its volume stays.
+                    state.under_way = false;
+                    state.previous = Vec::new();
                     return;
                 }
             },
@@ -1298,19 +1351,27 @@ impl OpenLocation for PathLocation {
         self.start_listing(previous);
     }
 
+    /// Lost with its volume, an open under way too: told in `Opening`
+    /// first, then the folder held looked at, as an open looks at `Opening`
+    /// once it holds its folder (`open_folder`).
     fn volume_gone(&self, error: crate::ListingError) {
+        self.opening.lock().gone = Some(error.clone());
         let shared = self.shared.lock().clone();
         match shared {
             Some(shared) => shared.lose(error),
-            // Lost already, or never opened: said so all the same, which
-            // says more than a deletion told before.
+            // Lost already, never opened, or an open under way, which is
+            // lost as it ends: said now all the same, which says more than
+            // a deletion told before.
             None => {
                 self.tx.send(ListingEvent::Error(error));
             }
         }
     }
 
+    /// Holds nothing from now on, what an open under way finds too: told
+    /// in `Opening` first, then the folder held looked at (`volume_gone`).
     fn hold_nothing(&self) -> bool {
+        self.opening.lock().hold_nothing = true;
         if let Some(shared) = self.shared.lock().clone() {
             shared.hold_nothing();
         }
@@ -1334,6 +1395,9 @@ impl OpenLocation for PathLocation {
             if self.ctx.cancel.is_cancelled() {
                 return;
             }
+            // A volume mounted there: what it is now decides.
+            opening.gone = None;
+            opening.hold_nothing = false;
             // The open under way may have found the folder before: it
             // opens again once done.
             if opening.under_way {
@@ -1398,8 +1462,18 @@ mod tests {
 
     /// `dir` opened as a pane opens it, the listing itself at hand.
     fn opened_here(app: &crate::App, dir: &Path, reads_metadata: bool) -> Arc<PathLocation> {
+        opened_on(app, app.scheduler.clone(), dir, reads_metadata)
+    }
+
+    /// `dir` opened as a pane opens it, its work on `scheduler`.
+    fn opened_on(
+        app: &crate::App,
+        scheduler: crate::scheduler::Scheduler,
+        dir: &Path,
+        reads_metadata: bool,
+    ) -> Arc<PathLocation> {
         let ctx = OpenContext {
-            scheduler: app.scheduler.clone(),
+            scheduler,
             cancel: CancelToken::new(),
             batch_size: 64,
             waker: None,
@@ -1494,6 +1568,101 @@ mod tests {
         assert!(again.rx.try_iter().next().is_none(), "nothing said");
         open.close();
         again.close();
+    }
+
+    /// A scheduler of one worker, held by a job until the sender it gives
+    /// is dropped or sent to: what is asked of it meanwhile waits.
+    fn held_scheduler() -> (crate::scheduler::Scheduler, std::sync::mpsc::Sender<()>) {
+        let scheduler = crate::scheduler::Scheduler::new(1);
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let (taken, started) = std::sync::mpsc::channel::<()>();
+        scheduler.spawn_in(
+            Lane::SHARED,
+            Priority::Visible,
+            "test.hold",
+            CancelToken::new(),
+            move || {
+                let _ = taken.send(());
+                let _ = wait.recv_timeout(Duration::from_secs(20));
+            },
+        );
+        started
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the worker holds");
+        (scheduler, release)
+    }
+
+    /// A folder whose volume goes while it is opened (ADR-149): what the
+    /// open finds is lost at once, saying its volume went, never listed
+    /// after; one whose volume is about to be let go of holds nothing of
+    /// it once opened.
+    #[test]
+    fn an_open_under_way_is_held_to_what_was_decided_of_its_volume() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("it's opening, été");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+
+        let (scheduler, release) = held_scheduler();
+        let open = opened_on(&app, scheduler, &dir, false);
+        open.volume_gone(crate::ListingError::left(crate::words::Words::as_written(
+            "unmounted",
+        )));
+        drop(release);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Error(_)));
+        assert!(
+            matches!(told.last(), Some(ListingEvent::Error(e)) if e.kind == crate::location::Failure::Left)
+        );
+        // The open ends lost: nothing listed after, its folder let go of.
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while open.opening.lock().under_way {
+            assert!(std::time::Instant::now() < deadline, "never opened");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        for event in open.rx.try_iter() {
+            assert!(
+                matches!(&event, ListingEvent::Error(e) if e.kind == crate::location::Failure::Left),
+                "told after: {event:?}"
+            );
+        }
+        assert!(open.shared.lock().is_none());
+        open.close();
+
+        let (scheduler, release) = held_scheduler();
+        let open = opened_on(&app, scheduler, &dir, false);
+        assert!(open.hold_nothing());
+        drop(release);
+        events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        let shared = open.shared.lock().clone().expect("listed");
+        assert!(matches!(*shared.folder.read(), Folder::ByPath), "held");
+        open.close();
+    }
+
+    /// A folder opened again whose path leads nowhere now takes out what
+    /// it listed before, never left beside its failure (ADR-149).
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_opened_again_that_fails_takes_out_what_it_listed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::write(first.join("it's one.txt"), "1").unwrap();
+        let link = tmp.path().join("it leads, été");
+        std::os::unix::fs::symlink(&first, &link).unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = opened_here(&app, &link, false);
+        events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("nowhere"), &link).unwrap();
+        open.reopen();
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Error(_)));
+        assert!(
+            told.iter()
+                .any(|e| matches!(e, ListingEvent::Removed(ids) if ids.len() == 1)),
+            "{told:?}"
+        );
+        open.close();
     }
 
     /// A folder on a volume the user may let go of (here a remote, as
