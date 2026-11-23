@@ -3094,6 +3094,19 @@ impl Executor {
         running.chain(waiting).collect()
     }
 
+    /// Whether an action that began runs still at or below `tree`,
+    /// cancelled or not: one cancelled holds its files there until it stops
+    /// (the file it was at, a partial one it takes away), which
+    /// [`Executor::under_way_in`] no longer names. What waits its turn holds
+    /// nothing there. What a forced unmount waits for (ADR-149, 10).
+    pub fn runs_in(&self, tree: &Path) -> bool {
+        self.lane
+            .lock()
+            .started
+            .iter()
+            .any(|begun| begun.footprint.touches(tree))
+    }
+
     /// Refused while actions of Skwir's are under way at or below `tree`
     /// ([`Executor::under_way_in`]), named: letting go of the volume there
     /// (Eject, Disconnect) would cut them.

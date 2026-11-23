@@ -1317,14 +1317,15 @@ fn cut_or_refuse(app: &App, point: &Path, force: bool) -> anyhow::Result<usize> 
     Ok(0)
 }
 
-/// Wait, on a worker, until no action of Skwir's is under way at or below
-/// `point` any more, or [`CUT`] passed, or `lifetime` ended: what
+/// Wait, on a worker, until no action of Skwir's runs at or below `point`
+/// any more, cancelled or not (`Executor::runs_in`: one cancelled holds its
+/// files until it stops), or [`CUT`] passed, or `lifetime` ended: what
 /// `cut_or_refuse` cancelled lets go of its files.
 fn wait_cut(app: &App, point: &Path, lifetime: Option<&CancelToken>) {
     let deadline = std::time::Instant::now() + CUT;
-    while !app.executor.under_way_in(point).is_empty()
+    while app.executor.runs_in(point)
         && std::time::Instant::now() < deadline
-        && !lifetime.is_none_or(CancelToken::is_cancelled)
+        && !lifetime.is_some_and(CancelToken::is_cancelled)
     {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -3240,13 +3241,18 @@ mod tests {
             "{refused}"
         );
         assert!(!app.executor.under_way_in(&drive).is_empty());
-        // Forced: cancelled, and over once waited for.
+        // Forced: cancelled, no longer named at once, and over once waited
+        // for, holding nothing there: the plan has ended.
         assert!(cut_or_refuse(&app, &drive, true).unwrap() > 0);
-        wait_cut(&app, &drive, None);
-        assert!(
-            app.executor.under_way_in(&drive).is_empty(),
-            "still under way"
-        );
+        assert!(app.executor.under_way_in(&drive).is_empty(), "named still");
+        let lifetime = CancelToken::new();
+        wait_cut(&app, &drive, Some(&lifetime));
+        assert!(!app.executor.runs_in(&drive), "runs still");
+        let deadline = std::time::Instant::now() + WAIT;
+        while app.executor.is_busy() {
+            assert!(std::time::Instant::now() < deadline, "never ended");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let copied = std::fs::read_dir(&drive).unwrap().count();
         assert!(copied < names.len(), "stopped before the end: {copied}");
         // Nothing under way: nothing to refuse or cut.
