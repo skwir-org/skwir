@@ -10300,10 +10300,16 @@ dependencies = [
 name = "skwir-plugin-skwird"
 version = "0.6.1"
 dependencies = [
+ "anyhow",
  "parking_lot 0.12.5",
+ "schemars",
+ "serde",
+ "serde_json",
  "skwir-core",
+ "skwir-platform",
  "skwird-client",
  "tempfile",
+ "toml 1.2.2+spec-1.1.0",
  "tracing",
 ]
 

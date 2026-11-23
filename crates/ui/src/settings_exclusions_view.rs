@@ -3293,6 +3293,72 @@ impl SettingsView {
     }
 }
 
+impl SettingsView {
+    /// The Index page's way to the Exclusions page (ADR-150, 8): what the
+    /// searches, and the indexes they ask, leave out is said and kept there.
+    pub(crate) fn index_exclusions(
+        &mut self,
+        items: &mut Vec<AnyElement>,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) {
+        let focus = self.handle("index-exclusions", cx);
+        self.stop(&focus, Some(items.len()), None);
+        let kept = self.exclusions.catalog.kept_from(Role::Searches).count();
+        items.push(
+            card_row(
+                theme,
+                Edge {
+                    first: true,
+                    last: true,
+                },
+            )
+            .mt_4()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(sized(3.))
+                    .child(page_name().say())
+                    .child(
+                        div()
+                            .text_body()
+                            .text_color(theme.text_muted)
+                            .child(
+                                words!(
+                                    exclusions_index = "What searches leave out, whatever answers them: { $count ->
+                                        [one] { $count } exclusion
+                                       *[other] { $count } exclusions
+                                    }. Your Secrets are kept out of the indexes Skwir can tell.",
+                                    count = kept,
+                                    note = "On the Index page of the settings, the way to the Exclusions page: how many exclusions are kept from searches."
+                                )
+                                .say(),
+                            ),
+                    ),
+            )
+            .child(
+                controls::button(
+                    "index-exclusions",
+                    words!(
+                        exclusions_index_open = "Exclusions…",
+                        note = "A button of the Index page of the settings: opens the Exclusions page on what searches leave out."
+                    )
+                    .say(),
+                    Some("folder"),
+                    ButtonStyle::Plain,
+                    &focus,
+                    theme,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.show_exclusions(Role::Searches, cx))),
+            )
+            .into_any_element(),
+        );
+    }
+}
+
 /// The page's name, where its list and what the search finds are named.
 fn page_name() -> Words {
     words!(

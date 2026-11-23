@@ -2470,6 +2470,9 @@ settings_section_maps = Maps
 # A heading of a section of the settings.
 settings_section_models_3d = 3D models
 
+# A heading of a section of the settings: the index of every file's name that searches ask (skwird's).
+settings_section_names_index = Index of names
+
 # A heading of a section of the settings.
 settings_section_opening_addresses = Opening addresses
 

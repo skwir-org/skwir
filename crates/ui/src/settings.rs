@@ -3003,6 +3003,9 @@ pub enum Page {
     Privacy,
     /// The exclusions (ADR-125): its own editor (`settings_exclusions_view`).
     Exclusions,
+    /// What makes searches fast (ADR-150, 8): the indexes' settings, under
+    /// the way to Exclusions.
+    Index,
     Plugins,
     Keyboard,
     Changed,
@@ -3116,7 +3119,7 @@ impl Builtin {
 
 /// The dialog's own pages, by subject, in the sidebar's order; plugins'
 /// follow.
-static BUILTIN: [Builtin; 13] = [
+static BUILTIN: [Builtin; 14] = [
     Builtin {
         page: Page::General,
         name: page::GENERAL,
@@ -3341,12 +3344,33 @@ static BUILTIN: [Builtin; 13] = [
         icon: "folder",
         intro: || {
             words!(
-                settings_intro_exclusions = "The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours.",
+                settings_intro_exclusions = "The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours. The indexes Skwir can tell keep your Secrets out too (Index).",
                 note = "What a page of the settings window says under its title."
             )
         },
         when_used: false,
         sections: &[],
+    },
+    Builtin {
+        page: Page::Index,
+        name: page::INDEX,
+        owner: None,
+        title: || {
+            words!(
+                settings_title_index = "Index",
+                note = "A page of the settings window, as its list and its header name it: the indexes searches ask."
+            )
+        },
+        icon: "search",
+        intro: || {
+            words!(
+                settings_intro_index = "What makes searches fast: an index that answers which files have a name, where it proves it is current, and which folders it keeps current as they change. Where no index answers, a search looks through every folder.",
+                note = "What a page of the settings window says under its title."
+            )
+        },
+        // Listed while an index has settings here (skwird's plugin on).
+        when_used: true,
+        sections: &[section::NAMES_INDEX],
     },
     Builtin {
         page: Page::Plugins,
@@ -5981,6 +6005,7 @@ mod tests {
             page::NETWORK,
             page::PRIVACY,
             page::EXCLUSIONS,
+            page::INDEX,
             page::KEYBOARD,
         ] {
             let spec =

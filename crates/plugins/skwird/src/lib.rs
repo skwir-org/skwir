@@ -10,7 +10,11 @@
 //! searches, so an engine started on demand ends a minute after the last
 //! one. Every error is no engine, and the search walks. The Secrets folders
 //! (ADR-125) are kept out of the index through `exclude`, once a run and
-//! again once the exclusions change.
+//! again once the exclusions change. Where none runs, the first search
+//! starts one unless the Index page's switch says not (`skwird.start`).
+//! What the user keeps live is `kept`'s (ADR-150, 6).
+
+mod kept;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -114,12 +118,15 @@ impl Plugin for SkwirdPlugin {
             None if app.index_services() => Engines::Machine,
             None => Engines::None,
         };
+        let kept = kept::Kept::new(app.weak(), engines.clone());
+        kept::register(&kept, app);
         app.names.register(
             ID,
             Arc::new(Index {
                 app: app.weak(),
                 engines,
                 secrets: Mutex::default(),
+                kept,
             }),
         );
     }
@@ -127,7 +134,7 @@ impl Plugin for SkwirdPlugin {
 
 /// Which engines a search asks.
 #[derive(Clone, Debug)]
-enum Engines {
+pub(crate) enum Engines {
     /// The machine's: the system service, then the user's engine, then one
     /// started where skwird is installed.
     Machine,
@@ -144,6 +151,8 @@ struct Index {
     /// The Secrets folders this run kept out of the index, and what they
     /// were made from.
     secrets: Mutex<Option<Secrets>>,
+    /// What the user keeps live, sent at each connection.
+    kept: Arc<kept::Kept>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,24 +163,36 @@ struct Secrets {
     folders: Vec<PathBuf>,
 }
 
-impl Index {
-    /// How to find an engine, or none where none may be asked.
-    fn find(&self) -> Option<Find> {
-        let mut find = Find::new(CLIENT);
-        find.silence = Some(SILENCE);
-        // Where the client looks, and where an engine it starts serves and
-        // logs: the XDG folders as Skwir reads them.
-        find.runtime = skwir_core::xdg::runtime_dir();
-        find.state = skwir_core::xdg::state_home();
-        match &self.engines {
-            Engines::Machine => {}
-            Engines::At(socket) => {
-                find.socket = Some(socket.clone());
-                find.start = None;
-            }
-            Engines::None => return None,
+/// How to find an engine, starting one where none runs if `start`; none
+/// where none may be asked.
+pub(crate) fn find(engines: &Engines, start: bool) -> Option<Find> {
+    let mut find = Find::new(CLIENT);
+    find.silence = Some(SILENCE);
+    // Where the client looks, and where an engine it starts serves and
+    // logs: the XDG folders as Skwir reads them.
+    find.runtime = skwir_core::xdg::runtime_dir();
+    find.state = skwir_core::xdg::state_home();
+    match engines {
+        Engines::Machine if start => {}
+        Engines::Machine => find.start = None,
+        Engines::At(socket) => {
+            find.socket = Some(socket.clone());
+            find.start = None;
         }
-        Some(find)
+        Engines::None => return None,
+    }
+    Some(find)
+}
+
+impl Index {
+    /// How a search finds an engine: started where none runs, unless the
+    /// Index page's switch says not (ADR-150, 9).
+    fn find(&self) -> Option<Find> {
+        let start = self
+            .app
+            .upgrade()
+            .is_none_or(|app| app.settings.get::<bool>(kept::START).unwrap_or(true));
+        find(&self.engines, start)
     }
 
     /// Keep the Secrets folders out of the index (ADR-125, ADR-150 3),
@@ -223,6 +244,8 @@ impl NameIndex for Index {
         let stopper = client.stopper().map_err(|e| said("stopper", &e)).ok()?;
         let stop = cancel.on_cancel(move || stopper.stop());
         self.keep_secrets_out(&mut client);
+        // What the user keeps live, sent as differences (a user's engine).
+        self.kept.reconcile(&mut client);
         let coverage = client
             .coverage(root)
             .map_err(|e| said("coverage", &e))

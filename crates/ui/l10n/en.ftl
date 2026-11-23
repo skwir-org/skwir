@@ -2610,6 +2610,15 @@ exclusions_holding = holding { $file }
 # What the Holding field of the dialog that adds an exclusion shows while empty: examples of a file's name, written as typed.
 exclusions_holding_placeholder = .nosearch, CACHEDIR.TAG
 
+# On the Index page of the settings, the way to the Exclusions page: how many exclusions are kept from searches.
+exclusions_index = What searches leave out, whatever answers them: { $count ->
+        [one] { $count } exclusion
+       *[other] { $count } exclusions
+    }. Your Secrets are kept out of the indexes Skwir can tell.
+
+# A button of the Index page of the settings: opens the Exclusions page on what searches leave out.
+exclusions_index_open = Exclusions…
+
 # An answer to what the Exclusions page asks before a change lets agents read folders: nothing changes.
 exclusions_keep_private = Keep private
 
@@ -6791,10 +6800,13 @@ settings_intro_appearance = How Skwir looks.
 settings_intro_changed = Every setting that differs from its default and every plugin turned on or off from how Skwir comes, each with its way back.
 
 # What a page of the settings window says under its title.
-settings_intro_exclusions = The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours.
+settings_intro_exclusions = The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours. The indexes Skwir can tell keep your Secrets out too (Index).
 
 # What a page of the settings window says under its title.
 settings_intro_general = The language Skwir speaks, what it does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.
+
+# What a page of the settings window says under its title.
+settings_intro_index = What makes searches fast: an index that answers which files have a name, where it proves it is current, and which folders it keeps current as they change. Where no index answers, a search looks through every folder.
 
 # What a page of the settings window says under its title.
 settings_intro_keyboard = Every action and its keys, grouped by where they work. Click a key to change it, or + to add one: yours replace Skwir's on the same keys there.
@@ -7175,6 +7187,9 @@ settings_title_exclusions = Exclusions
 
 # A page of the settings window, as its list and its header name it.
 settings_title_general = General
+
+# A page of the settings window, as its list and its header name it: the indexes searches ask.
+settings_title_index = Index
 
 # A page of the settings window, as its list and its header name it.
 settings_title_keyboard = Keyboard

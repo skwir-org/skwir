@@ -61,6 +61,10 @@ pub mod page {
     /// The folders skwir treats apart, and what each is kept from:
     /// searches, agents (ADR-125).
     pub const EXCLUSIONS: &str = "exclusions";
+    /// What makes searches fast (ADR-150, 8): the indexes searches ask,
+    /// which folders they keep current, and whether Skwir starts them;
+    /// Phase 7's indexes join it.
+    pub const INDEX: &str = "index";
     pub const KEYBOARD: &str = "keyboard";
 }
 
@@ -282,6 +286,13 @@ pub mod section {
         )
     });
     // Network.
+    // Index.
+    pub const NAMES_INDEX: Section = Section::new("names_index", || {
+        crate::words!(
+            settings_section_names_index = "Index of names",
+            note = "A heading of a section of the settings: the index of every file's name that searches ask (skwird's)."
+        )
+    });
     pub const SERVERS: Section = Section::new("servers", || {
         crate::words!(
             settings_section_servers = "Servers",

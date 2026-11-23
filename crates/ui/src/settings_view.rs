@@ -2681,6 +2681,11 @@ impl Render for SettingsView {
                     toolbar = Some(self.exclusions_toolbar(&theme, window, cx));
                     content = Some(self.exclusions_list(&theme, window, cx));
                 }
+                // What the indexes leave out is the Exclusions page's.
+                Page::Index => {
+                    self.index_exclusions(&mut items, &theme, cx);
+                    self.page_rows(&Page::Index, &mut items, &theme, window, cx);
+                }
                 // Its private folders are the Exclusions page's, on Agents.
                 Page::Privacy => {
                     self.privacy_folders(&mut items, &theme, cx);

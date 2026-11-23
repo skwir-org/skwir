@@ -23167,3 +23167,43 @@ elsewhere (`RecordSource`), which Phase 7's indexed folders can take too.
   groups, the records alone); the settings dialog's 23 tests; rustfmt,
   clippy `-D warnings` on skwir-core and skwir-ui; the catalogs. Not yet
   drawn in a window: Kept live will be its first list (part 3).
+
+## 2026-11-23: the Index page and Kept live (ADR-150, 6 and 8 to 10; step E, parts 2 to 4)
+
+- **The Index page** (`settings::page::INDEX`, its section `NAMES_INDEX`),
+  after Exclusions in the dialog's list, listed while an index has
+  settings there; its intro says what an index does and that a search
+  walks where none answers. Above its settings, the way to Exclusions
+  (how many exclusions searches keep, the Secrets kept out of the
+  indexes Skwir can tell, Exclusions… on Searches); the Exclusions page's
+  intro names the Index page back. The words name no plugin; skwird's
+  own say what is skwird's.
+- **`skwird.start`**, a switch there, on by default (ADR-150, 9): off,
+  `Find.start` is none and only a running engine is asked.
+- **Kept live** (`skwird.kept_live`), the list skwird's plugin keeps
+  (`RecordSource`, part 1's groups): Your folders and Bookmarks
+  (`skwir_platform::places`), each group's switch following its source,
+  Added by you (Add Folder… through the system's chooser, Remove); every
+  row ticked or not, a source's folder unticked kept by its path; under
+  each name, its folder and what skwird says of it (live, live inside
+  another, not live and why, being sent, kept once skwird runs, live as
+  every folder at the system service); under the list, the share's use
+  and the order it fills in, or why there is none. What the user chose is
+  their data (`skwird.kept`, ADR-057), changed by the commands
+  (`skwird.kept_add`, `kept_remove`, `kept_tick`, `kept_follow`,
+  `keep_live`) off the window's thread, one at a time.
+- **Sent to skwird** as differences at each search's connection and
+  after each change (`Kept::reconcile`): this client's folders asked
+  (`watch` with nothing), the list's added, what it no longer names taken
+  back; a user's engine only; a change or the list asked never starts an
+  engine (`Kept::refresh`, once at a time).
+- **The menu's `Keep Live for Searches`** (165, beside the bookmarks; a
+  folder's menu, `single dir`), a menu source answering from memory: only
+  once a search found a user's engine, checked while the folder is kept.
+- **Checked:** the plugin's tests (the list in the share's order, each
+  folder once; adding, removing, ticking, following and the menu's
+  toggle), its others and the fake engine's; the settings dialog's tests
+  (the Index page drawn for its settings); `plugins_toggle` (all of it
+  withdrawn with the plugin), `skwird_search`, `settings`; rustfmt;
+  clippy `-D warnings` on skwir-core, skwir-plugin-skwird, skwir-ui and
+  skwir; the catalogs. Not yet: the page in a window (part 6).

@@ -56,6 +56,7 @@ fn engine(dir: &Path, root: &Path, silent: bool) -> Fake {
 fn index(engines: Engines) -> Index {
     Index {
         app: Weak::new(),
+        kept: kept::Kept::new(Weak::new(), engines.clone()),
         engines,
         secrets: Mutex::default(),
     }
