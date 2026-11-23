@@ -912,7 +912,7 @@ impl SettingsView {
                     .constraints
                     .record_source
                     .as_ref()
-                    .map(|source| source.add.clone());
+                    .map(|source| (source.add.clone(), source.adds_folders));
                 controls::button(
                     format!("add-{key}"),
                     // Its owner's own words (`SettingConstraints::record_add`).
@@ -925,7 +925,10 @@ impl SettingsView {
                 .key_context("SettingControl")
                 .when(editing, |b| b.opacity(0.5))
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(add) = &add {
+                    if let Some((add, true)) = &add {
+                        // A folder the user chooses first (Kept live).
+                        this.add_folder_record(add.clone(), cx);
+                    } else if let Some((add, false)) = &add {
                         let invocation = skwir_core::command::Invocation::new(add.as_str());
                         if let Err(error) = this.app.dispatch(&invocation) {
                             this.app.notify(

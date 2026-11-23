@@ -3769,6 +3769,9 @@ pub struct SettingsView {
     /// (`words::revision`) listed at, and the records' JSON, their words
     /// said (`settings_records::said_answer`).
     pub(crate) sourced: HashMap<String, ((u64, u64), String)>,
+    /// What each owner said of its list beside its records, by key: its
+    /// groups and a note under it (`settings_records::Shape`).
+    pub(crate) sourced_shapes: HashMap<String, crate::settings_records::Shape>,
     /// The settings file cannot be written (Home Manager's link): read
     /// when the dialog opens and at each wake, never while drawing.
     pub(crate) read_only: bool,
@@ -3966,6 +3969,7 @@ impl SettingsView {
             listed: 0,
             search_found: crate::settings_view::SearchFound::default(),
             sourced: HashMap::new(),
+            sourced_shapes: HashMap::new(),
             read_only: app.settings.read_only(),
             keys,
             exclusions,
@@ -4134,13 +4138,14 @@ impl SettingsView {
                         none.to_owned()
                     }
                 }
-                Ok(Outcome::Value(mut value)) => value
-                    .get_mut("records")
-                    .filter(|records| records.is_array())
-                    .map_or_else(
-                        || none.to_owned(),
-                        |records| crate::settings_records::said_answer(records.take()).to_string(),
-                    ),
+                Ok(Outcome::Value(value)) => {
+                    let mut said = crate::settings_records::said_answer(value);
+                    self.sourced_shapes
+                        .insert(key.clone(), crate::settings_records::Shape::of(&said));
+                    said.get_mut("records")
+                        .filter(|records| records.is_array())
+                        .map_or_else(|| none.to_owned(), |records| records.take().to_string())
+                }
                 Ok(_) => none.to_owned(),
                 Err(error) => {
                     tracing::debug!(key, "what its owner keeps is not listed: {error:#}");
@@ -4739,6 +4744,44 @@ impl SettingsView {
             self.reset(&key, cx);
         }
         self.reset_armed = false;
+    }
+
+    /// Add to a list its owner keeps elsewhere a folder the user chooses
+    /// in the system's chooser: the owner's `add` runs with its `path`
+    /// (`RecordSource::adding_folders`).
+    pub(crate) fn add_folder_record(&mut self, add: String, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(
+                words!(
+                    settings_add_folder_choose = "Add",
+                    note = "The button of the system's folder chooser opened by a list's Add Folder in the settings."
+                )
+                .say()
+                .into(),
+            ),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = paths.await;
+            this.update(cx, |this, _| {
+                let Ok(Ok(Some(paths))) = picked else {
+                    return;
+                };
+                let Some(path) = paths.first() else {
+                    return;
+                };
+                let invocation =
+                    Invocation::with_args(add.as_str(), &serde_json::json!({ "path": path }));
+                if let Err(error) = this.app.dispatch(&invocation) {
+                    this.app
+                        .notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn browse(&mut self, key: &str, cx: &mut Context<Self>) {

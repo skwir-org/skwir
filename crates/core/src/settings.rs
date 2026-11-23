@@ -442,15 +442,31 @@ pub struct RecordAction {
 /// `Words::to_data`, which the dialog says and an agent reads in English,
 /// what is no one's to translate as text) and changes them only
 /// through the owner's commands, each run with `{ "id": <record id> }`
-/// (`add` with nothing): never edited in place, never moved. The setting's
-/// own value is never read nor saved. The dialog lists them again when
-/// `revision` moves ([`RecordSource::changed`]).
+/// (`add` with nothing, or `{ "path": … }` where it adds folders,
+/// [`RecordSource::adding_folders`]); a command left empty is no button:
+/// never edited in place, never moved. The setting's own value is never
+/// read nor saved. The dialog lists them again when `revision` moves
+/// ([`RecordSource::changed`]).
+///
+/// The answer may also say (ADR-150, 6), each optional:
+/// - `groups`: `[{ "id", "title", "switch"? }]`, in order, each record
+///   under the one its `group` names, headed by its title (the Exclusions
+///   page's look), a group's `switch` (`{ "on", "command", "args"? }`)
+///   heading it, its records dimmed while it is off;
+/// - a record's `tick` (`{ "on", "command", "args"? }`), a box before its
+///   words;
+/// - `note`: words under the list (what the list costs, as its owner says).
+///
+/// A switch's or a tick's command runs with its `args` and `on`, the value
+/// it is to have.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RecordSource {
     pub list: String,
     pub add: String,
     pub edit: String,
     pub remove: String,
+    /// Whether `add` takes a folder the user chooses first (`{ "path" }`).
+    pub adds_folders: bool,
     #[serde(skip)]
     pub revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
@@ -462,8 +478,17 @@ impl RecordSource {
             add: add.into(),
             edit: edit.into(),
             remove: remove.into(),
+            adds_folders: false,
             revision: std::sync::Arc::default(),
         }
+    }
+
+    /// `add` is run with a folder the user chose first, in the system's
+    /// chooser: Add folder… (Kept live, ADR-150, 6).
+    #[must_use]
+    pub fn adding_folders(mut self) -> Self {
+        self.adds_folders = true;
+        self
     }
 
     /// Say that what `list` answers changed: the dialog asks again.

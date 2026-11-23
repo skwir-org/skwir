@@ -352,6 +352,15 @@ The key is the owner's; the page is the subject's (ADR-072).
   answered from memory (`ui.languages` reads no grammar there; asked off
   the window's thread, by a script or an agent, it checks the combined
   grammars waiting first, ADR-110).
+- **A list its owner keeps elsewhere may be grouped** (`RecordSource`,
+  ADR-150, 6): its answer names `groups`, each record under its
+  `group`'s heading as the Exclusions page heads its categories (the
+  title, how many it holds, a `switch` that runs the owner's command, its
+  records dimmed while it is off), a record's `tick` a box before its
+  words, and a `note` under the list. A switch or a tick runs its command
+  with `on`, the value it is to have; a command left empty is no button.
+  One that adds folders (`RecordSource::adding_folders`) opens the
+  system's chooser first. Nothing of this is the owner's to draw.
 - **Data is written by its owning command, off the window's thread.**
   `settings.apply` takes no `data` setting; its command changes it
   through `Settings::set` and saves it on a worker when asked from the

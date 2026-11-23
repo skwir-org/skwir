@@ -23145,3 +23145,25 @@ btrbk's). The user chose a rule by what a snapshot is, not a list.
 - **Checked:** `SKWIRD=<skwird 58609b2's target/debug> just skwird-check`
   green; rustfmt and clippy `-D warnings` on skwir (all targets). Not in
   `release-check` until skwird is packaged (ADR-150, 7).
+
+## 2026-11-23: a list kept elsewhere may be grouped (ADR-150, 6; step E, part 1)
+
+The user chose (option 2 of 3) that Kept live be drawn as the Exclusions
+page draws its categories, by extending the list a setting's owner keeps
+elsewhere (`RecordSource`), which Phase 7's indexed folders can take too.
+
+- **What an owner may answer beside its records:** `groups` (each
+  record under its `group`'s heading: its title, how many it holds, and
+  a `switch` running the owner's command, its records dimmed while off),
+  a record's `tick` (a box before its words), and a `note` under the list.
+  A switch or a tick runs its command with `on`, the value it is to have.
+  A command left empty is no button (a list's own folders removed, never
+  edited). `RecordSource::adding_folders`: Add opens the system's folder
+  chooser and runs `add` with the folder's `path`. Lists that say none of
+  this are drawn as before. `docs/invariants/settings.md` says so.
+- **Checked:** `settings_records`' test of an answer's groups, switch,
+  tick command and note, and of the lines drawn (the groups' order, one
+  switched off dimmed, one empty unheaded, what no group holds last; no
+  groups, the records alone); the settings dialog's 23 tests; rustfmt,
+  clippy `-D warnings` on skwir-core and skwir-ui; the catalogs. Not yet
+  drawn in a window: Kept live will be its first list (part 3).

@@ -5948,6 +5948,9 @@ records_filter_label = Filter the list
 # How many records a long list's filter in the settings kept (found), of all it holds (count).
 records_found_of = { $found } of { $count }
 
+# How many records a group of a list in the settings holds, beside its title.
+records_group_count = { $count }
+
 # Said while a record holding a secret (a password) waits for the desktop's keyring.
 records_keyring_asking = Asking the keyring…
 
@@ -6317,6 +6320,9 @@ settings_activity_unfold_description = How long an action you asked runs before 
 
 # What a setting's description says after its first sentence, in its tooltip.
 settings_activity_unfold_description_more = Until then, and for anything quicker, the footer's strip says how it goes.
+
+# The button of the system's folder chooser opened by a list's Add Folder in the settings.
+settings_add_folder_choose = Add
 
 # A badge on a setting whose change takes effect at the next start.
 settings_after_restart = Applies after restart

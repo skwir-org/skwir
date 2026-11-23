@@ -171,6 +171,139 @@ pub(crate) fn records(text: &str) -> Vec<Record> {
     serde_json::from_str(text).unwrap_or_default()
 }
 
+/// What an owner keeping a list elsewhere says of it beside its records
+/// (`RecordSource`, ADR-150, 6): its groups, in order, and a note under
+/// it, said for the window.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Shape {
+    pub groups: Vec<Group>,
+    pub note: Option<String>,
+}
+
+/// A group of a list: the records whose `group` is its `id`, headed by its
+/// title and its switch.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Group {
+    pub id: String,
+    pub title: String,
+    pub switch: Option<Toggle>,
+}
+
+/// A group's switch or a record's tick: whether it is on, and what turns
+/// it the other way (its command, run with its `args` and `on`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Toggle {
+    pub on: bool,
+    pub command: String,
+    pub args: serde_json::Value,
+}
+
+impl Toggle {
+    pub(crate) fn of(value: Option<&serde_json::Value>) -> Option<Toggle> {
+        let toggle = value?.as_object()?;
+        Some(Toggle {
+            on: toggle.get("on")?.as_bool()?,
+            command: toggle.get("command")?.as_str()?.to_owned(),
+            args: toggle
+                .get("args")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        })
+    }
+
+    /// What turns it the other way.
+    pub(crate) fn turned(&self) -> skwir_core::command::Invocation {
+        let mut args = self.args.clone();
+        match args.as_object_mut() {
+            Some(args) => {
+                args.insert("on".into(), serde_json::json!(!self.on));
+            }
+            None => args = serde_json::json!({ "on": !self.on }),
+        }
+        skwir_core::command::Invocation::with_args(self.command.as_str(), &args)
+    }
+}
+
+impl Shape {
+    /// What an owner's answer, said, says beside its records.
+    pub(crate) fn of(answer: &serde_json::Value) -> Shape {
+        let text = |value: Option<&serde_json::Value>| value?.as_str().map(str::to_owned);
+        Shape {
+            groups: answer
+                .get("groups")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|group| {
+                    Some(Group {
+                        id: text(group.get("id"))?,
+                        title: text(group.get("title")).unwrap_or_default(),
+                        switch: Toggle::of(group.get("switch")),
+                    })
+                })
+                .collect(),
+            note: text(answer.get("note")).filter(|note| !note.is_empty()),
+        }
+    }
+}
+
+/// A line of a list as it is drawn: a group's heading, or a record (none
+/// for the one being added), dimmed while its group's switch is off.
+enum Line<'a> {
+    Heading(&'a Group, usize),
+    Record(usize, Option<&'a Record>, bool),
+}
+
+/// The lines of `shown`, under their groups' headings in `shape`'s order
+/// (a group with nothing shown has none), what no group holds last; the
+/// records alone where the owner groups none.
+fn lines<'a>(shape: &'a Shape, shown: &[(usize, Option<&'a Record>)]) -> Vec<Line<'a>> {
+    if shape.groups.is_empty() {
+        return shown
+            .iter()
+            .map(|(index, record)| Line::Record(*index, *record, false))
+            .collect();
+    }
+    let group_of = |record: &Record| {
+        record
+            .get("group")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    let mut held: std::collections::HashMap<String, Vec<(usize, Option<&'a Record>)>> =
+        std::collections::HashMap::new();
+    let mut loose = Vec::new();
+    let known: std::collections::HashSet<&str> =
+        shape.groups.iter().map(|g| g.id.as_str()).collect();
+    for (index, record) in shown {
+        match record.and_then(group_of) {
+            Some(group) if known.contains(group.as_str()) => {
+                held.entry(group).or_default().push((*index, *record));
+            }
+            _ => loose.push((*index, *record)),
+        }
+    }
+    let mut lines = Vec::new();
+    for group in &shape.groups {
+        let Some(records) = held.remove(&group.id) else {
+            continue;
+        };
+        let off = group.switch.as_ref().is_some_and(|s| !s.on);
+        lines.push(Line::Heading(group, records.len()));
+        lines.extend(
+            records
+                .into_iter()
+                .map(|(index, record)| Line::Record(index, record, off)),
+        );
+    }
+    lines.extend(
+        loose
+            .into_iter()
+            .map(|(index, record)| Line::Record(index, record, false)),
+    );
+    lines
+}
+
 /// What an owner keeping a setting elsewhere answers (`RecordSource`,
 /// `ChoiceSource`), its words said for the window: each words' data in it
 /// (`Words::to_data`, which an agent reads in English) said in the
@@ -858,10 +991,21 @@ impl SettingsView {
             .border_1()
             .border_color(theme.border)
             .bg(theme.bg);
-        for (n, (index, record)) in shown.iter().enumerate() {
+        // Under their owner's groups, where it says some.
+        let shape = self.sourced_shapes.get(key).cloned().unwrap_or_default();
+        let lines = lines(&shape, &shown);
+        for (n, line) in lines.iter().enumerate() {
             let edge = crate::settings_view::Edge {
                 first: n == 0,
-                last: n + 1 == shown.len(),
+                last: n + 1 == lines.len(),
+            };
+            let (index, record, dimmed) = match line {
+                Line::Heading(group, count) => {
+                    rows =
+                        rows.child(self.group_heading(key, group, *count, edge, item, theme, cx));
+                    continue;
+                }
+                Line::Record(index, record, dimmed) => (index, record, *dimmed),
             };
             let id = record
                 .as_ref()
@@ -879,7 +1023,12 @@ impl SettingsView {
             } else {
                 continue;
             };
-            rows = rows.child(element);
+            // A group switched off: its records said, dimmed.
+            rows = rows.child(if dimmed {
+                div().opacity(0.5).child(element).into_any_element()
+            } else {
+                element
+            });
         }
         if shown.is_empty() {
             let said = if !query.is_empty() {
@@ -963,6 +1112,16 @@ impl SettingsView {
             );
         }
         block = block.child(div().w_full().child(rows));
+        // What the owner says under its list (what it costs).
+        if let Some(note) = shape.note {
+            block = block.child(
+                div()
+                    .w_full()
+                    .text_small()
+                    .text_color(theme.text_muted)
+                    .child(note),
+            );
+        }
         if long && query.is_empty() {
             let focus = self.handle(&format!("fold:{key}"), cx);
             self.stop(&focus, Some(item), None);
@@ -1190,6 +1349,71 @@ impl SettingsView {
             .into_any_element()
     }
 
+    /// A group's heading in a list its owner keeps elsewhere (ADR-150, 6),
+    /// as the Exclusions page heads its categories: its title, how many it
+    /// holds, and its switch, which runs the owner's command.
+    #[allow(clippy::too_many_arguments)] // a heading of the list and its place in it
+    fn group_heading(
+        &mut self,
+        key: &str,
+        group: &Group,
+        count: usize,
+        edge: crate::settings_view::Edge,
+        item: usize,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut heading = inset_row(theme, edge.first)
+            .id(gpui::SharedString::from(format!("records-group-heading-{key}-{}", group.id)))
+            .role(gpui::Role::Heading)
+            .child(
+                div()
+                    .flex_none()
+                    .max_w(gpui::relative(0.6))
+                    .truncate()
+                    .text_body()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(group.title.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_small()
+                    .text_color(theme.text_muted)
+                    .child(
+                        words!(
+                            records_group_count = "{ $count }",
+                            count = count,
+                            note = "How many records a group of a list in the settings holds, beside its title."
+                        )
+                        .say(),
+                    ),
+            );
+        if let Some(switch) = &group.switch {
+            let focus = self.handle(&format!("group:{key}:{}", group.id), cx);
+            self.stop(&focus, Some(item), None);
+            let turned = switch.turned();
+            heading = heading.child(
+                controls::switch(
+                    format!("records-group-{key}-{}", group.id),
+                    switch.on,
+                    &focus,
+                    theme,
+                )
+                .aria_label(group.title.clone())
+                .on_click(cx.listener(move |this, _, _, _| {
+                    if let Err(error) = this.app.dispatch(&turned) {
+                        this.app
+                            .notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
+                    }
+                })),
+            );
+        }
+        heading.into_any_element()
+    }
+
     /// A row of records their owner keeps elsewhere (`RecordSource`): its
     /// Edit and Remove run the owner's commands, which ask what they need
     /// themselves; it is not moved. The record may say what else its line
@@ -1226,7 +1450,12 @@ impl SettingsView {
                 ButtonStyle::Danger,
             ),
         ];
-        for (verb, label, command, style) in verbs.into_iter().filter(|_| !fixed) {
+        // A command left empty is no button (Kept live's own folders
+        // are removed, never edited).
+        for (verb, label, command, style) in verbs
+            .into_iter()
+            .filter(|(_, _, command, _)| !fixed && !command.is_empty())
+        {
             let focus = self.handle(&format!("{verb}:{key}:{id}"), cx);
             self.stop(&focus, Some(item), None);
             self.record_stops
@@ -1298,8 +1527,43 @@ impl SettingsView {
             );
             owns = true;
         }
+        // A box before its words, as the owner says it (Kept live's
+        // folders): pressing it runs the owner's command.
+        let tick = Toggle::of(record.get("tick")).map(|tick| {
+            let focus = self.handle(&format!("tick:{key}:{id}"), cx);
+            self.stop(&focus, Some(item), None);
+            self.record_stops
+                .push((focus.clone(), key.to_owned(), id.to_owned()));
+            let turned = tick.turned();
+            let accent = theme.accent;
+            div()
+                .id(gpui::SharedString::from(format!("record-tick-{key}-{id}")))
+                .role(gpui::Role::CheckBox)
+                .aria_label(title.clone())
+                .aria_toggled(if tick.on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .track_focus(&focus)
+                .flex_none()
+                .p(px(2.))
+                .rounded_sm()
+                .border_1()
+                .border_color(gpui::transparent_black())
+                .focus(move |s| s.border_color(accent))
+                .cursor_pointer()
+                .child(controls::check_box(tick.on, theme))
+                .on_click(cx.listener(move |this, _, _, _| {
+                    if let Err(error) = this.app.dispatch(&turned) {
+                        this.app
+                            .notify(skwir_core::app::NotifyLevel::Error, Words::of_error(error));
+                    }
+                }))
+        });
         inset_row(theme, edge.first)
             .key_context("SettingRecord")
+            .children(tick)
             .child(
                 div()
                     .flex_1()
@@ -1777,7 +2041,84 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{moved, said_answer, stepped};
+    use super::{Line, Record, Shape, lines, moved, said_answer, stepped};
+
+    /// What an owner says beside its records (ADR-150, 6): its groups in
+    /// order, a group's switch and a record's tick, the note under it.
+    #[test]
+    fn an_owner_s_groups_ticks_and_note_are_read_and_drawn_in_order() {
+        let answer = serde_json::json!({
+            "records": [],
+            "groups": [
+                { "id": "own", "title": "Your folders",
+                  "switch": { "on": false, "command": "x.follow", "args": { "source": "own" } } },
+                { "id": "added", "title": "Added by you" },
+                { "id": "empty", "title": "Nothing here" },
+                { "title": "no id: none" },
+            ],
+            "note": "Watches used: 12 of 100",
+        });
+        let shape = Shape::of(&answer);
+        assert_eq!(
+            shape
+                .groups
+                .iter()
+                .map(|g| g.id.as_str())
+                .collect::<Vec<_>>(),
+            ["own", "added", "empty"]
+        );
+        assert_eq!(shape.note.as_deref(), Some("Watches used: 12 of 100"));
+        let switch = shape.groups[0].switch.clone().unwrap();
+        assert!(!switch.on);
+        let turned = switch.turned();
+        assert_eq!(&*turned.name, "x.follow");
+        assert_eq!(
+            turned.args,
+            serde_json::json!({ "source": "own", "on": true })
+        );
+        assert_eq!(
+            Shape::of(&serde_json::json!({ "records": [] })),
+            Shape::default()
+        );
+
+        let record = |id: &str, group: Option<&str>| -> Record {
+            let mut r = Record::new();
+            r.insert("id".into(), id.into());
+            if let Some(group) = group {
+                r.insert("group".into(), group.into());
+            }
+            r
+        };
+        let (a, b, c, d) = (
+            record("a", Some("added")),
+            record("b", Some("own")),
+            record("c", None),
+            record("d", Some("own")),
+        );
+        let shown = [(0, Some(&a)), (1, Some(&b)), (2, Some(&c)), (3, Some(&d))];
+        let drawn: Vec<String> = lines(&shape, &shown)
+            .iter()
+            .map(|line| match line {
+                Line::Heading(group, count) => format!("{} ({count})", group.id),
+                Line::Record(index, _, dimmed) => {
+                    format!("{index}{}", if *dimmed { " dim" } else { "" })
+                }
+            })
+            .collect();
+        assert_eq!(
+            drawn,
+            ["own (2)", "1 dim", "3 dim", "added (1)", "0", "2"],
+            "in the groups' order, a group switched off dimmed, the empty one unheaded, the loose last"
+        );
+        let plain: Vec<usize> = lines(&Shape::default(), &shown)
+            .iter()
+            .filter_map(|line| match line {
+                Line::Record(index, _, _) => Some(*index),
+                Line::Heading(..) => None,
+            })
+            .collect();
+        assert_eq!(plain, [0, 1, 2, 3], "no groups: the records alone");
+    }
 
     /// Left and Right through a choice: from the one held, staying at the
     /// ends; from none held (Not chosen), Right the first and Left the
