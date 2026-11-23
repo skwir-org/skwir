@@ -4186,7 +4186,7 @@ impl Shell {
             "media_scrub" => self.media_scrub(args, cx),
             "media_escape" => {
                 if self.preview.fullscreen.is_some() {
-                    self.exit_fullscreen(window, cx);
+                    self.leave_fullscreen(window, cx);
                 } else {
                     self.preview_close(window, cx);
                 }

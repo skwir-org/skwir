@@ -132,7 +132,7 @@ impl Shell {
     /// find, play) work at once.
     pub fn preview_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.preview.fullscreen.is_some() {
-            return self.exit_fullscreen(window, cx);
+            return self.leave_fullscreen(window, cx);
         }
         if self.fullscreen_shows().is_none() {
             return;
@@ -173,6 +173,18 @@ impl Shell {
         self.preview.area.moved();
         self.read_ahead_next(window, cx);
         cx.notify();
+    }
+
+    /// Leave the whole screen for what showed the file before (the panel,
+    /// peek), which goes on showing it: what is read ahead is read again
+    /// there, in its room, as entering read it for the screen's
+    /// (`Area::moved`, `Ahead::fits`). `exit_fullscreen` alone where what is
+    /// shown changes too (another file, none, a player gone).
+    pub fn leave_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.exit_fullscreen(window, cx);
+        if self.preview.peek || self.preview.panel_open() {
+            self.read_ahead_next(window, cx);
+        }
     }
 
     pub fn exit_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {

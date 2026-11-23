@@ -376,7 +376,8 @@ A name that says nothing is not a binary file.
   another (`Ahead::place`, `fits`, `take_ahead`): fitted in another's
   room, it would be shown too small and decoded again as a zoom, or held
   larger than shown; entering or leaving the whole screen or peek reads
-  it again there. Only once the one shown has
+  it again there (`enter_fullscreen`, `leave_fullscreen`, `open_peek`,
+  `close_peek`). Only once the one shown has
   arrived: the two never wait for each other's decode, and an arrow held
   down, its steps quicker than a photo's decode, starts none. One at most, `PreviewState::ahead`, kept
   beside the preview since a step replaces the preview. It is keyed as
