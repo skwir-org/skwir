@@ -4814,6 +4814,9 @@ placeholder_filter_empty = Nothing here is { $filter }. Press Enter in the addre
 
 placeholder_filtered = Hidden by filters
 
+# A button in place of a folder's files when the drive or server the folder is on was unmounted, disconnected or is not open now: leave it for the home folder.
+placeholder_go_home = Go Home
+
 placeholder_gone = This folder no longer exists
 
 placeholder_hidden = Only hidden files here
@@ -4855,7 +4858,7 @@ placeholder_reading_files = Reading the details of { $count ->
        *[other] { $count } files
     }…
 
-# Under "… is not mounted" or "… is not connected" in place of a folder's files: the folder shows again by itself once its drive or server is back, whoever mounts it.
+# Under "… is not mounted", "… is locked" or "… is not connected" in place of a folder's files: the folder shows again by itself once its drive or server is back (mounted, unlocked, connected), whoever brings it back.
 placeholder_reopen_detail = This folder is on it, and shows here again once it is back.
 
 placeholder_retry = Try again
