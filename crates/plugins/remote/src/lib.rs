@@ -1056,7 +1056,12 @@ impl Remotes {
                     // A server kio-fuse holds, but maybe not this folder of
                     // it yet: asked for it.
                     Some(connector) if connector.mounts_each_path() => {
-                        let connected = self.connect_keyed(app, connector, address, ask, cancel)?;
+                        // Asked for a folder it does not hold yet, it
+                        // connects: said so meanwhile, as below.
+                        let connecting = Connecting::begin(self, app, address);
+                        let connected = self.connect_keyed(app, connector, address, ask, cancel);
+                        drop(connecting);
+                        let connected = connected?;
                         let below = connected.address.below(address).unwrap_or_default();
                         let path = join(&connected.point, below);
                         // A server's folder answered: its place opens it
