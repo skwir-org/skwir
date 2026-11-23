@@ -90,6 +90,10 @@ struct Shared {
     /// ([`Shared::hand_over`]) is asked of the folder its listing opens
     /// after it.
     opening: std::sync::Weak<Mutex<Opening>>,
+    /// How many times it was opened from its path for a read: what the
+    /// tests count.
+    #[cfg(test)]
+    opens: std::sync::atomic::AtomicUsize,
     /// Whether it was lost, and how: [`LISTED`] not, [`HANDED_ON`],
     /// [`LOST_MISSING`] or [`LOST_LEFT`] (its volume let go of, which a
     /// deletion told after does not say over). Changed only under the
@@ -429,6 +433,8 @@ fn open_folder(
         writing: Mutex::new(std::collections::HashSet::new()),
         slot: Arc::downgrade(slot),
         opening: Arc::downgrade(opening),
+        #[cfg(test)]
+        opens: std::sync::atomic::AtomicUsize::new(0),
         lost: std::sync::atomic::AtomicU8::new(LISTED),
     });
     // Watched before it is listed, so nothing changed
@@ -829,8 +835,9 @@ impl Shared {
                     return;
                 }
                 // Handed on meanwhile: the next listing reads what its
-                // order wants.
-                let _ = self.hydrate(chunk, Priority::Visible);
+                // order wants. In the folder this listing opened: read by
+                // its path, it is opened once.
+                let _ = self.hydrate_in(&folder, chunk, Priority::Visible);
             }
         }
         self.send(ListingEvent::Complete);
@@ -907,6 +914,22 @@ impl Shared {
             }
             return self.handed_on(ids);
         };
+        self.hydrate_in(&folder, ids, priority)
+    }
+
+    /// [`Shared::hydrate`] in `folder` as a read already found it (the
+    /// listing's own, which stats every entry before it completes): a
+    /// folder read by its path is opened once for that read, never once
+    /// for each batch of it.
+    fn hydrate_in(
+        &self,
+        folder: &Dir,
+        ids: &[EntryId],
+        priority: Priority,
+    ) -> Option<Vec<EntryId>> {
+        if self.is_lost() {
+            return self.handed_on(ids);
+        }
         let mut stated = Vec::with_capacity(ids.len());
         let (mut gone, mut unread) = (Vec::new(), Vec::new());
         let mut early = Vec::new();
@@ -928,7 +951,7 @@ impl Shared {
                 continue;
             };
             let mut e = Entry::new(id, name, EntryKind::Unknown);
-            match stat_entry_as(&folder, &mut e) {
+            match stat_entry_as(folder, &mut e) {
                 Stated::Found => {
                     // Written still as the watcher last said: a stat of it
                     // says so too, rather than drop its mark until told.
@@ -1036,19 +1059,11 @@ impl Shared {
     /// hold it open (the inode outlives its name until we close it), but a
     /// removed directory has no links left; its children's removal is the
     /// event that brings us here.
-    fn is_unlinked(&self) -> bool {
-        let held = match &*self.folder.read() {
-            Folder::Held(held) => Some(Arc::clone(held)),
-            Folder::ByPath => None,
-        };
-        match held {
-            Some(held) => held.0.is_unlinked(),
-            // Read by its path: another folder there now, or none, is this
-            // one gone.
-            None => match Dir::open(&self.dir()).and_then(|dir| dir.identity()) {
-                Ok(id) => id != self.id,
-                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
-            },
+    fn is_unlinked(&self, folder: &Opened) -> bool {
+        match folder {
+            Opened::Held(held) => held.0.is_unlinked(),
+            // Read by its path: another folder there now is this one gone.
+            Opened::Now { dir, .. } => dir.identity().is_ok_and(|id| id != self.id),
         }
     }
 
@@ -1059,6 +1074,8 @@ impl Shared {
             return Ok(Opened::Held(Arc::clone(held)));
         }
         let dir = self.dir();
+        #[cfg(test)]
+        self.opens.fetch_add(1, Ordering::Relaxed);
         let opened = Dir::open(&dir)?;
         let held = Held::new(&dir, &dir);
         Ok(Opened::Now {
@@ -1237,7 +1254,23 @@ impl Shared {
             drop(self.watcher.lock().take());
             return;
         }
-        if c.deleted || (c.moved && !self.follow_self()) || self.is_unlinked() {
+        if c.deleted || (c.moved && !self.follow_self()) {
+            self.lose_self();
+            return;
+        }
+        // Opened once for what follows: read by its path, the folder there
+        // now tells whether this one went.
+        let folder = match self.opened() {
+            Ok(folder) => folder,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.lose_self();
+                return;
+            }
+            // Not there to read now: its watch or the mounts say what
+            // comes next.
+            Err(_) => return,
+        };
+        if self.is_unlinked(&folder) {
             self.lose_self();
             return;
         }
@@ -1283,11 +1316,6 @@ impl Shared {
             .filter_map(|n| self.ctx.companions.owner(n))
             .collect();
         names.extend(owners);
-        let Ok(folder) = self.opened() else {
-            // Not there to read now: its watch or the mounts say what
-            // comes next.
-            return;
-        };
         for name in names {
             if self.ctx.cancel.is_cancelled() {
                 return;
@@ -1988,6 +2016,38 @@ mod tests {
         let (point, open) = shown_on("a drive", false);
         umount(&point);
         events_until(&open.rx, |e| matches!(e, ListingEvent::Error(_)));
+        open.close();
+    }
+
+    /// A folder read by its path (a remote's, as pretended) is opened once
+    /// for a read: the listing's own stats of every entry, made before it
+    /// completes for a pane whose order reads them, read in the folder the
+    /// listing opened, never once more for each batch (ADR-149).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_folder_read_by_its_path_is_opened_once_a_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let volume = tmp.path().join("a server");
+        let shown = volume.join("many, été");
+        std::fs::create_dir_all(&shown).unwrap();
+        for i in 0..300 {
+            std::fs::write(shown.join(format!("it's {i}.txt")), "x").unwrap();
+        }
+        crate::fs::reach::pretend_remote(&volume);
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = opened_here(&app, &shown, true);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        let updated: usize = told
+            .iter()
+            .filter_map(|e| match e {
+                ListingEvent::Updated(entries) => Some(entries.len()),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(updated, 300, "every entry read before it completes");
+        let shared = open.shared.lock().clone().expect("listed");
+        assert!(matches!(*shared.folder.read(), Folder::ByPath));
+        assert_eq!(shared.opens.load(Ordering::Relaxed), 1, "opened once");
         open.close();
     }
 
