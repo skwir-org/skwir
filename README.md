@@ -78,6 +78,7 @@ phones KDE holds; the rest is optional:
 | `skwir-mermaid`   | Mermaid diagrams in Markdown                          |
 | `skwir-math`      | Formulas typeset in Markdown, notebooks and HTML      |
 | `skwir-mupdf`     | PDFs and books laid out in pages through MuPDF (AGPL) |
+| `skwir-heif`      | HEIC and AVIF pictures through libheif                |
 
 Some previews use programs you may already have, such as LibreOffice or
 ffmpeg: [Previews](docs/previews.md) says which. Remote folders use the tools
@@ -114,6 +115,9 @@ sudo dnf install ./skwir-0.6.0-1.x86_64.rpm
 sudo dnf install ./skwir-media-0.6.0-1.x86_64.rpm      # optional, and so on
 ```
 
+Fedora's libheif reads AVIF but not HEIC: for HEIC pictures, install RPM
+Fusion's `libheif-freeworld` beside `skwir-heif`.
+
 ### Arch Linux
 
 From the AUR, with an AUR helper or by hand:
@@ -123,8 +127,9 @@ paru -S skwir                                          # or: yay -S skwir
 git clone https://aur.archlinux.org/skwir.git && cd skwir && makepkg -si
 ```
 
-Arch's `skwir` holds the player and the Poppler and DjVuLibre readers;
-install `gst-plugins-base`, `poppler-glib` and `djvulibre` to use them.
+Arch's `skwir` holds the player, the Poppler and DjVuLibre readers and the
+HEIC and AVIF reader; install `gst-plugins-base`, `poppler-glib`, `djvulibre`
+and `libheif` to use them.
 `skwir-mermaid`, `skwir-math` and `skwir-mupdf` are packages of their own.
 
 Two other packages stand in for those: `skwir-bin` installs the release's
