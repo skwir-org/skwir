@@ -15,6 +15,8 @@ fn taught() {
         std::env::set_var("SKWIR_HEIF_WORKER", env!("CARGO_BIN_EXE_skwir-heif-worker"));
     }
     picture::formats();
+    // As the thumbnails' discovery asks it, the program started.
+    assert!(skwir_platform::heif::probe(), "the helper works");
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -66,8 +68,42 @@ fn without_the_helper_a_heic_is_left_to_the_desktop() {
     unsafe {
         std::env::set_var("SKWIR_HEIF_WORKER", fixture("no-such-helper"));
     }
+    assert!(!skwir_platform::heif::probe());
     assert!(!skwir_platform::heif::reads("image/heic"));
     assert!(!skwir_platform::thumb_providers::decodes("image/avif"));
+}
+
+/// A helper that is found but cannot run (its library missing, as where
+/// Arch's `libheif` is not installed) answers no probe: its types stay
+/// the thumbnailer's.
+#[cfg(unix)]
+#[test]
+fn a_helper_that_cannot_run_is_left_out() {
+    use std::os::unix::fs::PermissionsExt;
+    let folder = tempfile_folder();
+    let helper = folder.join("skwir-heif-worker");
+    std::fs::write(&helper, "#!/bin/sh\nexit 127\n").unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // SAFETY: as in `taught`.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("SKWIR_HEIF_WORKER", &helper);
+    }
+    assert!(
+        !skwir_platform::heif::reads("image/heic"),
+        "not before it answers"
+    );
+    assert!(!skwir_platform::heif::probe());
+    assert!(!skwir_platform::heif::reads("image/heic"));
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A folder of this test's own, under the tests' cache (never `/tmp`).
+fn tempfile_folder() -> PathBuf {
+    let cache = std::env::var_os("XDG_CACHE_HOME").map_or_else(std::env::temp_dir, PathBuf::from);
+    let folder = cache.join(format!("heif-helper-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    folder
 }
 
 /// What the helper says, run directly on the fixture `name`: the size it

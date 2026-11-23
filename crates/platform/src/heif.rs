@@ -6,8 +6,8 @@
 //! Taught to `image` as a decoder (`picture::formats`), so a HEIC is read
 //! wherever a picture is (its size, a decode shrunk, a region, a
 //! thumbnail, a comic's page), and counted as read here only where the
-//! helper is found (`reads`): elsewhere the desktop's thumbnailer draws
-//! it, as before. A region is decoded from the tiles it covers
+//! helper works (`reads`, by its `--probe`): elsewhere the desktop's
+//! thumbnailer draws it, as before. A region is decoded from the tiles it covers
 //! (`Decoder`'s `picture::Regional`, ADR-148 amended): an iPhone's photo
 //! is stored in tiles of 512 pixels, and a part of 2000 × 1600 of one of
 //! 45 megapixels decodes a tenth of them. The thumbnail the file carries
@@ -182,9 +182,44 @@ fn program() -> Option<&'static Path> {
 }
 
 /// Whether a file of type `mime` is read here: its type is HEIF's or
-/// AVIF's, and the helper is installed.
+/// AVIF's, and the helper works (`probe`). Until it has said so, no
+/// (the probe started then, on a thread of its own, where nothing asked
+/// it yet): its pictures are the thumbnailer's meanwhile.
 pub fn reads(mime: &str) -> bool {
-    TYPES.contains(mime) && program().is_some()
+    TYPES.contains(mime) && works()
+}
+
+/// Whether the helper works here: found, and answering `--probe`, which
+/// it does once its library is loaded. Found is not enough: Arch's
+/// skwir carries the helper, `libheif` an optional dependency, and a
+/// helper that cannot start would keep its types from the thumbnailer
+/// and `ImageMagick`. Asked once, the answer kept; it starts the helper, so
+/// call it from a worker (the thumbnails' discovery does as the program
+/// starts, then asks again what waited).
+pub fn probe() -> bool {
+    *WORKS.get_or_init(|| WORKER.works())
+}
+
+/// What `probe` answered.
+static WORKS: OnceLock<bool> = OnceLock::new();
+
+/// What `probe` answered, or no while it has not, the probe started.
+fn works() -> bool {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if let Some(&works) = WORKS.get() {
+        return works;
+    }
+    if !STARTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        let started = std::thread::Builder::new()
+            .name("heif-probe".into())
+            .spawn(|| {
+                probe();
+            });
+        if let Err(error) = started {
+            tracing::debug!("the HEIF helper's probe not started: {error}");
+        }
+    }
+    false
 }
 
 /// Whether `start`, a file's first bytes, begins a HEIF or an AVIF.

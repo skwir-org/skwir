@@ -116,7 +116,9 @@ asked, in the preview as in the grid (decision 3).
    `image`, do not run the helper for it again, and a thumbnail too small
    for what is asked is not decoded; the pixels it writes are read
    straight into the decode's buffer, not held twice. Its types count as read here only where
-   it is installed (`heif::reads`), so elsewhere the desktop's thumbnailer
+   it works (`heif::reads`; amended: by its `--probe`, asked once on a
+   worker, as found is not enough where `libheif` is optional, as on
+   Arch), so elsewhere the desktop's thumbnailer
    draws them as before. A package of its own, `skwir-heif`, recommended
    by `skwir` (Debian's recommending libheif's decoder plugins); in Arch's
    `skwir`, `libheif` an optional dependency; a flag of Nix's package, on

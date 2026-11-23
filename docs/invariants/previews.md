@@ -227,7 +227,8 @@ A name that says nothing is not a binary file.
   asked next, so one that carries no JPEG (a phone's DNG) keeps the
   fallbacks' picture. HEIC and AVIF through the libheif
   helper (`heif`), an `image` decoder whose types count as decoded here
-  only where the helper is installed (`heif::reads`), its size and its
+  only where the helper works (`heif::reads`: its `--probe` answered,
+  asked once on a worker, found not being enough), its size and its
   thumbnail's asked once of a file's bytes (`size`, kept by their hash:
   the thumbnail decoded only where its size is wanted), its runs asked by
   whoever decodes (`heif::asking`: cancelled with the request, the

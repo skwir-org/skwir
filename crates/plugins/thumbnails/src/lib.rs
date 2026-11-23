@@ -456,6 +456,12 @@ impl Plugin for ThumbnailsPlugin {
                 "thumbnailers.discover",
                 app.lifetime().child(),
                 move || {
+                    // Whether Skwir's HEIF helper works here, which decides
+                    // whose its pictures are (ADR-148): asked first, and
+                    // what was asked meanwhile asked again.
+                    if skwir_platform::heif::probe() {
+                        service.providers_changed();
+                    }
                     let found = Thumbnailers::from_system();
                     let any = !found.is_empty();
                     let _ = discovered.found.set(found);
