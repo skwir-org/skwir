@@ -98,6 +98,33 @@ a11y-check *args:
         --atspi "$atspi" --dbus "$(nixpkgs dbus.out)" \
         --xdotool "$(nixpkgs xdotool)/bin/xdotool" {{args}}
 
+# skwird's plugin against a real engine (ADR-150, 11): its tests, each
+# starting an engine on a fixture of its own (crates/skwir/tests/skwird_engine.rs),
+# then a search in the release window heard over AT-SPI
+# (tools/test/skwird_window.py). `SKWIRD` names skwird's program, else the
+# PATH's; with none, it fails. Nothing of the user's is read.
+skwird-check *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    skwird="${SKWIRD:-$(command -v skwird || true)}"
+    if [ -z "$skwird" ] || [ ! -x "$skwird" ]; then
+        echo "skwird-check: no skwird: install it, or name its program in SKWIRD" >&2
+        exit 1
+    fi
+    export SKWIRD="$(realpath "$skwird")"
+    cargo nextest run -p skwir --test skwird_engine --run-ignored only
+    nixpkgs() { nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' "nixpkgs#$1"; }
+    case " {{args}} " in *" --skwir "*) ;; *) cargo build --release -p skwir ;; esac
+    atspi=$(nixpkgs at-spi2-core)
+    python=$(python3 -c 'import sys; print(f"python{sys.version_info[0]}.{sys.version_info[1]}")')
+    export PYTHONPATH="$(nixpkgs python3Packages.pygobject3)/lib/$python/site-packages"
+    export GI_TYPELIB_PATH="$atspi/lib/girepository-1.0:$(nixpkgs glib.out)/lib/girepository-1.0:$(nixpkgs gobject-introspection.out)/lib/girepository-1.0"
+    tools/test/skwird_window.py \
+        --xvfb "$(nixpkgs xorg.xorgserver)/bin/Xvfb" \
+        --icd "$(nixpkgs mesa)/share/vulkan/icd.d/lvp_icd.x86_64.json" \
+        --atspi "$atspi" --dbus "$(nixpkgs dbus.out)" \
+        --xdotool "$(nixpkgs xdotool)/bin/xdotool" --skwird "$SKWIRD" {{args}}
+
 # Run after the window changes, and look at docs/images/ before committing
 # (tools/screenshots/readme.py: an X display of its own, synthetic files).
 # Make the README's screenshots again, light and dark.

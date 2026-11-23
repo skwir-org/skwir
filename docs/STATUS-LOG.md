@@ -23123,3 +23123,25 @@ btrbk's). The user chose a rule by what a snapshot is, not a list.
   1,257 tests. `bench-check --only tag_search_us,tags_check_us` within
   budget (3.23 s of 7.5, 0.42 s of 4) under a load average of 62, so no
   finer comparison was made.
+
+## 2026-11-23: `just skwird-check` (ADR-150, step F)
+
+- **What it runs.** With a real `skwird` (`SKWIRD`, else the `PATH`'s;
+  none, it fails saying so): `crates/skwir/tests/skwird_engine.rs`,
+  ignored but there (`--run-ignored only`), each test starting `skwird
+  serve --root` on a fixture of its own in five folders of its own under
+  `~/.cache/skwir-tests` and waiting until its root is read; then the
+  release window's check, `tools/test/skwird_window.py` (B's, from the
+  scratch folder, on `tools/test/a11y.py`'s window), with `--shots` for
+  screenshots.
+- **The tests:** a search answered from the engine's index, checked;
+  a file made since found once the sync proves the index; live once
+  kept live (`watch`, waited for until skwird says live); a folder in
+  the engine's exclusions answered as a hole (`excluded`) and walked by
+  the search. The window: "2 results, index checked Today 17:29", "1
+  result, index up to date", "0 results, index as of 15 Jan 2027, 1
+  excluded" for `/` (a stand-in plocate), heard over AT-SPI, `entries`
+  agreeing.
+- **Checked:** `SKWIRD=<skwird 58609b2's target/debug> just skwird-check`
+  green; rustfmt and clippy `-D warnings` on skwir (all targets). Not in
+  `release-check` until skwird is packaged (ADR-150, 7).
