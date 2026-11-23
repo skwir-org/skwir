@@ -367,23 +367,24 @@ def bodies_of(source):
     return found
 
 
-# A number written in a message (digits, a decimal or grouping mark between
-# them): what the English keeps on one line with what is beside it by a
-# no-break space (`24\u{a0}MP`, `1920\u{a0}×\u{a0}1080`) stays there in a
-# translation. An argument is the catalogs' test's to hold so
+# A number written in a message (digits, a decimal mark between them, or
+# a grouping mark before each three: `1,5`, `1.920`, `1 920` with a narrow
+# no-break space): what the English keeps on one line with what is beside
+# it by a no-break space (`24\u{a0}MP`, `1920\u{a0}×\u{a0}1080`) stays
+# there in a translation. An argument is the catalogs' test's to hold so
 # (`crates/core/src/words/tests.rs`).
-DIGITS = re.compile(r"(?<![\d.,])\d+(?:[.,]\d+)*(?![\d])")
-JOINING = "  ⁠"
+DIGITS = re.compile(r"(?<![\d.,])\d+(?:[.,]\d+|[\u00a0\u202f]\d{3}(?!\d))*(?![\d])")
+JOINING = "\u00a0\u202f\u2060"
 
 
 def number_sides(text):
-    """The numbers `text` writes, each keyed by its digits (a comma read as
-    a point: `1,5` and `1.5` are one number), with the sides where a plain
-    space parts it from what is beside it and those where a no-break space
-    joins it to it: `>` after it, `<` before it. Each found with where it is
-    in `text`."""
+    """The numbers `text` writes, each keyed by its digits alone (`1,5` and
+    `1.5` are one number, `1.920` and `1920` too), with the sides where a
+    plain space parts it from what is beside it and those where a no-break
+    space joins it to it: `>` after it, `<` before it. Each found with
+    where it is in `text`."""
     for found in DIGITS.finditer(text):
-        key = found.group(0).replace(",", ".")
+        key = re.sub(r"\D", "", found.group(0))
         after = text[found.end() : found.end() + 1]
         before = text[found.start() - 1 : found.start()] if found.start() else ""
         for side, beside in ((">", after), ("<", before)):
@@ -393,20 +394,26 @@ def number_sides(text):
                 yield key + side, "joined", found
 
 
+def english_of(source):
+    """Each message's text in an English catalog's `source`, by its id, as
+    `joined_problems` takes the English: its lines joined."""
+    return {id_: "\n".join(text for _, _, text in lines) for id_, (_, lines) in bodies_of(source).items()}
+
+
 def joined_problems(path, source, english):
     """Where the catalog `source`, at `path`, parts a number from what is
-    beside it by a plain space, where a line may break, that the English
-    catalog's text `english` joins to it by a no-break space (and never
-    parts): a number and its unit, a dimension's numbers and their `×`."""
-    given = bodies_of(english)
+    beside it by a plain space, where a line may break, that its English
+    joins to it by a no-break space (and never parts): a number and its
+    unit, a dimension's numbers and their `×`. `english` is each message's
+    English by its id: what the code says (`catalogs`), or a plugin's from
+    outside's `en.ftl` (`english_of`)."""
     problems = []
     for id_, (_, lines) in bodies_of(source).items():
-        if id_ not in given:
+        if id_ not in english:
             continue
         joined, parted = set(), set()
-        for _, _, text in given[id_][1]:
-            for side, how, _ in number_sides(text):
-                (joined if how == "joined" else parted).add(side)
+        for side, how, _ in number_sides(english[id_]):
+            (joined if how == "joined" else parted).add(side)
         kept = joined - parted
         if not kept:
             continue
@@ -759,13 +766,20 @@ def main():
             if path.exists():
                 problems += spacing_problems(path, language, path.read_text())
     # Every translation, a plugin's from outside's too, keeps on one line
-    # the numbers its English joins to what is beside them.
+    # the numbers its English joins to what is beside them: the English the
+    # code says, which its en.ftl may not say yet (a plugin's from outside
+    # is its en.ftl, written by its author).
     for english in sorted((ROOT / "crates").glob("**/l10n/en.ftl")):
         if "target" in english.relative_to(ROOT).parts:
             continue
+        folder = english.parents[1]
+        if folder in found:
+            said = {id_: text for id_, (text, _, _) in found[folder].items()}
+        else:
+            said = english_of(english.read_text())
         for path in sorted(english.parent.glob("*.ftl")):
             if path != english:
-                problems += joined_problems(path, path.read_text(), english.read_text())
+                problems += joined_problems(path, path.read_text(), said)
     known = {share["language"] for share in language_shares}
     problems += [
         f"{shown(OFFERED)}: {tag} is no language a catalog is in" for tag in record if tag not in known

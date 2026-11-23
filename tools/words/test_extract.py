@@ -151,7 +151,7 @@ class Messages(unittest.TestCase):
         )
 
     def test_a_translation_keeps_on_one_line_the_numbers_its_english_joins(self):
-        nbsp, narrow = " ", " "
+        nbsp, narrow = "\u00a0", "\u202f"
         english = "\n".join(
             [
                 f"mp = 12 to 24{nbsp}MP",
@@ -176,7 +176,7 @@ class Messages(unittest.TestCase):
                 "gone = 9 MB, a message the English has not",
             ]
         )
-        problems = extract.joined_problems(Path("sample/it.ftl"), source, english)
+        problems = extract.joined_problems(Path("sample/it.ftl"), source, extract.english_of(english))
         self.assertEqual(
             [problem.split(": ", 1)[0] for problem in problems],
             [
@@ -192,8 +192,45 @@ class Messages(unittest.TestCase):
         self.assertIn("`lines` parts 1 from what follows", problems[4])
         # Joined as the English joins them: nothing.
         self.assertEqual(
-            extract.joined_problems(Path("sample/fr.ftl"), f"mp = de 12 à 24{narrow}Mpx", english),
+            extract.joined_problems(
+                Path("sample/fr.ftl"), f"mp = de 12 à 24{narrow}Mpx", extract.english_of(english)
+            ),
             [],
+        )
+
+    def test_a_number_is_told_by_its_digits_whatever_groups_them(self):
+        nbsp, narrow = "\u00a0", "\u202f"
+        english = {"dims": f"1920{nbsp}×{nbsp}1080 pixels", "loose": "1920 lines"}
+        source = "\n".join(
+            [
+                "dims = 1.920 × 1080",
+                f"loose = 1{narrow}920 righe",
+                f"other = 1{narrow}920 ×",
+            ]
+        )
+        problems = extract.joined_problems(Path("sample/it.ftl"), source, english)
+        self.assertEqual(
+            [problem.split(": ", 1)[0] for problem in problems], ["sample/it.ftl:1:8", "sample/it.ftl:1:16"]
+        )
+        self.assertIn("`dims` parts 1.920 from what follows", problems[0])
+        self.assertIn("`dims` parts 1080 from what comes before", problems[1])
+        french = extract.joined_problems(
+            Path("sample/fr.ftl"), f"dims = 1{narrow}920 × 1{narrow}080", english
+        )
+        self.assertEqual(
+            [problem.split(": ", 1)[0] for problem in french], ["sample/fr.ftl:1:8", "sample/fr.ftl:1:16"]
+        )
+        self.assertIn("parts 1\u202f080 from what comes before", french[1])
+
+    def test_the_english_compared_is_what_the_code_says(self):
+        # A message whose code now joins a number its en.ftl still parts:
+        # the translation is held to the code's English.
+        source = "mp = da 12 a 24 MP"
+        self.assertEqual(
+            extract.joined_problems(Path("sample/it.ftl"), source, extract.english_of("mp = 12 to 24 MP")), []
+        )
+        self.assertEqual(
+            len(extract.joined_problems(Path("sample/it.ftl"), source, {"mp": "12 to 24\u00a0MP"})), 1
         )
 
     def test_the_program_s_own_catalogs_are_read_whole(self):
