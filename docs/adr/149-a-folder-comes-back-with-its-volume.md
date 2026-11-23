@@ -17,7 +17,8 @@ night, on the user's go (decisions 13 to 16): a server that stops under
 its mount is said lost as a folder of it fails, with Connect where its
 files still show; nothing is read unasked on a volume let go of; what
 udisks unmounts unannounced is let go of as it begins; Windows' removable
-drives hold nothing between reads.
+drives are read by their path (their watch still holds them, corrected
+after review).
 
 ## Context
 
@@ -178,13 +179,20 @@ drives hold nothing between reads.
     says Skwir no longer uses it, to unmount it again if nothing else
     does (Skwir cannot tell whose hold it was). What Skwir is
     unmounting itself is its own Eject's to say.
-16. **Windows' removable drives hold nothing between reads** (amended
+16. **Windows' removable drives are read by their path** (amended
     again): a drive Windows calls removable (`GetDriveTypeW`: a USB
     stick, a card reader) is read by its path, as Linux's are (decision
     8); a USB disk Windows calls fixed is held. macOS's `/Volumes` was
-    already. Neither system's notice of an unmount to come is followed
-    (DiskArbitration's approval, `DBT_DEVICEQUERYREMOVE` to a window):
-    compiled only, tried nowhere.
+    already. Its folder's watch still holds it (corrected after review):
+    Windows' watch (`ReadDirectoryChangesW`, notify's) keeps a handle on
+    the folder watched for as long as it watches, where Linux's inotify
+    and macOS's FSEvents hold nothing, so Windows' Eject finds the drive
+    in use while a pane shows a folder there, and goes on once the pane
+    goes elsewhere. Holding nothing there would close the watch as
+    Windows asks (`DBT_DEVICEQUERYREMOVE` for that handle, to a window
+    registered for it), which is not built. Neither system's notice of
+    an unmount to come is followed (DiskArbitration's approval, that
+    message): compiled only, tried nowhere.
 
 ## Considered
 

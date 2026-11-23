@@ -282,7 +282,9 @@ around the views is in [shell.md](shell.md).
   folder is held by nothing between reads, so no unmount is refused
   because of it (ADR-149, amended): it is followed only when renamed
   within its folder, found there by its identity; moved elsewhere it is
-  gone.
+  gone. Its watch holds nothing on Linux (inotify) nor on macOS
+  (FSEvents); Windows' (`ReadDirectoryChangesW`) keeps a handle on the
+  folder, so a drive there is held while a pane shows it (ADR-149, 16).
 - **A search laid out as a tree (ADR-127)** is the tree view's own
   (`PaneView::lays_found_out_as_tree`): the flat order stays the source
   (`Pane::flat_order`) and `Pane::order` reads the tree a worker made of
