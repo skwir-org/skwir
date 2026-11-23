@@ -1099,10 +1099,14 @@ fn specimen(path: &Path) -> Part {
 
 /// A picture: a JPEG, PNG, GIF or WebP as it is, with how to turn it,
 /// when within `Picture::MOST_PIXELS`; another, or one larger, decoded
-/// and turned (within the platform's limits) and written as a PNG.
+/// and turned (within the platform's limits) and written as a PNG. A
+/// camera's raw file is the JPEG it carries, as the window shows it
+/// (`picture::Typed`, ADR-148), never the small picture its TIFF shape
+/// begins with.
 fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part> {
     let alt = display_name(path);
-    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let typed = skwir_platform::picture::Typed::new(path, mime)?;
+    let reader = typed.reader()?;
     let embedded = matches!(
         mime,
         Some("image/jpeg" | "image/png" | "image/gif" | "image/webp")
@@ -1114,8 +1118,7 @@ fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part>
     let (path, (width, height), orientation) = if embedded && within {
         (path.to_owned(), (width, height), orientation)
     } else {
-        let reader = image::ImageReader::open(path)?.with_guessed_format()?;
-        let decoded = skwir_platform::picture::decode(reader, image::Limits::default())?;
+        let decoded = skwir_platform::picture::decode(typed.reader()?, image::Limits::default())?;
         let png = work.join("picture.png");
         decoded.save_with_format(&png, image::ImageFormat::Png)?;
         (png, (decoded.width(), decoded.height()), 0)
@@ -1152,15 +1155,23 @@ pub(crate) fn sheet(
         let name = display_name(path);
         // What a link opens, typed by its own name.
         let content = skwir_core::fs::content_path(path);
-        let image = content
+        let mime = content
             .as_deref()
-            .and_then(|content| skwir_platform::mime::of_request(content, None))
-            .is_some_and(|mime| {
-                skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image)
-            });
+            .and_then(|content| skwir_platform::mime::of_request(content, None));
+        let image = mime.as_ref().is_some_and(|mime| {
+            skwir_platform::mime::is_kind(mime, skwir_platform::mime::Kind::Image)
+        });
         let read = content
             .filter(|_| image)
-            .map(|content| sheet_picture(&content, &work.join(format!("sheet-{n}")), &name))
+            .map(|content| {
+                let stem = work.join(format!("sheet-{n}"));
+                sheet_picture(
+                    &content,
+                    mime.as_ref().map(|mime| mime.0.as_str()),
+                    &stem,
+                    &name,
+                )
+            })
             .transpose();
         match read {
             Ok(Some(picture)) => pictures.push(picture),
@@ -1198,10 +1209,16 @@ pub(crate) fn sheet(
     ))
 }
 
-/// A picture of a contact sheet: decoded, turned, shrunk, written as a
-/// JPEG at `stem` (a PNG where it is see-through).
-fn sheet_picture(path: &Path, stem: &Path, name: &str) -> anyhow::Result<paper::Picture> {
-    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+/// A picture of a contact sheet, of type `mime`: decoded, turned, shrunk,
+/// written as a JPEG at `stem` (a PNG where it is see-through); a raw
+/// file's, the JPEG it carries.
+fn sheet_picture(
+    path: &Path,
+    mime: Option<&str>,
+    stem: &Path,
+    name: &str,
+) -> anyhow::Result<paper::Picture> {
+    let reader = skwir_platform::picture::open_typed(path, mime)?;
     let image = skwir_platform::picture::decode_fitted(
         reader,
         SHEET_SIDE,
@@ -1526,5 +1543,40 @@ mod tests {
         );
         assert!(notice.unwrap().english().contains("notes.txt"));
         assert!(sheet(&[text], &work, &cancel).is_err(), "no picture");
+    }
+
+    /// A camera's raw file prints as the JPEG it carries, as the window
+    /// shows it (ADR-148), never as its TIFF shape: here a directory
+    /// naming a JPEG of 64 × 48 and no picture of its own.
+    #[test]
+    fn a_raw_file_prints_as_the_jpeg_it_carries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 80)
+            .encode_image(&image::RgbImage::from_pixel(
+                64,
+                48,
+                image::Rgb([20, 90, 200]),
+            ))
+            .unwrap();
+        let mut raw = b"II*\0\x08\0\0\0".to_vec();
+        raw.extend_from_slice(&2u16.to_le_bytes());
+        let at = 8 + 2 + 2 * 12 + 4;
+        for (tag, value) in [(0x0201u16, at), (0x0202, jpeg.len() as u32)] {
+            raw.extend_from_slice(&tag.to_le_bytes());
+            raw.extend_from_slice(&4u16.to_le_bytes());
+            raw.extend_from_slice(&1u32.to_le_bytes());
+            raw.extend_from_slice(&value.to_le_bytes());
+        }
+        raw.extend_from_slice(&0u32.to_le_bytes());
+        raw.extend_from_slice(&jpeg);
+        let path = tmp.path().join("a photo’s name.nef");
+        std::fs::write(&path, raw).unwrap();
+        let Part::Pictures { pictures, .. } =
+            picture(&path, Some("image/x-nikon-nef"), tmp.path()).unwrap()
+        else {
+            panic!("a picture");
+        };
+        assert_eq!((pictures[0].width, pictures[0].height), (64, 48));
     }
 }
