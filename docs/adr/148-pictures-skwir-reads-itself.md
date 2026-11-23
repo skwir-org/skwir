@@ -151,6 +151,16 @@ asked, in the preview as in the grid (decision 3).
      gives none whose proportions are not the picture's, within a pixel
      of rounding (another picture's, or the picture's before it was
      cropped): the whole is decoded then.
+   - **A run is asked for by whoever decodes** (review before 0.6.1,
+     `heif::asking`): `image`'s hook reaches no argument of the caller's,
+     so the caller names itself for its thread while it decodes. The run
+     is cancelled with its request; the picture the user waits for (the
+     preview's own, a zoom's part) has a turn of its own, never behind
+     thumbnails or what is read ahead (two shared turns); a grid's
+     thumbnail never waits for one: with none free it answers `Busy`, as
+     ImageMagick's does, and is asked again once one is, its worker going
+     on with other files. A thumbnail waiting held a scheduler worker
+     each, all but one of them in a folder of AVIFs.
 
 ## Alternatives
 

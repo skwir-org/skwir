@@ -2059,6 +2059,7 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
         let bytes = inspection::read_drawing(held, Bounds::QUICK, cancel).ok()?;
         return inspection::drawing_size(&bytes).ok();
     }
+    let _asking = skwir_platform::heif::asking(cancel, skwir_platform::heif::Asker::Shown);
     skwir_platform::picture::size(skwir_platform::picture::open_typed(held, Some(mime)).ok()?).ok()
 }
 
@@ -2078,6 +2079,16 @@ fn decode_image(
     first: Option<&dyn Fn(PreviewContent)>,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
+    // A HEIF's runs cancelled with the request, the one shown in a turn of
+    // its own (ADR-148 amended).
+    let _asking = skwir_platform::heif::asking(
+        cancel,
+        if matches!(turn, Turn::Ahead) {
+            skwir_platform::heif::Asker::Background
+        } else {
+            skwir_platform::heif::Asker::Shown
+        },
+    );
     // A raw file as the JPEG it carries (ADR-148).
     let reader = || skwir_platform::picture::open_typed(held, mime);
     let (w, h) = skwir_platform::picture::size(reader()?)?;
@@ -2195,6 +2206,7 @@ fn decode_region(
     let Some(_turn) = Turn::Zoomed.take(cancel) else {
         anyhow::bail!("cancelled");
     };
+    let _asking = skwir_platform::heif::asking(cancel, skwir_platform::heif::Asker::Shown);
     let started = std::time::Instant::now();
     let img = skwir_platform::picture::decode_region(
         skwir_platform::picture::open_typed(held, mime)?,

@@ -295,6 +295,11 @@ impl ThumbnailProvider for ImageDecoder {
         if mime_of(req).is_some_and(|m| is_drawing(&m)) {
             return drawn_to(path, req.size.pixels(), cancel);
         }
+        // A HEIF's runs cancelled with the request, and never waited for:
+        // with no turn free, the thumbnails ask again once one is, this
+        // worker going on with other files meanwhile (ADR-148 amended).
+        let asking = crate::heif::asking(cancel, crate::heif::Asker::Thumbnail);
+        let busy = || anyhow::Error::from(skwir_core::thumbs::Busy::new(crate::heif::when_free));
         // A raw file as the JPEG it carries (ADR-148).
         let mime = mime_of(req);
         let open = || {
@@ -310,13 +315,20 @@ impl ThumbnailProvider for ImageDecoder {
             |longer| longer >= side,
             crate::picture::Threads::Caller,
         );
+        if asking.busy() {
+            return Err(busy());
+        }
         if let Ok(Some(carried)) = carried {
             if cancel.is_cancelled() {
                 return Ok(None);
             }
             return Ok(Some(fit(carried, req.size.pixels())));
         }
-        let (w, h) = open()?.into_dimensions()?;
+        let own = open()?.into_dimensions();
+        if asking.busy() {
+            return Err(busy());
+        }
+        let (w, h) = own?;
         anyhow::ensure!(
             u64::from(w) * u64::from(h) <= MAX_PIXELS,
             "{w}x{h} is too large to thumbnail"
@@ -325,7 +337,11 @@ impl ThumbnailProvider for ImageDecoder {
             open()?,
             req.size.pixels(),
             crate::picture::Threads::Caller,
-        )?;
+        );
+        if asking.busy() {
+            return Err(busy());
+        }
+        let img = img?;
         if cancel.is_cancelled() {
             return Ok(None);
         }

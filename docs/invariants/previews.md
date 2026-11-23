@@ -226,7 +226,10 @@ A name that says nothing is not a binary file.
   asked next, so one that carries no JPEG (a phone's DNG) keeps the
   fallbacks' picture. HEIC and AVIF through the libheif
   helper (`heif`), an `image` decoder whose types count as decoded here
-  only where the helper is installed (`heif::reads`): a format a helper
+  only where the helper is installed (`heif::reads`), its runs asked by
+  whoever decodes (`heif::asking`: cancelled with the request, the
+  preview's own in a turn of its own, a thumbnail never waiting: `Busy`
+  with no turn free, as ImageMagick's): a format a helper
   reads is never listed as decoded where the helper is missing, or its
   pictures would lose the thumbnailer's. A region of a picture in tiles
   is decoded from the tiles it covers, found as stored and turned by the

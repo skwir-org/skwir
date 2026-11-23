@@ -12,6 +12,13 @@
 //! is stored in tiles of 512 pixels, and a part of 2000 × 1600 of one of
 //! 45 megapixels decodes a tenth of them. The thumbnail the file carries
 //! stands for it while it decodes (`thumbnail`).
+//!
+//! A run is asked for by whoever decodes (`asking`, ADR-148 amended):
+//! cancelled with its request, in a turn of the preview's own for the
+//! picture the user waits for, and, for a grid's thumbnail, never waited
+//! for (`Asking::busy`): the thumbnails take it again once a turn is free
+//! (`when_free`), their worker going on with other files meanwhile.
+use std::cell::{Cell, RefCell};
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -64,6 +71,109 @@ const FILE_BYTES: u64 = 256 << 20;
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Runs at once, the others waiting: each holds a picture whole.
 static TURNS: crate::process::Turns = crate::process::Turns::new(2);
+/// The preview's own run, for the picture the user waits for: never
+/// behind thumbnails or what is read ahead.
+static SHOWN: crate::process::Turns = crate::process::Turns::new(1);
+
+/// Who asks for the pictures decoded on a thread (`asking`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asker {
+    /// The picture the user waits for (the preview's own, a zoom's part):
+    /// a turn of its own.
+    Shown,
+    /// What is read ahead, or one of many decoded together (a comic's
+    /// pages, a contact sheet): one of the shared turns, waited for.
+    Background,
+    /// A grid's thumbnail: one of the shared turns, never waited for. With
+    /// none free, the run is not made and the request is busy
+    /// (`Asking::busy`).
+    Thumbnail,
+}
+
+/// What a thread's decodes are asked with (`asking`).
+struct Asked {
+    cancel: CancelToken,
+    asker: Asker,
+    /// Whether a run found no turn free (`Asker::Thumbnail`).
+    busy: Cell<bool>,
+}
+
+thread_local! {
+    /// The innermost `asking` of this thread, read by the decoder
+    /// `image`'s hook makes, which no argument of the caller's reaches.
+    static ASKED: RefCell<Option<Asked>> = const { RefCell::new(None) };
+}
+
+/// The HEIF and AVIF pictures this thread decodes until the guard is
+/// dropped are asked by `asker`, and their runs cancelled with `cancel`.
+/// Unasked (a picture in a document), a run waits for one of the shared
+/// turns and ends with its time alone.
+pub fn asking(cancel: &CancelToken, asker: Asker) -> Asking {
+    let now = Asked {
+        cancel: cancel.clone(),
+        asker,
+        busy: Cell::new(false),
+    };
+    Asking {
+        previous: ASKED.with(|slot| slot.replace(Some(now))),
+    }
+}
+
+/// While held, what this thread's decodes are asked with (`asking`).
+#[must_use = "the asking ends when the guard is dropped"]
+pub struct Asking {
+    previous: Option<Asked>,
+}
+
+impl Asking {
+    /// Whether a run asked by a thumbnail found no turn free: the request
+    /// is to be asked again once one is (`when_free`).
+    pub fn busy(&self) -> bool {
+        ASKED.with(|slot| slot.borrow().as_ref().is_some_and(|now| now.busy.get()))
+    }
+}
+
+impl Drop for Asking {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        ASKED.with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+/// Call `then` once one of the shared turns is free, on the thread giving
+/// it back: a busy thumbnail asked again.
+pub fn when_free(then: Box<dyn FnOnce() + Send>) {
+    TURNS.when_free(then);
+}
+
+/// A turn for a run asked as this thread asks (`asking`), and the token
+/// it is cancelled with; an error once cancelled, or where a thumbnail's
+/// finds none free (noted busy).
+fn turn() -> anyhow::Result<(crate::process::Turn<'static>, CancelToken)> {
+    ASKED.with(|slot| {
+        let slot = slot.borrow();
+        let (cancel, by) = slot
+            .as_ref()
+            .map_or((CancelToken::new(), Asker::Background), |now| {
+                (now.cancel.clone(), now.asker)
+            });
+        let turn = match by {
+            Asker::Shown => SHOWN.take(&cancel),
+            Asker::Background => TURNS.take(&cancel),
+            Asker::Thumbnail => {
+                let Some(turn) = TURNS.try_take() else {
+                    if let Some(now) = slot.as_ref() {
+                        now.busy.set(true);
+                    }
+                    anyhow::bail!("the HEIF helper is busy");
+                };
+                Some(turn)
+            }
+        };
+        let turn = turn.ok_or_else(|| anyhow::anyhow!("cancelled"))?;
+        Ok((turn, cancel))
+    })
+}
 
 /// Where the helper is, once asked; `None` where it is not installed.
 fn program() -> Option<&'static Path> {
@@ -138,8 +248,7 @@ impl Work {
     /// decode: the size it says, and whether it has alpha; `None` for
     /// `0 0 0` (no thumbnail).
     fn ask(&self, mode: &str, args: &[u32]) -> anyhow::Result<Option<(u32, u32, bool)>> {
-        let cancel = CancelToken::new();
-        let _turn = TURNS.take(&cancel);
+        let (_turn, cancel) = turn()?;
         let input = self.folder.path().join(INPUT);
         let mut run = sandbox::untrusted(self.program, &input, self.folder.path(), Otherwise::Run)?;
         run.command
@@ -281,6 +390,31 @@ impl crate::picture::Regional for Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A thumbnail's run never waits for a turn: with none free it is not
+    /// made and the request is busy; a run cancelled with its request is
+    /// not made either; the preview's own has a turn of its own.
+    #[test]
+    fn a_run_is_asked_as_its_caller_says() {
+        let held = [TURNS.try_take().unwrap(), TURNS.try_take().unwrap()];
+        let thumbnail = asking(&CancelToken::new(), Asker::Thumbnail);
+        assert!(turn().is_err());
+        assert!(thumbnail.busy(), "busy, asked again once a turn is free");
+        drop(thumbnail);
+        {
+            let _shown = asking(&CancelToken::new(), Asker::Shown);
+            assert!(turn().is_ok(), "the shown one's turn is its own");
+        }
+        drop(held);
+        let thumbnail = asking(&CancelToken::new(), Asker::Thumbnail);
+        assert!(turn().is_ok());
+        assert!(!thumbnail.busy());
+        drop(thumbnail);
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        let _background = asking(&cancelled, Asker::Background);
+        assert!(turn().is_err(), "cancelled with its request");
+    }
 
     /// The brands told apart by their first bytes, whatever the box's size.
     #[test]
