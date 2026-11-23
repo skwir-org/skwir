@@ -22989,3 +22989,33 @@ own behind step A's seam.
   what answers), so no search syncs one: it walks. A test holds it
   (`a_root_being_read_is_walked_and_never_synced`). The 6 to 20 s
   measured were until a query found something, not a first answer.
+
+## 2026-11-23: step B checked in a window (ADR-150)
+
+What step A left for the end of B: a search in a window through a real
+skwird engine, heard and seen.
+
+- **How.** The release build (skwir 20bc76bf) on `tools/test/a11y.py`'s
+  window (Xvfb from :90, a D-Bus session of its own, every XDG folder
+  and `HOME` under `~/.cache/skwir-tests/a11y-*`), a screen reader said
+  to listen. Before it, skwird's engine (its `target/debug`, skwird
+  58609b2) started as `skwird serve --root <fixture>` in the window's
+  own five folders, `SKWIRD_NO_START` set: nothing of the user's home
+  read, no engine started by skwir. A stand-in plocate on the window's
+  `PATH`, its database dated. Searches through `query.search` (the
+  control plugin), the footer read over AT-SPI, `entries` asked,
+  screenshots of the footer. A scratch script; step F's model.
+- **Heard and seen.** A search of the fixture: "2 results, checked Today
+  15:51", `entries`' `index` `checked` by "skwird's index". After
+  `skwird watch` kept the fixture live: "1 result, up to date",
+  `index` `live`. A search of `/`: skwird's engine says outside (asked
+  directly: "not covered: Outside"), plocate answers: "0 results, as of
+  15 Jan 2027, 1 excluded" (the fixture is below `~/.cache`, which
+  searches leave out), `as_of` as before and `index` `as_of`.
+- **Met on the way.** A first run searched `/` with the pane's lens
+  `type:file` still on (a second search's term, kept as ADR-107 keeps a
+  lens), and plocate declined, as it always did for a search that is
+  not name substrings alone: the walk answered. The check now searches
+  with no lens term; nothing to change in Skwir.
+- **Not checked:** the footer's tooltips (hovered); Orca itself (the
+  status line read over AT-SPI as it reads it).
