@@ -1091,6 +1091,20 @@ impl Opened {
         }
         Ok(Opened { pane, tab, below })
     }
+
+    /// The folder to show in the volume mounted at `point`: `below` it,
+    /// name by name, so the volume's top asked again (an empty `below`, a
+    /// pane showing the top itself) is `point` as it is written, never
+    /// `point/`, which a location tells apart from it.
+    fn at(&self, point: &Path) -> PathBuf {
+        let mut at = point.to_path_buf();
+        for part in self.below.iter().flat_map(|below| below.components()) {
+            if let std::path::Component::Normal(name) = part {
+                at.push(name);
+            }
+        }
+        at
+    }
 }
 
 /// Unlock as `unlock` says, mount, republish the places and open the
@@ -1100,8 +1114,7 @@ impl Opened {
 /// Everything blocks, so it runs on a worker; the pane is resolved now,
 /// not when the work ends.
 fn attach(places: &Places, app: &App, device: String, unlock: Unlock, opened: Opened) {
-    let Opened { pane, tab, below } = opened;
-    let pane = app.pane_or_active(pane);
+    let (pane, tab) = (app.pane_or_active(opened.pane), opened.tab);
     let this = places.clone();
     // The place `volume_place` published for it.
     let location = Location::parse(&format!("device:{device}"));
@@ -1134,16 +1147,13 @@ fn attach(places: &Places, app: &App, device: String, unlock: Unlock, opened: Op
             Ok(None) => {}
             Ok(Some(path)) => {
                 let name = Name::of(&path);
-                let location = Location::from_path(match &below {
-                    Some(below) => path.join(below),
-                    None => path.clone(),
-                });
+                let location = Location::from_path(opened.at(&path));
                 // Whether in a tab: a window of one tab (a dialog's,
                 // ADR-144, 2) shows it in place.
-                let opened = if tab {
+                let shown = if tab {
                     app.new_tab(Some(pane), Some(location), false)
                         .map(|(_, opened)| opened != pane)
-                } else if below.is_none() {
+                } else if opened.below.is_none() {
                     app.navigate(pane, &location).map(|()| false)
                 } else if app.shows(pane, &location) {
                     // Shown already, as it could not be: read again now,
@@ -1153,7 +1163,7 @@ fn attach(places: &Places, app: &App, device: String, unlock: Unlock, opened: Op
                 } else {
                     app.navigate_in_place(pane, &location).map(|()| false)
                 };
-                match opened {
+                match shown {
                     Ok(true) => app.notify(
                         NotifyLevel::Info,
                         words!(
@@ -3170,6 +3180,17 @@ mod tests {
         let inside =
             Opened::new(None, false, Some(PathArg::from(Path::new("photos/été")))).unwrap();
         assert_eq!(inside.below.as_deref(), Some(Path::new("photos/été")));
+        let point = Path::new("/run/media/me/it's USB");
+        assert_eq!(inside.at(point), point.join("photos/été"));
+        // The top asked again (a pane showing it): the point as written, no
+        // separator after it, which a location would tell apart.
+        for top in ["", ".", "./"] {
+            let top = Opened::new(None, false, Some(PathArg::from(Path::new(top)))).unwrap();
+            assert_eq!(top.at(point).as_os_str(), point.as_os_str());
+        }
+        let nested = Opened::new(None, false, Some(PathArg::from(Path::new("./a//b/")))).unwrap();
+        assert_eq!(nested.at(point).as_os_str(), point.join("a/b").as_os_str());
+        assert_eq!(Opened::new(None, false, None).unwrap().at(point), point);
     }
 
     /// A copy under way to a drive holds it: Eject names it and is
