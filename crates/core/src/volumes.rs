@@ -49,7 +49,7 @@ impl Drop for Acting<'_> {
 
 impl Seen {
     /// Whether the mounts were seen once.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     fn once(&self) -> bool {
         self.0.lock().mounts.is_some()
     }
