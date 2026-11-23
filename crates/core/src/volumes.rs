@@ -19,10 +19,41 @@ use crate::location::{ListingError, OpenLocation};
 use crate::scheduler::Priority;
 use crate::words;
 
-/// The mounts as last seen, against which a change is told; `None` until
-/// first seen.
+/// The mounts as last seen, against which a change is told, and the
+/// changes seen and not acted on yet.
 #[derive(Default)]
-pub(crate) struct Seen(parking_lot::Mutex<Option<Mounts>>);
+pub(crate) struct Seen(parking_lot::Mutex<Sight>);
+
+#[derive(Default)]
+struct Sight {
+    /// `None` until first seen.
+    mounts: Option<Mounts>,
+    /// The changes seen and not acted on yet, in the order seen.
+    waiting: std::collections::VecDeque<Change>,
+    /// Whether a worker acts on them: one at a time, in the order seen,
+    /// never under this lock (what acts calls the locations' own code).
+    acting: bool,
+}
+
+/// A worker acting on the changes seen (`App::see_volumes`): if it unwinds,
+/// another acts on what is left.
+struct Acting<'a>(&'a Seen, bool);
+
+impl Drop for Acting<'_> {
+    fn drop(&mut self) {
+        if self.1 {
+            self.0.0.lock().acting = false;
+        }
+    }
+}
+
+impl Seen {
+    /// Whether the mounts were seen once.
+    #[cfg(test)]
+    fn once(&self) -> bool {
+        self.0.lock().mounts.is_some()
+    }
+}
 
 /// What is mounted, by point.
 #[derive(Default)]
@@ -148,9 +179,14 @@ impl Change {
     }
 }
 
-/// Follow the mounts for `app`'s panes: seen once at start, on a worker,
-/// then told each change (`reach::follow`).
+/// Follow the mounts for `app`'s panes: seen once as it starts, then told
+/// each change (`reach::follow`, on a worker).
 pub(crate) fn follow(app: &Arc<App>) {
+    // Seen at once, from the table in memory (read if it was not: procfs,
+    // or `getfsstat` waiting on no mount): a mount made from now on, as the
+    // panes restored open their folders, is a change, never taken into a
+    // first sight a worker makes after it.
+    app.see_volumes();
     let weak = Arc::downgrade(app);
     let lifetime = app.lifetime().child();
     app.scheduler.spawn(
@@ -167,7 +203,8 @@ pub(crate) fn follow(app: &Arc<App>) {
                     app.volumes_changed();
                 }
             });
-            // Seen before any change is told against it.
+            // What changed between the first sight and the follower's being
+            // told, seen against it.
             app.see_volumes();
         },
     );
@@ -224,20 +261,44 @@ impl App {
     }
 
     /// See the mounts again, and act on what changed since they were
-    /// last seen: on a worker. Under the lock of what was seen, so two
-    /// changes told close together act in the order they were seen.
+    /// last seen: on a worker. Seen under the lock of what was seen, and
+    /// acted on out of it by one worker at a time, so two changes told
+    /// close together act in the order they were seen, and no lock is held
+    /// as the locations' own code runs (AGENTS.md, "Locks and re-entry").
     fn see_volumes(&self) {
-        let mut seen = self.volumes.0.lock();
-        let now = Mounts::now(self);
-        let gate = self.registry.gate();
-        let change = seen
-            .as_ref()
-            .map(|before| Change::between(before, &now, |owner| gate.is_open(owner)));
-        *seen = Some(now);
-        let Some(change) = change.filter(|change| !change.is_empty()) else {
-            return;
-        };
-        self.act_on(&change);
+        {
+            let mut sight = self.volumes.0.lock();
+            let now = Mounts::now(self);
+            let gate = self.registry.gate();
+            let change = sight
+                .mounts
+                .as_ref()
+                .map(|before| Change::between(before, &now, |owner| gate.is_open(owner)));
+            sight.mounts = Some(now);
+            if let Some(change) = change.filter(|change| !change.is_empty()) {
+                sight.waiting.push_back(change);
+            }
+            if sight.acting || sight.waiting.is_empty() {
+                return;
+            }
+            sight.acting = true;
+        }
+        // Acted on out of the lock, in the order seen: another worker seeing
+        // a change meanwhile leaves it to this one, which ends only under
+        // the lock that found none left. One that unwound lets another act.
+        let mut acting = Acting(&self.volumes, true);
+        loop {
+            let change = {
+                let mut sight = self.volumes.0.lock();
+                let Some(change) = sight.waiting.pop_front() else {
+                    sight.acting = false;
+                    acting.1 = false;
+                    return;
+                };
+                change
+            };
+            self.act_on(&change);
+        }
     }
 
     /// What the panes hold open below a mount let go of lets go of it and
@@ -565,11 +626,8 @@ mod tests {
         std::fs::write(shown.join("a.txt"), "a").unwrap();
         crate::fs::reach::pretend_remote(&point);
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while app.volumes.0.lock().is_none() {
-            assert!(Instant::now() < deadline, "the mounts were never seen");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        // Seen as it starts: a change from now on is told against it.
+        assert!(app.volumes.once());
         let pane = show(&app, &shown);
         wait(&app, pane, "listed", |p| named(p, "a.txt"));
         assert!(
@@ -618,12 +676,8 @@ mod tests {
         std::fs::create_dir(drive.join("photos, été")).unwrap();
         std::fs::write(drive.join("photos, été").join("it's a.jpg"), "a").unwrap();
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-        // Seen once at start, on a worker: then a change is told.
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while app.volumes.0.lock().is_none() {
-            assert!(Instant::now() < deadline, "the mounts were never seen");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        // Seen as it starts: a change from now on is told against it.
+        assert!(app.volumes.once());
         let pane = show(&app, &shown);
         wait(&app, pane, "missing", |p| {
             p.listing.failure() == Some(Failure::Missing)

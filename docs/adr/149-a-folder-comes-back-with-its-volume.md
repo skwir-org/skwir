@@ -49,8 +49,10 @@ after review).
    `App::volumes_changed`): the table's points (`reach::points`), and
    the folders a plugin knows mounted that the table does not list (a
    GVfs bridge's, `Registry::remotes`, which the remote plugin tells as
-   it publishes one more or one fewer), seen once at start and again at
-   each change, on a worker. A change is the points holding a mount
+   it publishes one more or one fewer), seen once as the app starts
+   (corrected after review: on a worker, a mount made before it ran was
+   taken into that first sight, never acted on) and again at each change,
+   on a worker, acted on in the order seen, out of any lock. A change is the points holding a mount
    they did not hold when last seen and those no longer holding one they
    did, from memory: nothing of the paths shown is read to find it. A
    mount is told apart by what it is (`reach::Mount::id`: Linux's number
