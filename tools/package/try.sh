@@ -253,7 +253,11 @@ fedora)
     enter "$fresh" 0 sh -c 'dnf -y -q install /package/extra/*.rpm' >/dev/null
     ;;
 arch)
-    enter "$fresh" 0 sh -c 'pacman -S --noconfirm --needed gst-plugins-base poppler-glib djvulibre inter-font ttf-jetbrains-mono && pacman -U --noconfirm /package/extra/*.pkg.tar.zst' >/dev/null
+    # pacman installs no optdepends: these are the ones a helper of skwir's
+    # links (GStreamer, Poppler, DjVuLibre, libheif) and its fonts, which
+    # Debian's and Fedora's packages recommend. A new helper's library is
+    # named here too, or the check below finds it not working.
+    enter "$fresh" 0 sh -c 'pacman -S --noconfirm --needed gst-plugins-base poppler-glib djvulibre libheif inter-font ttf-jetbrains-mono && pacman -U --noconfirm /package/extra/*.pkg.tar.zst' >/dev/null
     ;;
 esac
 echo "== $distribution: with the others and what they recommend"
