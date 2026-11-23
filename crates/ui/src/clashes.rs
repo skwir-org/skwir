@@ -605,7 +605,7 @@ fn clash_rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -
     };
     let icons = &mut shell.icons;
     let theme = cx.global::<Theme>().clone();
-    let now = jiff::ZonedDateTime::now();
+    let now = skwir_core::locale::now();
     let shown = clashes.shown();
     let mut rows = Vec::with_capacity(range.len());
     for n in range {

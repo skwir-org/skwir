@@ -816,8 +816,8 @@ impl Shell {
             Detail::Taken,
             Detail::Deleted,
         ];
-        let now = (friendly && dated.iter().any(|detail| columns[*detail]))
-            .then(jiff::ZonedDateTime::now);
+        let now =
+            (friendly && dated.iter().any(|detail| columns[*detail])).then(skwir_core::locale::now);
         move |time: Option<std::time::SystemTime>| -> Said {
             let exact = time.map_or_else(String::new, format::time);
             let shown = match (time, &now) {

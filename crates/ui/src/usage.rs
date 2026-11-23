@@ -1583,7 +1583,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     };
     // Read before the lock below: a second read waits behind a writer.
     let show_hidden = shell.sort_spec().show_hidden;
-    let zoned = jiff::ZonedDateTime::now();
+    let zoned = skwir_core::locale::now();
     let built_from = |shell: &Shell| BuiltFrom {
         root: shell.ui().usage.root.clone(),
         answer: shell.ui().usage.answer,

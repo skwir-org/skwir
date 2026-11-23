@@ -204,6 +204,15 @@ pub fn zone() -> jiff::tz::TimeZone {
     set.unwrap_or_else(jiff::tz::TimeZone::system)
 }
 
+/// Now, in the user's zone (`zone`): what a moment is told against
+/// (today, yesterday, this week) and what is written as the local time (a
+/// trashed file's `DeletionDate`), in the zone the moment is said in.
+/// `jiff::ZonedDateTime::now` is in the system's zone whatever a test set,
+/// so clippy refuses it (clippy.toml).
+pub fn now() -> jiff::ZonedDateTime {
+    jiff::Timestamp::now().to_zoned_datetime(zone())
+}
+
 /// What words say moved, beside the languages and their formats (the size
 /// setting's units, `fs::set_size_units`): what keeps words it said keyed
 /// by the revision says them again.
@@ -742,6 +751,19 @@ mod tests {
         matching, preferred, set_chosen, set_system,
     };
     use crate::words::{Offer, Share, Shipped};
+
+    /// Now is told in the zone a test set, as every moment is said in it:
+    /// never the system's behind it.
+    #[test]
+    fn now_is_in_the_zone_set() {
+        let paris =
+            jiff::tz::TimeZone::get("Europe/Paris").expect("the zone database knows Europe/Paris");
+        super::set_zone(Some(paris.clone()));
+        assert_eq!(super::now().time_zone(), &paris);
+        super::set_zone(Some(jiff::tz::TimeZone::UTC));
+        assert_eq!(super::now().time_zone(), &jiff::tz::TimeZone::UTC);
+        assert_eq!(super::now().offset(), jiff::tz::Offset::UTC);
+    }
 
     /// A test has its process to itself under nextest, or asked alone by
     /// its exact name; any other run of a test binary may run others

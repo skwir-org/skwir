@@ -347,7 +347,7 @@ fn record(path: &Path) -> String {
     }
     format!(
         "[Trash Info]\nPath={encoded}\nDeletionDate={}\n",
-        jiff::ZonedDateTime::now().strftime("%Y-%m-%dT%H:%M:%S")
+        crate::locale::now().strftime("%Y-%m-%dT%H:%M:%S")
     )
 }
 

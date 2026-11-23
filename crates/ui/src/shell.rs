@@ -897,7 +897,7 @@ impl Shell {
         // day changes. One timer per day, not a clock.
         cx.spawn(async move |this, cx| {
             loop {
-                let now = jiff::ZonedDateTime::now();
+                let now = skwir_core::locale::now();
                 let wait = now
                     .date()
                     .tomorrow()

@@ -327,7 +327,7 @@ pub(crate) fn render(
     };
     // An index's answer says as of when (ADR-050): what was made, renamed
     // or removed since is not in it.
-    let as_of = as_of.map(|as_of| as_of_said(&as_of, &jiff::ZonedDateTime::now()));
+    let as_of = as_of.map(|as_of| as_of_said(&as_of, &skwir_core::locale::now()));
     // What a search walked past (ADR-125): said, never silently.
     let left_out = (left_out > 0).then(|| {
         words!(

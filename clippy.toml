@@ -13,10 +13,16 @@ doc-valid-idents = ["GVfs", "WebDAV", "BitLocker", "LXQt", "JetBrains", "RaTeX",
 # from a console; build scripts; helpers, whose own console is unseen.
 #
 # The user's time zone is read from skwir_core::locale::zone alone, which
-# a test sets (`locale::set_zone`): the system's zone read elsewhere is
-# the machine's whatever the test said, and the `TZ` variable is not seen
-# once jiff has read it (its cache keeps the zone for minutes).
+# a test sets (`locale::set_zone`), and now from skwir_core::locale::now,
+# in that zone: the system's zone read elsewhere is the machine's whatever
+# the test said, and the `TZ` variable is not seen once jiff has read it
+# (its cache keeps the zone for minutes). jiff's `ZonedDateTime::now` and
+# `TimeZone::try_system` read it too (and `ZonedDateTime::try_from` a
+# `SystemTime`, which no path here can name: convert a `Timestamp` with
+# `to_zoned_datetime(locale::zone())`).
 disallowed-methods = [
     { path = "std::process::Command::new", reason = "make it with skwir_platform::process::command: on Windows a program started otherwise opens a console window" },
     { path = "jiff::tz::TimeZone::system", reason = "read the user's zone with skwir_core::locale::zone, which a test sets with locale::set_zone" },
+    { path = "jiff::tz::TimeZone::try_system", reason = "read the user's zone with skwir_core::locale::zone, which a test sets with locale::set_zone" },
+    { path = "jiff::ZonedDateTime::now", reason = "take now in the user's zone with skwir_core::locale::now: this is the system's whatever a test set with locale::set_zone" },
 ]
