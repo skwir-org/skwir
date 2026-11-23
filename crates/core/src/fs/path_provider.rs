@@ -735,8 +735,10 @@ impl Shared {
     /// Its listing failed with `error`. What was handed on to it to take
     /// out (`taken`: rows of the folder it was opened again in place of,
     /// `reopen`) goes first, those it did not list again, never shown
-    /// beside the failure; a refresh's own rows stay, the files it read
-    /// still shown under it.
+    /// beside the failure: sent through the gate, as the names hold them
+    /// now (`as_now`), a `Removed` takes out no id this listing named
+    /// before it failed, those of a batch not sent yet included. A
+    /// refresh's own rows stay, the files it read still shown under it.
     fn fail(&self, error: &std::io::Error, taken: Option<Vec<EntryId>>) {
         if let Some(ids) = taken {
             self.send(ListingEvent::Removed(ids));
@@ -1963,6 +1965,39 @@ mod tests {
             "{told:?}"
         );
         std::fs::set_permissions(&shown, std::fs::Permissions::from_mode(0o755)).unwrap();
+        open.close();
+    }
+
+    /// A listing that fails part way takes out only the rows handed on it
+    /// did not list again: one it named before it failed (the same folder
+    /// opened again, its ids the same) stays, whether sent or not.
+    #[test]
+    fn a_listing_that_fails_part_way_keeps_what_it_listed_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("it's listed, été");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = opened_here(&app, &dir, false);
+        let listed: Vec<EntryId> = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete))
+            .iter()
+            .filter_map(|e| match e {
+                ListingEvent::Added(entries) => Some(entries.iter().map(|e| e.id)),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let shared = open.shared.lock().clone().expect("listed");
+        let another = EntryId::in_folder(FileId::new(1, 2), FileId::new(1, 3), OsStr::new("b"));
+        let mut taken = listed.clone();
+        taken.push(another);
+        shared.fail(&std::io::Error::other("broken"), Some(taken));
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Error(_)));
+        assert!(
+            told.iter()
+                .any(|e| matches!(e, ListingEvent::Removed(ids) if *ids == [another])),
+            "{told:?}"
+        );
         open.close();
     }
 
