@@ -796,11 +796,17 @@ fn solid_block(path: &str) -> Option<String> {
     unescaped(name).filter(|name| !name.is_empty() && !name.contains('/'))
 }
 
-/// Where `block`'s filesystem is mounted, or the filesystem of what it
-/// holds unlocked (a LUKS container's): sysfs's `slaves` and the mount
-/// table, both in memory.
+/// Where `block`'s filesystem is mounted, or the filesystem of what is
+/// made of it (a LUKS container's, a volume group's on it): sysfs's
+/// `slaves` and the mount table, both in memory.
 #[cfg(target_os = "linux")]
 fn points_of_block(block: &str) -> Vec<PathBuf> {
+    points_made_of(Path::new("/sys/class/block"), block)
+}
+
+/// [`points_of_block`], with sysfs's block devices at `sys`.
+#[cfg(target_os = "linux")]
+fn points_made_of(sys: &Path, block: &str) -> Vec<PathBuf> {
     let Ok(text) = std::fs::read("/proc/self/mountinfo") else {
         return Vec::new();
     };
@@ -817,15 +823,33 @@ fn points_of_block(block: &str) -> Vec<PathBuf> {
             else {
                 return false;
             };
-            name.as_os_str() == block
-                || Path::new("/sys/class/block")
-                    .join(&name)
-                    .join("slaves")
-                    .join(block)
-                    .exists()
+            made_of(sys, name.as_os_str(), block, LAYERS)
         })
         .map(|mounted| mounted.point)
         .collect()
+}
+
+/// How many layers a block device is followed down through: LVM on LUKS on
+/// RAID is three.
+#[cfg(target_os = "linux")]
+const LAYERS: u8 = 8;
+
+/// Whether the block device `name` is `block`, or is made of it through at
+/// most `layers` layers (device mapper's LUKS and LVM, RAID): each one's
+/// `slaves` in sysfs at `sys`.
+#[cfg(target_os = "linux")]
+fn made_of(sys: &Path, name: &std::ffi::OsStr, block: &str, layers: u8) -> bool {
+    if name == block {
+        return true;
+    }
+    let Some(below) = layers.checked_sub(1) else {
+        return false;
+    };
+    std::fs::read_dir(sys.join(name).join("slaves")).is_ok_and(|slaves| {
+        slaves
+            .flatten()
+            .any(|slave| made_of(sys, &slave.file_name(), block, below))
+    })
 }
 
 /// Unmount, then lock the container under it if there is one, so the volume
@@ -1762,6 +1786,36 @@ mod tests {
             [PathBuf::from("/run/media/example/USB stick, été")]
         );
         assert!(notice("sftp://example.com/").is_empty());
+    }
+
+    /// A notice naming a partition (Solid's teardown of a LUKS container)
+    /// names the volumes made of it, through every layer between.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_block_device_is_followed_down_through_its_layers() {
+        // LVM's volume (dm-5) on a LUKS container's cleartext (dm-4) on a
+        // partition (sdb2), as sysfs's `slaves` say.
+        let sys = tempfile::tempdir().unwrap();
+        for (device, slave) in [
+            ("dm-5", Some("dm-4")),
+            ("dm-4", Some("sdb2")),
+            ("sdb2", None),
+        ] {
+            let slaves = sys.path().join(device).join("slaves");
+            std::fs::create_dir_all(&slaves).unwrap();
+            if let Some(slave) = slave {
+                std::fs::create_dir_all(slaves.join(slave)).unwrap();
+            }
+        }
+        let made_of = |name: &str, block: &str, layers: u8| {
+            super::made_of(sys.path(), name.as_ref(), block, layers)
+        };
+        assert!(made_of("sdb2", "sdb2", 0), "itself");
+        assert!(made_of("dm-4", "sdb2", super::LAYERS), "the container's");
+        assert!(made_of("dm-5", "sdb2", super::LAYERS), "the volume group's");
+        assert!(!made_of("dm-5", "sdb2", 1), "one layer only");
+        assert!(!made_of("dm-5", "sdc1", super::LAYERS), "another drive's");
+        assert!(!made_of("nvme0n1", "sdb2", super::LAYERS), "not there");
     }
 
     /// Solid names the device whose teardown it announces by its udi,
