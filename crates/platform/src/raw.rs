@@ -120,8 +120,16 @@ fn jpeg_pixels<R: Read + Seek>(raw: &mut R, offset: u64, length: u64) -> Option<
         }
         let marker = head[at + 1];
         let size = usize::from(u16::from_be_bytes([head[at + 2], head[at + 3]]));
+        // A lossless frame is the sensor's data (a CR2's last directory, a
+        // DNG's raw image in one strip), never a picture to show.
+        if matches!(marker, 0xC3 | 0xC7 | 0xCB | 0xCF) {
+            return None;
+        }
         // A frame header: its height and width.
-        if matches!(marker, 0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF) {
+        if matches!(
+            marker,
+            0xC0..=0xC2 | 0xC5 | 0xC6 | 0xC9 | 0xCA | 0xCD | 0xCE
+        ) {
             let height = u64::from(u16::from_be_bytes([head[at + 5], head[at + 6]]));
             let width = u64::from(u16::from_be_bytes([head[at + 7], head[at + 8]]));
             return Some(width * height);
@@ -464,12 +472,17 @@ fn child<R: Read + Seek>(
 ) -> anyhow::Result<(u64, u64)> {
     let mut at = start;
     for _ in 0..256 {
-        anyhow::ensure!(at + 8 <= end, "no {} box", String::from_utf8_lossy(&name));
+        anyhow::ensure!(
+            at.checked_add(8).is_some_and(|header| header <= end),
+            "no {} box",
+            String::from_utf8_lossy(&name)
+        );
         let mut head = [0u8; 16];
         raw.seek(SeekFrom::Start(at))?;
         raw.read_exact(&mut head[..8])?;
         let mut size = u64::from(u32::from_be_bytes([head[0], head[1], head[2], head[3]]));
         let mut content = at + 8;
+        // Sizes are the file's: a crafted one may say 2^64 - 1.
         if size == 1 {
             raw.read_exact(&mut head[8..16])?;
             size = u64::from_be_bytes(head[8..16].try_into()?);
@@ -478,10 +491,13 @@ fn child<R: Read + Seek>(
             size = end - at;
         }
         anyhow::ensure!(size >= content - at, "a box shorter than its header");
+        let next = at
+            .checked_add(size)
+            .ok_or_else(|| anyhow::anyhow!("a box past any file"))?;
         if head[4..8] == name {
-            return Ok((content, at + size));
+            return Ok((content, next));
         }
-        at += size;
+        at = next;
     }
     anyhow::bail!("no {} box", String::from_utf8_lossy(&name))
 }
@@ -690,6 +706,48 @@ mod tests {
         let mut empty = b"II*\0\x08\0\0\0".to_vec();
         empty.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
         assert!(embedded_jpeg(&mut Cursor::new(empty)).is_err());
+    }
+
+    /// A lossless JPEG is a raw file's sensor data, never what it shows,
+    /// however large its frame says it is; a box whose size says more
+    /// than any file holds is an error, not a panic.
+    #[test]
+    fn sensor_data_and_boxes_past_any_file_are_not_shown() {
+        let small = jpeg(40, 30);
+        // A lossless frame header of 4000 x 3000, as a CR2's sensor strip.
+        let mut lossless = vec![0xFF, 0xD8, 0xFF, 0xC3, 0, 11, 14];
+        lossless.extend_from_slice(&3000u16.to_be_bytes());
+        lossless.extend_from_slice(&4000u16.to_be_bytes());
+        lossless.extend_from_slice(&[1, 1, 0x11, 0]);
+        lossless.resize(64, 0);
+        let entry = |tag: u16, value: u32| {
+            let mut e = tag.to_le_bytes().to_vec();
+            e.extend_from_slice(&4u16.to_le_bytes());
+            e.extend_from_slice(&1u32.to_le_bytes());
+            e.extend_from_slice(&value.to_le_bytes());
+            e
+        };
+        let data = 8 + 2 + 5 * 12 + 4;
+        let mut raw = b"II*\0\x08\0\0\0".to_vec();
+        raw.extend_from_slice(&5u16.to_le_bytes());
+        raw.extend(entry(0x0103, 6));
+        raw.extend(entry(0x0111, data));
+        raw.extend(entry(0x0117, lossless.len() as u32));
+        raw.extend(entry(0x0201, data + lossless.len() as u32));
+        raw.extend(entry(0x0202, small.len() as u32));
+        raw.extend_from_slice(&0u32.to_le_bytes());
+        raw.extend_from_slice(&lossless);
+        raw.extend_from_slice(&small);
+        let shown = embedded_jpeg(&mut Cursor::new(&raw)).unwrap();
+        assert_eq!(size_of(&shown), (40, 30), "the lossy one");
+        // A CR3 whose box after its `ftyp` says it is 2^64 - 1 long.
+        let mut cr3 = 20u32.to_be_bytes().to_vec();
+        cr3.extend_from_slice(b"ftypcrx \0\0\0\x01crx ");
+        cr3.extend_from_slice(&1u32.to_be_bytes());
+        cr3.extend_from_slice(b"skip");
+        cr3.extend_from_slice(&u64::MAX.to_be_bytes());
+        cr3.resize(64, 0);
+        assert!(embedded_jpeg(&mut Cursor::new(&cr3)).is_err());
     }
 
     /// Whether a raw file may carry a JPEG is told from its first bytes:
