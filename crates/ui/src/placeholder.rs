@@ -73,7 +73,7 @@ pub fn failure(
             (None, Failure::Other) => error.say(),
             (None, _) => words!(
                 placeholder_reopen_detail = "This folder is on it, and shows here again once it is back.",
-                note = "Under \"… is not mounted\" or \"… is not connected\" in place of a folder's files: the folder shows again by itself once its drive or server is back, whoever mounts it."
+                note = "Under \"… is not mounted\", \"… is locked\" or \"… is not connected\" in place of a folder's files: the folder shows again by itself once its drive or server is back (mounted, unlocked, connected), whoever brings it back."
             )
             .say(),
         };
@@ -135,6 +135,19 @@ pub(crate) fn reopening(shell: &Shell, pane: PaneId, path: &std::path::Path) -> 
             .with("below", skwir_core::os_path::PathArg::from(below)),
         busy: reopen.busy.clone(),
     })
+}
+
+/// The way out of a folder a pane cannot show, its volume gone or not
+/// open now: the home folder, whatever the pane showed before.
+fn go_home() -> Option<(Words, Invocation)> {
+    let home = skwir_core::os_path::home()?;
+    Some((
+        words!(
+            placeholder_go_home = "Go Home",
+            note = "A button in place of a folder's files when the drive or server the folder is on was unmounted, disconnected or is not open now: leave it for the home folder."
+        ),
+        Invocation::navigate(&skwir_core::location::Location::from_path(home)),
+    ))
 }
 
 /// The way back from a filter that leaves nothing.
@@ -282,7 +295,7 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
             .and_then(|path| reopening(shell, pane, &path));
         // Home, whatever the pane showed before: a step back may be on
         // the same volume.
-        return Some(failure(kind, error, reopen, crate::loading::leaving(false)));
+        return Some(failure(kind, error, reopen, go_home()));
     }
     if !state.listing.is_complete() {
         return None;

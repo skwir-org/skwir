@@ -5330,6 +5330,9 @@ placeholder_filter_empty = 此处没有符合{ $filter }的内容。在地址栏
 placeholder_filtered = 已被筛选条件隐藏
 
 # draft
+placeholder_go_home = 回到主文件夹
+
+# draft
 placeholder_gone = 此文件夹已不存在
 
 # draft

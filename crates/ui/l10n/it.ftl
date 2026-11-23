@@ -5540,6 +5540,9 @@ placeholder_filter_empty = Qui nulla è { $filter }. Premi Invio nella barra deg
 placeholder_filtered = Nascosti dai filtri
 
 # draft
+placeholder_go_home = Vai alla Cartella personale
+
+# draft
 placeholder_gone = Questa cartella non esiste più
 
 # draft

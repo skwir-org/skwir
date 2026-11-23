@@ -5532,6 +5532,9 @@ placeholder_filter_empty = Rien ici ne correspond à { $filter }. Appuyez sur En
 placeholder_filtered = Tout est masqué par les filtres
 
 # draft
+placeholder_go_home = Dossier personnel
+
+# draft
 placeholder_gone = Ce dossier n’existe plus
 
 # draft
