@@ -330,10 +330,30 @@ fn within_half_a_pixel(
     }
 }
 
-/// Whether `part`, a part drawn of page `seen` (ADR-147), holds more
-/// pixels along the page's longer side than its drawing whole shows over
-/// the same share (`Seen::held`): an engine with no more pixels than the
-/// whole holds (a picture at its own size) draws its part at the whole's.
+/// Whether page `seen`, drawn whole as `image` when asked at `asked`, came
+/// back at its own pixels (its longer side within a pixel of its own
+/// size's, in its unit), more than 5 % short of the side it could have
+/// been drawn at (`whole`, `DocumentScroll::whole_side`): all it has
+/// (`Shell::held_back`).
+fn held_whole(
+    seen: &crate::elements::document::Seen,
+    asked: u32,
+    image: &RenderImage,
+    whole: impl Fn(u32) -> u32,
+) -> bool {
+    let size = image.size(0);
+    let longer = size.width.0.max(size.height.0).max(0) as f32;
+    let own = seen.own.0.max(seen.own.1);
+    (longer - own).abs() <= 1. && longer < whole(asked) as f32 * 0.95
+}
+
+/// Whether `part`, a part drawn of page `seen` (ADR-147), is drawn
+/// denser than the page whole is held (`Seen::held`): its pixels along the
+/// page's longer side for the whole length of it. An engine with no more
+/// pixels than the whole holds (a picture at its own size) draws its part
+/// at the whole's density. A density, never a count: a thin part (a page
+/// peeking into the view by a few pixels) is as dense as a thick one, and
+/// counted in pixels was refused, its page then left without.
 fn sharper(seen: &crate::elements::document::Seen, part: &CachedPage) -> bool {
     let Some(at) = part.part else {
         return false;
@@ -344,7 +364,7 @@ fn sharper(seen: &crate::elements::document::Seen, part: &CachedPage) -> bool {
     } else {
         (at.bottom - at.top, size.height.0 as f32)
     };
-    drawn > seen.held as f32 * share * 1.05 + 1.
+    drawn / share.max(f32::MIN_POSITIVE) > seen.held as f32 * 1.05
 }
 
 /// Hand what the pages covered this frame to the shell, when it changes the
@@ -591,7 +611,8 @@ impl DocumentScroll {
     /// atlas); a part being drawn that is no longer what would be asked is
     /// given up; then, unless one is still being drawn or the session
     /// draws no part sharper than its whole (`draws`, `draws_parts`; nor
-    /// does a page in `refused`), the page that most needs one
+    /// does a page in `refused`, nor one `held_back`), the page that most
+    /// needs one
     /// (`part_wanted`), the one showing most first, and what to draw of
     /// it. One at a time, chosen again whenever anything it reads changes
     /// (`part_changed`): a view that moved meanwhile, or a second page in
@@ -599,6 +620,7 @@ impl DocumentScroll {
     fn choose_part(
         &mut self,
         draws: bool,
+        held_back: &std::collections::BTreeSet<u32>,
     ) -> (
         Vec<CachedPage>,
         Option<(u32, skwir_core::document::Part, u32)>,
@@ -637,7 +659,7 @@ impl DocumentScroll {
         }
         let chosen = seen
             .values()
-            .filter(|seen| !self.refused.contains(&seen.page))
+            .filter(|seen| !self.refused.contains(&seen.page) && !held_back.contains(&seen.page))
             .filter_map(|seen| {
                 let held = self
                     .parts
@@ -1385,7 +1407,9 @@ impl Shell {
             return;
         }
         let draws = session.is_some_and(|session| session.draws_parts());
-        let (let_go, chosen) = scroll.choose_part(draws);
+        let held_back = self.held_back();
+        let scroll = &mut self.preview.reader.scroll;
+        let (let_go, chosen) = scroll.choose_part(draws, &held_back);
         if !let_go.is_empty() {
             for part in let_go {
                 cx.drop_image(part.image, Some(window));
@@ -1395,6 +1419,43 @@ impl Shell {
         if let Some((number, part, side)) = chosen {
             self.request_document_part(number, part, side);
         }
+    }
+
+    /// The pages in view whose whole came back at the page's own pixels,
+    /// short of the side asked (ADR-147): a picture, never enlarged, holds
+    /// whole every pixel it has, and a part of it would be no sharper. Told
+    /// by what came back, with no decode: asked, each such part was drawn
+    /// to be found no sharper (`sharper`), a webtoon's every page decoded
+    /// twice. An engine that draws at the scale asked comes back at it (a
+    /// PDF's, a `DjVu`'s, a little short at most), never at its own size
+    /// short of it.
+    fn held_back(&self) -> std::collections::BTreeSet<u32> {
+        let reader = &self.preview.reader;
+        let scroll = &reader.scroll;
+        let content = match &self.preview.content {
+            Some(PreviewContent::Image {
+                image,
+                document: Some(page),
+                ..
+            }) => Some((page.page, image)),
+            _ => None,
+        };
+        scroll
+            .seen
+            .iter()
+            .filter_map(|seen| {
+                let (asked, image) = if let Some(cached) = scroll.pages.get(&seen.page) {
+                    (cached.side, &cached.image)
+                } else {
+                    let (page, image) = content?;
+                    (page == seen.page).then_some((reader.shown_side, image))?
+                };
+                held_whole(seen, asked, image, |side| {
+                    scroll.whole_side(seen.page, side)
+                })
+                .then_some(seen.page)
+            })
+            .collect()
     }
 
     /// Draw `part` of page `number` at `side`, apart from the page whole.
@@ -2288,26 +2349,30 @@ mod tests {
         let mut state = DocumentScroll::new(true);
         // The bottom of page 3, the top of page 4: page 3 shows most.
         state.seen = Rc::new(vec![seen(3, 0.6, 1.), seen(4, 0., 0.3)]);
-        // A session that draws no part sharper than its whole is asked none.
-        assert_eq!(state.choose_part(false).1, None);
-        let (gone, chosen) = state.choose_part(true);
+        // A session that draws no part sharper than its whole is asked none,
+        // nor is a page held whole at its own pixels.
+        let none = std::collections::BTreeSet::new();
+        assert_eq!(state.choose_part(false, &none).1, None);
+        let both = std::collections::BTreeSet::from([3, 4]);
+        assert_eq!(state.choose_part(true, &both).1, None);
+        let (gone, chosen) = state.choose_part(true, &none);
         assert!(gone.is_empty());
         let (page, part, side) = chosen.expect("a part");
         assert_eq!(page, 3);
         let cancel = ask(&mut state, page, part, side);
         // Nothing moved: what is being drawn is waited for.
-        assert_eq!(state.choose_part(true).1, None);
+        assert_eq!(state.choose_part(true, &none).1, None);
         assert!(!cancel.is_cancelled());
         // It came back: page 4 has its own at once, with nothing moving.
         state.part_pending = None;
         Rc::make_mut(&mut state.parts).insert(3, drawn(3, part, side));
-        let (page, part, side) = state.choose_part(true).1.expect("the second page's");
+        let (page, part, side) = state.choose_part(true, &none).1.expect("the second page's");
         assert_eq!(page, 4);
         let cancel = ask(&mut state, page, part, side);
         // The view moves down past what is being drawn: it gives way to
         // the view's, and page 3, gone, lets its part go.
         state.seen = Rc::new(vec![seen(4, 0.5, 0.8)]);
-        let (gone, chosen) = state.choose_part(true);
+        let (gone, chosen) = state.choose_part(true, &none);
         assert!(cancel.is_cancelled() && state.part_pending.is_none());
         assert_eq!(gone.len(), 1);
         assert!(state.parts.is_empty());
@@ -2316,7 +2381,7 @@ mod tests {
         assert!(part.holds(&seen(4, 0.5, 0.8).shown));
         // A failure: not asked again until the page is visited.
         state.refused.insert(4);
-        assert_eq!(state.choose_part(true).1, None);
+        assert_eq!(state.choose_part(true, &none).1, None);
         state.forget_errors(Some(4));
         assert!(state.refused.is_empty());
         // Zoomed out to where the whole suffices: the part goes.
@@ -2325,7 +2390,7 @@ mod tests {
             covered: 4000.,
             ..seen(4, 0.5, 0.8)
         }]);
-        let (gone, chosen) = state.choose_part(true);
+        let (gone, chosen) = state.choose_part(true, &none);
         assert_eq!((gone.len(), chosen), (1, None));
         // Chosen again when due, once: a search running, or no session
         // there to ask (a document read again, its session still to come),
@@ -2341,10 +2406,10 @@ mod tests {
         assert!(state.part_due_now(false, true), "refreshed");
         state.cancel_all();
         assert!(state.part_due_now(false, true), "everything given up");
-        assert!(state.choose_part(true).1.is_some());
+        assert!(state.choose_part(true, &none).1.is_some());
         // A layout tried twice in a frame said a page twice: the last holds.
         state.seen = Rc::new(vec![seen(4, 0., 0.1), seen(4, 0.5, 0.8)]);
-        let (_, part, _) = state.choose_part(true).1.unwrap();
+        let (_, part, _) = state.choose_part(true, &none).1.unwrap();
         assert!(part.holds(&seen(4, 0.5, 0.8).shown) && part.top > 0.2);
         // The whole pages given up leave the part being drawn alone.
         let cancel = ask(&mut state, 4, part, side);
@@ -2416,6 +2481,43 @@ mod tests {
         };
         assert!(sharper(&wide, &part(1536, 1187, across)));
         assert!(!sharper(&wide, &part(819, 1187, across)));
+        // A page peeking into the view by three pixels: as dense as the
+        // rest, sharper all the same.
+        let sliver = Part {
+            left: 0.,
+            top: 0.998,
+            right: 1.,
+            bottom: 1.,
+        };
+        assert!(sharper(&pdf, &part(5935, 16, sliver)));
+        // Held whole at its own pixels, short of what was asked: a comic's
+        // page, its part never asked. A PDF's page drawn at the side asked,
+        // or one whose own size happens to be that side, is not.
+        let image = |width: u32, height: u32| {
+            crate::thumbs::owned_render_image(
+                width,
+                height,
+                vec![0; width as usize * height as usize * 4],
+            )
+            .unwrap()
+        };
+        let at = |side: u32| side;
+        assert!(held_whole(&comic, 4218, &image(1200, 1800), at));
+        assert!(!held_whole(&pdf, 4096, &image(3165, 4096), at));
+        let slide = Seen {
+            own: (1024., 768.),
+            ..comic
+        };
+        assert!(!held_whole(&slide, 1024, &image(1024, 768), at));
+        // Asked at a side a shape guessed wrongly gave (a tall one's), a
+        // picture drawn at nearly all its shape may hold whole: not held
+        // back by what was asked, by what it could be drawn at.
+        let picture = Seen {
+            own: (300., 400.),
+            ..comic
+        };
+        assert!(!held_whole(&picture, 13_341, &image(300, 400), |_| 409));
+        assert!(held_whole(&picture, 13_341, &image(300, 400), |side| side));
     }
 
     /// A part sized to as many pixels as a page may hold is drawn by every

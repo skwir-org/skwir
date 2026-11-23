@@ -309,9 +309,13 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   the page as shown) and a comic (`inspection::picture_part`), each saying
   so (`DocumentSession::draws_parts`); a session that does not (a book
   laid out, a plugin from outside Skwir) is asked no part, its whole cut
-  (`render_part`'s default) holding no more than the whole shown. A part
-  that comes back no sharper than the whole over the same share (a
-  picture at its own size) is not kept, and its page is not asked again
+  (`render_part`'s default) holding no more than the whole shown. A page
+  whose whole came back at its own pixels, short of the side asked (a
+  picture, never enlarged), is asked no part: it has no more
+  (`Shell::held_back`, told by what came back, never by decoding a
+  part). A part that comes back no denser than the whole is held (a
+  density, never a count: a page peeking in by a few pixels is as dense
+  as a page in view) is not kept, and its page is not asked again
   (`reader_scroll::sharper`). A part asked and none said is an error,
   never the page whole squeezed into the part's place (a helper older
   than the reader, packaged apart).
