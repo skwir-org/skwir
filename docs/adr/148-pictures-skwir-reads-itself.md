@@ -47,7 +47,11 @@ asked, in the preview as in the grid (decision 3).
      `image`'s limits, so it was not shown at all. In bands it holds
      400 MiB at 24 megapixels, 500 at 45, in about the same time: a
      tenth more, at most a fifth but once (each band decodes again the
-     groups beside it, which its filters read).
+     groups beside it, which its filters read). Amended: where a band of
+     a group's rows is more than may be held (a panorama 40 000 pixels
+     wide), each band is read in parts across, as many columns of groups
+     as it allows (`Decoder::columns`), each part into a buffer of its
+     own: such a picture was refused.
    - **A region is read alone** (`Decoder::cut`, `picture::decode_region`):
      the groups it covers and those beside them, at full size, the only
      scale it is decoded at.

@@ -2,6 +2,10 @@
 //! decoder of Skwir's own (`picture::formats`), which reads a picture in
 //! bands of its rows, and a region of it alone.
 //!
+//! Where a band of a group's rows is more than may be held (a panorama
+//! of 40 000 pixels), each is read in parts across, as many columns as
+//! it allows (`Decoder::columns`).
+//!
 //! jxl-oxide draws a frame in 32-bit floats: decoded whole, a photo of 24
 //! megapixels held 635 MiB and one of 45 megapixels 1.18 GiB, past what
 //! `image` lets a decode hold (512 MiB), so neither was shown. Read in
@@ -515,6 +519,17 @@ impl<R: Read> Decoder<R> {
         let rows = self.held / (width * samples * BAND_SAMPLE_BYTES);
         (u32::try_from(rows).unwrap_or(u32::MAX) / GROUP * GROUP).max(GROUP)
     }
+
+    /// A band's columns, read at a time: all of them where the decode may
+    /// hold a group's rows of its width; else, a panorama's, as many as it
+    /// may hold of a group's rows, a multiple of a group's side, at least
+    /// one group. A band of a group's rows across 40 000 pixels held more
+    /// than a decode may, and was refused.
+    fn columns(&self) -> u32 {
+        let samples = u64::from(self.inner.color_type().channel_count());
+        let columns = self.held / (u64::from(GROUP) * samples * BAND_SAMPLE_BYTES);
+        (u32::try_from(columns).unwrap_or(u32::MAX) / GROUP * GROUP).max(GROUP)
+    }
 }
 
 impl<R: Read> crate::picture::Regional for Decoder<R> {
@@ -557,19 +572,43 @@ impl<R: Read> ImageDecoder for Decoder<R> {
 
     fn read_image(mut self, buf: &mut [u8]) -> ImageResult<()> {
         let [left, top, width, height] = self.region;
-        let pitch = width as usize * usize::from(self.color_type().bytes_per_pixel());
-        let rows = self.rows();
-        let bottom = top + height;
+        let pixel = usize::from(self.color_type().bytes_per_pixel());
+        let pitch = width as usize * pixel;
+        let (rows, columns) = (self.rows(), self.columns());
+        let (right, bottom) = (left + width, top + height);
         // Bands from the group the region begins in, each but the first
-        // and the last a band's rows.
+        // and the last a band's rows; across, the same in columns, where a
+        // band is more than may be held at once.
         let mut band_end = top / GROUP * GROUP;
         let mut from = top;
         while from < bottom {
             band_end += rows;
             let to = band_end.min(bottom);
-            let (start, end) = ((from - top) as usize * pitch, (to - top) as usize * pitch);
-            self.inner
-                .read_rect(left, from, width, to - from, &mut buf[start..end], pitch)?;
+            let band = &mut buf[(from - top) as usize * pitch..(to - top) as usize * pitch];
+            if columns >= width {
+                self.inner
+                    .read_rect(left, from, width, to - from, band, pitch)?;
+            } else {
+                // Each part read whole into a buffer of its own, then laid
+                // in its place: jxl-oxide writes a rectangle only whole.
+                let mut part_end = left / GROUP * GROUP;
+                let mut at = left;
+                let mut part = Vec::new();
+                while at < right {
+                    part_end = part_end.saturating_add(columns);
+                    let until = part_end.min(right);
+                    let across = (until - at) as usize * pixel;
+                    part.resize(across * (to - from) as usize, 0);
+                    self.inner
+                        .read_rect(at, from, until - at, to - from, &mut part, across)?;
+                    let offset = (at - left) as usize * pixel;
+                    for (row, source) in band.chunks_exact_mut(pitch).zip(part.chunks_exact(across))
+                    {
+                        row[offset..offset + across].copy_from_slice(source);
+                    }
+                    at = until;
+                }
+            }
             from = to;
         }
         Ok(())
@@ -696,6 +735,10 @@ mod tests {
         assert_eq!(decoder.rows(), 512);
         decoder.held = 1000;
         assert_eq!(decoder.rows(), GROUP, "never less than a group");
+        // A group's rows of 640 pixels not held: read 256 columns at a time.
+        assert_eq!(decoder.columns(), GROUP);
+        decoder.held = 23_040 * 600;
+        assert!(decoder.columns() >= 640, "a band whole where it is held");
         decoder.cut([600, 1200, 500, 500]);
         assert_eq!(decoder.region(), [600, 1200, 40, 100], "within the picture");
     }
@@ -716,7 +759,8 @@ mod tests {
         };
         let whole = read(HELD, None);
         assert_eq!(whole.dimensions(), (640, 1300));
-        // Bands of a group: six of them, the last short.
+        // Bands of a group: six of them, the last short, each read in
+        // three parts across.
         assert!(read(1, None) == whole, "bands differ from the whole");
         for region in [[0, 0, 100, 40], [300, 250, 200, 600], [520, 1100, 120, 200]] {
             let [x, y, width, height] = region;
