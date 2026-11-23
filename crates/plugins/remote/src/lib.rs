@@ -1608,6 +1608,11 @@ impl Remotes {
                 .contains(&m.remote.point)
                 .then(|| reopen(&m.recognised.label, address, &m.remote.point, true))
         }));
+        // What is done to it meanwhile (Disconnecting…), said in place of
+        // its button, as its place says it (shell.md).
+        for reopen in &mut reopens {
+            reopen.busy = state.busy.get(&reopen.at.display().to_string()).cloned();
+        }
         // Read before what it words: a change after it publishes again.
         let proved = skwir_core::fs::reach::proved_changed();
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
@@ -2290,6 +2295,10 @@ impl Plugin for RemotePlugin {
         state.devices.clear();
         // Its watcher's thread ends with it.
         state.sources = None;
+        // Off, what it knew of the bridge's folders is withdrawn, and the
+        // core no longer counts them (ADR-149, 12): on again, each is told
+        // anew, so that one let go of later is told so.
+        state.known_points.clear();
     }
 
     fn on_looked_at(&self, app: &App) {
