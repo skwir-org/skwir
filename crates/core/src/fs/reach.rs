@@ -236,8 +236,8 @@ pub fn volume_of(path: &Path) -> Option<PathBuf> {
         table()
             .points
             .iter()
-            .find(|point| path.starts_with(point))
-            .cloned()
+            .find(|mount| path.starts_with(&mount.point))
+            .map(|mount| mount.point.clone())
     }
 }
 
@@ -642,28 +642,55 @@ pub fn is_point(path: &Path) -> bool {
     table().remotes.iter().any(|r| r.point == path)
 }
 
-/// Every mount's point the table lists now, each with whether it is a
-/// network's: what tells the mounts made and let go of since a read
-/// before (`App::volumes_changed`, ADR-149). A point mounted on twice is
-/// listed twice. Where the system lists no table (Windows), the remotes
-/// of the folders programs mount in. From memory, read again when stale.
-pub fn points() -> Vec<(PathBuf, bool)> {
+/// A mount the table lists ([`points`]): where it is mounted, what tells
+/// it apart from another mount made at the same point since, and whether
+/// it is a network's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mount {
+    pub point: PathBuf,
+    /// Linux's: its number in the table with what is mounted (its
+    /// device, type, source and root), so a mount let go of and made again
+    /// at once is another, its number being free again only once nothing
+    /// holds the one before; macOS's: what is mounted (its source and
+    /// type); the remotes of the folders programs mount in (Windows):
+    /// theirs.
+    pub id: u64,
+    pub remote: bool,
+}
+
+impl Mount {
+    /// A mount at `point` told apart by `what`.
+    fn of(point: PathBuf, what: impl std::hash::Hash) -> Self {
+        use std::hash::Hasher;
+        let mut id = std::hash::DefaultHasher::new();
+        what.hash(&mut id);
+        Mount {
+            point,
+            id: id.finish(),
+            remote: false,
+        }
+    }
+}
+
+/// Every mount the table lists now: what tells the mounts made and let
+/// go of since a read before (`App::volumes_changed`, ADR-149), by what
+/// each is, not by how many a point holds, so one let go of and made
+/// again within a change is both. Where the system lists no table
+/// (Windows), the remotes of the folders programs mount in. From memory,
+/// read again when stale.
+pub fn points() -> Vec<Mount> {
     let table = table();
-    let remote: crate::hashing::Set<&Path> =
-        table.remotes.iter().map(|r| r.point.as_path()).collect();
-    let listed: crate::hashing::Set<&Path> = table.points.iter().map(PathBuf::as_path).collect();
-    table
-        .points
+    let listed: crate::hashing::Set<&Path> =
+        table.points.iter().map(|m| m.point.as_path()).collect();
+    let remotes = table
+        .remotes
         .iter()
-        .map(|point| (point.clone(), remote.contains(point.as_path())))
-        .chain(
-            table
-                .remotes
-                .iter()
-                .filter(|r| !listed.contains(r.point.as_path()))
-                .map(|r| (r.point.clone(), true)),
-        )
-        .collect()
+        .filter(|r| !listed.contains(r.point.as_path()))
+        .map(|r| Mount {
+            remote: true,
+            ..Mount::of(r.point.clone(), (&r.fstype, &r.source))
+        });
+    table.points.iter().cloned().chain(remotes).collect()
 }
 
 /// Forget the table read: a mount was made or let go of here.
@@ -829,7 +856,7 @@ struct Table {
     // Windows lists no table: its volumes are told by a path's drive or
     // share (`volume_of`), and its list stays empty, never read.
     #[cfg_attr(windows, allow(dead_code))]
-    points: Vec<PathBuf>,
+    points: Vec<Mount>,
 }
 
 impl Table {
@@ -837,7 +864,12 @@ impl Table {
         let (remotes, made_up, mut points) = imp::read();
         let mut remotes: Vec<Arc<Remote>> = remotes.into_iter().map(Arc::new).collect();
         remotes.sort_by_key(|r| std::cmp::Reverse(r.point.as_os_str().len()));
-        points.sort_by_key(|point| std::cmp::Reverse(point.as_os_str().len()));
+        let remote: crate::hashing::Set<&Path> =
+            remotes.iter().map(|r| r.point.as_path()).collect();
+        for mount in &mut points {
+            mount.remote = remote.contains(mount.point.as_path());
+        }
+        points.sort_by_key(|mount| std::cmp::Reverse(mount.point.as_os_str().len()));
         Table {
             remotes,
             made_up,
@@ -1037,12 +1069,20 @@ mod imp {
     /// The table: its network mounts, its FUSE mounts for the numbers made
     /// up (each worked out when its device is asked, `MadeUp`), its points.
     /// Reads procfs alone.
-    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
+    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<super::Mount>) {
         let Ok(text) = std::fs::read("/proc/self/mountinfo") else {
             return (Vec::new(), super::MadeUp::default(), Vec::new());
         };
         let mounts = crate::fs::volume::mountinfo(&text);
-        let points = mounts.iter().map(|m| m.point.clone()).collect();
+        let points = mounts
+            .iter()
+            .map(|m| {
+                super::Mount::of(
+                    m.point.clone(),
+                    (m.id, m.device, &m.fstype, &m.source, &m.root),
+                )
+            })
+            .collect();
         (
             remotes(&mounts),
             super::MadeUp {
@@ -1245,7 +1285,7 @@ mod imp {
 
     /// macOS's mounts that are not local (`MNT_LOCAL` unset), and every
     /// mount's point; no device is told whose numbers are made up.
-    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
+    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<super::Mount>) {
         let (remotes, points) = mounts();
         (remotes, super::MadeUp::default(), points)
     }
@@ -1253,7 +1293,7 @@ mod imp {
     /// macOS's mounts that are not local (`MNT_LOCAL` unset), and every
     /// mount's point, read by `getfsstat` without waiting on any
     /// (`MNT_NOWAIT`).
-    fn mounts() -> (Vec<Remote>, Vec<std::path::PathBuf>) {
+    fn mounts() -> (Vec<Remote>, Vec<super::Mount>) {
         fn name(chars: &[libc::c_char]) -> Vec<u8> {
             chars
                 .iter()
@@ -1295,7 +1335,12 @@ mod imp {
             .collect();
         let points = table
             .iter()
-            .map(|fs| std::ffi::OsStr::from_bytes(&name(&fs.f_mntonname)).into())
+            .map(|fs| {
+                super::Mount::of(
+                    std::ffi::OsStr::from_bytes(&name(&fs.f_mntonname)).into(),
+                    (name(&fs.f_mntfromname), name(&fs.f_fstypename)),
+                )
+            })
             .collect();
         (remotes, points)
     }
@@ -1350,7 +1395,7 @@ mod imp {
     /// Windows lists no table: a path is told by its own form
     /// ([`share_of`]), and a program's mounts in a folder it said by their
     /// being mount points there ([`super::mounts_in`]).
-    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
+    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<super::Mount>) {
         use std::os::windows::fs::MetadataExt;
         /// `FILE_ATTRIBUTE_REPARSE_POINT`: what a folder a file system is
         /// mounted on is.
@@ -1430,7 +1475,7 @@ mod imp {
         false
     }
 
-    pub(super) fn read() -> (Vec<super::Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
+    pub(super) fn read() -> (Vec<super::Remote>, super::MadeUp, Vec<super::Mount>) {
         (Vec::new(), super::MadeUp::default(), Vec::new())
     }
 }

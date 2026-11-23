@@ -50,9 +50,13 @@ after review).
    the folders a plugin knows mounted that the table does not list (a
    GVfs bridge's, `Registry::remotes`, which the remote plugin tells as
    it publishes one more or one fewer), seen once at start and again at
-   each change, on a worker. A change is the points holding more mounts
-   than when last seen and those holding fewer, by their text, from
-   memory: nothing of the paths shown is read to find it. A plugin's
+   each change, on a worker. A change is the points holding a mount
+   they did not hold when last seen and those no longer holding one they
+   did, from memory: nothing of the paths shown is read to find it. A
+   mount is told apart by what it is (`reach::Mount::id`: Linux's number
+   in the table with its device, type, source and root), never by how
+   many a point holds (corrected after review): a drive let go of and
+   another mounted in its place within one change is both. A plugin's
    folder is told let go of only while that plugin is on (amended,
    decision 12): one turned off lets go of what it knows, not of the
    mounts.
@@ -232,9 +236,12 @@ after review).
   `App::letting_go`, `LETTING_GO`; the terminal's `Input::Leave`;
   `Executor::cancel_under`, `refuse_under_way` and the `cancel_in`
   command; `places.unmount`'s `force`.
-- A mount let go of and made again within one settled change is taken as
-  the one before (as `reach` takes it): a folder lost then is not opened
-  again by itself.
+- A mount let go of and made again within one settled change is both
+  (corrected after review: counted, it was taken as the one before, a
+  folder held there holding the filesystem let go of): its folders are
+  let go of, then opened again. On macOS a mount is told by what is
+  mounted (its source and type), so the same drive mounted again at once
+  is taken as the one before.
 - What shows a file on a volume announced is let go of for 10 s: an
   unmount refused (busy) leaves the preview closed that long, its
   thumbnails not made and Usage not walking that long.

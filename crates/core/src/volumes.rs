@@ -27,8 +27,8 @@ pub(crate) struct Seen(parking_lot::Mutex<Option<Mounts>>);
 /// What is mounted, by point.
 #[derive(Default)]
 struct Mounts {
-    /// The table's points, each with how many mounts it holds and
-    /// whether one is a network's.
+    /// The table's points, each with the mounts it holds and whether one
+    /// is a network's.
     table: hashing::Map<PathBuf, Point>,
     /// The folders a plugin knows mounted that the table does not list
     /// (a GVfs bridge's), each with that plugin: one it no longer knows
@@ -37,9 +37,11 @@ struct Mounts {
     known: hashing::Map<PathBuf, std::sync::Arc<str>>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct Point {
-    mounts: usize,
+    /// What tells each mount apart (`reach::Mount::id`): one let go of and
+    /// made again within a change, of the same drive even, is another.
+    mounts: hashing::Set<u64>,
     remote: bool,
 }
 
@@ -47,10 +49,10 @@ impl Mounts {
     /// What is mounted now, read from memory.
     fn now(app: &App) -> Self {
         let mut table: hashing::Map<PathBuf, Point> = hashing::Map::default();
-        for (point, remote) in crate::fs::reach::points() {
-            let seen = table.entry(point).or_default();
-            seen.mounts += 1;
-            seen.remote |= remote;
+        for mount in crate::fs::reach::points() {
+            let seen = table.entry(mount.point).or_default();
+            seen.mounts.insert(mount.id);
+            seen.remote |= mount.remote;
         }
         let known = app
             .registry
@@ -64,9 +66,12 @@ impl Mounts {
     }
 }
 
-/// What changed between two sights of the mounts: the points that hold
-/// more mounts than before, and those that hold fewer, each with whether
-/// it was a network's.
+/// What changed between two sights of the mounts: the points that hold a
+/// mount they did not before, and those that no longer hold one they did,
+/// each with whether it was a network's. By what each mount is, not by
+/// how many a point holds: a drive let go of and mounted again at once
+/// (`umount -l` then `mount`) is both, its folders let go of and opened
+/// again, never left holding the filesystem let go of.
 #[derive(Default)]
 struct Change {
     made: hashing::Set<PathBuf>,
@@ -82,13 +87,17 @@ impl Change {
             if before
                 .table
                 .get(point)
-                .is_none_or(|b| b.mounts < seen.mounts)
+                .is_none_or(|b| !seen.mounts.is_subset(&b.mounts))
             {
                 change.made.insert(point.clone());
             }
         }
         for (point, seen) in &before.table {
-            if now.table.get(point).is_none_or(|n| n.mounts < seen.mounts) {
+            if now
+                .table
+                .get(point)
+                .is_none_or(|n| !seen.mounts.is_subset(&n.mounts))
+            {
                 change.gone.insert(point.clone(), seen.remote);
             }
         }
@@ -274,11 +283,16 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
-    fn mounts(table: &[(&str, usize, bool)], known: &[&str]) -> Mounts {
+    /// The mounts as seen: each point with the mounts it holds, by what
+    /// tells each apart, and whether one is a network's.
+    fn mounts(table: &[(&str, &[u64], bool)], known: &[&str]) -> Mounts {
         Mounts {
             table: table
                 .iter()
-                .map(|&(point, mounts, remote)| (PathBuf::from(point), Point { mounts, remote }))
+                .map(|&(point, mounts, remote)| {
+                    let mounts = mounts.iter().copied().collect();
+                    (PathBuf::from(point), Point { mounts, remote })
+                })
                 .collect(),
             known: known
                 .iter()
@@ -287,25 +301,28 @@ mod tests {
         }
     }
 
-    /// What changed is what holds more mounts than before and what holds
-    /// fewer: a mount stacked on a point is one made, one of two let go of
-    /// one gone; a folder a plugin knows mounted, made, and gone only while
+    /// What changed is what a point holds that it did not and what it
+    /// held that it does not: a mount stacked on a point is one made, one
+    /// of two let go of one gone, one let go of and made again in its place
+    /// both; a folder a plugin knows mounted, made, and gone only while
     /// that plugin is on.
     #[test]
     fn a_change_is_what_was_mounted_and_what_was_let_go_of() {
         let before = mounts(
             &[
-                ("/", 1, false),
-                ("/media/u/usb", 1, false),
-                ("/mnt/nas", 1, true),
+                ("/", &[1], false),
+                ("/media/u/usb", &[2], false),
+                ("/mnt/nas", &[3], true),
+                ("/mnt/again", &[4], false),
             ],
             &["/run/user/1/gvfs/sftp:host=a"],
         );
         let now = mounts(
             &[
-                ("/", 1, false),
-                ("/mnt/nas", 2, true),
-                ("/media/u/disk", 1, false),
+                ("/", &[1], false),
+                ("/mnt/nas", &[3, 5], true),
+                ("/media/u/disk", &[6], false),
+                ("/mnt/again", &[7], false),
             ],
             &["/run/user/1/gvfs/sftp:host=b"],
         );
@@ -316,12 +333,16 @@ mod tests {
             made,
             [
                 PathBuf::from("/media/u/disk"),
+                "/mnt/again".into(),
                 "/mnt/nas".into(),
                 "/run/user/1/gvfs/sftp:host=b".into()
             ]
         );
-        assert_eq!(change.gone.len(), 2);
+        assert_eq!(change.gone.len(), 3);
         assert_eq!(change.gone.get(Path::new("/media/u/usb")), Some(&false));
+        // Let go of and made again within one change: both, so what was
+        // held there is let go of before it is opened again.
+        assert_eq!(change.gone.get(Path::new("/mnt/again")), Some(&false));
         // A bridge's folder its plugin knows no more, a network's: let go
         // of while the plugin is on, never as it is turned off.
         assert_eq!(
@@ -554,8 +575,37 @@ mod tests {
         wait(&app, pane, "back once mounted again", |p| {
             p.listing.failure().is_none() && named(p, "b.jpg")
         });
+
+        // Let go of lazily and another drive mounted in its place at once,
+        // within one change of the table: the folder held is let go of and
+        // the new drive's shown, never the one let go of held still.
+        let other = tmp.path().join("another drive");
+        std::fs::create_dir(&other).unwrap();
+        mount(&[
+            "-t".as_ref(),
+            "tmpfs".as_ref(),
+            "skwir-test".as_ref(),
+            other.as_os_str(),
+        ]);
+        std::fs::create_dir(other.join("photos, été")).unwrap();
+        std::fs::write(other.join("photos, été").join("c.jpg"), "c").unwrap();
+        assert!(
+            Command::new("sh")
+                .arg("-c")
+                .arg(r#"umount -l "$1" && mount --bind "$2" "$1""#)
+                .arg("sh")
+                .arg(&point)
+                .arg(&other)
+                .status()
+                .unwrap()
+                .success()
+        );
+        wait(&app, pane, "the drive mounted in its place shown", |p| {
+            p.listing.failure().is_none() && named(p, "c.jpg") && !named(p, "b.jpg")
+        });
         drop(app);
         let _ = Command::new("umount").arg("-l").arg(&point).status();
+        let _ = Command::new("umount").arg("-l").arg(&other).status();
         let _ = Command::new("umount").arg("-l").arg(&drive).status();
     }
 }
