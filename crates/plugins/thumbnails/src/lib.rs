@@ -107,7 +107,8 @@ fn mime_of(req: &ThumbRequest) -> Option<String> {
 }
 
 /// Pictures skwir does not decode itself (HEIF and AVIF without the
-/// libheif helper, a raw file whose JPEG it does not find, ADR-148)
+/// libheif helper, a raw file that carries no JPEG, told from its first
+/// bytes: `thumb_providers::decodes_file`, ADR-148)
 /// previewed as the desktop's thumbnailer draws them, else as
 /// `ImageMagick` does, at the largest size the thumbnail cache knows, and
 /// kept there like any thumbnail so the next look, and other applications,
@@ -124,6 +125,19 @@ struct Pictures {
 /// What the preview asks a thumbnailer to draw.
 const PICTURE_SIZE: ThumbSize = ThumbSize::XXLarge;
 
+/// Whether skwir decodes the file `req` asks of type `mime` itself: told
+/// by its first bytes, which the preview holds, for a raw file
+/// (`thumb_providers::decodes_file`); one that cannot be read is left to
+/// the panel, which says why.
+fn decoded(req: &PreviewRequest, mime: &str) -> bool {
+    if !skwir_platform::raw::is_raw(mime) {
+        return thumb_providers::decodes(mime);
+    }
+    req.held().map_or(true, |held| {
+        thumb_providers::decodes_file(mime, held.head())
+    })
+}
+
 impl PreviewProvider for Pictures {
     fn id(&self) -> &'static str {
         "desktop-pictures"
@@ -137,7 +151,7 @@ impl PreviewProvider for Pictures {
     fn accepts(&self, req: &PreviewRequest) -> bool {
         req.mime.as_deref().is_some_and(|mime| {
             pictured(mime)
-                && !thumb_providers::decodes(mime)
+                && !decoded(req, mime)
                 && (self.claimed(mime) || self.converted(mime).is_some())
         })
     }
@@ -721,6 +735,60 @@ mod tests {
             cache.lookup(&photo, PICTURE_SIZE).is_some(),
             "kept in the desktop's cache"
         );
+    }
+
+    /// A camera's raw file is skwir's where it may carry a JPEG, and the
+    /// thumbnailer's where its directories name none, as a phone's DNG of
+    /// uncompressed pictures (ADR-148 amended): told file by file.
+    #[test]
+    fn a_raw_file_without_a_jpeg_is_previewed_as_its_thumbnailer_draws_it() {
+        use skwir_platform::thumb_providers::ThumbnailerEntry;
+        let dir = tempfile::tempdir().unwrap();
+        // IFD0 alone, naming a JPEG or an uncompressed strip.
+        let raw = |name: &str, tags: [(u16, u32); 2]| {
+            let mut bytes = b"II*\0\x08\0\0\0".to_vec();
+            bytes.extend_from_slice(&2u16.to_le_bytes());
+            for (tag, value) in tags {
+                bytes.extend_from_slice(&tag.to_le_bytes());
+                bytes.extend_from_slice(&4u16.to_le_bytes());
+                bytes.extend_from_slice(&1u32.to_le_bytes());
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.resize(4096, 0);
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let with = raw("a photo’s name.nef", [(0x0201, 1024), (0x0202, 2048)]);
+        let without = raw("a phone’s photo.nef", [(0x0103, 1), (0x0111, 64)]);
+        let discovered = Arc::new(Discovered::default());
+        let _ = discovered
+            .found
+            .set(Thumbnailers::new(vec![ThumbnailerEntry {
+                name: "raw".into(),
+                try_exec: None,
+                exec: "true %i %o".into(),
+                mime_types: vec!["image/x-nikon-nef".into()],
+            }]));
+        let pictures = Pictures {
+            thumbnailers: discovered,
+            magick: false,
+            cache: None,
+            write_back: false,
+        };
+        let request = |path: &std::path::Path| PreviewRequest {
+            entry: EntryRef::from_path(path).unwrap(),
+            mime: Some("image/x-nikon-nef".into()),
+            page: 1,
+            seconds: None,
+            max_side: 2048,
+            text_size: None,
+            fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
+        };
+        assert!(!pictures.accepts(&request(&with)), "skwir shows its JPEG");
+        assert!(pictures.accepts(&request(&without)), "it carries none");
     }
 
     /// A picture's own size is read from what the preview holds

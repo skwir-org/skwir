@@ -90,6 +90,13 @@ asked, in the preview as in the grid (decision 3).
    kept. The types read are listed (`raw::RAW`); an Olympus ORF (its
    preview in its maker note), a Canon CRW, a Sigma X3F stay with the
    desktop's thumbnailer. A raw file's sensor data is never developed.
+   Amended (review before 0.6.1): a raw file is Skwir's file by file, not
+   by its type. One whose directories, read in its first bytes, name no
+   JPEG (a phone's DNG holds only uncompressed pictures) is left to the
+   desktop's thumbnailer and ImageMagick (`raw::may_carry_jpeg`,
+   `thumb_providers::decodes_file`), as before Skwir read raw files; the
+   grid's decoder tries every raw file, and the next provider draws one
+   it finds no JPEG in.
 3. **HEIC and AVIF are read by a helper of their own**, libheif (with
    libde265 and dav1d, LGPL and BSD) in `skwir-heif-worker`, as the
    Poppler and DjVuLibre helpers are: isolated where the system allows,

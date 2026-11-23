@@ -48,14 +48,15 @@ pub fn embedded_jpeg<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<u8>> {
     raw.read_exact(&mut head)?;
     let (found, orientation) = if head.starts_with(b"FUJIFILMCCD-RAW") {
         (raf(raw)?, None)
-    } else if &head[4..8] == b"ftyp" && &head[8..11] == b"crx" {
+    } else if is_cr3(&head) {
         (cr3(raw)?, None)
     } else {
-        tiff(raw, &head)?
+        let walk = tiff(raw, &head)?;
+        (walk.found, walk.orientation)
     };
     let (offset, length) = found
         .into_iter()
-        .filter(|&(_, length)| length > 4 && length <= JPEG_BYTES)
+        .filter(|&(_, length)| plausible(length))
         .filter_map(|(offset, length)| {
             let pixels = jpeg_pixels(raw, offset, length)?;
             Some((pixels, offset, length))
@@ -70,6 +71,37 @@ pub fn embedded_jpeg<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<u8>> {
         Some(turn) if turn != 1 && !has_exif(&jpeg) => with_orientation(&jpeg, turn),
         _ => jpeg,
     })
+}
+
+/// Whether the raw file whose first bytes are `head` may carry a JPEG to
+/// show (ADR-148 amended): false only where its container, read in `head`
+/// alone, is known to hold none, as an Android phone's DNG holds only
+/// uncompressed pictures. Such a file is left to the desktop's
+/// thumbnailer and `ImageMagick`, as a type Skwir does not read
+/// (`thumb_providers::decodes_file`). A Fuji RAF and a Canon CR3 always
+/// carry one; a TIFF-shaped file names its JPEGs in its directories, and
+/// says it has none only where every directory it points to lies in
+/// `head` and names none. What is no raw file this module reads has none.
+pub fn may_carry_jpeg(head: &[u8]) -> bool {
+    let Some(start) = head.first_chunk::<16>() else {
+        return false;
+    };
+    if start.starts_with(b"FUJIFILMCCD-RAW") || is_cr3(start) {
+        return true;
+    }
+    tiff(&mut std::io::Cursor::new(head), start)
+        .is_ok_and(|walk| !walk.complete || walk.found.iter().any(|&(_, length)| plausible(length)))
+}
+
+/// Whether a file's first bytes begin a Canon CR3.
+fn is_cr3(head: &[u8; 16]) -> bool {
+    &head[4..8] == b"ftyp" && &head[8..11] == b"crx"
+}
+
+/// Whether `length` may be a JPEG's: more than its markers, no more than
+/// what is read of one.
+fn plausible(length: u64) -> bool {
+    length > 4 && length <= JPEG_BYTES
 }
 
 /// The pixels a JPEG at `offset` says it has (its frame header), `None`
@@ -169,12 +201,18 @@ struct Entry {
     value: [u8; 4],
 }
 
-/// The JPEGs a TIFF-shaped raw file holds (offset and length), and its
-/// IFD0's Orientation.
-fn tiff<R: Read + Seek>(
-    raw: &mut R,
-    head: &[u8; 16],
-) -> anyhow::Result<(Vec<(u64, u64)>, Option<u16>)> {
+/// What the directories of a TIFF-shaped raw file say.
+struct Walk {
+    /// The JPEGs they name: offset and length.
+    found: Vec<(u64, u64)>,
+    /// IFD0's Orientation.
+    orientation: Option<u16>,
+    /// Whether every directory they point to was read.
+    complete: bool,
+}
+
+/// The JPEGs a TIFF-shaped raw file holds, and its IFD0's Orientation.
+fn tiff<R: Read + Seek>(raw: &mut R, head: &[u8; 16]) -> anyhow::Result<Walk> {
     let order = match &head[..2] {
         b"II" => Order { big: false },
         b"MM" => Order { big: true },
@@ -187,15 +225,24 @@ fn tiff<R: Read + Seek>(
         "not a raw file this reads"
     );
     let first = u64::from(order.u32([head[4], head[5], head[6], head[7]]));
-    let mut found = Vec::new();
-    let mut orientation = None;
+    let mut walk = Walk {
+        found: Vec::new(),
+        orientation: None,
+        complete: true,
+    };
+    let found = &mut walk.found;
     let mut queue = vec![(first, true)];
     let mut seen = std::collections::BTreeSet::new();
     while let Some((at, chained)) = queue.pop() {
-        if at == 0 || !seen.insert(at) || seen.len() > DIRECTORIES {
+        if at == 0 || !seen.insert(at) {
+            continue;
+        }
+        if seen.len() > DIRECTORIES {
+            walk.complete = false;
             continue;
         }
         let Ok((entries, next)) = directory(raw, order, at) else {
+            walk.complete = false;
             continue;
         };
         if chained && next != 0 {
@@ -211,7 +258,7 @@ fn tiff<R: Read + Seek>(
         if at == first
             && let Some(turn) = tag(0x0112)
         {
-            orientation = u16::try_from(value(turn)).ok();
+            walk.orientation = u16::try_from(value(turn)).ok();
         }
         // JPEGInterchangeFormat and its length.
         if let (Some(start), Some(length)) = (tag(0x0201), tag(0x0202)) {
@@ -234,13 +281,17 @@ fn tiff<R: Read + Seek>(
         // SubIFDs (a NEF's, a DNG's full-size preview) and EXIF's.
         for sub in [0x014A, 0x8769] {
             if let Some(entry) = tag(sub) {
-                for offset in offsets(raw, order, entry) {
+                let Some(offsets) = offsets(raw, order, entry) else {
+                    walk.complete = false;
+                    continue;
+                };
+                for offset in offsets {
                     queue.push((offset, sub == 0x014A));
                 }
             }
         }
     }
-    Ok((found, orientation))
+    Ok(walk)
 }
 
 /// The IFD at `at`: its entries and the next one's offset.
@@ -274,26 +325,24 @@ fn directory<R: Read + Seek>(
 }
 
 /// The offsets an entry of LONG or IFD offsets holds: inline for one,
-/// where it points for more.
-fn offsets<R: Read + Seek>(raw: &mut R, order: Order, entry: &Entry) -> Vec<u64> {
+/// where it points for more. `None` where they cannot be read.
+fn offsets<R: Read + Seek>(raw: &mut R, order: Order, entry: &Entry) -> Option<Vec<u64>> {
     if entry.count <= 1 {
-        return vec![u64::from(order.u32(entry.value))];
+        return Some(vec![u64::from(order.u32(entry.value))]);
     }
     let count = entry.count.min(16) as usize;
     let mut bytes = vec![0u8; count * 4];
-    if raw
-        .seek(SeekFrom::Start(u64::from(order.u32(entry.value))))
+    raw.seek(SeekFrom::Start(u64::from(order.u32(entry.value))))
         .and_then(|_| raw.read_exact(&mut bytes))
-        .is_err()
-    {
-        return Vec::new();
-    }
-    bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|&b| u64::from(order.u32(b)))
-        .collect()
+        .ok()?;
+    Some(
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&b| u64::from(order.u32(b)))
+            .collect(),
+    )
 }
 
 /// A Fuji RAF's JPEG: its offset and length in the header, big-endian.
@@ -505,5 +554,33 @@ mod tests {
         let mut empty = b"II*\0\x08\0\0\0".to_vec();
         empty.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
         assert!(embedded_jpeg(&mut Cursor::new(empty)).is_err());
+    }
+
+    /// Whether a raw file may carry a JPEG is told from its first bytes:
+    /// no only where every directory lies in them and names none, as a
+    /// phone's DNG of uncompressed pictures does.
+    #[test]
+    fn a_raw_file_without_a_jpeg_is_told_from_its_first_bytes() {
+        assert!(may_carry_jpeg(&tiff_raw(1)), "names two");
+        // IFD0 alone, its one picture uncompressed in a strip.
+        let mut uncompressed = b"II*\0\x08\0\0\0".to_vec();
+        uncompressed.extend_from_slice(&2u16.to_le_bytes());
+        for (tag, value) in [(0x0103u16, 1u32), (0x0111, 64)] {
+            uncompressed.extend_from_slice(&tag.to_le_bytes());
+            uncompressed.extend_from_slice(&4u16.to_le_bytes());
+            uncompressed.extend_from_slice(&1u32.to_le_bytes());
+            uncompressed.extend_from_slice(&value.to_le_bytes());
+        }
+        uncompressed.extend_from_slice(&0u32.to_le_bytes());
+        uncompressed.resize(80, 0);
+        assert!(!may_carry_jpeg(&uncompressed), "names none");
+        // The same, its next directory past what was read: not known.
+        let at = 8 + 2 + 2 * 12;
+        uncompressed[at..at + 4].copy_from_slice(&1_000_000u32.to_le_bytes());
+        assert!(may_carry_jpeg(&uncompressed), "a directory past the head");
+        assert!(!may_carry_jpeg(b"not a raw file at all"), "no raw file");
+        let mut raf = b"FUJIFILMCCD-RAW 0201".to_vec();
+        raf.resize(100, 0);
+        assert!(may_carry_jpeg(&raf), "a RAF always carries one");
     }
 }

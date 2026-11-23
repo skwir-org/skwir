@@ -372,7 +372,8 @@ The player, in the panel or pinned at its foot:
   drawn, thumbnails included, and sharper as the preview is zoomed.
   Zoomed past the panel, a picture moves with a drag.
 - Other kinds (HEIC and AVIF without libheif's helper, as on Windows and
-  macOS; an Olympus or Sigma raw file) are shown
+  macOS; an Olympus or Sigma raw file; a raw file that carries no JPEG, as
+  a phone's DNG) are shown
   as the desktop's thumbnailer for them draws them, at most 1024 pixels,
   when one is installed (`thumbnails` plugin). Otherwise ImageMagick
   draws them (**Use ImageMagick**, on by default): AVIF, HEIC, JPEG 2000,

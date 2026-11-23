@@ -243,13 +243,27 @@ static RASTERS: crate::mime::Types = crate::mime::Types::new(&[
 static DRAWINGS: crate::mime::Types =
     crate::mime::Types::new(&["image/svg+xml", "image/svg+xml-compressed"]);
 
-/// Whether skwir decodes pictures of type `mime` itself: a raster the
-/// `image` crate reads (JPEG XL taught to it), a drawing (`is_drawing`), a
-/// camera's raw file by its JPEG (`raw::is_raw`), a HEIC or an AVIF where
-/// the libheif helper is installed (`heif::reads`, ADR-148). What it
-/// lists, `ImageDecoder` thumbnails and the fallbacks leave alone.
+/// Whether skwir decodes every picture of type `mime` itself: a raster
+/// the `image` crate reads (JPEG XL taught to it), a drawing
+/// (`is_drawing`), a HEIC or an AVIF where the libheif helper is
+/// installed (`heif::reads`, ADR-148). What it lists, `ImageDecoder`
+/// thumbnails and the fallbacks leave alone. A camera's raw file is not
+/// listed: whether it is decoded here is told file by file
+/// (`decodes_file`), and one without a JPEG goes to the fallbacks.
 pub fn decodes(mime: &str) -> bool {
-    raster(mime) || is_drawing(mime) || crate::raw::is_raw(mime) || crate::heif::reads(mime)
+    raster(mime) || is_drawing(mime) || crate::heif::reads(mime)
+}
+
+/// Whether skwir decodes the picture of type `mime` whose first bytes are
+/// `head` itself: every one of a type it lists (`decodes`), and a
+/// camera's raw file of the types `raw::is_raw` lists that may carry a
+/// JPEG (`raw::may_carry_jpeg`, ADR-148 amended). A raw file that carries
+/// none is drawn by the fallbacks, as before Skwir read raw files. Where
+/// only a path is known (a thumbnail, asked on the window's thread), the
+/// file is tried (`ImageDecoder` takes every raw type), and the next
+/// provider asked where it has none.
+pub fn decodes_file(mime: &str, head: &[u8]) -> bool {
+    decodes(mime) || (crate::raw::is_raw(mime) && crate::raw::may_carry_jpeg(head))
 }
 
 /// Whether a file of type `mime` is a drawing, read by
@@ -270,8 +284,10 @@ impl ThumbnailProvider for ImageDecoder {
         "image-decoder"
     }
 
+    /// Every type skwir decodes, and every raw file's: one without a JPEG
+    /// fails here, and the thumbnailers and `ImageMagick` are asked next.
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        mime_of(req).is_some_and(|m| decodes(&m))
+        mime_of(req).is_some_and(|m| decodes(&m) || crate::raw::is_raw(&m))
     }
 
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
@@ -874,6 +890,15 @@ mod tests {
             !ImageDecoder.accepts(&r("/x/a.heic", None)),
             "left to the thumbnailers"
         );
+        // A raw file is tried, and its type not counted as decoded: one
+        // without a JPEG is the fallbacks' (ADR-148 amended).
+        assert!(ImageDecoder.accepts(&r("/x/a.nef", Some("image/x-nikon-nef"))));
+        assert!(!decodes("image/x-nikon-nef"));
+        assert!(decodes_file("image/png", b""));
+        assert!(!decodes_file(
+            "image/x-nikon-nef",
+            b"II*\0\x08\0\0\0\0\0\0\0\0\0\0\0"
+        ));
     }
 
     #[test]

@@ -219,7 +219,12 @@ A name that says nothing is not a binary file.
   it carries (`raw::embedded_jpeg`, its Orientation written in where the
   JPEG says none), read wherever the type is known
   (`picture::open_typed`: the preview's decode, a region, read ahead,
-  thumbnails), never its sensor data; HEIC and AVIF through the libheif
+  thumbnails), never its sensor data. Whether a raw file is Skwir's is
+  told file by file, never by its type alone: `decodes` lists no raw
+  type, `decodes_file` asks its first bytes (`raw::may_carry_jpeg`), and
+  `ImageDecoder` tries every raw file, the thumbnailers and ImageMagick
+  asked next, so one that carries no JPEG (a phone's DNG) keeps the
+  fallbacks' picture. HEIC and AVIF through the libheif
   helper (`heif`), an `image` decoder whose types count as decoded here
   only where the helper is installed (`heif::reads`): a format a helper
   reads is never listed as decoded where the helper is missing, or its

@@ -174,8 +174,10 @@ impl Magick {
         }
     }
 
-    /// Whether it draws files of type `mime`: a picture skwir does not
-    /// decode itself, in a format it reads.
+    /// Whether it draws files of type `mime`: a picture of a type skwir
+    /// does not decode itself (`thumb_providers::decodes`; a raw file, which
+    /// skwir reads where it carries a JPEG, asked after skwir's decoder),
+    /// in a format it reads.
     pub fn draws(&self, mime: &str) -> bool {
         self.format(mime, None).is_some()
     }
@@ -461,8 +463,8 @@ mod tests {
             Some("ORF")
         );
         assert!(
-            !magick.draws("image/x-sony-arw"),
-            "skwir reads its JPEG (ADR-148)"
+            magick.draws("image/x-sony-arw"),
+            "asked after skwir's decoder, for one that carries no JPEG (ADR-148)"
         );
         assert!(magick.draws("image/x-xcf"));
         assert!(!magick.draws("image/png"), "skwir decodes it");

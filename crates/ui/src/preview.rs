@@ -2587,7 +2587,9 @@ fn shown_as_itself(previews: &skwir_core::preview::Previews, request: &PreviewRe
     let mime = request.mime.as_deref();
     match drawn_here(mime, held.head()) {
         Drawn::Drawing | Drawn::Text => true,
-        Drawn::Picture => mime.is_some_and(skwir_platform::thumb_providers::decodes),
+        // A raw file without a JPEG is no picture Skwir decodes (ADR-148).
+        Drawn::Picture => mime
+            .is_some_and(|mime| skwir_platform::thumb_providers::decodes_file(mime, held.head())),
         Drawn::Nothing => false,
     }
 }
