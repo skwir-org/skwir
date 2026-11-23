@@ -8,8 +8,8 @@ use std::path::Path;
 
 use skwir_core::document::{
     Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_SIZE, MAX_PART_SIDE, Outline,
-    PAGE_PIXELS, PIXELS_FILE, PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply,
-    WorkerRequest, held_side, page_labels, words, worker,
+    PIXELS_FILE, PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest,
+    held_side, page_labels, words, worker,
 };
 
 mod native;
@@ -203,12 +203,8 @@ impl<'a> Document<'a> {
         let height = (f64::from(shown.height) * scale).round().clamp(1., limit) as u32;
         let drawn = match part {
             None => [0, 0, width, height],
-            Some(part) => part.pixels(width, height),
+            Some(part) => part.drawn(width, height)?,
         };
-        anyhow::ensure!(
-            part.is_none() || u64::from(drawn[2]) * u64::from(drawn[3]) <= PAGE_PIXELS,
-            "the part asked is larger than a page may be"
-        );
         let pixels = self.native.render(number, (width, height), drawn)?;
         let mut output = BufWriter::new(std::fs::File::create(scratch.join(PIXELS_FILE))?);
         output.write_all(&pixels)?;

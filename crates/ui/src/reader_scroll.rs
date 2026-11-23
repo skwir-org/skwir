@@ -232,9 +232,12 @@ pub(crate) fn report_seen(
 /// What of page `seen` to draw apart, at what side (ADR-147): where it
 /// covers more device pixels than its pixels drawn whole hold, the part
 /// that shows and a margin round it of half as much each way, as many
-/// pixels as a page may hold (`document::PAGE_PIXELS`), at the side it
-/// covers. `None` while what is drawn whole suffices, or `held` (a part
-/// drawn or asked, and its side) holds what shows at that side.
+/// pixels as a page may hold (`document::PAGE_PIXELS`, counted as
+/// `Part::most_pixels` counts them, never fewer than an engine draws), at
+/// the side it covers, or smaller where more of it shows than a page may
+/// hold. `None` while what is drawn whole suffices (at the side asked, or
+/// at all the side a part could be drawn at), or `held` (a part drawn or
+/// asked, and its side) holds what shows at that side.
 pub(crate) fn part_wanted(
     seen: &crate::elements::document::Seen,
     held: Option<(skwir_core::document::Part, u32)>,
@@ -249,35 +252,46 @@ pub(crate) fn part_wanted(
     if skwir_core::document::held_side(seen.own.0, seen.own.1, side) as f32 * 1.05 >= seen.covered {
         return None;
     }
+    // More of it shows than a page may hold at that side: drawn smaller,
+    // with no margin; no sharper than the whole, not at all.
+    let shown = seen.shown.most_pixels(seen.own, side);
+    if shown > PAGE_PIXELS {
+        let mut smaller = (f64::from(side) * (PAGE_PIXELS as f64 / shown as f64).sqrt()) as u32;
+        while smaller > 64 && seen.shown.most_pixels(seen.own, smaller) > PAGE_PIXELS {
+            smaller -= smaller.div_ceil(64);
+        }
+        if smaller as f32 <= seen.held as f32 * 1.05 {
+            return None;
+        }
+        side = smaller;
+    }
     if let Some((part, held_side)) = held
         && held_side as f32 * 1.05 >= side as f32
         && part.holds(&seen.shown)
     {
         return None;
     }
-    let (width, height) = (seen.own.0.max(1.), seen.own.1.max(1.));
-    let longer = width.max(height);
-    let pixels = |part: &Part, side: u32| {
-        let scale = side as f32 / longer;
-        f64::from((part.right - part.left) * width * scale)
-            * f64::from((part.bottom - part.top) * height * scale)
+    let around = |margin: f32| {
+        let (across, down) = (
+            (seen.shown.right - seen.shown.left) * margin,
+            (seen.shown.bottom - seen.shown.top) * margin,
+        );
+        Part {
+            left: (seen.shown.left - across).max(0.),
+            top: (seen.shown.top - down).max(0.),
+            right: (seen.shown.right + across).min(1.),
+            bottom: (seen.shown.bottom + down).min(1.),
+        }
     };
-    let shown = pixels(&seen.shown, side);
-    let room = PAGE_PIXELS as f64 / shown.max(1.);
-    if room < 1. {
-        side = ((f64::from(side) * room.sqrt()).floor() as u32).max(64);
+    let room = PAGE_PIXELS as f64 / seen.shown.most_pixels(seen.own, side).max(1) as f64;
+    let mut margin = ((room.sqrt() - 1.) / 2.).clamp(0., 0.5) as f32;
+    // The whole pixels round the margin count too: a little less of it
+    // until the part is within the bound, what shows alone at worst.
+    let mut part = around(margin);
+    while margin > 0. && part.most_pixels(seen.own, side) > PAGE_PIXELS {
+        margin = (margin - 0.005).max(0.);
+        part = around(margin);
     }
-    let margin = ((room.sqrt() - 1.) / 2.).clamp(0., 0.5) as f32;
-    let (across, down) = (
-        (seen.shown.right - seen.shown.left) * margin,
-        (seen.shown.bottom - seen.shown.top) * margin,
-    );
-    let part = Part {
-        left: (seen.shown.left - across).max(0.),
-        top: (seen.shown.top - down).max(0.),
-        right: (seen.shown.right + across).min(1.),
-        bottom: (seen.shown.bottom + down).min(1.),
-    };
     Some((part, side))
 }
 
@@ -1874,7 +1888,7 @@ mod tests {
     #[test]
     fn what_shows_of_a_page_zoomed_past_its_whole_is_drawn_apart() {
         use crate::elements::document::Seen;
-        use skwir_core::document::Part;
+        use skwir_core::document::{PAGE_PIXELS, Part};
         let seen = Seen {
             page: 3,
             own: (816., 1056.),
@@ -1920,20 +1934,78 @@ mod tests {
             ..seen
         };
         assert_eq!(part_wanted(&tall, None), None);
-        // What shows larger than a page may hold: no margin, a smaller side.
+        // What shows larger than a page may hold: a smaller side, as much
+        // of a margin as is left, within the bound.
         let wall = Seen {
             covered: 30_000.,
+            shown: Part {
+                left: 0.2,
+                top: 0.2,
+                right: 0.8,
+                bottom: 0.8,
+            },
+            ..seen
+        };
+        let (part, side) = part_wanted(&wall, None).unwrap();
+        assert!(part.holds(&wall.shown), "{part:?}");
+        assert!(side < 28_672 && side as f32 > 4096. * 1.05, "{side}");
+        assert!(part.most_pixels(wall.own, side) <= PAGE_PIXELS);
+        // At that side, the part drawn and asked again: held.
+        assert_eq!(part_wanted(&wall, Some((part, side))), None);
+        // The whole page showing at that zoom: no part sharper than the
+        // whole, none.
+        let whole = Seen {
             shown: Part {
                 left: 0.,
                 top: 0.,
                 right: 1.,
                 bottom: 1.,
             },
-            ..seen
+            ..wall
         };
-        let (part, side) = part_wanted(&wall, None).unwrap();
-        assert_eq!(part, wall.shown);
-        assert!(side < 30_000, "{side}");
+        assert_eq!(part_wanted(&whole, None), None);
+    }
+
+    /// A part sized to as many pixels as a page may hold is drawn by every
+    /// engine, however it lays the page's pixels: on a screen of two device
+    /// pixels a pixel, an A4 page at 400 % had what shows of it in the
+    /// middle refused by all five, its whole pixels rounding it past the
+    /// bound counted by its shares alone (ADR-147).
+    #[test]
+    fn a_part_sized_to_the_bound_is_drawn_by_every_engine() {
+        use crate::elements::document::Seen;
+        use skwir_core::document::{PAGE_PIXELS, Part};
+        let own = (793.7, 1122.5);
+        let seen = Seen {
+            page: 1,
+            own,
+            covered: 8980.,
+            held: 4096,
+            shown: Part {
+                left: 0.3,
+                top: 0.4,
+                right: 0.703,
+                bottom: 0.578,
+            },
+        };
+        let (part, side) = part_wanted(&seen, None).expect("a part");
+        assert_eq!(side, 8704);
+        assert!(part.holds(&seen.shown));
+        assert!(
+            part.left > 0. && part.right < 1.,
+            "a margin each way: {part:?}"
+        );
+        let scale = f64::from(side) / f64::from(own.1);
+        let laid = |length: f32| f64::from(length) * scale;
+        for (width, height) in [
+            (laid(own.0).round(), laid(own.1).round()),
+            (laid(own.0).ceil(), laid(own.1).ceil()),
+        ] {
+            let (width, height) = (width as u32, height as u32);
+            let [_, _, w, h] = part.pixels(width, height);
+            assert!(u64::from(w) * u64::from(h) <= PAGE_PIXELS, "{w}×{h}");
+            assert!(part.drawn(width, height).is_ok());
+        }
     }
 
     /// Before any page was shown, the first is rendered at the side an

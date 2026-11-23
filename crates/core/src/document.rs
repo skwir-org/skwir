@@ -200,6 +200,38 @@ impl Part {
         }
     }
 
+    /// The pixels this part is drawn at on a page laid `width` × `height`
+    /// ([`Part::pixels`]), refused past what a page's pixels may be
+    /// (`MAX_PAGE_PIXELS`, the manager's bound): what every engine draws.
+    /// The reader sizes a part by [`Part::most_pixels`], never fewer than
+    /// these, to `PAGE_PIXELS`, well within (ADR-147).
+    pub fn drawn(&self, width: u32, height: u32) -> anyhow::Result<[u32; 4]> {
+        let drawn = self.pixels(width, height);
+        anyhow::ensure!(
+            u64::from(drawn[2]) * u64::from(drawn[3]) <= MAX_PAGE_PIXELS,
+            "the part asked is larger than a page may be"
+        );
+        Ok(drawn)
+    }
+
+    /// The most pixels this part is drawn at on a page of `own` size (in
+    /// any unit) laid with `side` on its longer side, however an engine
+    /// lays the page's pixels there (rounded, rounded up, or a little
+    /// smaller, as djvu-rs draws) and the part's whole pixels round it:
+    /// what the reader counts a part by, never fewer than an engine's
+    /// [`Part::drawn`] (ADR-147).
+    pub fn most_pixels(&self, own: (f32, f32), side: u32) -> u64 {
+        let (width, height) = (f64::from(own.0.max(1.)), f64::from(own.1.max(1.)));
+        let scale = f64::from(side) / width.max(height);
+        // The page laid at most a pixel past its size at that scale, and
+        // the part's whole pixels a pixel and a half more each way at most.
+        let along = |from: f32, to: f32, length: f64| {
+            let laid = (length * scale).ceil() + 1.;
+            (f64::from((to - from).clamp(0., 1.)) * laid + 3.).min(laid)
+        };
+        (along(self.left, self.right, width) * along(self.top, self.bottom, height)).ceil() as u64
+    }
+
     /// Whether this part covers all of `other`.
     pub fn holds(&self, other: &Part) -> bool {
         self.left <= other.left
@@ -448,6 +480,11 @@ pub const MAX_SIDE: u32 = 4096;
 /// (11.9 megapixels, 47 MB), counted rather than a side, so a tall page
 /// is held as long as an A4 one is wide (`held_side`, ADR-147).
 pub const PAGE_PIXELS: u64 = (MAX_SIDE as u64) * (MAX_SIDE as u64) * 1000 / 1414;
+/// The most pixels a page's drawing may be, whole or a part of one: a
+/// square page's at `MAX_SIDE`. The manager takes no more, and an engine
+/// refuses no part within it (`Part::drawn`): the reader asks at most
+/// `PAGE_PIXELS` (`Part::most_pixels`), so rounding never meets it.
+pub const MAX_PAGE_PIXELS: u64 = (MAX_SIDE as u64) * (MAX_SIDE as u64);
 /// The longest side a page is drawn at for a part of it: past it, a zoom
 /// enlarges what is drawn (about 30 times an A4 page at 96 per inch).
 pub const MAX_PART_SIDE: u32 = 32_768;
@@ -741,6 +778,94 @@ mod part_tests {
         // A squarer page keeps `MAX_SIDE`, as before.
         assert_eq!(held_side(600., 800., 100_000), MAX_SIDE);
         assert_eq!(held_side(10., 10., 1), 64, "at least the least side");
+    }
+
+    /// What the reader counts a part by is never fewer pixels than an
+    /// engine draws it at, however the engine lays the page's pixels
+    /// (rounded as `PDFium` and `DjVuLibre` do, rounded up as Poppler and
+    /// `MuPDF` do, a little smaller as djvu-rs may): a part the reader sizes
+    /// to `PAGE_PIXELS` is drawn by every engine. Counted by its shares
+    /// alone, a part sized to the bound was refused once its whole pixels
+    /// rounded it out.
+    #[test]
+    fn a_part_is_counted_alike_by_the_reader_and_every_engine() {
+        let pages: [(f32, f32); 4] = [
+            (793.7, 1122.5),
+            (816., 1056.),
+            (1122.5, 793.7),
+            (533., 8000.),
+        ];
+        let parts = [
+            Part {
+                left: 0.3,
+                top: 0.4,
+                right: 0.703,
+                bottom: 0.578,
+            },
+            Part {
+                left: 0.,
+                top: 0.123_457,
+                right: 1.,
+                bottom: 0.3,
+            },
+            Part {
+                left: 0.499_99,
+                top: 0.5,
+                right: 0.500_01,
+                bottom: 0.5,
+            },
+        ];
+        for own in pages {
+            for side in [513, 4608, 8704, 17_000, 32_768] {
+                let scale = f64::from(side) / f64::from(own.0.max(own.1));
+                let laid = |length: f32| f64::from(length) * scale;
+                let wholes = [
+                    (laid(own.0).round(), laid(own.1).round()),
+                    (laid(own.0).ceil(), laid(own.1).ceil()),
+                    (laid(own.0).floor() - 1., laid(own.1).floor() - 1.),
+                ];
+                for part in parts {
+                    let most = part.most_pixels(own, side);
+                    for (width, height) in wholes {
+                        let [_, _, w, h] = part.pixels(width as u32, height as u32);
+                        assert!(
+                            u64::from(w) * u64::from(h) <= most,
+                            "{own:?} at {side}: {part:?} drawn {w}×{h}, counted {most}"
+                        );
+                    }
+                }
+            }
+        }
+        // A part counted at the reader's bound is drawn by every engine;
+        // one past the manager's is refused.
+        let side = 8704;
+        let scale = f64::from(side) / 1122.5;
+        let (width, height) = (
+            (793.7 * scale).ceil() as u32,
+            (1122.5 * scale).ceil() as u32,
+        );
+        let across = 0.5;
+        let down = (PAGE_PIXELS as f64 / (f64::from(width) * f64::from(height) * across)) as f32;
+        let at_bound = Part {
+            left: 0.2,
+            top: 0.1,
+            right: 0.2 + across as f32,
+            bottom: 0.1 + down,
+        };
+        let [_, _, w, h] = at_bound.pixels(width, height);
+        assert!(
+            u64::from(w) * u64::from(h) > PAGE_PIXELS,
+            "rounded out past the bound"
+        );
+        assert!(at_bound.drawn(width, height).is_ok());
+        let whole = Part {
+            left: 0.,
+            top: 0.,
+            right: 1.,
+            bottom: 1.,
+        };
+        assert!(whole.drawn(MAX_SIDE, MAX_SIDE).is_ok());
+        assert!(whole.drawn(MAX_SIDE + 1, MAX_SIDE).is_err());
     }
 }
 

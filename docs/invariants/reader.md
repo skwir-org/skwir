@@ -281,6 +281,14 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   drawn and the part cut (`DocumentSession::render_part`'s default).
   `tools/pdf/check.py` and `tools/djvu/check.py` compare each engine's
   part with the whole's at the same side.
+- **A part is counted alike by the reader and every engine**: the reader
+  sizes it by `Part::most_pixels` (never fewer than any engine draws it
+  at, however it lays the page's pixels and rounds the part's) to
+  `PAGE_PIXELS`; every engine draws `Part::drawn`, refused only past
+  `MAX_PAGE_PIXELS`, the manager's own bound. Counted by its shares alone,
+  a part sized to the bound was refused by all five once its whole pixels
+  rounded it out: on a screen of two device pixels a pixel, what shows in
+  the middle of an A4 page at 400 %. Both checks ask a part at the bound.
 - Before any page was shown, the first renders at the side an upright page
   of ISO's shape covers in the content's area (`reader_scroll::area_side`),
   never a fixed side: the area says it as it is laid out for that preview

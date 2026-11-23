@@ -9,9 +9,8 @@ use pdfium_render::prelude::*;
 use skwir_core::direction::Direction;
 use skwir_core::document::{
     COMPOSED_FILE, CSS_PER_POINT, Compose, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS,
-    MAX_PAGE_CHARS, MAX_PART_SIDE, Outline, PAGE_PIXELS, PIXELS_FILE, PageContent, Part,
-    PixelOrder, Rect, SearchHit, TextChar, WorkerReply, WorkerRequest, held_side, page_labels,
-    worker,
+    MAX_PAGE_CHARS, MAX_PART_SIDE, Outline, PIXELS_FILE, PageContent, Part, PixelOrder, Rect,
+    SearchHit, TextChar, WorkerReply, WorkerRequest, held_side, page_labels, worker,
 };
 
 mod print;
@@ -876,11 +875,7 @@ fn render(
     let (bitmap, drawn) = match part {
         None => (page.render_with_config(&config)?, None),
         Some(part) => {
-            let [left, top, w, h] = part.pixels(whole.0, whole.1);
-            anyhow::ensure!(
-                u64::from(w) * u64::from(h) <= PAGE_PIXELS,
-                "the part asked is larger than a page may be"
-            );
+            let [left, top, w, h] = part.drawn(whole.0, whole.1)?;
             // The page laid at that side with its corner off the bitmap's,
             // the part's own size: only the part is drawn.
             let mut bitmap =

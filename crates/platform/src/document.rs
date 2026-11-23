@@ -748,15 +748,15 @@ impl Manager {
             } => {
                 // A page whole within what a page may hold (a tall one past
                 // `MAX_SIDE`, ADR-147), a part of one within as much: never
-                // more pixels than a square page at `MAX_SIDE`.
+                // more pixels than a square page at `MAX_SIDE`, the bound an
+                // engine draws a part within (`Part::drawn`).
                 anyhow::ensure!(
                     width > 0
                         && height > 0
                         && width <= MAX_PART_SIDE
                         && height <= MAX_PART_SIDE
                         && u64::from(width) * u64::from(height)
-                            <= u64::from(skwir_core::document::MAX_SIDE)
-                                * u64::from(skwir_core::document::MAX_SIDE),
+                            <= skwir_core::document::MAX_PAGE_PIXELS,
                     "invalid document bitmap size"
                 );
                 anyhow::ensure!(

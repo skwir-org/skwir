@@ -48,7 +48,13 @@ on Xvfb.
    optional `part`, in shares of the page (`document::Part`), never in
    pixels: each engine lays its own pixels on the page at the side, draws
    whole pixels round the part, and says back the part it drew exactly.
-   A part carries no text again (the whole carried it).
+   A part carries no text again (the whole carried it). The reader and
+   the engines count a part alike (amended 2026-11-23): the reader sizes
+   it by `Part::most_pixels`, never fewer than an engine draws, to
+   `PAGE_PIXELS`; an engine draws `Part::drawn`, refused only past the
+   manager's bound (`MAX_PAGE_PIXELS`). Counted by its shares alone, a
+   part sized to the bound was refused once its whole pixels rounded it
+   out.
    `DocumentSession::render_part` draws one; by default the whole is
    drawn and the part cut from it (`DocumentPage::cut`): a book laid out,
    a plugin from outside Skwir.

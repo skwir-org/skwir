@@ -6,9 +6,8 @@ use anyhow::Context;
 use cairo::{Context as CairoContext, Format, ImageSurface};
 use poppler::{Document, Page};
 use skwir_core::document::{
-    CSS_PER_POINT, DocumentInfo, FIRST_PAGE, MAX_HITS, MAX_PART_SIDE, PAGE_PIXELS, PIXELS_FILE,
-    PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, held_side,
-    page_labels, worker,
+    CSS_PER_POINT, DocumentInfo, FIRST_PAGE, MAX_HITS, MAX_PART_SIDE, PIXELS_FILE, PageContent,
+    Part, PixelOrder, Rect, SearchHit, WorkerReply, WorkerRequest, held_side, page_labels, worker,
 };
 
 mod navigation;
@@ -145,12 +144,8 @@ fn render(
     // corner off the surface's.
     let [left, top, w, h] = match part {
         None => [0, 0, whole_width, whole_height],
-        Some(part) => part.pixels(whole_width, whole_height),
+        Some(part) => part.drawn(whole_width, whole_height)?,
     };
-    anyhow::ensure!(
-        part.is_none() || u64::from(w) * u64::from(h) <= PAGE_PIXELS,
-        "the part asked is larger than a page may be"
-    );
     let (width, height) = (i32::try_from(w)?, i32::try_from(h)?);
     let mut surface = ImageSurface::create(Format::ARgb32, width, height)?;
     {

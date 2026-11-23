@@ -32,6 +32,29 @@ def has_ink(pixels, width, height, bounds):
                for y in range(y0, y1) for x in range(x0, x1))
 
 
+# What a page may hold (`document::PAGE_PIXELS`) and what any page's
+# pixels may be, the manager's bound (`document::MAX_PAGE_PIXELS`).
+PAGE_PIXELS = 4096 * 4096 * 1000 // 1414
+MAX_PAGE_PIXELS = 4096 * 4096
+
+
+def check_part_at_bound(process, whole, number):
+    """A part as large as the reader asks (`PAGE_PIXELS` by its shares, ADR-147)
+    is drawn, though its whole pixels round it past that: the engine refuses a
+    part only past the manager's bound."""
+    side = 8704
+    content = whole["content"]
+    longer = max(content["width"], content["height"])
+    laid = (side * content["width"] / longer) * (side * content["height"] / longer)
+    across = PAGE_PIXELS / (laid * 0.5)
+    assert across <= 0.8, across
+    asked = {"left": 0.1, "top": 0.2, "right": 0.1 + across, "bottom": 0.7}
+    reply = send(process, {"Render": {"page": number, "side": side, "part": asked}})
+    assert "Page" in reply, reply
+    page = reply["Page"]
+    assert page["width"] * page["height"] <= MAX_PAGE_PIXELS, page
+
+
 def check_part(process, root, number):
     """A part of a page drawn alone (ADR-147) is that part of the page drawn
     whole at the same side, to a level of anti-aliasing at most; asked at
@@ -67,6 +90,7 @@ def check_part(process, root, number):
     far = send(process, {"Render": {"page": number, "side": 20000,
                                     "part": {"left": 0.5, "top": 0.5, "right": 0.52, "bottom": 0.52}}})["Page"]
     assert 200 <= max(far["width"], far["height"]) <= 600, far
+    check_part_at_bound(process, whole, number)
 
 
 def page_text(process, number):

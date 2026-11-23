@@ -14,7 +14,7 @@ use djvu_rs::resource_limits::{ParseOptions, ResourceLimits};
 use djvu_rs::text::{TextZone, TextZoneKind};
 use skwir_core::document::{
     Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_SIZE, MAX_PART_SIDE, MAX_SIDE,
-    Outline, PAGE_PIXELS, PIXELS_FILE, PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply,
+    Outline, PIXELS_FILE, PageContent, Part, PixelOrder, Rect, SearchHit, WorkerReply,
     WorkerRequest, held_side, words, worker,
 };
 
@@ -299,12 +299,8 @@ impl<'a> Document<'a> {
         } else {
             (across, down)
         };
-        let drawn = part.pixels(shown.0, shown.1);
+        let drawn = part.drawn(shown.0, shown.1)?;
         let [x, y, width, height] = drawn;
-        anyhow::ensure!(
-            u64::from(width) * u64::from(height) <= PAGE_PIXELS,
-            "the part asked is larger than a page may be"
-        );
         let options = RenderOptions {
             width: across,
             height: down,

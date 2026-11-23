@@ -20,8 +20,8 @@ use mupdf::{Colorspace, Device, Document, Matrix, Page, Pixmap, Quad, TextPageFl
 use skwir_core::direction::Direction;
 use skwir_core::document::{
     CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS,
-    MAX_PART_SIDE, Outline, PAGE_PIXELS, PIXELS_FILE, PageContent, Part, PixelOrder, Rect,
-    SearchHit, TextChar, WorkerReply, WorkerRequest, held_side, page_labels, worker,
+    MAX_PART_SIDE, Outline, PIXELS_FILE, PageContent, Part, PixelOrder, Rect, SearchHit, TextChar,
+    WorkerReply, WorkerRequest, held_side, page_labels, worker,
 };
 
 mod fonts;
@@ -268,12 +268,8 @@ fn render(
     // corner off the pixmap's.
     let [left, top, width, height] = match part {
         None => [0, 0, whole_width, whole_height],
-        Some(part) => part.pixels(whole_width, whole_height),
+        Some(part) => part.drawn(whole_width, whole_height)?,
     };
-    anyhow::ensure!(
-        part.is_none() || u64::from(width) * u64::from(height) <= PAGE_PIXELS,
-        "the part asked is larger than a page may be"
-    );
     let mut pixmap = Pixmap::new_with_w_h(
         &Colorspace::device_rgb(),
         i32::try_from(width)?,
