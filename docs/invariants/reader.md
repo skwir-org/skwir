@@ -291,8 +291,8 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   whole come, a session come or gone, parts refused or forgotten,
   everything given up), and it is chosen at the next turn that may
   (`Shell::choose_part_when_due`: as what shows is said and at every
-  sync), with no search running and a session there to ask; never by a
-  call at each place that changes it. Chosen only as the view moved, the
+  sync), with a session there to ask (asking nothing while a search
+  runs, below); never by a call at each place that changes it. Chosen only as the view moved, the
   second page in view never had its part, nor the view a part asked for
   one it had left; chosen only where it was called for, a document read
   again (its session arriving, nothing in view moving) and a refresh
@@ -302,8 +302,10 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   has its own cancel, apart from the whole pages' (`DocumentScroll::
   cancel` gives up pages read ahead, not what shows). A part that fails
   is not asked again until the page is visited or the pages refreshed;
-  a part waits while a search runs, never cancelling a find the user
-  started. What a page said twice in a frame (gpui's list lays out
+  while a search runs, what is no longer wanted still goes (a part let
+  go of, one being drawn for a view left given up) and only the asking
+  waits for its end, never cancelling a find the user started, the
+  choice due still. What a page said twice in a frame (gpui's list lays out
   again after an autoscroll) counts as its last.
 - **A part is asked in shares, never pixels** (`document::Part`,
   `WorkerRequest::Render`'s `part`): each engine lays its own pixels on the
