@@ -29,8 +29,14 @@ impl HintProvider for Learned {
         // Not stat-ed here: the search stats every file it is named.
         (key == keys::TAGS).then(|| self.0.candidates_with(value, root))
     }
-    fn covers(&self, key: &str, root: &Path) -> bool {
-        key == keys::TAGS && self.0.covering(root).is_some()
+    /// As of when the count covering `root` began: what panes and plans
+    /// taught it since keeps it so, what other programs did is not known
+    /// until the next check.
+    fn coverage(&self, key: &str, root: &Path) -> Option<skwir_core::coverage::Coverage> {
+        (key == keys::TAGS)
+            .then(|| self.0.covering(root))
+            .flatten()
+            .map(|c| skwir_core::coverage::Coverage::as_of(Some(c.since())))
     }
 }
 

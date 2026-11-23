@@ -3797,9 +3797,9 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   - **D4, the tags index's checks** through skwird's journal: *built
     2026-11-23* (ADR-150, 15): a count keeps the journal's mark, the next
     check reads only the folders the journal names where it is every
-    change (skwird's `complete`, fd4334d), and walks elsewhere. Left: its
-    coverage said in A's words (the search's `covered_by_an_index` still
-    asks a yes or no of the hints). Checked against a real engine
+    change (skwird's `complete`, fd4334d), and walks elsewhere; its
+    coverage said in A's words (`HintProvider::coverage`, as of when its
+    count began, in place of a yes or no). Checked against a real engine
     (`just skwird-check`): its journal tells a tag set as an attribute
     alone where the folder is live, says it is every change, and names a
     folder removed by the device and inode a stat says; the tag place's

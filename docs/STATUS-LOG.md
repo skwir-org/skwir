@@ -23398,3 +23398,13 @@ time. skwird's journal now stands in where it is every change.
   before (what the tags index keys its folders by). 4 of 4 pass. Not run:
   the window part of the recipe, nor a tag place's count against it.
 - **`just check-cross`** over D1, D2, D4 and D5: clean.
+
+## 2026-11-23: the hints' coverage in the seam's words (ADR-150, 15)
+
+D4's last part: `HintProvider::covers` (a yes or no) became `coverage`, a
+`Coverage` as the names indexes say theirs; the tags index's is as of
+when the count covering the folder began. `Hints::covers` asks it, an
+answer counting where it `answers()`. Nothing a person sees changes: only
+a lens's folders ask it. Checked: the tags and query plugins' tests
+(233), core's hints test, `search_tags`, `plugins_toggle`; clippy on
+core, tags, query and the binary.

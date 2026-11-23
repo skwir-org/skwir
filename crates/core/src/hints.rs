@@ -29,15 +29,16 @@ pub trait HintProvider: Send + Sync {
         cancel: &CancelToken,
     ) -> Option<Vec<PathBuf>>;
 
-    /// Whether `candidates` names every file under `root` with a value of
-    /// `key` that this index knew when it last looked over all of `root`:
-    /// its coverage (never overstated, `docs/invariants/indexes.md`), the
-    /// one case where what it does not name was looked at. Only what asks
-    /// whether anything is there at all reads this (a lens's folders, and
+    /// How far `candidates` names every file under `root` with a value of
+    /// `key` (ADR-150, 1: the names indexes' words): as of when this index
+    /// last looked over all of `root`, kept since by what Skwir learned,
+    /// never overstated (`docs/invariants/indexes.md`). Only what asks
+    /// whether anything is there at all reads it (a lens's folders, and
     /// not when a change or F5 asks again: the index learns of a plan's
-    /// changes after it); a search walks.
-    fn covers(&self, _key: &str, _root: &Path) -> bool {
-        false
+    /// changes after it); a search walks. `None` (the default): it never
+    /// looked over all of it.
+    fn coverage(&self, _key: &str, _root: &Path) -> Option<crate::coverage::Coverage> {
+        None
     }
 }
 
@@ -66,10 +67,13 @@ impl Hints {
         self.list.all().iter().map(|p| p.id()).collect()
     }
 
-    /// Whether an index looked over all of `root` for `key`
-    /// (`HintProvider::covers`).
+    /// Whether an index looked over all of `root` for `key`, by what it
+    /// says of it (`HintProvider::coverage`).
     pub fn covers(&self, key: &str, root: &Path) -> bool {
-        self.list.all().iter().any(|p| p.covers(key, root))
+        self.list
+            .all()
+            .iter()
+            .any(|p| p.coverage(key, root).is_some_and(|c| c.names.answers()))
     }
 
     /// Every provider's candidates, once each, only those under `root`;

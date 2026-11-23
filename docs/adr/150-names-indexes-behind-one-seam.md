@@ -233,5 +233,8 @@ time, folder totals: agreed with it, built on its side next).
     already runs, nothing started: following is no search. **The tags
     index's checks** (D4) read it instead of walking where it is every
     change since the last count's mark (`docs/invariants/notes.md`); the
-    harvest (ADR-089, Phase 7) will consume it the same way.
+    harvest (ADR-089, Phase 7) will consume it the same way. The hints'
+    coverage is said in the same words (`HintProvider::coverage`, a
+    `Coverage` in place of ADR-026's yes or no): the tags index's, as of
+    when the count covering the folder began.
 
