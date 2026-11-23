@@ -3656,7 +3656,10 @@ its own, every color readable on what it is drawn on.
   2026-11-07.** Checked on Xvfb and through the platform on the
   reference session (`docs/STATUS-LOG.md`, 2026-11-07). Not checked: a
   real Caelestia, Dux Shell or Omarchy session, qtengine and
-  hyprqt6engine installed.
+  hyprqt6engine installed. Plasma's platform theme (`kde`) named outside
+  Plasma reads `kdeglobals` as Qt's (Mandara's KDE scheme, Noctalia's,
+  Dux Shell's): **built 2026-11-23**, checked through the platform; not
+  in a real Mandara session.
 - **Fonts by role (ADR-073).** Three choices, Automatic or a family:
   `ui.font` (Appearance), `reading.font` (Reading › Text), `ui.code_font`
   (Reading › Code); Automatic is the desktop's font while Desktop colors

@@ -650,3 +650,51 @@ read).
     following test passed five combined runs of the UI's and the
     platform's tests (it had failed two of four). Not checked in a
     window: the user checks on their own desktop.
+- 2026-11-23, **Plasma's Qt platform theme outside Plasma.** The user
+  asked how the Mandara shell (drawn with gpui over Hyprland, Niri,
+  Sway, KWin and others) says its colors and whether Skwir took them;
+  then, told of the one gap left, "go ahead". Mandara writes for an
+  application only once its user switches it on (Studio › Themes ›
+  Other apps, every one off at first): GTK's `mandara-colors.css` beside
+  each `gtk.css`, imported by its whole path after the imports there, in
+  libadwaita's names and GTK 3's; qt5ct's and qt6ct's
+  `colors/mandara.conf`, named with their custom palette on; a KDE
+  scheme, `Mandara.colors`, its keys merged into `kdeglobals`. It reads
+  the portal's look and says none. The first two were read already
+  (2026-11-07's points 1 and 2), the third only on Plasma.
+  - **Decided:** `QT_QPA_PLATFORMTHEME=kde` (plasma-integration, which
+    gives Qt's applications Plasma's `kdeglobals` wherever they run) is
+    a platform theme read as the others (`desktop_settings::QtTheme`):
+    Qt's colors are Plasma's scheme, read as on Plasma (`kde_scheme`:
+    the cascade, the scheme it names filling in, Breeze's where it names
+    none), its fonts `kdeglobals`' `font` and `fixed`, both said to come
+    from "Qt (KDE)", and the user's `kdeglobals` is followed. It keeps
+    no settings of its own: named, it is read. Noctalia and Dux Shell
+    write a KDE scheme into `kdeglobals` too, so their users who name
+    Plasma's platform theme are read alike.
+  - **Left as they are:** on Plasma itself Qt's colors stay the
+    desktop's own whatever `QT_QPA_PLATFORMTHEME` names (`Own::
+    qt_is_own`). `gtk3` and `xdgdesktopportal` name nothing here: the
+    first gives Qt GTK's palette, read already, the second the look
+    alone. Mandara's own palette is not read: with every switch off it
+    writes none outside its folders, and GTK's and Qt's applications
+    wear none of its colors either. Its GTK sheet writes `borders` as
+    `#rrggbbaa`, which GTK 3 refuses (`_gtk_css_parser_try_hash_color`
+    reads six digits, then "Missing semicolon at end of color
+    definition", gtk 3.24.52) and GTK 4 reads: Skwir wears it, as
+    Mandara means it, where GTK 3's applications keep their theme's.
+  - **Consequences:** Automatic reaches Qt's colors only where GTK's
+    name none (GTK's built-in Adwaita, no colors in the user's
+    `gtk.css`); elsewhere the change shows in Colors from's Qt and in
+    Qt's fonts, said apart (ADR-117).
+  - **Checked:** a platform theme named `kde` found with nothing
+    written, `gtk3` still none; through the platform
+    (`desktop_style::read` and `follow`), outside Plasma
+    (`XDG_CURRENT_DESKTOP=Hyprland`, no bus, folders of the check's
+    own), a `kdeglobals` written as Mandara merges its scheme (synthetic
+    colors): Automatic and Qt's colors "Qt (KDE)", its view's ground,
+    the selection's ground as the accent, its two fonts; the file put in
+    place again with a light scheme, its colors told again. With
+    `qt5ct` named and nothing of qt5ct's written, nothing read and
+    nothing told. Not checked: a real Mandara session, a Qt application
+    beside Skwir with plasma-integration installed.

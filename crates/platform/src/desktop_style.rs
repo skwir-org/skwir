@@ -13,13 +13,14 @@
 //! with the user's own GTK sheet over it (`gtk_theme`: what a desktop
 //! shell writes there), then the scheme of the Qt platform theme
 //! `QT_QPA_PLATFORMTHEME` names (`qt_palette`: qt5ct, qt6ct, qtengine,
-//! hyprqt6engine); each file read followed as it is written or replaced,
+//! hyprqt6engine; Plasma's, `kde`, reading `kdeglobals` as Plasma's own
+//! applications do); each file read followed as it is written or replaced,
 //! and what it names followed where it names it now. The fonts are read where the
 //! desktop keeps them (`desktop_settings`: `GSettings`, `kdeglobals`,
 //! xfconf, LXQt's `lxqt.conf`), then GTK's (`settings.ini`, then the
 //! portal's `org.gnome.desktop.interface`, which it answers outside GNOME
-//! too), then Qt's (qt6ct's or qt5ct's, as `QT_QPA_PLATFORMTHEME` names
-//! it); a fontconfig alias among them (`Monospace`) is the family
+//! too), then Qt's (the platform theme's `QT_QPA_PLATFORMTHEME` names,
+//! as its colors); a fontconfig alias among them (`Monospace`) is the family
 //! fontconfig matches it to (`fonts::unalias`). Each font's size is read
 //! with its family, from the same settings, and GTK's and Qt's fonts are
 //! also said apart, for the user to choose (ADR-117). The hours are
@@ -570,7 +571,7 @@ mod imp {
     use zbus::zvariant::{OwnedValue, Value};
 
     use super::{DesktopStyle, Schemes};
-    use crate::desktop_settings::{self as desktop, Chosen};
+    use crate::desktop_settings::{self as desktop, Chosen, QtTheme};
 
     const DESTINATION: &str = "org.freedesktop.portal.Desktop";
     const PATH: &str = "/org/freedesktop/portal/desktop";
@@ -701,7 +702,7 @@ mod imp {
         }
         /// The fonts Qt's applications are given where they are not the
         /// desktop's own (`qt_is_own`): the platform theme's
-        /// (`desktop::qt_settings`).
+        /// (`desktop::qt_theme`).
         fn qt_fonts(&self) -> Named {
             Named::default()
         }
@@ -764,7 +765,8 @@ mod imp {
             false
         }
         /// The colors Qt's applications are given elsewhere: the scheme of
-        /// the platform theme `QT_QPA_PLATFORMTHEME` names.
+        /// the platform theme `QT_QPA_PLATFORMTHEME` names, Plasma's
+        /// where it names Plasma's (`kde`).
         fn qt_colors(&self) -> Painted {
             Painted::default()
         }
@@ -867,14 +869,15 @@ mod imp {
         }
 
         fn qt_colors(&self) -> Painted {
-            match desktop::qt_settings() {
-                Some(settings) => Painted::one(
+            match desktop::qt_theme() {
+                Some(QtTheme::Settings(settings)) => Painted::one(
                     crate::qt_palette::of_settings(
                         &settings,
                         skwir_core::os_path::home().as_deref(),
                     ),
                     qt_source(settings.program),
                 ),
+                Some(QtTheme::Kde) => Painted::one(crate::kde_scheme::read(), qt_source("kde")),
                 None => Painted::default(),
             }
         }
@@ -903,12 +906,18 @@ mod imp {
                 .collect();
             // The scheme a Qt platform theme names, which a shell writes
             // again in its place (Noctalia's for qt6ct, Caelestia's for
-            // qtengine), and the settings that name it.
-            if !self.qt_is_own()
-                && let Some(settings) = desktop::qt_settings()
-            {
-                files.extend(crate::qt_palette::scheme_path(&settings, home.as_deref()));
-                files.push(settings.path);
+            // qtengine), and the settings that name it; Plasma's
+            // `kdeglobals` where Plasma's platform theme reads it outside
+            // Plasma (Mandara merges its scheme there).
+            if !self.qt_is_own() {
+                match desktop::qt_theme() {
+                    Some(QtTheme::Settings(settings)) => {
+                        files.extend(crate::qt_palette::scheme_path(&settings, home.as_deref()));
+                        files.push(settings.path);
+                    }
+                    Some(QtTheme::Kde) => files.extend(crate::kde_scheme::user_file()),
+                    None => {}
+                }
             }
             // The user's GTK sheets and the files they import, which a shell
             // writes again (Noctalia's `noctalia.css`, Dux Shell's
@@ -1481,19 +1490,7 @@ mod imp {
                     from: Some(super::Read::desktop(schema_name(schema))),
                 }
             }
-            Some(Chosen::Kde) => {
-                // As its colors are: the user's, then the system's and the
-                // look's (`kdedefaults`, which Plasma names in
-                // `XDG_CONFIG_DIRS`).
-                let kdeglobals = desktop::kdeglobals_cascade();
-                let texts: Vec<&str> = kdeglobals.iter().map(String::as_str).collect();
-                qt_named_in(
-                    &texts,
-                    "General",
-                    ("font", "fixed"),
-                    super::Read::desktop("Plasma"),
-                )
-            }
+            Some(Chosen::Kde) => plasma_fonts(super::Read::desktop("Plasma")),
             Some(Chosen::Lxqt) => {
                 let conf = desktop::lxqt_conf();
                 qt_named(
@@ -1517,6 +1514,16 @@ mod imp {
             }
             None => Named::default(),
         }
+    }
+
+    /// The fonts Plasma's `kdeglobals` name, as its colors are read: the
+    /// user's, then the system's and the look's (`kdedefaults`, which
+    /// Plasma names in `XDG_CONFIG_DIRS`); said to come `from` Plasma, or
+    /// from Qt where Plasma's platform theme gives them outside it.
+    fn plasma_fonts(from: super::Read) -> Named {
+        let kdeglobals = desktop::kdeglobals_cascade();
+        let texts: Vec<&str> = kdeglobals.iter().map(String::as_str).collect();
+        qt_named_in(&texts, "General", ("font", "fixed"), from)
     }
 
     /// The fonts a Qt settings file names (`text`), its interface font and
@@ -1557,9 +1564,6 @@ mod imp {
         }
     }
 
-    /// The fonts Qt's applications are given: Plasma's and LXQt's own on
-    /// those desktops, elsewhere qt6ct's or qt5ct's, as
-    /// `QT_QPA_PLATFORMTHEME` names it.
     /// The colors the desktop's own settings name (`Own::own_colors`), a
     /// GTK3 theme read by `theme`, `GTK_THEME` before the settings as GTK
     /// takes it.
@@ -1598,12 +1602,19 @@ mod imp {
     /// The fonts of the Qt platform theme `QT_QPA_PLATFORMTHEME` names (on
     /// Plasma and LXQt, Qt's are the desktop's own: `Own::qt_is_own`).
     fn qt_fonts() -> Named {
-        desktop::qt_settings().map_or_else(Named::default, |settings| qt_settings_named(&settings))
+        match desktop::qt_theme() {
+            Some(QtTheme::Settings(settings)) => qt_settings_named(&settings),
+            Some(QtTheme::Kde) => plasma_fonts(qt_source("kde")),
+            None => Named::default(),
+        }
     }
 
-    /// Where a platform theme's colors and fonts are said to come from.
+    /// Where a platform theme's colors and fonts are said to come from:
+    /// its program's name, Plasma's (`kde`) as `QT_QPA_PLATFORMTHEME`
+    /// names it.
     fn qt_source(program: &str) -> super::Read {
         super::Read::qt(match program {
+            "kde" => "Qt (KDE)",
             "qt6ct" => "Qt (qt6ct)",
             "qtengine" => "Qt (qtengine)",
             "hyprqt6engine" => "Qt (hyprqt6engine)",

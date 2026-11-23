@@ -2,7 +2,8 @@
 //! amended 2026-11-05: Colors from; 2026-11-07: the platform themes after
 //! qt6ct): the color scheme of the platform theme `QT_QPA_PLATFORMTHEME`
 //! names (qt5ct, qt6ct, qtengine, hyprqt6engine), and LXQt's palette.
-//! Plasma's own scheme is `kde_scheme`'s.
+//! Plasma's own scheme is `kde_scheme`'s, read for Plasma's platform theme
+//! (`kde`) wherever it is named (ADR-071, amended 2026-11-23).
 //!
 //! qt5ct and qt6ct name a scheme while their custom palette is on
 //! (`[Appearance] custom_palette`, `color_scheme_path`): a file of their

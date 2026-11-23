@@ -22614,3 +22614,45 @@ given a dialog was ever kept there.
 - **Not done**: Hyprland itself (no headless Hyprland harness); X11
   unchanged (its window managers say neither tiling nor drags); macOS
   and Windows have no such dialogs.
+
+## 2026-11-23: Plasma's Qt platform theme outside Plasma (ADR-071 amended)
+
+Asked how the Mandara shell colors applications and whether Skwir takes
+it. Read in Mandara's source (5ad3f565): every integration is off until
+its user switches it on; GTK's is a `mandara-colors.css` beside each
+`gtk.css`, imported by its whole path after the imports there (read
+already by the user's sheet, 2026-11-07); Qt's is qt5ct's and qt6ct's
+`colors/mandara.conf` with their custom palette on (read already); KDE's
+is `Mandara.colors`, its keys merged into `kdeglobals` and
+`KGlobalSettings.notifyChange` sent, which Skwir read on Plasma alone.
+
+- **Built:** `desktop_settings::QtTheme`: the platform theme
+  `QT_QPA_PLATFORMTHEME` names is a program's settings (qt5ct, qt6ct,
+  qtengine, hyprqt6engine) or Plasma's (`kde`), which reads
+  `kdeglobals` wherever it runs and needs no file of its own. Where it is
+  named outside Plasma, Qt's colors are `kde_scheme::read` and its fonts
+  `kdeglobals`' (`plasma_fonts`, shared with Plasma's own reading), both
+  from "Qt (KDE)", and the user's `kdeglobals` is followed. A doc comment
+  of `qt_fonts` left on `own_colors` is gone.
+- **Checked:** `rustfmt --check` on the three files; `cargo clippy -p
+  skwir-platform --all-targets -D warnings`; 57 platform tests (qt, kde,
+  plasma, desktop_style, desktop_settings, gtk_theme), green,
+  `a_qt_platform_theme_s_settings_are_found_where_it_looks` extended
+  (`kde` found with nothing written, `gtk3` none, qt6ct's settings).
+  Through the platform, a scratch example (not kept) calling
+  `desktop_style::read` and `follow` with `XDG_CURRENT_DESKTOP=Hyprland`,
+  `QT_QPA_PLATFORMTHEME=kde`, no bus and XDG folders of its own, a
+  `kdeglobals` naming `ColorScheme=Mandara`, view 20,22,30, selection
+  120,90,220, Inter and JetBrains Mono: Automatic and Qt's colors from
+  "Qt (KDE)", ground (0.078, 0.086, 0.118), accent (0.471, 0.353, 0.863),
+  both fonts; the file renamed into place with a light scheme, a reading
+  told with ground (0.941, 0.941, 0.961) and accent (0.157, 0.471,
+  0.784). The same with `qt5ct` named and none of its files: nothing
+  read, nothing told in 10 s.
+- **Not checked:** a real Mandara session; a Qt application with
+  plasma-integration beside Skwir; `check-cross` (the code is Linux's
+  alone); release-check.
+- **Noted, left:** Mandara writes `borders` as `#rrggbbaa`; GTK 3 drops
+  the definition (gtk 3.24.52 reads six hex digits, then "Missing
+  semicolon at end of color definition") and keeps its theme's, GTK 4
+  and Skwir read it.

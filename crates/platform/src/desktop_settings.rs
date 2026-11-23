@@ -103,10 +103,21 @@ pub(crate) fn lxqt_conf() -> Option<String> {
     config_text("lxqt/lxqt.conf")
 }
 
-/// The settings of the Qt platform theme that gives Qt's applications
-/// their fonts and colors outside Plasma and LXQt, as
-/// `QT_QPA_PLATFORMTHEME` names it (ADR-071, amended 2026-11-07): qt5ct's
-/// or qt6ct's (the other's when it has none), qtengine's or
+/// The Qt platform theme that gives Qt's applications their fonts and
+/// colors outside Plasma and LXQt, as `QT_QPA_PLATFORMTHEME` names it
+/// (ADR-071, amended 2026-11-07 and 2026-11-23).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum QtTheme {
+    /// A program of its own, read in its settings.
+    Settings(QtSettings),
+    /// Plasma's own (plasma-integration's `kde`), which gives Qt's
+    /// applications Plasma's `kdeglobals` wherever they run: read as
+    /// Plasma's are.
+    Kde,
+}
+
+/// The settings of a Qt platform theme that keeps its own: qt5ct's or
+/// qt6ct's (the other's when it has none), qtengine's or
 /// hyprqt6engine's, each found where the program looks for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QtSettings {
@@ -173,10 +184,20 @@ impl QtFolders {
     }
 }
 
-/// The Qt platform theme's settings this session names.
-pub(crate) fn qt_settings() -> Option<QtSettings> {
+/// The Qt platform theme this session names.
+pub(crate) fn qt_theme() -> Option<QtTheme> {
     let named = std::env::var("QT_QPA_PLATFORMTHEME").ok()?;
-    qt_settings_in(&named, &QtFolders::of_session())
+    qt_theme_in(&named, &QtFolders::of_session())
+}
+
+/// The platform theme `named` (`QT_QPA_PLATFORMTHEME`'s value), as read
+/// here: Plasma's, which reads `kdeglobals` and needs no settings of its
+/// own, else one whose settings are found in `folders`.
+pub(crate) fn qt_theme_in(named: &str, folders: &QtFolders) -> Option<QtTheme> {
+    if named.trim().eq_ignore_ascii_case("kde") {
+        return Some(QtTheme::Kde);
+    }
+    qt_settings_in(named, folders).map(QtTheme::Settings)
 }
 
 /// The settings of the platform theme `named` (`QT_QPA_PLATFORMTHEME`'s
@@ -693,11 +714,21 @@ mod tests {
         let found = |named: &str, folders: &QtFolders| {
             qt_settings_in(named, folders).map(|s| (s.program, s.path))
         };
-        // Nothing written: none, and none for a theme not read here.
+        // Nothing written: none, and none for a theme not read here; but
+        // Plasma's, which keeps nothing of its own (it reads kdeglobals).
         assert_eq!(found("qt6ct", &folders), None);
+        assert_eq!(qt_theme_in(" KDE ", &folders), Some(QtTheme::Kde));
         write("config/qt6ct/qt6ct.conf", "[Appearance]\n");
         write("config/kvantum/kvantum.kvconfig", "");
         assert_eq!(found("gtk3", &folders), None);
+        assert_eq!(qt_theme_in("gtk3", &folders), None);
+        assert!(matches!(
+            qt_theme_in("qt6ct", &folders),
+            Some(QtTheme::Settings(QtSettings {
+                program: "qt6ct",
+                ..
+            }))
+        ));
         // qt5ct named, qt6ct's taken where qt5ct has none; its own first.
         assert_eq!(
             found("qt5ct", &folders),
