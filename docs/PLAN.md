@@ -31,21 +31,23 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-21)
+## Current status (2026-11-23)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.6.0, the words in every language, its source made ready on
-  2026-11-21 (the reviews before it fixed, its changelog section dated),
-  its tag and release the user's to make; 0.5.1 was released 2026-11-16
-  on GitHub and the AUR's three bases, 0.5.0 2026-11-14, 0.4.0
-  2026-11-10, 0.3.1 2026-11-05, 0.3.0 2026-11-03, 0.2.0 2026-10-20,
-  0.1.0 [released](#release-01-linux) 2026-10-13. Since 2026-11-20
-  skwir.org also serves signed apt and dnf repositories (ADR-142),
-  holding 0.5.1. Phases 0 to 4, 5a and 6 pass their gates. Maps and
-  Notes everywhere are built, their gates not closed, as is much that no
-  phase planned ([Built beyond the plan](#built-beyond-the-plan)).
+  version 0.6.1, its source made ready on 2026-11-23 (the three reviews
+  of the night before it fixed, every dependency at its newest, its
+  changelog section dated), its tag, signed build and GitHub draft made
+  from it next, its publication the user's; 0.6.0 was released
+  2026-11-21 on GitHub and the AUR's three bases, 0.5.1 2026-11-16,
+  0.5.0 2026-11-14, 0.4.0 2026-11-10, 0.3.1 2026-11-05, 0.3.0
+  2026-11-03, 0.2.0 2026-10-20, 0.1.0 [released](#release-01-linux)
+  2026-10-13. Since 2026-11-20 skwir.org also serves signed apt and dnf
+  repositories (ADR-142), holding 0.6.0. Phases 0 to 4, 5a and 6 pass
+  their gates. Maps and Notes everywhere are built, their gates not
+  closed, as is much that no phase planned ([Built beyond the
+  plan](#built-beyond-the-plan)).
 - **Next:** that release; the user's review of the French drafts and a
-  speaker's of the Simplified Chinese
+  speaker's of the Simplified Chinese and the Italian
   ([words in every language](#words-in-every-language-adr-139), step G);
   then skwird's steps (ADR-050) and
   Phase 7, which the user put after the release (2026-10-07). [Remote folders](#remote-folders)
@@ -1269,6 +1271,29 @@ windows (ADR-145, after what GTK, KDE, COSMIC Files and Windows do); a
 skwir the bus starts reaches no display until it is asked. Checks in
 `docs/STATUS-LOG.md` (2026-11-21).
 
+## Review fixes before 0.6.1 (2026-11-23)
+
+The user asked for a review of what came since 0.6.0 (a9b0d5ce..f280442b,
+27 commits: ADR-146 to 149, the Italian draft, a dialog's size, Plasma's
+Qt theme outside Plasma), a second of its fixes, then 0.6.1 made. Six
+readers made 58 findings, two high: a page's part was never asked again
+once one came back, and on a dense screen every engine refused a part at
+the bound (RD-1, RD-2). Six fixers fixed them all, in one tree, in 59
+commits (67fc2f89..6886cba6, not pushed), among them every dependency at
+its newest release (9f3d8921: jiff 1.0, rusqlite 0.43, gix 0.91, lopdf
+0.47, djvu-rs 0.46) and a bug the user found that night: a phone's film
+stored on its side played sideways (e9a1f635: the media helper turns
+each frame as the stream says). Fresh readers read the fixes: 24
+findings, four medium (a HEIF's stored size unbounded past its crop; a
+forced unmount not waiting for the work it cut; a reopened document's
+part never asked again; and, from 0.3.0, an exchange rename on a phone
+deleting the file it swapped with), fixed in 21 commits
+(e8d76432..42121566). Two readers read those: seven low (a Linux test
+left to run everywhere among them), fixed in 9 commits
+(dc587aba..03640580), the last the whole workspace's one failure, a test
+told of a change another test's namespace made. Checks in
+`docs/STATUS-LOG.md` (2026-11-23).
+
 ## A folder comes back with its volume (ADR-149, 2026-11-22)
 
 Asked by the user: a pane showing a folder that is not there because its
@@ -1395,10 +1420,29 @@ refused once (udisks has begun as Skwir is told; a toast says to try
 again); Windows (a drive's folder opened again as a window comes to the
 front, removable drives read by path) and macOS (`/Volumes` read by
 path) compiled only, and neither follows another program's unmount
-(DiskArbitration's approval, `DBT_DEVICEQUERYREMOVE`); what a sort
-reads on demand (a picture's date, ADR-131) and the Git states, each a
-brief read, are not held back while a volume is let go of (thumbnails
-and Usage are).
+(DiskArbitration's approval, `DBT_DEVICEQUERYREMOVE`); what a sort reads
+on demand (a picture's date, ADR-131) and the Git states, each a brief
+read, are not held back while a volume is let go of (thumbnails and
+Usage are). After the reviews of 2026-11-23: on Windows a folder shown
+on a removable drive is held by its watch (`ReadDirectoryChangesW`), so
+Windows' Eject finds the drive in use while a pane shows it; closing the
+watch on `DBT_DEVICEQUERYREMOVE`, through a window registered for that
+handle, would let it go (decision 16; needs a Windows machine, Wine
+cannot tell). A folder read by its path is still opened once a hydration
+batch the window asks for (an open for stats alone, `O_PATH`, which FUSE
+answers without OPENDIR, is not built). An automount's expiry is tried
+only with a pretended automount point, no real autofs or systemd
+automount. Places names the work under way on a drive with its own copy
+of core's message (one `Executor::named_under_way` would serve Eject,
+Disconnect and the unmount notices); `bus::keep`'s log lines name the
+session bus for any bus it keeps. The player steps over a volume let go
+of by its tracks' own paths: a playlist's link into the drive is not
+known to be on it. After a server's connect, its offer is published
+before the mounts in memory list the new mount (another pane may show
+Connect until the next publish); a pin started while a volume is let go
+of steps over nothing until the letting-go moves again; once a drive is
+unmounted, the player's queue still holds its tracks, passed over one by
+one as gone.
 
 **Pictures at the pixels they cover** (ADR-146, built 2026-11-21 and
 22). The leftovers built 2026-11-22 (ADR-146 amended): a JPEG's region
@@ -1407,10 +1451,15 @@ asks in a turn of its own, the eighth of a picture read ahead shown when
 a step takes it; checked at two device pixels a pixel and memory
 measured while browsing. Left: a JPEG region's columns (a band is the
 picture's whole width), a progressive JPEG's coefficients for the whole
-picture while its band decodes, any other format's region (decoded
-whole), a zoom's first step (the whole again at the held bound, decoded
-whole for a JPEG at no reduced scale); no 4K screen of its own size
-tried (Xvfb's 1600 × 1000 at twice the scale).
+picture while its band decodes, a PNG's, WebP's or TIFF's region
+(decoded whole), a zoom's first step (the whole again at the held bound,
+decoded whole for a JPEG at no reduced scale); no 4K screen of its own
+size tried (Xvfb's 1600 × 1000 at twice the scale). After the reviews of
+2026-11-23: a picture kept for a step back (`KeptPicture`) shown in
+another place than it was kept from (peek, the whole screen) is
+sharpened as a zoom (`Cover::Side`), not decoded for that room; a page
+of a document at 400 % checked at two device pixels a pixel (its parts
+drawn, none refused), the zoom back out not tried in a window.
 
 **Pictures at the pixels they cover: the next one** (comic and PDF pages done as ADR-147, the formats below as ADR-148, 2026-11-22; asked by the user
 on 2026-11-21, to be done right after the preview's pictures, steps 1–4
@@ -1419,22 +1468,58 @@ of `docs/STATUS-LOG.md` 2026-11-21). Measured that day: in release, a
 against libwebp's 381 (whose scaled decode, 371 ms, saves memory, not
 time).
 - *HEIC, HEIF, AVIF, JPEG XL and camera raw files* (built as ADR-148,
-  2026-11-22; JPEG XL in bands, its regions and its eighth alone, a HEIC's
-  regions from its tiles, its thumbnail first, for the grid and as a
-  preview no larger, amended the same day; seven HEICs from phones tried;
-  the helper in the AppImage). Left: a JPEG XL asked larger than its
-  eighth decoded whole, in bands (shrunk band by band, it would not hold
-  its eight bits whole), and a lossless one at every size (it stores no LF
-  to read alone); a HEIC's tiles never decoded by a libheif older than
-  1.19 here (none on this machine: the lookup's failing path is the one a
-  picture of one tile takes, which the tests take), nor a picture its file
-  crops (`clap`, decoded whole: no fixture writes one); the AppImage's
-  helper tried only in its Ubuntu 22.04 root (its check), not on other
-  distributions; Windows' WIC and macOS's ImageIO for HEIC and AVIF; a raw
-  file whose JPEG hides in its maker note (Olympus's ORF), Canon's CRW,
-  Sigma's X3F; a raw file never tried from a real camera (synthetic
-  containers laid out as each maker's are); the AVIF decoder never tried
-  on Debian's split plugins.
+  2026-11-22; JPEG XL in bands, its regions and its eighth alone, a
+  HEIC's regions from its tiles, its thumbnail first, for the grid and
+  as a preview no larger, amended the same day; seven HEICs from phones
+  tried; the helper in the AppImage). Left: a JPEG XL asked larger than
+  its eighth decoded whole, in bands (shrunk band by band, it would not
+  hold its eight bits whole), and a lossless one at every size (it
+  stores no LF to read alone); a HEIC's tiles never decoded by a libheif
+  older than 1.19 here (none on this machine: the lookup's failing path
+  is the one a picture of one tile takes, which the tests take), nor a
+  picture its file crops (`clap`, decoded whole: no fixture writes one);
+  the AppImage's helper tried only in its Ubuntu 22.04 root (its check),
+  not on other distributions; Windows' WIC and macOS's ImageIO for HEIC
+  and AVIF; a raw file whose JPEG hides in its maker note (Olympus's
+  ORF), Canon's CRW, Sigma's X3F; a raw file never tried from a real
+  camera (synthetic containers laid out as each maker's are); the AVIF
+  decoder never tried on Debian's split plugins. After the reviews of
+  2026-11-23: the helper's bound on a libheif older than 1.19 (the file
+  read twice, tiles bounded by the picture's sides) is not tried against
+  Debian 12 or Ubuntu 24.04; a raw file whose directories lie past its
+  first 64 KiB is tried by Skwir, never handed to the fallbacks (a DNG
+  with its directories at its end and no JPEG shows an error, not the
+  thumbnailer's picture); until the helper's probe answers, a moment
+  after start, HEIC and AVIF are counted as the thumbnailer's; a raw
+  file's JPEG is found again for each zoomed region and each settle
+  (kept with the preview's `Held` by the file's version, it would be
+  read once); a CR3 turned, the helper's Busy and turns, a JPEG XL
+  panorama read in parts and a raw file without a JPEG are not tried in
+  a window.
+
+**Films kept on their side** (built 2026-11-23, the user's report: a
+phone's film played sideways). The media helper turns each frame after
+playsink's scale and conversion (`videoflip`, `video-direction=auto`).
+Left: a turned film's subtitles turn with it (playsink's overlay draws
+on the stored picture before the turn; playbin's `video-filter` would
+turn first but converts every 10-bit film a hardware decoder gives at
+its own size); the turn costs ~6–7 ms of CPU a 1920 × 888 frame
+(measured under load), on the GPU it would cost nothing; a 10-bit HLG
+phone film (HEVC Main 10, 2336 × 1080) took the helper 1.4–3.5 cores
+even unturned, most of it converting and scaling to BGRA (measured under
+a load of 5–13: measure again on a quiet machine, then try the GPU's
+converter or a scale before the convert).
+
+**Two D-Bus libraries** (2026-11-23): notify-rust 4.19, which gpui links
+for desktop notifications Skwir never shows, brings zbus 6 beside the
+zbus 5 the rest of the tree uses; the binary's growth is not measured. A
+gpui feature leaving its notifications out would drop it.
+
+**Scratch folders of killed processes** (2026-11-23):
+`file::memory_dir`'s folders under `/dev/shm` stay when their process is
+killed (tests stopped by nextest, a helper killed): ~240 empty or sparse
+folders over a few days (60 KB, no memory). Remove a stale one at start,
+or name each by its owner.
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not

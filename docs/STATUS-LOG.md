@@ -22656,3 +22656,98 @@ is `Mandara.colors`, its keys merged into `kdeglobals` and
   the definition (gtk 3.24.52 reads six hex digits, then "Missing
   semicolon at end of color definition") and keeps its theme's, GTK 4
   and Skwir read it.
+
+## 2026-11-23: the reviews before 0.6.1, fixed, every dependency at its newest
+
+The user asked, the night before 0.6.1, for a review of what came since
+0.6.0 and of its fixes, every dependency at its newest, then the release
+made up to its GitHub draft, theirs to publish.
+
+- **First review** (a9b0d5ce..f280442b, 27 commits): six readers, one an
+  area (pictures held at their pixels PV, the formats Skwir reads PF, the
+  reader's pages RD, volumes in core VC, volumes in the plugins and the
+  window VU, the rest MX: the Italian draft, the time zone in tests, the
+  headings, a dialog's size, Plasma's Qt theme, the documents). 58
+  findings, two high: RD-1, a page's part never asked again once one came
+  back (the view still), and RD-2, on a dense screen every engine refused
+  the part the reader asked at the bound (the reader and the engines
+  counted it apart: the rounding out to whole pixels went past
+  `PAGE_PIXELS`). Medium among them: a `Complete` after a loss cleared
+  it (VC-1), a reopen hit listings opened after the mount and dropped
+  their rows' hydrations (VC-2), an open under way escaped a volume gone
+  (VC-3), an automount's expiry said as a disconnection (VC-4), Windows'
+  watch holding a removable drive (VC-5, documented), a forced unmount
+  not cutting Skwir's own work (VU-1), the player opening the next track
+  on a volume let go of (VU-2), a raw file without a JPEG left with no
+  fallback (PF-1), a CR3 never turned (PF-2), the HEIF helper holding
+  workers (PF-3), a file read three or four times a request (PF-4), a
+  step after an error decoded for the error's strip (PV-1), the guide
+  silent on all of it (MX-4).
+- **Fixed** by the six readers as fixers, in one tree, each owning its
+  files, a queue running one build at a time (memory-capped,
+  non-incremental), the integrator committing each step: 59 commits
+  67fc2f89..6886cba6 (titles rewritten once, the tree unchanged), all 58
+  but VC-5's Windows part (documented, in PLAN) and VU-10's shared helper
+  (the notes fixed).
+- **Every dependency at its newest** (9f3d8921): `cargo update` (219
+  packages), Skwir's own majors where nothing holds the older (jiff 1.0,
+  fast_image_resize 6.2, lopdf 0.47, rusqlite 0.43, gix 0.91, fuser 0.19,
+  merman 0.11, syn 3 for the words macro), the three pinned after their
+  checks (djvu-rs 0.46 with `just djvu-check`, pdfium-render 0.9.6,
+  ogeom 0.21); jiff's and fuser's ports; nothing lower. Held by another
+  dependency: zbus 5, oo7 0.6, resvg 0.46, usvg 0.47, skrifa 0.44, parley
+  0.12, selectors 0.41, wasmtime 48. New beside an older one: zbus 6, by
+  notify-rust 4.19, gpui's notifications, which Skwir never shows (in
+  PLAN).
+- **A film kept on its side** (e9a1f635, the user's report that night: a
+  phone's upright film played sideways while its thumbnail stood): the
+  media helper ignored GStreamer's `image-orientation`; its sink now sits
+  behind `videoflip video-direction=auto` after playsink's scale and
+  conversion, all eight orientations, a tag that comes or changes
+  mid-stream; the packages that carry GStreamer carry `videofilter`, their
+  checks look for it, and the AppImage's plays a turned clip (81bce117).
+  Tried on the user's film, read only (its frames 888 × 1920, upright,
+  `nvh265dec` and `avdec_h265`, after a seek and playing, corners as
+  ffmpeg turns them); the turn costs ~6–7 ms of CPU a frame.
+- **Second review**, by fresh readers of the fixes (QP pictures, QR the
+  reader, QV volumes, QD the dependencies and documents): 24 findings,
+  four medium: a HEIF's stored size unbounded past its crop (QP-1), a
+  forced unmount not waiting for the work it cut (QV-1), a reopened
+  document's part never asked again (QR-1), and, older than tonight, an
+  exchange rename on a phone through kmtpd deleting the file it swapped
+  with, since 0.3.0 (QD-1). Fixed in 21 commits e8d76432..42121566.
+- **Third read**, two readers of those 21: seven low, none medium: a
+  Linux test left to run everywhere (RB-1, certain), a cancelled copy
+  not waited for by an unmount (RB-2), a direct automount point taken for
+  a map's (RB-3), parts kept while a search runs (RA-1), leaving the
+  whole screen reading nothing ahead (RA-3); RB-4 was not a bug (a test
+  now holds it), RA-2 left (PLAN). Fixed in 9 commits dc587aba..03640580,
+  with the leftovers of the kio branch and a letting-go that ran out
+  before udisks was asked.
+- **Checked** (on the tree as it stood at each point): each fixer's
+  rustfmt, clippy `-D warnings` on the crates it touched and their
+  tests, through the queue; the engines' checks (`just poppler-check`,
+  `mupdf-check`, `djvu-check`, PDFium's `check.py`); the media helper's
+  12 tests and `tools/media/check.py`; Windows and macOS clippy on the
+  crates touched. Whole tree at 05:19 (HEAD 42121566 + the version made
+  0.6.1): `just lint-all` green (rustfmt, the words, clippy over the
+  workspace, `check-windows`, `check-macos`); `cargo nextest run
+  --workspace` 4,243 of 4,244 passed, 32 skipped: `fs::reach`'s
+  namespace test `the_table_is_followed` failed once: not a second
+  notice of the follower's (it passed alone 13 times, 3 more under a 5 %
+  CPU quota) but a true one, the tests beside it in the run letting go
+  of mounts its namespace holds copies of; the test now holds each call
+  to a changed table (03640580), tried 6 times in a namespace changed
+  beside it. A window, on Xvfb at two device pixels a pixel: a PDF page
+  at 400 % drawn by parts at the bound, none refused (RD-2's case).
+  `just words --release`.
+- `just startup-order` after the last fix: 12,990 functions, 19.0 MiB
+  of code.
+- **Not checked**: Hyprland's resizing state for a dialog's size (only
+  sway headless); a libheif older than 1.19; a real autofs; Windows'
+  watch on a removable drive; the new formats' paths in a window (CR3,
+  HEIF's turns, a JPEG XL panorama).
+- **Disk**: six fixers' builds of their own crates (`-p`, each its own
+  feature set) took the disk from 46 to 11 GB in about an hour; the
+  units every file of which was older than the dependency update were
+  deleted (72 GB), later those older than 03:00 (28 GB).
