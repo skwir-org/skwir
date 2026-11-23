@@ -268,11 +268,14 @@ pub(crate) fn part_wanted(
     }
     // A part drawn at that side or a little short, holding what shows, is
     // kept; one drawn at more than twice it (zoomed out since) is drawn
-    // again: shown that much smaller, its letters would shimmer.
+    // again: shown that much smaller, its letters would shimmer. What it
+    // misses by less than half a pixel there (an engine rounds a part to
+    // its whole pixels, a share's float a hair either way) it holds: asked
+    // again, it would come back the same, and be asked again.
     if let Some((part, held_side)) = held
         && held_side as f32 * 1.05 >= side as f32
         && held_side <= side.saturating_mul(2)
-        && part.holds(&seen.shown)
+        && part.holds(&within_half_a_pixel(seen, side))
     {
         return None;
     }
@@ -298,6 +301,27 @@ pub(crate) fn part_wanted(
         part = around(margin);
     }
     Some((part, side))
+}
+
+/// What shows of page `seen`, less half a pixel each way of the page laid
+/// with `side` on its longer side: what a part drawn at that side must
+/// hold to hold what shows.
+fn within_half_a_pixel(
+    seen: &crate::elements::document::Seen,
+    side: u32,
+) -> skwir_core::document::Part {
+    let longer = seen.own.0.max(seen.own.1).max(1.);
+    let pixel = |length: f32| 0.5 * longer / (side.max(1) as f32 * length.max(1.));
+    let (across, down) = (pixel(seen.own.0), pixel(seen.own.1));
+    let shown = seen.shown;
+    let (left, right) = (shown.left + across, shown.right - across);
+    let (top, bottom) = (shown.top + down, shown.bottom - down);
+    skwir_core::document::Part {
+        left: left.min(right),
+        top: top.min(bottom),
+        right: right.max(left),
+        bottom: bottom.max(top),
+    }
 }
 
 /// Whether `part`, a part drawn of page `seen` (ADR-147), holds more
@@ -2106,6 +2130,15 @@ mod tests {
             ..seen
         };
         assert!(part_wanted(&further, Some((part, side))).is_some());
+        // A part missing what shows by less than half a pixel at its side
+        // holds it (asked again, it would come back the same); by more, not.
+        let pixel = 1. / (7680. * 816. / 1056.);
+        let short = |by: f32| Part {
+            left: seen.shown.left + by * pixel,
+            ..seen.shown
+        };
+        assert_eq!(part_wanted(&seen, Some((short(0.3), side))), None);
+        assert!(part_wanted(&seen, Some((short(2.), side))).is_some());
         // Zoomed out to less than half the side it was drawn at: asked
         // again at its own.
         let (large, large_side) = part_wanted(&further, None).unwrap();

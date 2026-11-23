@@ -274,10 +274,12 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   `request_document_part`), over the page in its place
   (`DocumentElement::part`). One part a page (`DocumentScroll::parts`),
   one asked at a time beside the whole pages, not asked again while what
-  is drawn or asked holds what shows; a page that leaves the view, or
-  needs no part at the zoom it shows at, lets its part go, atlas entry
-  and all, as the cache does pages, and one drawn at more than twice the
-  side wanted is drawn again.
+  is drawn or asked holds what shows, to half a pixel at its side (an
+  engine rounds a part to its whole pixels: held exactly, one that missed
+  a hair would be asked again as it came, forever); a page that leaves
+  the view, or needs no part at the zoom it shows at, lets its part go,
+  atlas entry and all, as the cache does pages, and one drawn at more
+  than twice the side wanted is drawn again.
 - **What is drawn apart is state, chosen again whenever it may change**
   (`DocumentScroll::choose_part`, `Shell::want_part`): as what shows
   changes, as a part comes back or fails, as a search it waited for ends.
