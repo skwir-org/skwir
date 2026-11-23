@@ -64,6 +64,7 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
                "Frameworks/GStreamer.framework/Versions/1.0/lib/libgstreamer-1.0.0.dylib",
                "Frameworks/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0/libgstplayback.dylib",
                "Frameworks/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0/libgstlibav.dylib",
+               "Frameworks/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0/libgstvideofilter.dylib",
                "Frameworks/GStreamer.framework/Versions/1.0/libexec/gstreamer-1.0/gst-plugin-scanner",
                "Frameworks/GStreamer.framework/Resources/Info.plist",
                "Frameworks/GStreamer.framework/GStreamer",

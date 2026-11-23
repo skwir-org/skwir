@@ -88,7 +88,9 @@ python3 tools/media/check.py --worker target/release/skwir-media-worker --size 3
   seek, track selection, volume and mute, clock progression at 1× and 1.5×,
   end of stream and replay. Timing starts after asynchronous preroll. Track
   changes keep the last frame shown and leave playbin's audio/video/text
-  flags alone.
+  flags alone. A clip kept on its side with a display matrix, as a phone
+  keeps one shot upright, comes upright (`videoflip`; the eight ways in
+  `crates/media-worker/tests/upright.rs`).
 - Real-backend checks run with output muted. **Audible lip sync has not been
   assessed.**
 - Automated tests: provider cancellation, idle worker cleanup, unavailable

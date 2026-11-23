@@ -47,6 +47,24 @@ def generate(root, size="1920x1080", codecs="h264-aac"):
     return clip
 
 
+def generate_turned(root):
+    """A clip kept on its side, as a phone keeps one shot upright: stored
+    320 by 160, its top-left corner blue, its display matrix saying it is
+    shown a quarter turn clockwise."""
+    root.mkdir(parents=True, exist_ok=True)
+    clip = root / "Synthetic phone's clip.mp4"
+    if not clip.exists():
+        stored = root / "Synthetic phone's clip, stored.mp4"
+        subprocess.run([
+            "ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+            "color=c=red:size=320x160:rate=30,drawbox=x=0:y=0:w=80:h=40:color=blue:t=fill",
+            "-t", "1", *CODECS["h264-aac"][0], "-pix_fmt", "yuv420p", str(stored),
+        ], check=True)
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-display_rotation", "-90",
+                        "-i", str(stored), "-c", "copy", str(clip)], check=True)
+    return clip
+
+
 def windows_path(path):
     return subprocess.run(["winepath", "-w", str(path)], check=True, capture_output=True,
                           text=True).stdout.strip()
@@ -76,6 +94,7 @@ class Worker:
         self.state = {}
         self.frames = 0
         self.frame = None
+        self.size = None
         self.lateness = []
         self.dropped = None
         self.last_generation = None
@@ -112,6 +131,7 @@ class Worker:
             if frame.get("seconds") is not None and frame.get("clock") is not None:
                 self.lateness.append((frame["clock"] - frame["seconds"]) * 1000)
             assert 0 < frame["width"] <= 1920 and 0 < frame["height"] <= 1920
+            self.size = (frame["width"], frame["height"])
             with self.slot.open("rb") as src:
                 self.frame = src.read(frame["width"] * frame["height"] * 4)
             assert len(self.frame) == frame["width"] * frame["height"] * 4
@@ -152,6 +172,21 @@ class Worker:
                 self.process.kill()
                 self.process.wait()
             self.scratch.cleanup()
+
+
+def check_upright(executable, clip, wine=False):
+    """The phone's clip comes upright (the helper's videoflip, which a
+    package's GStreamer carries): 160 by 320, its stored top-left corner at
+    the top right."""
+    worker = Worker(executable, clip, wine=wine)
+    try:
+        worker.until(lambda: worker.frames)
+        assert worker.size == (160, 320), ("not turned", worker.size)
+        width = worker.size[0]
+        b, g, r = worker.frame[(2 * width + width - 3) * 4:][:3]
+        assert b > 150 and r < 100 and g < 100, ("not turned a quarter clockwise", (r, g, b))
+    finally:
+        worker.close()
 
 
 def pss(pid):
@@ -274,5 +309,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="skwir-synthetic-video-") as temporary:
         clip = generate(args.fixtures or Path(temporary), args.size, args.codecs)
+        turned = generate_turned(args.fixtures or Path(temporary))
         if not args.generate_only:
             check(args.worker, clip, args.audio, args.wine)
+            check_upright(args.worker, turned, args.wine)

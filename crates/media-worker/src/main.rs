@@ -72,34 +72,11 @@ impl Player {
     /// Builds the pipeline and wires its bus and sink to `events` before any
     /// state change, so no message can be queued where the loop cannot see it.
     fn new(path: &std::path::Path, events: &Arc<Events>) -> anyhow::Result<Self> {
-        let sink = AppSink::builder()
-            .caps(
-                &gst::Caps::builder("video/x-raw")
-                    .field("format", "BGRA")
-                    .field(
-                        "width",
-                        gst::IntRange::<i32>::new(1, i32::try_from(MAX_SIDE)?),
-                    )
-                    .field(
-                        "height",
-                        gst::IntRange::<i32>::new(1, i32::try_from(MAX_SIDE)?),
-                    )
-                    .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
-                    .build(),
-            )
-            .max_buffers(1)
-            .drop(true)
-            .sync(true)
-            // A preview may skip video frames to preserve the audio clock.
-            // Twenty milliseconds is the sink's lateness budget, not a timer.
-            .qos(true)
-            .max_lateness(20_000_000)
-            .enable_last_sample(false)
-            .build();
+        let sink = frame_sink()?;
         let uri = gst::glib::filename_to_uri(path, None)?;
         let pipeline = gst::ElementFactory::make("playbin3")
             .property("uri", uri.as_str())
-            .property("video-sink", &sink)
+            .property("video-sink", upright(&sink)?)
             .build()?;
         let audio_only = std::env::var_os("SKWIR_MEDIA_AUDIO_ONLY").is_some();
         if audio_only {
@@ -735,6 +712,65 @@ fn ghost(bin: &gst::Bin, element: &gst::Element, pad: &str) -> bool {
         .is_some_and(|ghost| bin.add_pad(&ghost).is_ok())
 }
 
+/// Where the frames are taken from: packed BGRA, square pixels, at most
+/// `MAX_SIDE` a side either way (playsink scales a larger film down), one
+/// at a time, kept to the clock.
+fn frame_sink() -> anyhow::Result<AppSink> {
+    let side = gst::IntRange::<i32>::new(1, i32::try_from(MAX_SIDE)?);
+    Ok(AppSink::builder()
+        .caps(
+            &gst::Caps::builder("video/x-raw")
+                .field("format", "BGRA")
+                .field("width", side)
+                .field("height", side)
+                .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
+                .build(),
+        )
+        .max_buffers(1)
+        .drop(true)
+        .sync(true)
+        // A preview may skip video frames to preserve the audio clock.
+        // Twenty milliseconds is the sink's lateness budget, not a timer.
+        .qos(true)
+        .max_lateness(20_000_000)
+        .enable_last_sample(false)
+        .build())
+}
+
+/// What playbin draws a film into: `sink`, behind a turn that follows the
+/// orientation the stream says (`image-orientation`, which a phone's
+/// display matrix becomes: a quarter turn, a half, a mirror, all eight), so
+/// every frame handed over is upright, at the size it is shown at, as the
+/// poster and the layout have it (`ffprobe`, turned). A tag that comes or
+/// changes mid-stream turns the frames after it, a new stream without one
+/// does not (videoflip's `video-direction=auto`).
+///
+/// It turns what playsink made: scaled and converted, BGRA at most
+/// `MAX_SIDE` a side, whatever memory the decoder gave (a hardware
+/// decoder's frames are in system memory by then), and a film not turned
+/// passes untouched. Playbin's `video-filter` would turn before the scale, behind
+/// a converter playsink always adds there: every 10-bit film a hardware
+/// decoder gives (P010, which videoflip does not take) would be converted
+/// at its own size, turned or not. Subtitles are drawn on the picture as
+/// stored, before either: a turned film's turn with it.
+///
+/// Without good's videofilter plugin (an installation that lacks it) the
+/// film plays as it is stored; the packages that carry their `GStreamer`
+/// carry it.
+fn upright(sink: &AppSink) -> anyhow::Result<gst::Element> {
+    let Ok(turn) = gst::ElementFactory::make("videoflip")
+        .property_from_str("video-direction", "auto")
+        .build()
+    else {
+        return Ok(sink.clone().upcast());
+    };
+    let bin = gst::Bin::with_name("upright");
+    bin.add_many([&turn, sink.upcast_ref()])?;
+    turn.link(sink)?;
+    anyhow::ensure!(ghost(&bin, &turn, "sink"), "the turn's input");
+    Ok(bin.upcast())
+}
+
 /// Sample rate the spectrum is measured at, from its negotiated caps.
 fn spectrum_rate(spectrum: &gst::Element) -> Option<u32> {
     let caps = spectrum.static_pad("sink")?.current_caps()?;
@@ -1278,10 +1314,99 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Event, Events, Playback, Wanted, answer, chosen, gst, hand_over, next_tracks, plays_film,
-        sends_frame,
+        Event, Events, Playback, Wanted, answer, chosen, frame_sink, gst, hand_over, next_tracks,
+        plays_film, sends_frame, upright,
     };
+    use gstreamer::prelude::*;
+    use gstreamer_video::{VideoFrameExt, VideoFrameRef, VideoInfo};
     use std::sync::{Mutex, mpsc};
+
+    /// The frames are turned as the stream says from the frame after its
+    /// word, all eight ways, a word that changes mid-stream turning them
+    /// anew; a new stream that says nothing is shown as stored. A picture
+    /// of three by two whose pixels each say where they were, read back
+    /// as rows of those places.
+    #[test]
+    fn frames_are_turned_as_the_stream_says() {
+        gst::init().unwrap();
+        let sink = frame_sink().unwrap();
+        // Handed over at once: these frames are not played to a clock.
+        sink.set_property("sync", false);
+        let turned = upright(&sink).unwrap();
+        let pipeline = gst::Pipeline::new();
+        pipeline.add(&turned).unwrap();
+        let src = gst::Pad::builder(gst::PadDirection::Src).build();
+        src.link(&turned.static_pad("sink").unwrap()).unwrap();
+        src.set_active(true).unwrap();
+        pipeline.set_state(gst::State::Playing).unwrap();
+        let start = |id: &str| {
+            assert!(src.push_event(gst::event::StreamStart::new(id)));
+            let caps = gst::Caps::builder("video/x-raw")
+                .field("format", "BGRA")
+                .field("width", 3)
+                .field("height", 2)
+                .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
+                .field("framerate", gst::Fraction::new(0, 1))
+                .build();
+            assert!(src.push_event(gst::event::Caps::new(&caps)));
+            let segment = gst::FormattedSegment::<gst::ClockTime>::new();
+            assert!(src.push_event(gst::event::Segment::new(&segment)));
+        };
+        // Place i, in the blue of BGRA.
+        let picture: Vec<u8> = (0..6u8).flat_map(|i| [i * 40, 0, 0, 255]).collect();
+        let shown = |said: Option<&str>| -> Vec<Vec<u8>> {
+            if let Some(said) = said {
+                let mut tags = gst::TagList::new();
+                tags.make_mut()
+                    .add::<gst::tags::ImageOrientation>(&said, gst::TagMergeMode::Replace);
+                tags.make_mut().set_scope(gst::TagScope::Stream);
+                assert!(src.push_event(gst::event::Tag::new(tags)));
+            }
+            src.push(gst::Buffer::from_slice(picture.clone())).unwrap();
+            let sample = sink
+                .try_pull_sample(gst::ClockTime::from_seconds(10))
+                .expect("a frame");
+            let info = VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
+            let frame =
+                VideoFrameRef::from_buffer_ref_readable(sample.buffer().unwrap(), &info).unwrap();
+            let stride = usize::try_from(frame.plane_stride()[0]).unwrap();
+            let data = frame.plane_data(0).unwrap();
+            (0..info.height() as usize)
+                .map(|y| {
+                    (0..info.width() as usize)
+                        .map(|x| data[y * stride + x * 4] / 40)
+                        .collect()
+                })
+                .collect()
+        };
+        start("stored");
+        assert_eq!(shown(None), [[0, 1, 2], [3, 4, 5]], "nothing said");
+        for (said, rows) in [
+            ("rotate-90", vec![vec![3, 0], vec![4, 1], vec![5, 2]]),
+            ("rotate-180", vec![vec![5, 4, 3], vec![2, 1, 0]]),
+            ("rotate-270", vec![vec![2, 5], vec![1, 4], vec![0, 3]]),
+            ("flip-rotate-0", vec![vec![2, 1, 0], vec![5, 4, 3]]),
+            ("flip-rotate-90", vec![vec![5, 2], vec![4, 1], vec![3, 0]]),
+            ("flip-rotate-180", vec![vec![3, 4, 5], vec![0, 1, 2]]),
+            ("flip-rotate-270", vec![vec![0, 3], vec![1, 4], vec![2, 5]]),
+            ("rotate-0", vec![vec![0, 1, 2], vec![3, 4, 5]]),
+            ("rotate-90", vec![vec![3, 0], vec![4, 1], vec![5, 2]]),
+        ] {
+            assert_eq!(shown(Some(said)), rows, "{said}");
+        }
+        assert_eq!(
+            shown(None),
+            [[3, 0], [4, 1], [5, 2]],
+            "the word holds until another"
+        );
+        start("next");
+        assert_eq!(
+            shown(None),
+            [[0, 1, 2], [3, 4, 5]],
+            "a new stream that says nothing"
+        );
+        pipeline.set_state(gst::State::Null).unwrap();
+    }
 
     /// A next file handed to playbin is answered again: its first audio
     /// track, not the one chosen for the file before, and its first

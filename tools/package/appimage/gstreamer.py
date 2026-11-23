@@ -65,9 +65,9 @@ BESIDE = {
 # aom's, its dav1d being gst-plugins-rs's since 1.26, and gst-libav takes
 # no decoder of FFmpeg's that wraps another library.
 FEATURES = {
-    "gst-plugins-good": ("autodetect", "replaygain", "audiofx", "spectrum", "matroska", "isomp4",
-                         "avi", "flv", "wavparse", "audioparsers", "id3demux", "apetag", "flac",
-                         "vpx", "pulse"),
+    "gst-plugins-good": ("autodetect", "replaygain", "audiofx", "spectrum", "videofilter", "matroska",
+                         "isomp4", "avi", "flv", "wavparse", "audioparsers", "id3demux", "apetag",
+                         "flac", "vpx", "pulse"),
     "gst-plugins-bad": ("aiff", "mpegtsdemux", "mpegdemux", "videoparsers", "aom", "assrender",
                         "dvdspu", "dvbsuboverlay", "va", "nvcodec"),
     "gst-plugins-ugly": ("asfdemux", "dvdsub"),

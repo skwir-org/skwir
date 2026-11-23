@@ -138,6 +138,28 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - Keep appsink, transfer storage and UI delivery bounded. A frame slot is
   never overwritten before it is acknowledged. Release replaced atlas
   entries; never write per-frame image files.
+- Frames are handed over upright (`upright`): the sink sits behind a
+  `videoflip` that follows the orientation the stream says
+  (`video-direction=auto`: the `image-orientation` tag a display matrix
+  becomes, all eight ways; a tag that comes or changes mid-stream turns
+  the frames after it, a new stream that says none is shown as stored).
+  A frame's size is the one it is shown at, as the poster's, the layout's
+  (`ffprobe`, turned) and ffmpeg's are: a phone's film, kept on its side,
+  played sideways before. It turns what playsink made, BGRA scaled to at
+  most `MAX_SIDE` a side, whatever memory the decoder gave (a hardware
+  decoder's is the system's by then): a film not turned passes untouched,
+  and a turned one costs one turn of a frame that size whatever the film's
+  (about 9 ms for 1920×888, measured 2026-11-23 on the reference machine
+  under load). Playbin's `video-filter` would turn at the film's own
+  size, behind a converter playsink always adds there: every 10-bit film
+  a hardware decoder gives (P010, which `videoflip` does not take) would
+  be converted at its own size, turned or not. Subtitles are drawn on the
+  picture as stored, before either: a turned film's turn with it.
+  Without good's `videofilter` plugin the film plays as stored; the
+  packages that carry GStreamer carry it (`tools/package/gstreamer.py`,
+  the AppImage's), and `tools/media/check.py` (Windows' package check
+  with it) plays a turned clip; `crates/media-worker/tests/upright.rs`
+  plays the eight ways through the helper.
 - Atlas eviction drops pending uploads before recycling texture slots, and
   a texture is destroyed only after in-flight GPU work finishes: GPUI can
   draw several scenes before Wayland presents one, so keeping only the

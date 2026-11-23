@@ -21,8 +21,9 @@ FFmpeg has (gst-libav: H.264, HEVC and AAC in software, as Linux's
 distributions and skwir's AppImage carry them), dav1d for AV1, the
 subtitle renderers (pango, libass, bitmaps), the system's video decoders
 and audio output (Direct3D 11 and WASAPI; VideoToolbox, AudioToolbox and
-Core Audio), and the helper's own (ReplayGain, tempo, spectrum). No GPL
-plugin: what they decode (AC-3, MPEG-2), FFmpeg does too.
+Core Audio), and the helper's own (ReplayGain, tempo, spectrum, the turn
+of a film kept on its side). No GPL plugin: what they decode (AC-3,
+MPEG-2), FFmpeg does too.
 
 Windows' build is an installer (Inno Setup 6.7, which innoextract cannot
 open): it runs under a WoW64 Wine on an Xvfb display of its own
@@ -51,8 +52,9 @@ COMMON = [
     # The core and playback, and what playbin3 plugs in.
     "coreelements", "typefindfunctions", "playback", "app", "videoconvertscale", "audioconvert",
     "audioresample", "volume", "autodetect", "pbtypes",
-    # What the helper adds: ReplayGain, the tempo kept at another rate, the spectrum.
-    "replaygain", "audiofx", "spectrum",
+    # What the helper adds: ReplayGain, the tempo kept at another rate, the spectrum,
+    # the turn of a film kept on its side (videoflip).
+    "replaygain", "audiofx", "spectrum", "videofilter",
     # Containers and parsers.
     "matroska", "isomp4", "ogg", "avi", "flv", "asf", "wavparse", "aiff", "mpegtsdemux",
     "mpegpsdemux", "audioparsers", "videoparsersbad", "id3demux", "apetag",

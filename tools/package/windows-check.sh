@@ -81,6 +81,7 @@ wanted = [at(p) for p in programs] + [
     "licenses/fonts/JetBrainsMono/OFL.txt",
     "licenses/zstd/LICENSE", "gstreamer/bin/libgstreamer-1.0-0.dll",
     "gstreamer/lib/gstreamer-1.0/libgstplayback.dll", "gstreamer/lib/gstreamer-1.0/libgstlibav.dll",
+    "gstreamer/lib/gstreamer-1.0/libgstvideofilter.dll",
     "gstreamer/libexec/gstreamer-1.0/gst-plugin-scanner.exe", "licenses/gstreamer/VERSIONS",
     "licenses/gstreamer/SOURCES", "licenses/gstreamer/ffmpeg/LGPL-2.1-or-later.txt"]
 missing = [w for w in wanted if not (folder / w).is_file()]
@@ -156,7 +157,8 @@ EOF
 
 # The media helper, the GStreamer beside it: a clip of two audio tracks and
 # subtitles played, sought, its tracks and subtitles changed, its rate,
-# its end (tools/media/check.py). H.264 and AAC, then VP9 and Opus.
+# its end, and a phone's clip turned upright (tools/media/check.py). H.264
+# and AAC, then VP9 and Opus.
 for codecs in h264-aac vp9-opus; do
     said="$(python3 tools/media/check.py --wine --codecs "$codecs" --size 1280x720 \
         --worker "$unpacked/$name/gstreamer/bin/skwir-media-worker.exe" --fixtures "$scratch/clips" 2>&1)" || {
