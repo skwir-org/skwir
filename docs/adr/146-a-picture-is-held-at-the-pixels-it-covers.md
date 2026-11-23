@@ -11,7 +11,9 @@ Xvfb. Amended the next night (2026-11-22), as the user chose for its
 leftovers: a JPEG's region decoded from its rows alone (5), what a zoom
 asks in a turn of its own (8), a picture read ahead keeping its eighth
 (6). Amended by the review before 0.6.1 (2026-11-23): the room is the
-one laid out for the picture's own preview (1).
+one laid out for the picture's own preview (1); the region drawn round,
+never over, a picture that lets its background through, and let go once
+zoomed out (5).
 
 ## Context
 
@@ -85,8 +87,12 @@ Measured in release on synthetic photos of about three bits a pixel
    part in view and a margin round it of half as much each way, as many
    pixels as the bound allows, decoded at the side it covers and drawn
    over the whole held within the bound (`preview::Detail`,
-   `region_past_held`, `picture::decode_region`). One region at a time;
-   one within it at no larger side is not asked again. Its decode reads
+   `region_past_held`, `picture::decode_region`); over a picture that
+   lets what is behind it through, the whole is drawn round it, never
+   under it (amended, 2026-11-23: it was drawn twice over there). One
+   region at a time; one within it at no larger side is not asked again;
+   it goes once the picture is shown no larger than what is held of it
+   whole (amended, 2026-11-23). Its decode reads
    the picture at the least reduced scale covering the side, then cuts,
    turns and shrinks the region alone. A JPEG reads only the rows the
    region covers as stored (`picture::jpeg_band`, `vendor/jpeg-decoder`'s

@@ -6870,6 +6870,16 @@ impl Shell {
         }
     }
 
+    /// The picture is shown no larger than what is held of it whole (zoomed
+    /// out again): what showed past it, and what was asked, goes, its
+    /// pixels and their GPU copy with it.
+    pub(crate) fn detail_unneeded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.detail.is_some() || self.preview.detail_wanted.is_some() {
+            self.let_detail_go(window, cx);
+            cx.notify();
+        }
+    }
+
     /// Let go of what showed of the picture past what was held of it whole,
     /// and of what was asked.
     fn let_detail_go(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -7871,6 +7881,7 @@ pub(crate) fn content(
                             .filter(|detail| p.key.as_ref() == Some(&detail.key))
                             .map(|detail| (Arc::clone(&detail.image), detail.region)),
                         patient: !p.exact && p.picture_side == 0,
+                        see_through: ink.is_some(),
                         most: {
                             let held = skwir_platform::picture::side_within(
                                 *width,
@@ -8732,10 +8743,46 @@ pub(crate) fn picture(
     // The pixels fill the box the layout gave the picture, as large as they
     // are or not; Fit's box can be taller or wider than the picture, which
     // stays whole in it.
-    let pixels = img(Arc::clone(image))
-        .absolute()
-        .size_full()
-        .object_fit(ObjectFit::Contain);
+    // What shows past what is held whole, where the picture lets what is
+    // behind it through: the whole is not drawn under it, or the region
+    // would be drawn twice over, more opaque than round it.
+    let hole = sharpen
+        .as_ref()
+        .filter(|sharpen| sharpen.see_through)
+        .and_then(|sharpen| sharpen.detail.as_ref())
+        .map(|(_, region)| *region);
+    let pixels = match hole {
+        None => img(Arc::clone(image))
+            .absolute()
+            .size_full()
+            .object_fit(ObjectFit::Contain)
+            .into_any_element(),
+        Some(region) => {
+            let (image, size) = (Arc::clone(image), image.size(0));
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, (), window, _| {
+                    let picture = ObjectFit::Contain.get_bounds(bounds, size);
+                    let hole = region_bounds(picture, region, (width, height));
+                    for part in around(picture, hole) {
+                        window.with_content_mask(Some(gpui::ContentMask::new(part)), |window| {
+                            let _ = window.paint_image(
+                                picture,
+                                picture,
+                                gpui::Corners::default(),
+                                Arc::clone(&image),
+                                0,
+                                false,
+                            );
+                        });
+                    }
+                },
+            )
+            .absolute()
+            .size_full()
+            .into_any_element()
+        }
+    };
     let backdrop = backdrop.map(|color| {
         let size = image.size(0);
         gpui::canvas(
@@ -8758,21 +8805,13 @@ pub(crate) fn picture(
     let detail = sharpen
         .as_ref()
         .and_then(|sharpen| sharpen.detail.clone())
-        .map(|(detail, [x, y, w, h])| {
+        .map(|(detail, region)| {
             let size = image.size(0);
             gpui::canvas(
                 |_, _, _| {},
                 move |bounds, (), window, _| {
                     let picture = ObjectFit::Contain.get_bounds(bounds, size);
-                    let across = f32::from(picture.size.width) / width;
-                    let down = f32::from(picture.size.height) / height;
-                    let at = gpui::Bounds::new(
-                        gpui::point(
-                            picture.origin.x + px(x as f32 * across),
-                            picture.origin.y + px(y as f32 * down),
-                        ),
-                        gpui::size(px(w as f32 * across), px(h as f32 * down)),
-                    );
+                    let at = region_bounds(picture, region, (width, height));
                     let _ = window.paint_image(
                         at,
                         at,
@@ -8865,6 +8904,50 @@ pub(crate) fn picture(
     }
 }
 
+/// Where `region` of a picture of `own` size (left, top, width, height, in
+/// its own pixels) lies on the screen, the picture drawn over `picture`.
+fn region_bounds(
+    picture: gpui::Bounds<gpui::Pixels>,
+    [x, y, w, h]: [u32; 4],
+    (width, height): (f32, f32),
+) -> gpui::Bounds<gpui::Pixels> {
+    let across = f32::from(picture.size.width) / width;
+    let down = f32::from(picture.size.height) / height;
+    gpui::Bounds::new(
+        gpui::point(
+            picture.origin.x + px(x as f32 * across),
+            picture.origin.y + px(y as f32 * down),
+        ),
+        gpui::size(px(w as f32 * across), px(h as f32 * down)),
+    )
+}
+
+/// What of `whole` lies round `hole`, within it: above, below, then beside
+/// it, each empty one left out; all of it where the hole is empty.
+fn around(
+    whole: gpui::Bounds<gpui::Pixels>,
+    hole: gpui::Bounds<gpui::Pixels>,
+) -> Vec<gpui::Bounds<gpui::Pixels>> {
+    let filled =
+        |part: &gpui::Bounds<gpui::Pixels>| part.size.width > px(0.) && part.size.height > px(0.);
+    let hole = hole.intersect(&whole);
+    if !filled(&hole) {
+        return vec![whole];
+    }
+    let corners = |left, top, right, bottom| {
+        gpui::Bounds::from_corners(gpui::point(left, top), gpui::point(right, bottom))
+    };
+    [
+        corners(whole.left(), whole.top(), whole.right(), hole.top()),
+        corners(whole.left(), hole.bottom(), whole.right(), whole.bottom()),
+        corners(whole.left(), hole.top(), hole.left(), hole.bottom()),
+        corners(hole.right(), hole.top(), whole.right(), hole.bottom()),
+    ]
+    .into_iter()
+    .filter(filled)
+    .collect()
+}
+
 /// Who a picture asks for more pixels (`picture`), the side it already
 /// asked for, so it asks once per step, and the most it can have: its own
 /// pixels, as many as `limits::PICTURE_HELD` holds (ADR-146).
@@ -8879,6 +8962,9 @@ pub(crate) struct Sharpen {
     pub(crate) detail: Option<(Arc<RenderImage>, [u32; 4])>,
     /// Whether it may be a tenth short while the walk goes on (`PATIENT`).
     pub(crate) patient: bool,
+    /// Whether it lets what is behind it through (its `ink`): the whole is
+    /// then not drawn under `detail`.
+    pub(crate) see_through: bool,
 }
 
 /// Steps a picture is drawn again at: a zoom step of 1.25 crosses at most
@@ -8928,6 +9014,18 @@ impl Sharpen {
                     f32::from(mask.size.height),
                 ];
                 let own = (width as u32, height as u32);
+                // Shown no larger than what is held whole again (zoomed
+                // out): what showed past it, or was asked, goes.
+                if !past_held(covered, raster, self.most, own) {
+                    if self.region.is_some() {
+                        window.defer(cx, move |window, cx| {
+                            if let Some(shell) = shell.upgrade() {
+                                shell.update(cx, |shell, cx| shell.detail_unneeded(window, cx));
+                            }
+                        });
+                    }
+                    return;
+                }
                 if let Some((region, side)) =
                     region_past_held(covered, raster, self.most, own, picture, view, self.region)
                 {
@@ -8966,13 +9064,7 @@ pub(crate) fn region_past_held(
 ) -> Option<([u32; 4], u32)> {
     use skwir_platform::inspection::limits::PICTURE_HELD;
     let longer = own.0.max(own.1);
-    if !covered.is_finite()
-        || raster < most
-        || most >= longer
-        || covered <= raster as f32 * 1.05
-        || own.0 == 0
-        || own.1 == 0
-    {
+    if !past_held(covered, raster, most, own) {
         return None;
     }
     let [left, top, width, height] = picture;
@@ -8997,7 +9089,19 @@ pub(crate) fn region_past_held(
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
+    // Its pixels at the side it covers: no more than may be held, the
+    // margin included where there is room for it; where what shows alone
+    // is more (a screen of more device pixels than the bound), a smaller
+    // side and no margin.
     let mut side = (covered.ceil() as u32).min(longer);
+    let ratio = f64::from(side) / f64::from(longer);
+    let shown = f64::from(x1 - x0) * f64::from(y1 - y0) * ratio * ratio;
+    let room = PICTURE_HELD as f64 / shown;
+    if room < 1. {
+        side = ((f64::from(side) * room.sqrt()).floor() as u32).max(1);
+    }
+    // Held already at that side, the side asked as the bound leaves it:
+    // asked again, the same region would be decoded again.
     if let Some(([hx, hy, hw, hh], held_side)) = held
         && held_side as f32 * 1.05 >= side as f32
         && hx <= x0
@@ -9007,20 +9111,24 @@ pub(crate) fn region_past_held(
     {
         return None;
     }
-    // Its pixels at that side: no more than may be held, the margin
-    // included where there is room for it.
-    let ratio = f64::from(side) / f64::from(longer);
-    let shown = f64::from(x1 - x0) * f64::from(y1 - y0) * ratio * ratio;
-    let room = PICTURE_HELD as f64 / shown;
-    if room < 1. {
-        side = ((f64::from(side) * room.sqrt()).floor() as u32).max(1);
-    }
     let margin = ((room.sqrt() - 1.) / 2.).clamp(0., 0.5);
     let grow = |length: u32| (f64::from(length) * margin).floor() as u32;
     let (grow_x, grow_y) = (grow(x1 - x0), grow(y1 - y0));
     let (x0, y0) = (x0.saturating_sub(grow_x), y0.saturating_sub(grow_y));
     let (x1, y1) = ((x1 + grow_x).min(own.0), (y1 + grow_y).min(own.1));
     Some(([x0, y0, x1 - x0, y1 - y0], side))
+}
+
+/// Whether a picture covering `covered` device pixels on its longer side,
+/// holding `raster` of them, is shown past what is held of it whole: held
+/// at as many as may be (`most`), fewer than its `own`, and covering more.
+fn past_held(covered: f32, raster: u32, most: u32, own: (u32, u32)) -> bool {
+    covered.is_finite()
+        && raster >= most
+        && most < own.0.max(own.1)
+        && covered > raster as f32 * 1.05
+        && own.0 > 0
+        && own.1 > 0
 }
 
 /// The side to draw a picture again at, when `covered` device pixels show
@@ -9843,9 +9951,41 @@ mod tests {
         let (region, side) = past(8192., most, most, own, wall, wall, None).unwrap();
         assert_eq!(region, [0, 0, 8192, 5464]);
         assert_eq!(side, most);
+        // Asked so, it holds that view at that side: not asked again.
+        let held = Some((region, side));
+        assert_eq!(past(8192., most, most, own, wall, wall, held), None);
         // Nothing in view: nothing asked.
         let away = [5000., 5000., 8192., 5464.];
         assert_eq!(past(8192., most, most, own, away, view, None), None);
+    }
+
+    /// A picture that lets what is behind it through is drawn round what
+    /// shows past what is held of it, never under it: the parts round the
+    /// region cover the whole once, the region not at all.
+    #[test]
+    fn a_see_through_picture_is_drawn_round_its_region() {
+        use gpui::{Bounds, point, px, size};
+        let whole = Bounds::new(point(px(10.), px(20.)), size(px(100.), px(50.)));
+        let region = super::region_bounds(whole, [25, 10, 50, 20], (200., 100.));
+        assert_eq!(
+            region,
+            Bounds::new(point(px(22.5), px(25.)), size(px(25.), px(10.)))
+        );
+        let parts = super::around(whole, region);
+        assert_eq!(parts.len(), 4);
+        let area = |b: &Bounds<gpui::Pixels>| f32::from(b.size.width) * f32::from(b.size.height);
+        let covered: f32 = parts.iter().map(area).sum();
+        assert!((covered + area(&region) - area(&whole)).abs() < 1e-3);
+        for part in &parts {
+            let overlap = part.intersect(&region);
+            assert!(overlap.size.width <= px(0.) || overlap.size.height <= px(0.));
+        }
+        // At an edge, the parts that would be empty are left out.
+        let corner = super::region_bounds(whole, [0, 0, 200, 50], (200., 100.));
+        assert_eq!(super::around(whole, corner).len(), 1);
+        // No region: the whole.
+        let none = Bounds::new(point(px(0.), px(0.)), size(px(0.), px(0.)));
+        assert_eq!(super::around(whole, none), vec![whole]);
     }
 
     /// Fitted in its room, a picture covers as much of it as its shape

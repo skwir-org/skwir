@@ -307,9 +307,18 @@ A name that says nothing is not a binary file.
   `jpeg_decoder::Decoder::set_rows`, which returns exactly the rows a
   whole decode draws), any other whole; the region alone cut, turned and
   shrunk) and drawn over the whole in its place (`preview::Detail`,
-  `picture`). One at a time, a `Latest`; a region within what was asked,
-  at no larger side, is not asked again; its pixels go with the content
-  (`replace_preview_content`). What a zoom asks (the picture again at a
+  `picture`). Over a picture that lets what is behind it through (its
+  `ink`), the whole is drawn round the region, never under it
+  (`preview::around`): drawn under it, the region was drawn twice over,
+  more opaque than round it. One at a time, a `Latest`; a region within
+  what was asked, at the side the bound leaves it, is not asked again.
+  Where what shows alone is more than the bound (a screen of more device
+  pixels than `PICTURE_HELD`), it is asked at a smaller side with no
+  margin, so again as it scrolls, each ask superseding the last
+  (`Turn::take` gives up a cancelled wait). Its pixels go with the
+  content (`replace_preview_content`) and once the picture is shown no
+  larger than what is held of it whole (`past_held`,
+  `Shell::detail_unneeded`). What a zoom asks (the picture again at a
   zoom's side, `Cover::Side`, and its region) decodes in a turn of its
   own (`Turn::Zoomed`, ADR-146 amended, 8): never the one the next
   step's picture waits for.
