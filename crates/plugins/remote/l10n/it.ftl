@@ -380,6 +380,9 @@ remote_connect = Connetti al server
 remote_connect_description = Apre una cartella remota dal suo indirizzo (sftp://, smb://, dav://, ftp://, nfs://, afp://, rclone://)
 
 # draft
+remote_connecting = Connessione…
+
+# draft
 remote_connectors = Strumenti che aprono indirizzi
 
 # draft

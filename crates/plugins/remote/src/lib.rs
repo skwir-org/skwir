@@ -158,6 +158,10 @@ struct State {
     answered: HashMap<String, PathBuf>,
     /// Points whose program is gone (`ENOTCONN`): drawn unavailable.
     lost: std::collections::HashSet<PathBuf>,
+    /// The servers being connected to now, by their address's top, each
+    /// with how many connect to it (`Connecting`): what a pane offering to
+    /// connect again says in place of its button meanwhile (ADR-149, 4).
+    connecting_to: HashMap<String, usize>,
     /// What reads proved of the mounts when last published
     /// (`fs::reach::proved_changed`): a plan's end that changed it
     /// publishes again.
@@ -243,6 +247,44 @@ struct State {
     /// one more or one fewer is told to the core (`App::volumes_changed`),
     /// the table not listing a bridge's folders.
     known_points: Vec<PathBuf>,
+}
+
+/// A server being connected to (`State::connecting_to`), said so where a
+/// pane offers to connect to it again, until dropped, however the
+/// connection ends.
+struct Connecting<'a> {
+    remotes: &'a Remotes,
+    app: &'a App,
+    top: String,
+}
+
+impl<'a> Connecting<'a> {
+    fn begin(remotes: &'a Remotes, app: &'a App, address: &Address) -> Self {
+        let top = address.top().to_string();
+        *remotes
+            .state
+            .lock()
+            .connecting_to
+            .entry(top.clone())
+            .or_default() += 1;
+        remotes.publish(app);
+        Connecting { remotes, app, top }
+    }
+}
+
+impl Drop for Connecting<'_> {
+    fn drop(&mut self) {
+        {
+            let mut state = self.remotes.state.lock();
+            if let Some(count) = state.connecting_to.get_mut(&self.top) {
+                *count -= 1;
+                if *count == 0 {
+                    state.connecting_to.remove(&self.top);
+                }
+            }
+        }
+        self.remotes.publish(self.app);
+    }
 }
 
 /// What a pane whose folder was on the server `label` mounted at `at`
@@ -1034,6 +1076,8 @@ impl Remotes {
                 }
             }
         }
+        // Said where a pane offers to connect to it again, until it ends.
+        let _connecting = Connecting::begin(self, app, address);
         let mut why_not = Vec::new();
         let mut failed: Vec<(Words, anyhow::Error)> = Vec::new();
         for connector in self.ordered(app) {
@@ -1590,7 +1634,28 @@ impl Remotes {
             }
         }
         // Each mounted earlier this run that is not now offers to connect
-        // again; a mount whose connection is lost, too.
+        // again; a mount whose connection is lost, too. What is done to it
+        // meanwhile (Connecting…, Disconnecting…) is said in place of its
+        // button, as its place says it (shell.md).
+        let doing = |address: &Address, at: &Path| {
+            state.busy.get(&at.display().to_string()).cloned().or_else(|| {
+                state
+                    .connecting_to
+                    .contains_key(&address.top().to_string())
+                    .then(|| {
+                        words!(
+                            remote_connecting = "Connecting…",
+                            note = "Said in place of the Connect button shown where a folder's server is not connected, while Skwir connects to it."
+                        )
+                    })
+            })
+        };
+        let offer = |label: &Words, address: &Address, at: &Path, lost: bool| {
+            skwir_core::registry::Reopen {
+                busy: doing(address, at),
+                ..reopen(label, address, at, lost)
+            }
+        };
         let mut reopens: Vec<skwir_core::registry::Reopen> = state
             .mounted_at
             .iter()
@@ -1599,20 +1664,15 @@ impl Remotes {
                     .iter()
                     .any(|m| m.recognised.address.as_ref() == Some(address))
             })
-            .map(|(address, at, label)| reopen(label, address, at, false))
+            .map(|(address, at, label)| offer(label, address, at, false))
             .collect();
         reopens.extend(mounted.iter().filter_map(|m| {
             let address = m.recognised.address.as_ref()?;
             state
                 .lost
                 .contains(&m.remote.point)
-                .then(|| reopen(&m.recognised.label, address, &m.remote.point, true))
+                .then(|| offer(&m.recognised.label, address, &m.remote.point, true))
         }));
-        // What is done to it meanwhile (Disconnecting…), said in place of
-        // its button, as its place says it (shell.md).
-        for reopen in &mut reopens {
-            reopen.busy = state.busy.get(&reopen.at.display().to_string()).cloned();
-        }
         // Read before what it words: a change after it publishes again.
         let proved = skwir_core::fs::reach::proved_changed();
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
@@ -3878,6 +3938,39 @@ mod tests {
         );
         let lost = super::reopen(&label, &address, Path::new("/run/m/nas"), true);
         assert!(lost.title.english().starts_with("The connection to "));
+    }
+
+    /// While Skwir connects to a server again, what a pane offers for it
+    /// says so in place of its button, which is not offered again
+    /// meanwhile (ADR-149, 4); once the connection ends, the button is back.
+    #[test]
+    fn a_server_being_connected_to_says_so_where_it_is_offered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let remotes = Remotes::with(Vec::new());
+        app.plugins
+            .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
+        let address = Address::parse("sftp://me@nas.example/srv").unwrap();
+        let at = tmp.path().join("it's nas, once mounted");
+        remotes.state.lock().mounted_at.push((
+            address.clone(),
+            at.clone(),
+            Words::as_written("me@nas"),
+        ));
+        let busy = || {
+            app.registry
+                .reopens
+                .find(|reopen| reopen.at == at)
+                .map(|reopen| reopen.busy.as_ref().map(Words::english))
+        };
+        remotes.publish(&app);
+        assert_eq!(busy(), Some(None), "offered, its button shown");
+        // Another folder of the same server, being connected to.
+        let below = Address::parse("sftp://me@nas.example/srv/it's photos").unwrap();
+        let connecting = Connecting::begin(&remotes, &app, &below);
+        assert_eq!(busy(), Some(Some("Connecting…".to_owned())));
+        drop(connecting);
+        assert_eq!(busy(), Some(None), "the button back");
     }
 
     /// A server whose mount was lost connects again in its own folder; one

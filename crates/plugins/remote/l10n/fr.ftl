@@ -381,6 +381,9 @@ remote_connect = Se connecter à un serveur
 remote_connect_description = Ouvrir un dossier distant par son adresse (sftp://, smb://, dav://, ftp://, nfs://, afp://, rclone://)
 
 # draft
+remote_connecting = Connexion…
+
+# draft
 remote_connectors = Outils qui ouvrent les adresses
 
 # draft

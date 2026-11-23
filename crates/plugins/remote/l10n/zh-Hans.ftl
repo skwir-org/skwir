@@ -377,6 +377,9 @@ remote_connect = 连接到服务器
 remote_connect_description = 通过地址打开远程文件夹（sftp://、smb://、dav://、ftp://、nfs://、afp://、rclone://）
 
 # draft
+remote_connecting = 正在连接…
+
+# draft
 remote_connectors = 打开地址的工具
 
 # draft

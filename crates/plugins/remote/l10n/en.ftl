@@ -308,6 +308,9 @@ remote_connect = Connect to server
 
 remote_connect_description = Open a remote folder by its address (sftp://, smb://, dav://, ftp://, nfs://, afp://, rclone://)
 
+# Said in place of the Connect button shown where a folder's server is not connected, while Skwir connects to it.
+remote_connecting = Connecting…
+
 remote_connectors = Tools that open addresses
 
 # sshfs, kmtp, gvfs, kio, rclone and fstab are what the setting's value names: never translated.
