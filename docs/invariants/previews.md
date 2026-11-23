@@ -219,8 +219,9 @@ A name that says nothing is not a binary file.
   it carries (`raw::embedded_jpeg`, its Orientation written in where the
   JPEG says none), read wherever the type is known, found and read once
   for a request however many readers it opens (`picture::Typed`: the
-  preview's decode, a region, read ahead, thumbnails), never its sensor
-  data. Whether a raw file is Skwir's is
+  preview's decode, a region, read ahead, thumbnails), its size read from
+  that JPEG's first bytes alone (`picture::typed_size`), never its sensor
+  data (a lossless JPEG, never a picture to show). Whether a raw file is Skwir's is
   told file by file, never by its type alone: `decodes` lists no raw
   type, `decodes_file` asks its first bytes (`raw::may_carry_jpeg`), and
   `ImageDecoder` tries every raw file, the thumbnailers and ImageMagick

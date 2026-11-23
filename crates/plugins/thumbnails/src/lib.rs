@@ -750,7 +750,8 @@ mod tests {
     fn a_raw_file_without_a_jpeg_is_previewed_as_its_thumbnailer_draws_it() {
         use skwir_platform::thumb_providers::ThumbnailerEntry;
         let dir = tempfile::tempdir().unwrap();
-        // IFD0 alone, naming a JPEG or an uncompressed strip.
+        // IFD0 alone, naming a JPEG (its frame header at 1024: 64 × 48) or
+        // an uncompressed strip.
         let raw = |name: &str, tags: [(u16, u32); 2]| {
             let mut bytes = b"II*\0\x08\0\0\0".to_vec();
             bytes.extend_from_slice(&2u16.to_le_bytes());
@@ -762,6 +763,8 @@ mod tests {
             }
             bytes.extend_from_slice(&0u32.to_le_bytes());
             bytes.resize(4096, 0);
+            bytes[1024..1037]
+                .copy_from_slice(&[0xFF, 0xD8, 0xFF, 0xC0, 0, 17, 8, 0, 48, 0, 64, 3, 1]);
             let path = dir.path().join(name);
             std::fs::write(&path, bytes).unwrap();
             path

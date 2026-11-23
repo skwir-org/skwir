@@ -30,6 +30,19 @@ pub fn open_typed<S: FileSource + ?Sized>(
     Typed::new(file, mime)?.reader()
 }
 
+/// The width and height of the picture `file` of type `mime`, turned as
+/// it is shown, read from its header: a camera's raw file's from its
+/// JPEG's first bytes (`raw::shown_size`), its JPEG not read whole for it.
+pub fn typed_size<S: FileSource + ?Sized>(
+    file: &S,
+    mime: Option<&str>,
+) -> anyhow::Result<(u32, u32)> {
+    if mime.is_some_and(crate::raw::is_raw) {
+        return crate::raw::shown_size(&mut file.open_reader()?);
+    }
+    Ok(size(open(file)?)?)
+}
+
 /// The picture `file` of type `mime`, as a request reads it again and
 /// again (its size, what it carries, its pixels): a camera's raw file as
 /// the JPEG it carries, found and read once (`raw::embedded_jpeg`,

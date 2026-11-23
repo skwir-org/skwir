@@ -43,6 +43,43 @@ const DIRECTORIES: usize = 64;
 /// The largest JPEG `raw` carries, its Orientation the raw file's where it
 /// says none. An error when it carries none.
 pub fn embedded_jpeg<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<u8>> {
+    let chosen = chosen(raw)?;
+    let mut jpeg = vec![0; usize::try_from(chosen.length)?];
+    raw.seek(SeekFrom::Start(chosen.offset))?;
+    raw.read_exact(&mut jpeg)?;
+    Ok(match chosen.orientation {
+        Some(turn) if turn != 1 && orientation_of(&jpeg).is_none() => with_orientation(&jpeg, turn),
+        _ => jpeg,
+    })
+}
+
+/// The size of the picture `raw` shows, turned as `embedded_jpeg`'s JPEG
+/// is: read from its JPEG's first bytes alone, never the JPEG whole (a
+/// cached thumbnail standing in asks it, before the picture is decoded).
+pub fn shown_size<R: Read + Seek>(raw: &mut R) -> anyhow::Result<(u32, u32)> {
+    let chosen = chosen(raw)?;
+    let head = jpeg_head(raw, chosen.offset, chosen.length)
+        .ok_or_else(|| anyhow::anyhow!("no picture in this raw file"))?;
+    let Frame::Picture(width, height) = frame(&head) else {
+        anyhow::bail!("no picture in this raw file");
+    };
+    Ok(match orientation_of(&head).or(chosen.orientation) {
+        Some(5..=8) => (height, width),
+        _ => (width, height),
+    })
+}
+
+/// The JPEG a raw file shows, as `chosen` finds it.
+struct Chosen {
+    offset: u64,
+    length: u64,
+    /// The raw file's Orientation, which its JPEG may not say.
+    orientation: Option<u16>,
+}
+
+/// The largest JPEG `raw` carries, by its frame header's size, and its
+/// Orientation; an error where it carries none.
+fn chosen<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Chosen> {
     let mut head = [0u8; 16];
     raw.seek(SeekFrom::Start(0))?;
     raw.read_exact(&mut head)?;
@@ -64,12 +101,10 @@ pub fn embedded_jpeg<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<u8>> {
         .max_by_key(|&(pixels, ..)| pixels)
         .map(|(_, offset, length)| (offset, length))
         .ok_or_else(|| anyhow::anyhow!("no picture in this raw file"))?;
-    let mut jpeg = vec![0; usize::try_from(length)?];
-    raw.seek(SeekFrom::Start(offset))?;
-    raw.read_exact(&mut jpeg)?;
-    Ok(match orientation {
-        Some(turn) if turn != 1 && orientation_of(&jpeg).is_none() => with_orientation(&jpeg, turn),
-        _ => jpeg,
+    Ok(Chosen {
+        offset,
+        length,
+        orientation,
     })
 }
 
@@ -81,7 +116,9 @@ pub fn embedded_jpeg<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<u8>> {
 /// (`thumb_providers::decodes_file`). A Fuji RAF and a Canon CR3 always
 /// carry one; a TIFF-shaped file names its JPEGs in its directories, and
 /// says it has none only where every directory it points to lies in
-/// `head` and names none. What is no raw file this module reads has none.
+/// `head`, and every JPEG they name either lies past it or is not one to
+/// show (a lossless one, its sensor data). What is no raw file this
+/// module reads has none.
 pub fn may_carry_jpeg(head: &[u8]) -> bool {
     let Some(start) = head.first_chunk::<16>() else {
         return false;
@@ -89,8 +126,31 @@ pub fn may_carry_jpeg(head: &[u8]) -> bool {
     if start.starts_with(b"FUJIFILMCCD-RAW") || is_cr3(start) {
         return true;
     }
-    tiff(&mut std::io::Cursor::new(head), start)
-        .is_ok_and(|walk| !walk.complete || walk.found.iter().any(|&(_, length)| plausible(length)))
+    tiff(&mut std::io::Cursor::new(head), start).is_ok_and(|walk| {
+        !walk.complete
+            || walk
+                .found
+                .iter()
+                .any(|&(offset, length)| plausible(length) && may_show(head, offset, length))
+    })
+}
+
+/// Whether the JPEG of `length` at `offset` may be one to show, as far as
+/// `head`, a file's first bytes, tells: no only where what of it they hold
+/// says it is none (no JPEG, a lossless one) or holds it whole without a
+/// frame.
+fn may_show(head: &[u8], offset: u64, length: u64) -> bool {
+    let Some(rest) = usize::try_from(offset).ok().and_then(|at| head.get(at..)) else {
+        return true;
+    };
+    let within = rest
+        .len()
+        .min(usize::try_from(length).unwrap_or(usize::MAX));
+    match frame(&rest[..within]) {
+        Frame::Picture(..) => true,
+        Frame::NotAPicture => false,
+        Frame::Unknown => (within as u64) < length,
+    }
 }
 
 /// Whether a file's first bytes begin a Canon CR3.
@@ -104,39 +164,65 @@ fn plausible(length: u64) -> bool {
     length > 4 && length <= JPEG_BYTES
 }
 
-/// The pixels a JPEG at `offset` says it has (its frame header), `None`
-/// where what lies there is no JPEG.
-fn jpeg_pixels<R: Read + Seek>(raw: &mut R, offset: u64, length: u64) -> Option<u64> {
-    raw.seek(SeekFrom::Start(offset)).ok()?;
-    let mut head = vec![0u8; usize::try_from(length.min(256 << 10)).ok()?];
-    raw.read_exact(&mut head).ok()?;
+/// What a JPEG's first bytes say of its frame.
+enum Frame {
+    /// A picture of this width and height, as stored.
+    Picture(u32, u32),
+    /// No picture to show: no JPEG, or a lossless one, a raw file's sensor
+    /// data (a CR2's last directory, a DNG's raw image in one strip).
+    NotAPicture,
+    /// Not said within the bytes held.
+    Unknown,
+}
+
+/// What `head`, a JPEG's first bytes, says of its frame (its header).
+fn frame(head: &[u8]) -> Frame {
+    if head.len() < 2 {
+        return Frame::Unknown;
+    }
     if !head.starts_with(&[0xFF, 0xD8]) {
-        return None;
+        return Frame::NotAPicture;
     }
     let mut at = 2;
     while at + 9 < head.len() {
         if head[at] != 0xFF {
-            return None;
+            return Frame::NotAPicture;
         }
         let marker = head[at + 1];
         let size = usize::from(u16::from_be_bytes([head[at + 2], head[at + 3]]));
-        // A lossless frame is the sensor's data (a CR2's last directory, a
-        // DNG's raw image in one strip), never a picture to show.
         if matches!(marker, 0xC3 | 0xC7 | 0xCB | 0xCF) {
-            return None;
+            return Frame::NotAPicture;
         }
         // A frame header: its height and width.
         if matches!(
             marker,
             0xC0..=0xC2 | 0xC5 | 0xC6 | 0xC9 | 0xCA | 0xCD | 0xCE
         ) {
-            let height = u64::from(u16::from_be_bytes([head[at + 5], head[at + 6]]));
-            let width = u64::from(u16::from_be_bytes([head[at + 7], head[at + 8]]));
-            return Some(width * height);
+            let height = u16::from_be_bytes([head[at + 5], head[at + 6]]);
+            let width = u16::from_be_bytes([head[at + 7], head[at + 8]]);
+            return Frame::Picture(u32::from(width), u32::from(height));
         }
         at += 2 + size;
     }
-    None
+    Frame::Unknown
+}
+
+/// The first bytes of the JPEG at `offset` (its header, and what comes
+/// before its frame: 256 KiB at most), `None` where they cannot be read.
+fn jpeg_head<R: Read + Seek>(raw: &mut R, offset: u64, length: u64) -> Option<Vec<u8>> {
+    raw.seek(SeekFrom::Start(offset)).ok()?;
+    let mut head = vec![0u8; usize::try_from(length.min(256 << 10)).ok()?];
+    raw.read_exact(&mut head).ok()?;
+    Some(head)
+}
+
+/// The pixels a JPEG at `offset` says it has (its frame header), `None`
+/// where what lies there is no JPEG to show.
+fn jpeg_pixels<R: Read + Seek>(raw: &mut R, offset: u64, length: u64) -> Option<u64> {
+    match frame(&jpeg_head(raw, offset, length)?) {
+        Frame::Picture(width, height) => Some(u64::from(width) * u64::from(height)),
+        Frame::NotAPicture | Frame::Unknown => None,
+    }
 }
 
 /// A JPEG's segments before its scan: marker, and where the segment
@@ -740,6 +826,20 @@ mod tests {
         raw.extend_from_slice(&small);
         let shown = embedded_jpeg(&mut Cursor::new(&raw)).unwrap();
         assert_eq!(size_of(&shown), (40, 30), "the lossy one");
+        assert!(may_carry_jpeg(&raw));
+        // Its sensor strip alone, in its first bytes: none to show.
+        let at = 8 + 2 + 3 * 12 + 4;
+        let mut sensor = b"II*\0\x08\0\0\0".to_vec();
+        sensor.extend_from_slice(&3u16.to_le_bytes());
+        sensor.extend(entry(0x0103, 6));
+        sensor.extend(entry(0x0111, at));
+        sensor.extend(entry(0x0117, lossless.len() as u32));
+        sensor.extend_from_slice(&0u32.to_le_bytes());
+        sensor.extend_from_slice(&lossless);
+        assert!(
+            !may_carry_jpeg(&sensor),
+            "a lossless strip is no JPEG to show"
+        );
         // A CR3 whose box after its `ftyp` says it is 2^64 - 1 long.
         let mut cr3 = 20u32.to_be_bytes().to_vec();
         cr3.extend_from_slice(b"ftypcrx \0\0\0\x01crx ");
@@ -748,6 +848,21 @@ mod tests {
         cr3.extend_from_slice(&u64::MAX.to_be_bytes());
         cr3.resize(64, 0);
         assert!(embedded_jpeg(&mut Cursor::new(&cr3)).is_err());
+    }
+
+    /// A raw file's size is its JPEG's, turned as it is shown, read from
+    /// the JPEG's first bytes alone.
+    #[test]
+    fn a_raw_file_s_size_is_its_jpeg_s_turned() {
+        let shown = |raw: &[u8]| size_of(&embedded_jpeg(&mut Cursor::new(raw)).unwrap());
+        for raw in [tiff_raw(1), tiff_raw(6), cr3_file(None), cr3_file(Some(6))] {
+            assert_eq!(shown_size(&mut Cursor::new(&raw)).unwrap(), shown(&raw));
+        }
+        assert_eq!(
+            shown_size(&mut Cursor::new(&tiff_raw(6))).unwrap(),
+            (120, 160)
+        );
+        assert!(shown_size(&mut Cursor::new(b"not a raw file at all".to_vec())).is_err());
     }
 
     /// Whether a raw file may carry a JPEG is told from its first bytes:

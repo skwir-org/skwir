@@ -2084,7 +2084,9 @@ fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32
         return inspection::drawing_size(&bytes).ok();
     }
     let _asking = skwir_platform::heif::asking(cancel, skwir_platform::heif::Asker::Shown);
-    skwir_platform::picture::size(skwir_platform::picture::open_typed(held, Some(mime)).ok()?).ok()
+    // A raw file's from its JPEG's header: the JPEG is read whole once, by
+    // the decode that follows (ADR-148).
+    skwir_platform::picture::typed_size(held, Some(mime)).ok()
 }
 
 /// An image decoded at the side `cover` asks (`IMAGE_MAX_SIDE` where it
