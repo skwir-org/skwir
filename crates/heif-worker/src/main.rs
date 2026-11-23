@@ -5,7 +5,8 @@
 //! `skwir-heif-worker <input> <output> size <most>` prints the primary
 //! picture's width, height and whether it has an alpha channel, as it is
 //! shown (turned, mirrored and cropped as the file says), without decoding
-//! it. Every mode refuses a picture of more than `most` pixels as shown,
+//! it, then the size of the thumbnail it carries (`0 0` for none, or one
+//! `thumbnail` would not give). Every mode refuses a picture of more than `most` pixels as shown,
 //! before decoding anything of it; libheif's own bound on its sides is
 //! never lowered (before 1.19 it bounds each side, and a panorama wider
 //! than the square of `most` is within it).
@@ -576,6 +577,27 @@ impl Picture {
     /// its proportions are not the picture's, within a pixel of rounding
     /// (another picture's, or the picture's before it was cropped).
     fn thumbnail(&self) -> anyhow::Result<Option<Pixels>> {
+        let Some((thumbnail, _, _, alpha)) = self.carried()? else {
+            return Ok(None);
+        };
+        let decoded = decode(thumbnail.0, alpha)?;
+        let plane = decoded.plane(channels(alpha))?;
+        let mut pixels = Vec::with_capacity(plane.row_bytes * plane.height);
+        for y in 0..plane.height {
+            pixels.extend_from_slice(plane.row(y));
+        }
+        Ok(Some((
+            pixels,
+            plane.width_u32()?,
+            plane.height_u32()?,
+            alpha,
+        )))
+    }
+
+    /// The thumbnail it carries, its size as shown and its alpha, read
+    /// without decoding it: none where its proportions are not the
+    /// picture's, within a pixel of rounding, or it is larger.
+    fn carried(&self) -> anyhow::Result<Option<(Thumbnail, u32, u32, bool)>> {
         let mut id = 0;
         // SAFETY: the handle is valid while `self` is; one ID asked, room
         // for one given.
@@ -605,18 +627,7 @@ impl Picture {
         {
             return Ok(None);
         }
-        let decoded = decode(thumbnail.0, alpha)?;
-        let plane = decoded.plane(channels(alpha))?;
-        let mut pixels = Vec::with_capacity(plane.row_bytes * plane.height);
-        for y in 0..plane.height {
-            pixels.extend_from_slice(plane.row(y));
-        }
-        Ok(Some((
-            pixels,
-            plane.width_u32()?,
-            plane.height_u32()?,
-            alpha,
-        )))
+        Ok(Some((thumbnail, width, height, alpha)))
     }
 }
 
@@ -899,7 +910,13 @@ fn run() -> anyhow::Result<()> {
     };
     if mode == "size" {
         let (width, height, alpha) = picture.size();
-        writeln!(out, "{width} {height} {}", u8::from(alpha))?;
+        // The thumbnail it carries, which is asked only where it is wanted.
+        let (across, down) = picture
+            .carried()
+            .ok()
+            .flatten()
+            .map_or((0, 0), |(_, width, height, _)| (width, height));
+        writeln!(out, "{width} {height} {} {across} {down}", u8::from(alpha))?;
     } else if mode == "decode" {
         let (width, height, alpha) = written(picture.decode()?)?;
         writeln!(out, "{width} {height} {}", u8::from(alpha))?;

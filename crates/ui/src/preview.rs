@@ -2089,8 +2089,10 @@ fn decode_image(
             skwir_platform::heif::Asker::Shown
         },
     );
-    // A raw file as the JPEG it carries (ADR-148).
-    let reader = || skwir_platform::picture::open_typed(held, mime);
+    // A raw file as the JPEG it carries (ADR-148), read once for the
+    // readers below.
+    let typed = skwir_platform::picture::Typed::new(held, mime)?;
+    let reader = || typed.reader();
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
         return Err(bounds.refuse(words!(

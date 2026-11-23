@@ -89,8 +89,10 @@ asked, in the preview as in the grid (decision 3).
    Canon keeps its IFD0 in, its JPEG saying nothing of it; a JPEG whose
    EXIF names no Orientation is turned too, its EXIF given way to one
    that says it). The JPEG then takes the JPEG path
-   (`picture::open_typed`): its reduced scales, a region, read ahead and
-   kept. The types read are listed (`raw::RAW`); an Olympus ORF (its
+   (`picture::Typed`, found and read once for a request, whatever
+   readers it opens: the preview's size, what it carries and its pixels
+   had each read it anew, three or four times a picture): its reduced
+   scales, a region, read ahead and kept. The types read are listed (`raw::RAW`); an Olympus ORF (its
    preview in its maker note), a Canon CRW, a Sigma X3F stay with the
    desktop's thumbnailer. A raw file's sensor data is never developed.
    Amended (review before 0.6.1): a raw file is Skwir's file by file, not
@@ -108,7 +110,12 @@ asked, in the preview as in the grid (decision 3).
    taught to `image` as a decoder (`heif::register`, by the brands of a
    file's first box): its size asked of the helper when the decoder is
    made, without decoding, its pixels when they are read, the file written
-   to a folder in memory for it. Its types count as read here only where
+   to a folder in memory for it. Amended: its size, and its thumbnail's,
+   are asked once of a file's bytes (`size` says both; what it said is
+   kept by the bytes' hash), so a request's decoders, each made anew by
+   `image`, do not run the helper for it again, and a thumbnail too small
+   for what is asked is not decoded; the pixels it writes are read
+   straight into the decode's buffer, not held twice. Its types count as read here only where
    it is installed (`heif::reads`), so elsewhere the desktop's thumbnailer
    draws them as before. A package of its own, `skwir-heif`, recommended
    by `skwir` (Debian's recommending libheif's decoder plugins); in Arch's

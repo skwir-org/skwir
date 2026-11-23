@@ -300,10 +300,14 @@ impl ThumbnailProvider for ImageDecoder {
         // worker going on with other files meanwhile (ADR-148 amended).
         let asking = crate::heif::asking(cancel, crate::heif::Asker::Thumbnail);
         let busy = || anyhow::Error::from(skwir_core::thumbs::Busy::new(crate::heif::when_free));
-        // A raw file as the JPEG it carries (ADR-148).
+        // A raw file as the JPEG it carries (ADR-148), found and read once
+        // for the three readers below.
         let mime = mime_of(req);
+        let typed = crate::picture::Typed::new(path.as_path(), mime.as_deref())
+            .with_context(|| format!("open {}", path.display()))?;
         let open = || {
-            crate::picture::open_typed(path, mime.as_deref())
+            typed
+                .reader()
                 .with_context(|| format!("open {}", path.display()))
         };
         // What it carries as large as asked (ADR-148 amended): a JPEG XL's

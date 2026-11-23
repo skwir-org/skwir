@@ -224,30 +224,124 @@ fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> ImageEr
     ))
 }
 
+/// What the helper said of a file's picture (`size`): its size as shown,
+/// whether it has alpha, and the thumbnail it carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Facts {
+    width: u32,
+    height: u32,
+    alpha: bool,
+    thumbnail: Carried,
+}
+
+/// The thumbnail a file carries, as the helper's `size` says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Carried {
+    /// None it gives (none, or one of other proportions).
+    None,
+    /// One of this size, as shown.
+    Sized(u32, u32),
+    /// Not said, by a helper of before it was: asked of `thumbnail`.
+    Unknown,
+}
+
+/// What the helper said of the files asked last, by their length and
+/// their bytes' hash (`Work::key`): a request asks a picture's size, then
+/// what it carries, then its pixels, each through a decoder of its own,
+/// and the helper is run for its size once.
+static KNOWN: parking_lot::Mutex<std::collections::VecDeque<((u64, u64), Facts)>> =
+    parking_lot::const_mutex(std::collections::VecDeque::new());
+/// How many are known at most: a grid's thumbnails asked at once.
+const KNOWN_MOST: usize = 64;
+/// What a file is hashed by at a time, whatever its reader gives.
+const BLOCK: usize = 64 << 10;
+
 /// A file handed to the helper: written to a folder in memory for it to
 /// read, and what it writes there.
 struct Work {
     program: &'static Path,
     folder: tempfile::TempDir,
+    /// Its length and its bytes' hash.
+    key: (u64, u64),
 }
 
 impl Work {
     fn new<R: Read + Seek>(mut reader: R) -> ImageResult<Work> {
+        use std::hash::{BuildHasher, Hasher};
+        static SEED: OnceLock<skwir_core::hashing::State> = OnceLock::new();
         let program = program().ok_or_else(|| failed("no HEIF helper"))?;
-        let folder = crate::file::memory_dir("skwir-heif-")?;
-        let mut file = std::fs::File::create(folder.path().join(INPUT))?;
-        reader.rewind()?;
-        let copied = std::io::copy(&mut reader.by_ref().take(FILE_BYTES + 1), &mut file)?;
-        if copied > FILE_BYTES {
+        // One too large is refused before anything of it is copied.
+        if reader.seek(std::io::SeekFrom::End(0))? > FILE_BYTES {
             return Err(failed("the picture's file is too large"));
         }
-        Ok(Work { program, folder })
+        reader.rewind()?;
+        let folder = crate::file::memory_dir("skwir-heif-")?;
+        let mut file = std::fs::File::create(folder.path().join(INPUT))?;
+        let mut hasher = SEED
+            .get_or_init(skwir_core::hashing::State::default)
+            .build_hasher();
+        let mut block = vec![0u8; BLOCK];
+        let mut length = 0u64;
+        loop {
+            // Blocks filled whole, so the hash is the bytes', not the reads'.
+            let mut held = 0;
+            while held < BLOCK {
+                match reader.read(&mut block[held..]) {
+                    Ok(0) => break,
+                    Ok(count) => held += count,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            if held == 0 {
+                break;
+            }
+            hasher.write(&block[..held]);
+            std::io::Write::write_all(&mut file, &block[..held])?;
+            length += held as u64;
+            if length > FILE_BYTES {
+                return Err(failed("the picture's file is too large"));
+            }
+        }
+        Ok(Work {
+            program,
+            folder,
+            key: (length, hasher.finish()),
+        })
+    }
+
+    /// What the helper says of the picture: known, or asked now.
+    fn facts(&self) -> ImageResult<Facts> {
+        if let Some(&(_, facts)) = KNOWN.lock().iter().find(|(key, _)| *key == self.key) {
+            return Ok(facts);
+        }
+        let said = self
+            .ask("size", &[])
+            .map_err(|error| failed(format!("{error:#}")))?;
+        let (width, height, alpha) =
+            picture(&said)?.ok_or_else(|| failed("the HEIF helper said no size"))?;
+        let thumbnail = match said.get(3..5) {
+            Some(&[0, 0]) => Carried::None,
+            Some(&[width, height]) => Carried::Sized(width, height),
+            _ => Carried::Unknown,
+        };
+        let facts = Facts {
+            width,
+            height,
+            alpha,
+            thumbnail,
+        };
+        let mut known = KNOWN.lock();
+        if known.len() >= KNOWN_MOST {
+            known.pop_front();
+        }
+        known.push_back((self.key, facts));
+        Ok(facts)
     }
 
     /// The helper run in `mode`, `args` after the most pixels it may
-    /// decode: the size it says, and whether it has alpha; `None` for
-    /// `0 0 0` (no thumbnail).
-    fn ask(&self, mode: &str, args: &[u32]) -> anyhow::Result<Option<(u32, u32, bool)>> {
+    /// decode: the numbers it says.
+    fn ask(&self, mode: &str, args: &[u32]) -> anyhow::Result<Vec<u32>> {
         let (_turn, cancel) = turn()?;
         let input = self.folder.path().join(INPUT);
         let mut run = sandbox::untrusted(self.program, &input, self.folder.path(), Otherwise::Run)?;
@@ -259,49 +353,69 @@ impl Work {
             .args(args.iter().map(u32::to_string));
         let said = crate::process::run(&mut run.command, &cancel, TIMEOUT)
             .map_err(|error| crate::process::explain(self.program, &cancel, error))?;
-        let said = String::from_utf8_lossy(&said);
-        let mut words = said.split_whitespace().map(str::parse::<u32>);
-        let (Some(Ok(width)), Some(Ok(height)), Some(Ok(alpha))) =
-            (words.next(), words.next(), words.next())
-        else {
-            anyhow::bail!("the HEIF helper said no size");
-        };
-        if (width, height) == (0, 0) {
-            return Ok(None);
-        }
-        anyhow::ensure!(
-            width > 0
-                && height > 0
-                && u64::from(width) * u64::from(height) <= limits::WHOLE_PICTURE_PIXELS,
-            "the picture is {width} × {height}"
-        );
-        Ok(Some((width, height, alpha == 1)))
+        String::from_utf8_lossy(&said)
+            .split_whitespace()
+            .map(|word| word.parse::<u32>().map_err(anyhow::Error::from))
+            .collect()
     }
 
-    /// The pixels the helper wrote, `bytes` of them.
-    fn pixels(&self, bytes: usize) -> ImageResult<Vec<u8>> {
-        let pixels = crate::file::read_regular(&self.folder.path().join(OUTPUT), bytes as u64 + 1)?;
-        if pixels.len() != bytes {
+    /// The pixels the helper wrote, read into `buf`, which holds as many.
+    fn pixels(&self, buf: &mut [u8]) -> ImageResult<()> {
+        let mut file = crate::file::open_regular(&self.folder.path().join(OUTPUT))?;
+        if file.metadata()?.len() != buf.len() as u64 {
             return Err(failed("the HEIF helper wrote another size"));
         }
-        Ok(pixels)
+        file.read_exact(buf)?;
+        Ok(())
     }
 }
 
+/// The picture the helper said (its first three numbers: width, height,
+/// alpha), `None` for `0 0 0` (no thumbnail), refused past what any
+/// picture is decoded at.
+fn picture(said: &[u32]) -> ImageResult<Option<(u32, u32, bool)>> {
+    let &[width, height, alpha, ..] = said else {
+        return Err(failed("the HEIF helper said no size"));
+    };
+    if (width, height) == (0, 0) {
+        return Ok(None);
+    }
+    if width == 0
+        || height == 0
+        || u64::from(width) * u64::from(height) > limits::WHOLE_PICTURE_PIXELS
+    {
+        return Err(failed(format!("the picture is {width} × {height}")));
+    }
+    Ok(Some((width, height, alpha == 1)))
+}
+
 /// The thumbnail a HEIF or an AVIF carries (ADR-148 amended), turned as
-/// the picture is shown, decoded by the helper: what stands for it while
-/// it decodes, or is it where it covers what is asked
-/// (`picture::carried`). `None` where it carries none.
-pub(crate) fn thumbnail<R: Read + Seek>(reader: R) -> ImageResult<Option<DynamicImage>> {
+/// the picture is shown, decoded by the helper where `wanted` takes its
+/// longer side, which the helper says with the picture's size: what stands
+/// for it while it decodes, or is it where it covers what is asked
+/// (`picture::carried`). `None` where it carries none, or one refused.
+pub(crate) fn thumbnail<R: Read + Seek>(
+    reader: R,
+    wanted: &impl Fn(u32) -> bool,
+) -> ImageResult<Option<DynamicImage>> {
     let work = Work::new(reader)?;
-    let Some((width, height, alpha)) = work
+    match work.facts()?.thumbnail {
+        Carried::None => return Ok(None),
+        Carried::Sized(width, height) if !wanted(width.max(height)) => return Ok(None),
+        Carried::Sized(..) | Carried::Unknown => {}
+    }
+    let said = work
         .ask("thumbnail", &[])
-        .map_err(|error| failed(format!("{error:#}")))?
-    else {
+        .map_err(|error| failed(format!("{error:#}")))?;
+    let Some((width, height, alpha)) = picture(&said)? else {
         return Ok(None);
     };
+    if !wanted(width.max(height)) {
+        return Ok(None);
+    }
     let channels = if alpha { 4 } else { 3 };
-    let pixels = work.pixels(width as usize * height as usize * channels)?;
+    let mut pixels = vec![0; width as usize * height as usize * channels];
+    work.pixels(&mut pixels)?;
     let image = if alpha {
         image::RgbaImage::from_raw(width, height, pixels).map(DynamicImage::ImageRgba8)
     } else {
@@ -313,7 +427,8 @@ pub(crate) fn thumbnail<R: Read + Seek>(reader: R) -> ImageResult<Option<Dynamic
 }
 
 /// A HEIF or AVIF picture handed to the helper: its size asked as it is
-/// made, its pixels as they are read, the whole or a region of it.
+/// made (or known, `Work::facts`), its pixels as they are read, the whole
+/// or a region of it.
 pub(crate) struct Decoder {
     work: Work,
     width: u32,
@@ -327,10 +442,12 @@ pub(crate) struct Decoder {
 impl Decoder {
     pub(crate) fn new<R: Read + Seek>(reader: R) -> ImageResult<Decoder> {
         let work = Work::new(reader)?;
-        let (width, height, alpha) = work
-            .ask("size", &[])
-            .map_err(|error| failed(format!("{error:#}")))?
-            .ok_or_else(|| failed("the HEIF helper said no size"))?;
+        let Facts {
+            width,
+            height,
+            alpha,
+            ..
+        } = work.facts()?;
         Ok(Decoder {
             work,
             width,
@@ -358,6 +475,7 @@ impl ImageDecoder for Decoder {
         }
     }
 
+    /// Its pixels, read straight into `buf` from what the helper wrote.
     fn read_image(self, buf: &mut [u8]) -> ImageResult<()> {
         let said = if self.whole() {
             self.work.ask("decode", &[])
@@ -365,11 +483,10 @@ impl ImageDecoder for Decoder {
             self.work.ask("region", &self.region)
         }
         .map_err(|error| failed(format!("{error:#}")))?;
-        if said != Some((self.region[2], self.region[3], self.alpha)) {
+        if picture(&said)? != Some((self.region[2], self.region[3], self.alpha)) {
             return Err(failed("the picture decoded at another size than it says"));
         }
-        buf.copy_from_slice(&self.work.pixels(buf.len())?);
-        Ok(())
+        self.work.pixels(buf)
     }
 
     fn read_image_boxed(self: Box<Self>, buf: &mut [u8]) -> ImageResult<()> {

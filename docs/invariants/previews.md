@@ -217,16 +217,19 @@ A name that says nothing is not a binary file.
   Orientation, jxl-oxide having turned the pixels by the codestream's; a
   camera's raw file of the types `raw::is_raw` lists, by the largest JPEG
   it carries (`raw::embedded_jpeg`, its Orientation written in where the
-  JPEG says none), read wherever the type is known
-  (`picture::open_typed`: the preview's decode, a region, read ahead,
-  thumbnails), never its sensor data. Whether a raw file is Skwir's is
+  JPEG says none), read wherever the type is known, found and read once
+  for a request however many readers it opens (`picture::Typed`: the
+  preview's decode, a region, read ahead, thumbnails), never its sensor
+  data. Whether a raw file is Skwir's is
   told file by file, never by its type alone: `decodes` lists no raw
   type, `decodes_file` asks its first bytes (`raw::may_carry_jpeg`), and
   `ImageDecoder` tries every raw file, the thumbnailers and ImageMagick
   asked next, so one that carries no JPEG (a phone's DNG) keeps the
   fallbacks' picture. HEIC and AVIF through the libheif
   helper (`heif`), an `image` decoder whose types count as decoded here
-  only where the helper is installed (`heif::reads`), its runs asked by
+  only where the helper is installed (`heif::reads`), its size and its
+  thumbnail's asked once of a file's bytes (`size`, kept by their hash:
+  the thumbnail decoded only where its size is wanted), its runs asked by
   whoever decodes (`heif::asking`: cancelled with the request, the
   preview's own in a turn of its own, a thumbnail never waiting: `Busy`
   with no turn free, as ImageMagick's): a format a helper

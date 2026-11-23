@@ -171,7 +171,16 @@ fn a_turned_heic_region_is_cut_as_shown() {
     taught();
     // 300 × 200 as stored, red at the top and blue at the bottom; shown
     // 200 × 300, red on the left.
-    assert_eq!(said("synthetic-turned-tiles.heic", &["size"]), "200 300 0");
+    // Its size, then its carried thumbnail's, as shown.
+    assert_eq!(
+        said("synthetic-turned-tiles.heic", &["size"]),
+        "200 300 0 64 96"
+    );
+    assert_eq!(
+        said("synthetic-gradient.heic", &["size"]),
+        "96 64 0 0 0",
+        "none"
+    );
     assert_eq!(
         said(
             "synthetic-turned-tiles.heic",

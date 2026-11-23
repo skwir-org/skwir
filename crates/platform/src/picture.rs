@@ -21,22 +21,52 @@ pub fn open<S: FileSource + ?Sized>(
     Ok(ImageReader::new(BufReader::new(file.open_reader()?)).with_guessed_format()?)
 }
 
-/// A reader over the picture `file` of type `mime`: a camera's raw file as
-/// the JPEG it carries (`raw::embedded_jpeg`, ADR-148), held in memory;
-/// any other as [`open`] reads it.
+/// A reader over the picture `file` of type `mime`, read once
+/// ([`Typed`]): what reads it once alone.
 pub fn open_typed<S: FileSource + ?Sized>(
     file: &S,
     mime: Option<&str>,
 ) -> anyhow::Result<ImageReader<BufReader<Box<dyn ReadSeek + Send>>>> {
-    if mime.is_some_and(crate::raw::is_raw) {
-        let jpeg = crate::raw::embedded_jpeg(&mut file.open_reader()?)?;
-        let inner: Box<dyn ReadSeek + Send> = Box::new(std::io::Cursor::new(jpeg));
-        return Ok(ImageReader::with_format(
-            BufReader::new(inner),
-            ImageFormat::Jpeg,
-        ));
+    Typed::new(file, mime)?.reader()
+}
+
+/// The picture `file` of type `mime`, as a request reads it again and
+/// again (its size, what it carries, its pixels): a camera's raw file as
+/// the JPEG it carries, found and read once (`raw::embedded_jpeg`,
+/// ADR-148), each reader over it in memory; any other as [`open`] reads
+/// it. A raw file's JPEG is several megabytes, read anew for each reader
+/// it was found for (on a remote, fetched anew).
+pub enum Typed<'a, S: FileSource + ?Sized> {
+    /// Read as it is.
+    File(&'a S),
+    /// A raw file's JPEG.
+    Jpeg(std::sync::Arc<[u8]>),
+}
+
+impl<'a, S: FileSource + ?Sized> Typed<'a, S> {
+    /// `file` of type `mime`, a raw file's JPEG read now.
+    pub fn new(file: &'a S, mime: Option<&str>) -> anyhow::Result<Typed<'a, S>> {
+        if mime.is_some_and(crate::raw::is_raw) {
+            let jpeg = crate::raw::embedded_jpeg(&mut file.open_reader()?)?;
+            return Ok(Typed::Jpeg(jpeg.into()));
+        }
+        Ok(Typed::File(file))
     }
-    open(file)
+
+    /// A reader over it, its format guessed, or a JPEG's.
+    pub fn reader(&self) -> anyhow::Result<ImageReader<BufReader<Box<dyn ReadSeek + Send>>>> {
+        match self {
+            Typed::File(file) => open(*file),
+            Typed::Jpeg(jpeg) => {
+                let inner: Box<dyn ReadSeek + Send> =
+                    Box::new(std::io::Cursor::new(std::sync::Arc::clone(jpeg)));
+                Ok(ImageReader::with_format(
+                    BufReader::new(inner),
+                    ImageFormat::Jpeg,
+                ))
+            }
+        }
+    }
 }
 
 /// The formats Skwir decodes beside `image`'s own, taught to it once
@@ -154,7 +184,7 @@ pub fn decode_fitted_within<R: BufRead + Seek>(
 /// smaller than asked, and is the picture, shrunk, where it covers what is
 /// asked (a grid's thumbnail, a small preview). `None` for any other
 /// picture, or where `wanted` refuses what it carries (a HEIF's thumbnail
-/// is asked once decoded: its size is known no sooner). A JPEG XL whose
+/// is asked by the size the helper says of it, before it is decoded). A JPEG XL whose
 /// eighth fails to decode has none: its whole says why.
 pub fn carried<R: BufRead + Seek>(
     reader: ImageReader<R>,
@@ -172,8 +202,8 @@ pub fn carried<R: BufRead + Seek>(
         return Ok(crate::jxl::eighth(&mut inner, wanted, threads).unwrap_or(None));
     }
     if crate::heif::starts(inner.fill_buf()?) {
-        return Ok(crate::heif::thumbnail(inner)?
-            .filter(|thumbnail| wanted(thumbnail.width().max(thumbnail.height()))));
+        // Its size asked first: one refused is not decoded.
+        return crate::heif::thumbnail(inner, &wanted);
     }
     Ok(None)
 }
