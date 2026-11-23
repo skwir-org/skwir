@@ -14,7 +14,7 @@ rust-version.workspace = true
 # them, with `command`), and its command runner, which its protocol
 # brings, is called only by a network client, not built either: nothing a
 # repository's configuration names can be run.
-gix = { version = "0.90.0", default-features = false, features = ["sha1", "excludes"] }
+gix = { version = "0.91.0", default-features = false, features = ["sha1", "excludes"] }
 # The line diff gix's own would bring the filters with.
 imara-diff = "0.2.0"
 serde.workspace = true

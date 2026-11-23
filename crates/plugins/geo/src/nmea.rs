@@ -66,8 +66,11 @@ impl State {
                 (Some(date), _) | (None, Some((date, _))) => date,
                 (None, None) => return None,
             };
-            let midnight = date.to_zoned(jiff::tz::TimeZone::UTC).ok()?;
-            Some(SystemTime::from(midnight.timestamp()) + Duration::from_millis(u64::from(ms)))
+            let midnight = date.to_zoned_datetime(jiff::tz::TimeZone::UTC).ok()?;
+            Some(
+                SystemTime::try_from(midnight.timestamp()).ok()?
+                    + Duration::from_millis(u64::from(ms)),
+            )
         });
         if !self.started {
             self.started = true;

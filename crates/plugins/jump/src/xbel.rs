@@ -38,7 +38,10 @@ pub fn parse(xml: &str) -> Vec<Recent> {
         let time = ["visited", "modified", "added"]
             .iter()
             .filter_map(|a| b.attribute(*a))
-            .find_map(|t| t.parse::<jiff::Timestamp>().ok().map(SystemTime::from))
+            .find_map(|t| {
+                let stamp = t.parse::<jiff::Timestamp>().ok()?;
+                SystemTime::try_from(stamp).ok()
+            })
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let mime = b
             .descendants()

@@ -18,7 +18,7 @@ image = { workspace = true, features = ["png", "jpeg"] }
 jpeg-encoder = "0.7"
 # A PDF read and written object by object: its images replaced where they
 # are stored, its pages' drawing never rewritten.
-lopdf = { version = "0.46", default-features = false }
+lopdf = { version = "0.47", default-features = false }
 # A scan's black-and-white pages (CCITT fax) read, to be written as JBIG2.
 hayro-ccitt = "0.5"
 # The EXIF a picture keeps: its date, without location or camera.

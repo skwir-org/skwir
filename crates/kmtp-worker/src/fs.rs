@@ -501,6 +501,7 @@ impl Filesystem for Phone {
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
         _flags: Option<fuser::BsdFileFlags>,
+        _kill_suid_gid: bool,
         reply: ReplyAttr,
     ) {
         // The phone keeps no mode or owner, and stamps what it is sent.
@@ -554,6 +555,7 @@ impl Filesystem for Phone {
         name: &OsStr,
         _mode: u32,
         _umask: u32,
+        _owner: fuser::Owner,
         reply: ReplyEntry,
     ) {
         let mut state = self
@@ -647,6 +649,7 @@ impl Filesystem for Phone {
         newparent: INodeNo,
         newname: &OsStr,
         flags: RenameFlags,
+        _owner: Option<fuser::Owner>,
         reply: ReplyEmpty,
     ) {
         // The phone renames within a folder alone: copies are made where
@@ -714,7 +717,14 @@ impl Filesystem for Phone {
         }
     }
 
-    fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
+    fn open(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        flags: OpenFlags,
+        _kill_suid_gid: bool,
+        reply: ReplyOpen,
+    ) {
         let mut state = self
             .state
             .lock()
@@ -747,6 +757,8 @@ impl Filesystem for Phone {
         _mode: u32,
         _umask: u32,
         _flags: i32,
+        _kill_suid_gid: bool,
+        _owner: fuser::Owner,
         reply: ReplyCreate,
     ) {
         let mut state = self

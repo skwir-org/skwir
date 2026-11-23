@@ -616,7 +616,7 @@ fn share(part: u64, whole: u64) -> Words {
 /// a month and a year before `now`, as the user's calendar counts them
 /// (a day across a clock change, a month of its own length), never as
 /// fixed numbers of seconds. Far in the past where one cannot be told.
-fn age_limits(now: &jiff::Zoned) -> [i64; AGES - 1] {
+fn age_limits(now: &jiff::ZonedDateTime) -> [i64; AGES - 1] {
     use jiff::ToSpan;
     [1.day(), 1.week(), 1.month(), 1.year()].map(|span| {
         now.checked_sub(span)
@@ -845,7 +845,7 @@ struct Build<'a> {
     /// When each step of a block's age begins (`age_limits`).
     ages: [i64; AGES - 1],
     /// Now, as the user's calendar says it.
-    zoned: &'a jiff::Zoned,
+    zoned: &'a jiff::ZonedDateTime,
     /// The folder as the pane names it, and as the plugin does (it counts
     /// by canonical path): a block's path is read from one into the other.
     root: &'a Path,
@@ -1290,7 +1290,7 @@ fn build_map(
     shell: &Shell,
     from: BuiltFrom,
     theme: &Theme,
-    zoned: &jiff::Zoned,
+    zoned: &jiff::ZonedDateTime,
     hues: &mut Hues,
 ) -> Built {
     let state = &shell.ui().usage;
@@ -1583,7 +1583,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     };
     // Read before the lock below: a second read waits behind a writer.
     let show_hidden = shell.sort_spec().show_hidden;
-    let zoned = jiff::Zoned::now();
+    let zoned = jiff::ZonedDateTime::now();
     let built_from = |shell: &Shell| BuiltFrom {
         root: shell.ui().usage.root.clone(),
         answer: shell.ui().usage.answer,
@@ -2180,10 +2180,10 @@ mod tests {
     /// A thousand days after 1970 began.
     const NOW: i64 = 1000 * 86_400;
 
-    fn now() -> jiff::Zoned {
+    fn now() -> jiff::ZonedDateTime {
         jiff::Timestamp::from_second(NOW)
             .unwrap()
-            .to_zoned(jiff::tz::TimeZone::UTC)
+            .to_zoned_datetime(jiff::tz::TimeZone::UTC)
     }
 
     fn build_in(
@@ -2654,14 +2654,14 @@ mod tests {
         assert_eq!(age(NOW + 60, &limits), 0, "a clock ahead is new");
         // A month is the calendar's: thirty days before 15 March is
         // older than a month (February is short), not within 31 days.
-        let march: jiff::Zoned = "2026-03-15T12:00[UTC]".parse().unwrap();
+        let march: jiff::ZonedDateTime = "2026-03-15T12:00[UTC]".parse().unwrap();
         let limits = age_limits(&march);
         let then = march.timestamp().as_second();
         assert_eq!(age(then - 30 * DAY, &limits), 3);
         assert_eq!(age(then - 27 * DAY, &limits), 2);
         // A day across a clock change is the calendar's day: 23 hours in
         // Paris the night summer time begins, and 23.5 hours is older.
-        let after: jiff::Zoned = "2026-03-29T12:00[Europe/Paris]".parse().unwrap();
+        let after: jiff::ZonedDateTime = "2026-03-29T12:00[Europe/Paris]".parse().unwrap();
         let limits = age_limits(&after);
         let then = after.timestamp().as_second();
         assert_eq!(age(then - 23 * 3600 - 1800, &limits), 1);

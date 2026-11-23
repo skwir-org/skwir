@@ -46,7 +46,7 @@ fn local(t: SystemTime, format: &str) -> String {
     jiff::Timestamp::try_from(t).map_or_else(
         |_| "—".into(),
         |ts| {
-            ts.to_zoned(skwir_core::locale::zone())
+            ts.to_zoned_datetime(skwir_core::locale::zone())
                 .strftime(format)
                 .to_string()
         },
@@ -57,7 +57,7 @@ fn local(t: SystemTime, format: &str) -> String {
 /// `Tuesday 18:45` within the last week, `12 Mar` this year, `12 Mar 2024`.
 /// Nothing here depends on the minute, so a list that is not re-rendered
 /// goes stale only at midnight, when the shell refreshes once.
-pub fn friendly_time(t: SystemTime, now: &jiff::Zoned) -> String {
+pub fn friendly_time(t: SystemTime, now: &jiff::ZonedDateTime) -> String {
     match friendly(t, now) {
         Friendly::Said(words) => words.say(),
         Friendly::Date(moment) => moment.said(),
@@ -67,7 +67,7 @@ pub fn friendly_time(t: SystemTime, now: &jiff::Zoned) -> String {
 /// `friendly_time` as an argument a message places ("as of { $when }"):
 /// words where it is said in words, a moment where it is a date, so a
 /// message never receives it said already (ADR-139).
-pub fn friendly_arg(t: SystemTime, now: &jiff::Zoned) -> skwir_core::words::Arg {
+pub fn friendly_arg(t: SystemTime, now: &jiff::ZonedDateTime) -> skwir_core::words::Arg {
     match friendly(t, now) {
         Friendly::Said(words) => words.into(),
         Friendly::Date(moment) => moment.into(),
@@ -81,11 +81,11 @@ enum Friendly {
     Date(Moment),
 }
 
-fn friendly(t: SystemTime, now: &jiff::Zoned) -> Friendly {
+fn friendly(t: SystemTime, now: &jiff::ZonedDateTime) -> Friendly {
     let Ok(timestamp) = jiff::Timestamp::try_from(t) else {
         return Friendly::Said(skwir_core::words::Words::as_written("—"));
     };
-    let when = timestamp.to_zoned(now.time_zone().clone());
+    let when = timestamp.to_zoned_datetime(now.time_zone().clone());
     let (date, today) = (when.date(), now.date());
     let moment = |shape| Moment {
         at: timestamp.as_second(),
@@ -365,16 +365,17 @@ mod tests {
         let tz = jiff::tz::TimeZone::UTC;
         let now = jiff::civil::date(2026, 9, 20)
             .at(15, 0, 0, 0)
-            .to_zoned(tz.clone())
+            .to_zoned_datetime(tz.clone())
             .unwrap();
         let at = |y, m, d, h, min| {
-            std::time::SystemTime::from(
+            std::time::SystemTime::try_from(
                 jiff::civil::date(y, m, d)
                     .at(h, min, 0, 0)
-                    .to_zoned(tz.clone())
+                    .to_zoned_datetime(tz.clone())
                     .unwrap()
                     .timestamp(),
             )
+            .unwrap()
         };
         assert_eq!(
             super::friendly_time(at(2026, 9, 20, 9, 5), &now),

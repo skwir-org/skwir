@@ -23,13 +23,13 @@ quick-xml = "0.42"
 # Rhino models' compressed buffers; the zip reader's zlib already.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # STEP: read and meshed by ogeom, pure Rust (ADR-069).
-ogeom-algo = "0.14.2"
-ogeom-core = "0.14.2"
-ogeom-doc = "0.14.2"
-ogeom-io = "0.14.2"
-ogeom-math = "0.14.2"
-ogeom-mesh = "0.14.2"
-ogeom-topo = "0.14.2"
+ogeom-algo = "0.21.0"
+ogeom-core = "0.21.0"
+ogeom-doc = "0.21.0"
+ogeom-io = "0.21.0"
+ogeom-math = "0.21.0"
+ogeom-mesh = "0.21.0"
+ogeom-topo = "0.21.0"
 
 [dev-dependencies]
 tempfile.workspace = true

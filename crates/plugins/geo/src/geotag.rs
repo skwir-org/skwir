@@ -265,12 +265,12 @@ pub(crate) struct Clock {
 pub(crate) fn instant(clock: Clock, tz: &TimeZone, offset_seconds: i64) -> Option<SystemTime> {
     let stamp = match clock.stated {
         Some(offset) => offset.to_timestamp(clock.local).ok()?,
-        None => clock.local.to_zoned(tz.clone()).ok()?.timestamp(),
+        None => clock.local.to_zoned_datetime(tz.clone()).ok()?.timestamp(),
     };
     let stamp = stamp
         .checked_add(jiff::SignedDuration::from_secs(offset_seconds))
         .ok()?;
-    Some(SystemTime::from(stamp))
+    SystemTime::try_from(stamp).ok()
 }
 
 /// `2026:07:01 08:30:00`, perhaps with a fraction and a zone
@@ -1543,7 +1543,7 @@ mod tests {
     use skwir_core::location::Location as Place;
 
     fn utc(text: &str) -> SystemTime {
-        SystemTime::from(text.parse::<jiff::Timestamp>().unwrap())
+        SystemTime::try_from(text.parse::<jiff::Timestamp>().unwrap()).unwrap()
     }
 
     fn fix(time: &str, lat: f64, lon: f64, altitude: Option<f64>) -> Fix {

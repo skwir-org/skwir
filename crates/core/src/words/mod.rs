@@ -401,7 +401,10 @@ impl Moment {
             i8::try_from(day).ok()?,
         )
         .ok()?;
-        let noon = date.at(12, 0, 0, 0).to_zoned(crate::locale::zone()).ok()?;
+        let noon = date
+            .at(12, 0, 0, 0)
+            .to_zoned_datetime(crate::locale::zone())
+            .ok()?;
         Some(Moment {
             at: noon.timestamp().as_second(),
             shape,
@@ -1644,7 +1647,7 @@ mod dates {
         let Ok(at) = jiff::Timestamp::from_second(moment.at) else {
             return "—".to_owned();
         };
-        let local = at.to_zoned(crate::locale::zone()).datetime();
+        let local = at.to_zoned_datetime(crate::locale::zone()).datetime();
         let format = match moment.shape {
             Shape::Time => "%H:%M",
             Shape::Weekday | Shape::DayMonth | Shape::Date | Shape::DateLong => "%Y-%m-%d",
@@ -1662,7 +1665,7 @@ mod dates {
         let Ok(at) = jiff::Timestamp::from_second(moment.at) else {
             return "—".to_owned();
         };
-        let local = at.to_zoned(crate::locale::zone()).datetime();
+        let local = at.to_zoned_datetime(crate::locale::zone()).datetime();
         let as_iso = || local.strftime("%Y-%m-%d %H:%M").to_string();
         let (Ok(date), Ok(time)) = (
             icu_calendar::Date::try_new_iso(

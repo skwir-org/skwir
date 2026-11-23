@@ -11,7 +11,7 @@ rust-version.workspace = true
 # cannot work, and nothing else.
 [target.'cfg(target_os = "linux")'.dependencies]
 # FUSE without libfuse: mounted through the system's `fusermount3`.
-fuser = { version = "0.18", default-features = false }
+fuser = { version = "0.19", default-features = false }
 # KDE's kmtpd on the session bus: the zbus the platform links.
 zbus = "5"
 # What is read or written, kept in an unnamed file of Skwir's cache.

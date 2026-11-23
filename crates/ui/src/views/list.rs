@@ -816,7 +816,8 @@ impl Shell {
             Detail::Taken,
             Detail::Deleted,
         ];
-        let now = (friendly && dated.iter().any(|detail| columns[*detail])).then(jiff::Zoned::now);
+        let now = (friendly && dated.iter().any(|detail| columns[*detail]))
+            .then(jiff::ZonedDateTime::now);
         move |time: Option<std::time::SystemTime>| -> Said {
             let exact = time.map_or_else(String::new, format::time);
             let shown = match (time, &now) {
@@ -1458,8 +1459,8 @@ fn on_the_clock(clock: u64) -> Option<std::time::SystemTime> {
         0,
     )
     .ok()?;
-    let zoned = civil.to_zoned(skwir_core::locale::zone()).ok()?;
-    Some(std::time::SystemTime::from(zoned.timestamp()))
+    let zoned = civil.to_zoned_datetime(skwir_core::locale::zone()).ok()?;
+    std::time::SystemTime::try_from(zoned.timestamp()).ok()
 }
 
 /// A column's header `label` while what is listed is sorted by it, with

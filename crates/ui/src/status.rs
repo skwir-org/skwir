@@ -111,7 +111,7 @@ pub const HEIGHT: f32 = 26.;
 /// leaves out. The moment is said as the list says its dates
 /// (`format::friendly_arg`), the exact one as written; what answered as
 /// its plugin said it.
-fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (Words, Words) {
+fn as_of_said(as_of: &AsOf, now: &jiff::ZonedDateTime) -> (Words, Words) {
     match as_of.updated {
         Some(updated) => (
             words!(
@@ -327,7 +327,7 @@ pub(crate) fn render(
     };
     // An index's answer says as of when (ADR-050): what was made, renamed
     // or removed since is not in it.
-    let as_of = as_of.map(|as_of| as_of_said(&as_of, &jiff::Zoned::now()));
+    let as_of = as_of.map(|as_of| as_of_said(&as_of, &jiff::ZonedDateTime::now()));
     // What a search walked past (ADR-125): said, never silently.
     let left_out = (left_out > 0).then(|| {
         words!(
@@ -700,7 +700,7 @@ mod tests {
         skwir_core::locale::set_zone(Some(jiff::tz::TimeZone::UTC));
         let now = jiff::Timestamp::from_second(1_800_000_007)
             .unwrap()
-            .to_zoned(jiff::tz::TimeZone::UTC);
+            .to_zoned_datetime(jiff::tz::TimeZone::UTC);
         let an_hour_before = std::time::SystemTime::UNIX_EPOCH
             + std::time::Duration::from_secs(1_800_000_007 - 3600);
         let as_of = AsOf {

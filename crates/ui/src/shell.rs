@@ -897,12 +897,12 @@ impl Shell {
         // day changes. One timer per day, not a clock.
         cx.spawn(async move |this, cx| {
             loop {
-                let now = jiff::Zoned::now();
+                let now = jiff::ZonedDateTime::now();
                 let wait = now
                     .date()
                     .tomorrow()
                     .ok()
-                    .and_then(|date| date.to_zoned(now.time_zone().clone()).ok())
+                    .and_then(|date| date.to_zoned_datetime(now.time_zone().clone()).ok())
                     .and_then(|midnight| now.duration_until(&midnight).try_into().ok())
                     .unwrap_or(std::time::Duration::from_secs(3600));
                 cx.background_executor()

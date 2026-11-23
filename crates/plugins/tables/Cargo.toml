@@ -19,7 +19,7 @@ calamine = { version = "0.38", default-features = false }
 # SQLite databases, read by the system's libsqlite3 (ADR-022), not a
 # bundled copy; built in on Windows, which has none to link, and where
 # `bundled-sqlite` asks.
-rusqlite = { version = "0.41", default-features = false, features = ["hooks", "bundled-windows"] }
+rusqlite = { version = "0.43", default-features = false, features = ["hooks", "bundled-windows"] }
 # A line's keys in the order it writes them.
 indexmap = { workspace = true, features = ["serde"] }
 

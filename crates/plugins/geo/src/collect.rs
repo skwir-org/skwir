@@ -385,7 +385,7 @@ pub fn time(text: &str) -> Option<SystemTime> {
     text.trim()
         .parse::<jiff::Timestamp>()
         .ok()
-        .map(SystemTime::from)
+        .and_then(|stamp| SystemTime::try_from(stamp).ok())
 }
 
 #[cfg(test)]

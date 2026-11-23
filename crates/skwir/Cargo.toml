@@ -113,7 +113,7 @@ parking_lot.workspace = true
 # DjVu documents written for the DjVu plugin's tests.
 djvu-rs.workspace = true
 # The PDFs printing makes, read back (the print plugin's tests).
-lopdf = { version = "0.46", default-features = false }
+lopdf = { version = "0.47", default-features = false }
 # Pictures written to be made smaller (the shrink plugin's tests).
 image = { workspace = true, features = ["png", "jpeg"] }
 

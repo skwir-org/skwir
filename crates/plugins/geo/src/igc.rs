@@ -122,8 +122,8 @@ fn date(text: &str) -> Option<SystemTime> {
         i8::try_from(day).ok()?,
     )
     .ok()?;
-    let zoned = date.to_zoned(jiff::tz::TimeZone::UTC).ok()?;
-    Some(SystemTime::from(zoned.timestamp()))
+    let zoned = date.to_zoned_datetime(jiff::tz::TimeZone::UTC).ok()?;
+    SystemTime::try_from(zoned.timestamp()).ok()
 }
 
 /// A number written in ASCII digits only (no sign, no spaces).

@@ -523,7 +523,7 @@ enum Row {
 }
 
 /// A side of a clash in words: "12 KB, Today 14:02", "folder, 1 Oct".
-fn said(side: &Side, now: &jiff::Zoned) -> Words {
+fn said(side: &Side, now: &jiff::ZonedDateTime) -> Words {
     // Words where it is said in words, a moment where it is a date: placed
     // by the message, never said before.
     let time = side.modified.map(|t| crate::format::friendly_arg(t, now));
@@ -605,7 +605,7 @@ fn clash_rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -
     };
     let icons = &mut shell.icons;
     let theme = cx.global::<Theme>().clone();
-    let now = jiff::Zoned::now();
+    let now = jiff::ZonedDateTime::now();
     let shown = clashes.shown();
     let mut rows = Vec::with_capacity(range.len());
     for n in range {

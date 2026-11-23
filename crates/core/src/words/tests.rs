@@ -688,10 +688,10 @@ fn a_moment_before_1970_is_said() {
     // Noon: the same day in every time zone a test runs in.
     let noon = jiff::civil::date(1965, 6, 15)
         .at(12, 0, 0, 0)
-        .to_zoned(jiff::tz::TimeZone::UTC)
+        .to_zoned_datetime(jiff::tz::TimeZone::UTC)
         .unwrap()
         .timestamp();
-    let when = std::time::SystemTime::from(noon);
+    let when = std::time::SystemTime::try_from(noon).unwrap();
     let moment = super::Moment::of(when, super::Shape::Date).expect("a date");
     assert_eq!(moment.at, noon.as_second());
     let said = crate::words!(test_moment_old = "made { $when }", when = moment);

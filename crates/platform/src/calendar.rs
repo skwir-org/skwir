@@ -83,7 +83,7 @@ impl Calendar {
                 (days_from_civil(9999, 12, 31), 86_399)
             };
         };
-        let shown = ts.to_zoned(self.tz.clone()).datetime();
+        let shown = ts.to_zoned_datetime(self.tz.clone()).datetime();
         let (date, time) = (shown.date(), shown.time());
         let day = days_from_civil(
             i64::from(date.year()),
@@ -103,9 +103,10 @@ impl Calendar {
         let zoned = i16::try_from(y)
             .ok()
             .and_then(|y| jiff::civil::Date::new(y, m as i8, d as i8).ok())
-            .and_then(|date| date.to_zoned(self.tz.clone()).ok());
+            .and_then(|date| date.to_zoned_datetime(self.tz.clone()).ok())
+            .and_then(|zoned| SystemTime::try_from(zoned.timestamp()).ok());
         match zoned {
-            Some(zoned) => SystemTime::from(zoned.timestamp()),
+            Some(start) => start,
             // Outside the calendar's years: as if in UTC.
             None => shift(UNIX_EPOCH, day.saturating_mul(86_400)),
         }
@@ -125,8 +126,8 @@ impl Calendar {
     /// gap or overlap, the instant the clock showed it first.
     pub fn local_time(&self, text: &str) -> Option<SystemTime> {
         let civil: jiff::civil::DateTime = text.trim().parse().ok()?;
-        let zoned = civil.to_zoned(self.tz.clone()).ok()?;
-        Some(SystemTime::from(zoned.timestamp()))
+        let zoned = civil.to_zoned_datetime(self.tz.clone()).ok()?;
+        SystemTime::try_from(zoned.timestamp()).ok()
     }
 
     /// `now` less a duration read as a calendar reads it: `7d` is this time
@@ -135,9 +136,11 @@ impl Calendar {
     /// jiff reads (`7d`, `3w`, `2h30m`, `1mo`, `1y`).
     pub fn ago(&self, now: SystemTime, text: &str) -> Option<SystemTime> {
         let span: jiff::Span = text.parse().ok()?;
-        let zoned = Timestamp::try_from(now).ok()?.to_zoned(self.tz.clone());
+        let zoned = Timestamp::try_from(now)
+            .ok()?
+            .to_zoned_datetime(self.tz.clone());
         let then = zoned.checked_sub(span).ok()?;
-        Some(SystemTime::from(then.timestamp()))
+        SystemTime::try_from(then.timestamp()).ok()
     }
 
     /// The year `t` falls in, in the zone.

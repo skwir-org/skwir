@@ -708,7 +708,7 @@ fn local(time: SystemTime, zone: &jiff::tz::TimeZone, day: Option<jiff::civil::D
     let Ok(stamp) = jiff::Timestamp::try_from(time) else {
         return String::new();
     };
-    let shape = if day == Some(stamp.to_zoned(zone.clone()).date()) {
+    let shape = if day == Some(stamp.to_zoned_datetime(zone.clone()).date()) {
         Shape::Time
     } else {
         Shape::DateTime
@@ -779,7 +779,7 @@ fn line_facts(totals: &Totals, zone: &jiff::tz::TimeZone) -> Vec<(Words, Option<
     let start_day = totals.first.and_then(|first| {
         jiff::Timestamp::try_from(first)
             .ok()
-            .map(|stamp| stamp.to_zoned(zone.clone()).date())
+            .map(|stamp| stamp.to_zoned_datetime(zone.clone()).date())
     });
     let moving = (!totals.moving.is_zero()).then_some(totals.moving);
     let metres = |value: f64| in_metres(words::Decimal::of(value, 0)).say();

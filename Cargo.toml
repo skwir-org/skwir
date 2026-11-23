@@ -169,7 +169,7 @@ jpeg-decoder = { version = "0.3", default-features = false }
 # Pictures shrunk to the pixels they cover (ADR-146): SIMD convolution
 # (SSE4.1, AVX2, NEON, chosen as it runs), alpha weighted; through
 # `image`'s own buffers.
-fast_image_resize = { version = "5.5", default-features = false, features = ["image"] }
+fast_image_resize = { version = "6.2", default-features = false, features = ["image"] }
 # JPEG XL, decoded in process (ADR-148): pure Rust, through `image`'s
 # decoding hook, so every path a picture takes reads it.
 jxl-oxide = { version = "0.12", features = ["image"] }
@@ -216,7 +216,7 @@ icu_locale = { version = "2.4", default-features = false, features = ["compiled_
 icu_collator = { version = "2.4", features = ["unstable"] }
 icu_properties = "2.4"
 icu_segmenter = { version = "2.4", default-features = false, features = ["compiled_data"] }
-jiff = "0.2"
+jiff = "1"
 plist = { version = "1", default-features = false }
 # Grammars match with Ferroni, a pure-Rust port of Oniguruma (ADR-060).
 syntect = { version = "5", default-features = false, features = [
@@ -240,7 +240,7 @@ proptest = "1"
 tempfile = "3"
 # DjVu in Rust (ADR-061). Pinned: young, and released weekly; an update is
 # read and tried with `just djvu-check` before it is taken.
-djvu-rs = { version = "=0.44.0", default-features = false, features = ["std"] }
+djvu-rs = { version = "=0.46.0", default-features = false, features = ["std"] }
 # Windows' own calls (ADR-035): the version most of the tree already links.
 windows-sys = "0.61"
 

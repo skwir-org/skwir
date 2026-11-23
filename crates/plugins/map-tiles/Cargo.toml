@@ -24,7 +24,7 @@ tracing.workspace = true
 # as the tables preview reads a database: built in on Windows, which has
 # none to link, and where `bundled-sqlite` asks.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
-rusqlite = { version = "0.41", default-features = false, features = ["hooks", "bundled-windows"] }
+rusqlite = { version = "0.43", default-features = false, features = ["hooks", "bundled-windows"] }
 # Rasterizes the offline outline; the version resvg already brings.
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 # The download thread's own runtime, which runs the platform's HTTP

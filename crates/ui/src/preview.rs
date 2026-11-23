@@ -8383,7 +8383,7 @@ fn fact_segments(facts: &Facts) -> Vec<(Fact, String)> {
 /// or as ISO 8601 writes it in every language where that is chosen.
 fn dated(shell: &Shell, t: SystemTime) -> String {
     if shell.prefs.friendly_dates {
-        format::friendly_time(t, &jiff::Zoned::now())
+        format::friendly_time(t, &jiff::ZonedDateTime::now())
     } else {
         format::time(t)
     }

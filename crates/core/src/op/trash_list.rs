@@ -174,7 +174,7 @@ fn read(trash: &Path, top: Option<&Path>) -> Vec<trash::TrashItem> {
 /// skipped it.
 fn local_seconds(date: &str) -> Option<i64> {
     let local = jiff::civil::DateTime::strptime("%Y-%m-%dT%H:%M:%S", date).ok()?;
-    let zoned = crate::locale::zone().to_ambiguous_zoned(local);
+    let zoned = crate::locale::zone().to_ambiguous_zoned_datetime(local);
     if matches!(zoned.offset(), jiff::tz::AmbiguousOffset::Gap { .. }) {
         return None;
     }
