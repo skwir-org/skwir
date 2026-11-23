@@ -4564,14 +4564,20 @@ impl Pane {
         self.close_where(|o| &o.location == location)
     }
 
-    /// Every location it holds open: the one it shows, and those it keeps
-    /// beside it (its view's, the folders opened in place). What a volume
-    /// mounted or let go of reaches (`App::volumes_changed`, ADR-149).
+    /// Every location it holds open: the one it shows, those it keeps
+    /// beside it (its view's, the folders opened in place) and the one just
+    /// left, which going back takes as it stands. What a volume mounted or
+    /// let go of reaches (`App::volumes_changed`, ADR-149).
     pub(crate) fn held_open(&self) -> Vec<Arc<dyn OpenLocation>> {
         self.open
             .iter()
             .cloned()
-            .chain(self.kept.iter().filter_map(|k| k.open.clone()))
+            .chain(
+                self.kept
+                    .iter()
+                    .chain(&self.left)
+                    .filter_map(|k| k.open.clone()),
+            )
             .collect()
     }
 
@@ -8319,5 +8325,35 @@ mod tests {
                 swept(at + 3, unset)
             );
         }
+    }
+
+    /// The folder just left is among what a pane holds open
+    /// (`Pane::held_open`): a volume let go of or mounted reaches it, as
+    /// going back to it takes it as it stands (ADR-149).
+    #[test]
+    fn the_folder_just_left_is_held_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (first, second) = (tmp.path().join("it's first"), tmp.path().join("second"));
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let pane = app.workspace.read().active_id();
+        for folder in [&first, &second] {
+            app.dispatch(&crate::command::Invocation::navigate(&Location::from_path(
+                folder,
+            )))
+            .unwrap();
+        }
+        // No window lets it go: kept as the folder left.
+        let ws = app.workspace.read();
+        let held: Vec<Option<PathBuf>> = ws
+            .pane(pane)
+            .unwrap()
+            .held_open()
+            .iter()
+            .map(|open| open.location().path())
+            .collect();
+        assert!(held.contains(&Some(first.clone())), "{held:?}");
+        assert!(held.contains(&Some(second.clone())), "{held:?}");
     }
 }

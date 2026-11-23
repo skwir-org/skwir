@@ -813,6 +813,24 @@ impl Work {
     }
 }
 
+impl Job {
+    /// Whether it touches something at or below `tree`, by its footprint
+    /// once worked out, else by what its plan's steps say they change: what
+    /// letting go of a volume there would cut (`Executor::under_way_in`,
+    /// `cancel_under`). An undo or a redo not measured yet touches nothing
+    /// known.
+    fn touches(&self, tree: &Path) -> bool {
+        match (&self.footprint, &self.work) {
+            (Some(footprint), _) => footprint.touches(tree),
+            (None, Work::Execute { plan, .. }) => plan.steps.iter().any(|step| {
+                let change = step.describe();
+                change.paths().any(|path| path.starts_with(tree))
+            }),
+            (None, Work::Replay(..)) => false,
+        }
+    }
+}
+
 struct Job {
     /// When it was asked for, in the order asked.
     seq: u64,
@@ -3071,15 +3089,7 @@ impl Executor {
         let waiting = lane
             .queue
             .iter()
-            .filter(|job| !job.cancel.is_cancelled())
-            .filter(|job| match (&job.footprint, &job.work) {
-                (Some(footprint), _) => footprint.touches(tree),
-                (None, Work::Execute { plan, .. }) => plan.steps.iter().any(|step| {
-                    let change = step.describe();
-                    change.paths().any(|path| path.starts_with(tree))
-                }),
-                (None, Work::Replay(..)) => false,
-            })
+            .filter(|job| !job.cancel.is_cancelled() && job.touches(tree))
             .map(|job| self.named(job));
         running.chain(waiting).collect()
     }
@@ -3137,15 +3147,7 @@ impl Executor {
             let waiting = lane
                 .queue
                 .iter()
-                .filter(|job| !job.cancel.is_cancelled())
-                .filter(|job| match (&job.footprint, &job.work) {
-                    (Some(footprint), _) => footprint.touches(tree),
-                    (None, Work::Execute { plan, .. }) => plan.steps.iter().any(|step| {
-                        let change = step.describe();
-                        change.paths().any(|path| path.starts_with(tree))
-                    }),
-                    (None, Work::Replay(..)) => false,
-                })
+                .filter(|job| !job.cancel.is_cancelled() && job.touches(tree))
                 .map(|job| job.cancel.cancel())
                 .count();
             if waiting > 0 {

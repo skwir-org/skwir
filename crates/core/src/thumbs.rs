@@ -591,9 +591,37 @@ impl Thumbnails {
     /// or cancelled while it runs: their volume is about to be let go of
     /// (`App::release`, ADR-149 amended). Asked again later, it is made.
     pub fn cancel_under(&self, tree: &std::path::Path) {
-        let s = self.state.lock();
-        for flight in s.in_flight.values().filter(|f| f.path.starts_with(tree)) {
-            flight.cancel.cancel();
+        let mut s = self.state.lock();
+        let State {
+            queue,
+            parked,
+            in_flight,
+            skipped,
+            ..
+        } = &mut *s;
+        let under: HashSet<Key> = in_flight
+            .iter()
+            .filter(|(_, flight)| flight.path.starts_with(tree))
+            .map(|(key, flight)| {
+                flight.cancel.cancel();
+                *key
+            })
+            .collect();
+        if under.is_empty() {
+            return;
+        }
+        // Not running yet: dropped now, so one asked again where the
+        // volume stays is queued anew rather than joining one no worker
+        // will run, whose asker would wait for good. One running ends as
+        // cancelled, and its askers ask again.
+        for waiting in [queue, parked] {
+            waiting.retain(|q| {
+                let goes = under.contains(&q.key);
+                if goes && in_flight.remove(&q.key).is_some() {
+                    *skipped += 1;
+                }
+                !goes
+            });
         }
     }
 
@@ -1240,7 +1268,8 @@ mod tests {
     }
 
     /// A volume about to be let go of (ADR-149, amended): what is asked of
-    /// its files stops, running or queued; another volume's goes on.
+    /// its files stops, running or queued, and what waited is dropped, so
+    /// asked again it is made; another volume's goes on.
     #[test]
     fn what_is_asked_on_a_volume_let_go_of_stops() {
         let t = Thumbnails::new(Scheduler::new(1));
@@ -1263,9 +1292,25 @@ mod tests {
                 .get(&r.key())
                 .map(|f| f.cancel.is_cancelled())
         };
-        assert_eq!(cancelled(&req(1)), Some(true));
-        assert_eq!(cancelled(&req(2)), Some(true));
+        // The one running ends as cancelled; those waiting are dropped at
+        // once (one worker: at least one of the two waited).
+        let states = [cancelled(&req(1)), cancelled(&req(2))];
+        assert!(
+            states.iter().all(|s| matches!(s, None | Some(true))),
+            "{states:?}"
+        );
+        let dropped = [req(1), req(2)]
+            .into_iter()
+            .find(|r| cancelled(r).is_none())
+            .expect("one waited, dropped at once");
         assert_eq!(cancelled(&elsewhere), Some(false), "another volume's");
+        // Asked again (the volume stayed): queued anew, never joining one
+        // no worker will run.
+        assert!(matches!(
+            t.get(dropped.clone(), Priority::Visible),
+            ThumbState::Pending
+        ));
+        assert_eq!(cancelled(&dropped), Some(false));
         for _ in 0..3 {
             held.release();
         }
