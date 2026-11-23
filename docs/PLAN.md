@@ -1511,9 +1511,18 @@ a load of 5–13: measure again on a quiet machine, then try the GPU's
 converter or a scale before the convert).
 
 **Two D-Bus libraries** (2026-11-23): notify-rust 4.19, which gpui links
-for desktop notifications Skwir never shows, brings zbus 6 beside the
-zbus 5 the rest of the tree uses; the binary's growth is not measured. A
-gpui feature leaving its notifications out would drop it.
+for desktop notifications Skwir never shows (its own go through the
+platform's zbus 5, `desktop/linux.rs`), brings zbus 6 beside the zbus 5
+the rest of the tree uses: ~1.1 MiB of the 157 MiB `dist` binary (its
+symbols' sizes in 0.6.1's, not an A/B build), none of it run by a start
+(`startup-order.txt`), so no idle memory. zbus 5 stays while
+accesskit_unix and atspi need it (their newest, 0.24.1 and 0.30, still
+do) and gpui pins ashpd 0.13 and Zed's oo7 0.6 (0.14 and 0.7 are on
+zbus 6). Once they have moved, the platform, mpris, remote and
+kmtp-worker move to zbus 6 too and zbus 5 goes (the platform's `bus`
+takes its futures and timer from zbus's runtime, which zbus 6 replaced
+with its own). A gpui feature leaving its notifications out would drop
+zbus 6 sooner.
 
 **Scratch folders of killed processes** (2026-11-23):
 `file::memory_dir`'s folders under `/dev/shm` stay when their process is
