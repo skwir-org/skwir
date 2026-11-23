@@ -108,9 +108,10 @@ impl Shell {
 pub const HEIGHT: f32 = 26.;
 
 /// What the footer says of an answer an index gave (`Listing::rests_on`,
-/// ADR-150), and its tooltip: `up to date` where it is live, `checked
-/// Today 14:02`, `as of Today 03:00`, then what answered and what that
-/// leaves out. The moment is said as the list says its dates
+/// ADR-150), naming the index (amended: the pane's footer says more than
+/// this), and its tooltip: `index up to date` where it is live, `index
+/// checked Today 14:02`, `index as of Today 03:00`, then what answered and
+/// what that leaves out. The moment is said as the list says its dates
 /// (`format::friendly_arg`), the exact one as written; what answered as
 /// its plugin said it. Nothing where no index answered.
 fn rests_on_said(rests_on: &RestsOn, now: &jiff::ZonedDateTime) -> Option<(Words, Words)> {
@@ -118,7 +119,7 @@ fn rests_on_said(rests_on: &RestsOn, now: &jiff::ZonedDateTime) -> Option<(Words
     Some(match rests_on.proof {
         Proof::Live { .. } => (
             words!(
-                status_live = "up to date",
+                status_live = "index up to date",
                 note = "In a pane's footer, after its count, when an index that follows every \
                         change (skwird's) answered a search."
             ),
@@ -126,13 +127,13 @@ fn rests_on_said(rests_on: &RestsOn, now: &jiff::ZonedDateTime) -> Option<(Words
                 status_live_tip = "Found in { $index }, which follows every change: this \
                                    answer is the files as they are now.",
                 index = index(),
-                note = "The tooltip of a footer's \"up to date\": index: what answered \
+                note = "The tooltip of a footer's \"index up to date\": index: what answered \
                         (skwird's index)."
             ),
         ),
         Proof::Checked { at } => (
             words!(
-                status_checked = "checked { $when }",
+                status_checked = "index checked { $when }",
                 when = format::friendly_arg(at, now),
                 note = "In a pane's footer, after its count, when an index answered a search \
                         and had compared what it knew with the folders; when: the moment \
@@ -143,13 +144,13 @@ fn rests_on_said(rests_on: &RestsOn, now: &jiff::ZonedDateTime) -> Option<(Words
                                       the folders { $when }.",
                 index = index(),
                 when = format::exact_time(at),
-                note = "The tooltip of a footer's \"checked\": index: what answered (skwird's \
+                note = "The tooltip of a footer's \"index checked\": index: what answered (skwird's \
                         index); when: the moment it compared."
             ),
         ),
         Proof::AsOf { at: Some(updated) } => (
             words!(
-                status_as_of = "as of { $when }",
+                status_as_of = "index as of { $when }",
                 when = format::friendly_arg(updated, now),
                 note = "In a pane's footer, after its count, when what answered a search (an \
                         index) was last brought up to date; when: the moment (Today 03:00)."
@@ -160,8 +161,8 @@ fn rests_on_said(rests_on: &RestsOn, now: &jiff::ZonedDateTime) -> Option<(Words
                                     answer.",
                 index = index(),
                 when = format::exact_time(updated),
-                note = "The tooltip of a footer's \"as of\": index: what answered (plocate's \
-                        database); when: the moment it was last brought up to date."
+                note = "The tooltip of a footer's \"index as of\": index: what answered \
+                        (plocate's database); when: the moment it was last brought up to date."
             ),
         ),
         Proof::AsOf { at: None } => (
@@ -757,7 +758,7 @@ mod tests {
                 at: Some(an_hour_before),
             },
         );
-        assert_eq!(text, "as of Today 7:00\u{202f}AM");
+        assert_eq!(text, "index as of Today 7:00\u{202f}AM");
         assert!(tip.starts_with("Found in plocate's database, last brought up to date "));
         assert!(tip.ends_with("is not in this answer."), "{tip}");
 
@@ -766,7 +767,7 @@ mod tests {
         assert!(tip.contains("whose last update cannot be told"), "{tip}");
 
         let (text, tip) = said("skwird's index", Proof::Checked { at: an_hour_before });
-        assert_eq!(text, "checked Today 7:00\u{202f}AM");
+        assert_eq!(text, "index checked Today 7:00\u{202f}AM");
         assert!(
             tip.starts_with("Found in skwird's index, which compared"),
             "{tip}"
@@ -778,7 +779,7 @@ mod tests {
                 since: an_hour_before,
             },
         );
-        assert_eq!(text, "up to date");
+        assert_eq!(text, "index up to date");
         assert!(tip.ends_with("the files as they are now."), "{tip}");
 
         assert!(

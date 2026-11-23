@@ -23052,3 +23052,15 @@ the manifest or the lockfile. Checked as at 5384fc9: the copies' tests
 and their Windows and macOS builds; clippy of the plugin for Windows; the
 plugin's tests and `skwird_search`; `just deny`. What it means for
 Skwir's own programs on Windows is in the plan, not checked yet.
+
+## 2026-11-23: the footer names the index (ADR-150, 12)
+
+The user asked that the footer be plain about what it speaks of: "index
+up to date", "index checked Today 15:51", "index as of 15 Jan 2027" (the
+last, plocate's, said "as of" alone since 2026-10-20). Ids kept, so the
+three languages' drafts of `status_as_of` are marked for review; an index
+whose time cannot be told is named already ("as of plocate's
+database"). Checked: the footer's test, rustfmt and clippy on skwir-ui,
+the catalogs' check. Left before a release: the French, Italian and
+Simplified Chinese drafts of what steps A and B added (the catalogs'
+script says each language lacks them).

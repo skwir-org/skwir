@@ -391,7 +391,8 @@ and `notes.agree` are core `notes.*` commands.
   taken back. Its holes are walked, but for a snapshot below the folder
   searched (unless `excluded:yes`). Each run says what its answer rests
   on once it is whole (`ListingEvent::RestsOn`: the index and its proof,
-  or `None` for a walk), and the footer ("up to date", "checked …", "as
-  of …") and `entries` (`index`, and `as_of` as it always was) say it. A
+  or `None` for a walk), and the footer ("index up to date", "index
+  checked …", "index as of …") and `entries` (`index`, and `as_of` as it
+  always was) say it. A
   provider that answers from an index without walking says it the same
   way; the shell shows it whatever the scheme.

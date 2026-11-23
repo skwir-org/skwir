@@ -7445,7 +7445,7 @@ sizes_step = { $step }%
 status_and = { $said }, { $fact }
 
 # In a pane's footer, after its count, when what answered a search (an index) was last brought up to date; when: the moment (Today 03:00).
-status_as_of = as of { $when }
+status_as_of = index as of { $when }
 
 # In a pane's footer, after its count: what answered a search, an index whose last update cannot be told (plocate's database).
 status_as_of_index = as of { $index }
@@ -7453,13 +7453,13 @@ status_as_of_index = as of { $index }
 # The tooltip of a footer's "as of": index: what answered (plocate's database).
 status_as_of_index_tip = Found in { $index }, whose last update cannot be told: what was made, renamed or removed since is not in this answer.
 
-# The tooltip of a footer's "as of": index: what answered (plocate's database); when: the moment it was last brought up to date.
+# The tooltip of a footer's "index as of": index: what answered (plocate's database); when: the moment it was last brought up to date.
 status_as_of_tip = Found in { $index }, last brought up to date { $when }: what was made, renamed or removed since is not in this answer.
 
 # In a pane's footer, after its count, when an index answered a search and had compared what it knew with the folders; when: the moment (Today 14:02).
-status_checked = checked { $when }
+status_checked = index checked { $when }
 
-# The tooltip of a footer's "checked": index: what answered (skwird's index); when: the moment it compared.
+# The tooltip of a footer's "index checked": index: what answered (skwird's index); when: the moment it compared.
 status_checked_tip = Found in { $index }, which compared what it knew with the folders { $when }.
 
 # In the window's footer: how many items wait to be copied by a paste.
@@ -7502,9 +7502,9 @@ status_items = { $count ->
 status_items_weigh = { $items } · { $size }
 
 # In a pane's footer, after its count, when an index that follows every change (skwird's) answered a search.
-status_live = up to date
+status_live = index up to date
 
-# The tooltip of a footer's "up to date": index: what answered (skwird's index).
+# The tooltip of a footer's "index up to date": index: what answered (skwird's index).
 status_live_tip = Found in { $index }, which follows every change: this answer is the files as they are now.
 
 # A pane's footer while its folder is read, before anything was.
