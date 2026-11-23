@@ -73,7 +73,10 @@ asked, in the preview as in the grid (decision 3).
      None is read where the LF is not all the picture is: a lossless
      picture (Modular), one with alpha or other extra channels, an
      animation, a frame with an LF frame, patches or splines of its own,
-     or not the picture's size. 24 and 45 megapixels: 31 to 137 ms on
+     or not the picture's size, or past an eighth of the largest picture
+     a preview decodes (amended: a header saying 1 Gi pixels, which a file
+     of a kilobyte can say, cost half a gigabyte for a grid's thumbnail,
+     whose own bound was asked only after). 24 and 45 megapixels: 31 to 137 ms on
      the preview's threads (an LF group of 2048 × 2048 pixels each), 61
      to 315 ms on one, at 11 to 22 MiB, where the whole took 0.74 to
      1.9 s at 366 to 500 MiB (release, a machine under load).

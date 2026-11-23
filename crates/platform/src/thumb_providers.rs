@@ -310,6 +310,18 @@ impl ThumbnailProvider for ImageDecoder {
                 .reader()
                 .with_context(|| format!("open {}", path.display()))
         };
+        // Its size first, from its header (a HEIF's said by the helper,
+        // once for the three readers): one too large is refused before
+        // anything of it is decoded, what it carries included.
+        let own = open()?.into_dimensions();
+        if asking.busy() {
+            return Err(busy());
+        }
+        let (w, h) = own?;
+        anyhow::ensure!(
+            u64::from(w) * u64::from(h) <= MAX_PIXELS,
+            "{w}x{h} is too large to thumbnail"
+        );
         // What it carries as large as asked (ADR-148 amended): a JPEG XL's
         // eighth, a HEIF's or an AVIF's own thumbnail; its whole is never
         // decoded then. One that fails to decode leaves it to the whole.
@@ -328,15 +340,6 @@ impl ThumbnailProvider for ImageDecoder {
             }
             return Ok(Some(fit(carried, req.size.pixels())));
         }
-        let own = open()?.into_dimensions();
-        if asking.busy() {
-            return Err(busy());
-        }
-        let (w, h) = own?;
-        anyhow::ensure!(
-            u64::from(w) * u64::from(h) <= MAX_PIXELS,
-            "{w}x{h} is too large to thumbnail"
-        );
         let img = crate::picture::decode_fitted(
             open()?,
             req.size.pixels(),

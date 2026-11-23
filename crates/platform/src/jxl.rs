@@ -62,9 +62,12 @@ pub(crate) fn starts(start: &[u8]) -> bool {
 }
 
 /// What a JPEG XL's eighth may hold: its samples in floats, three to a
-/// pixel, at most this many pixels (a picture of 1 Gi pixels). One
-/// larger is left to a whole decode, which its limits refuse.
-const EIGHTH_PIXELS: u64 = 16 << 20;
+/// pixel, at most this many pixels, an eighth of the largest picture any
+/// preview decodes (`WHOLE_PICTURE_PIXELS`, 128 Mi pixels: 2 Mi samples,
+/// about 60 MiB with the coefficients beside them). One larger is left to
+/// a whole decode, which its limits refuse: a header saying 1 Gi pixels,
+/// which a file of a kilobyte can, cost half a gigabyte for a thumbnail.
+const EIGHTH_PIXELS: u64 = crate::inspection::limits::WHOLE_PICTURE_PIXELS / 64;
 /// What is read of a file at a time while looking for its eighth.
 const CHUNK: usize = 64 << 10;
 
