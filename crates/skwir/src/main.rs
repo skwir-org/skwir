@@ -65,6 +65,9 @@ fn main() -> anyhow::Result<()> {
     skwir_platform::process::set_build(env!("SKWIR_BUILD"));
     #[cfg(all(windows, not(debug_assertions)))]
     attach_console();
+    // What skwir starts inherits none of its standard handles (ADR-074,
+    // amended): before any program is started.
+    skwir_platform::process::keep_own_handles();
     // `skwir mcp` and `skwir cmd` (ADR-043), before anything logs: their
     // standard output is the protocol, or the JSON a script reads.
     let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();

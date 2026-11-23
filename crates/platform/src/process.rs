@@ -36,6 +36,43 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     command
 }
 
+/// Keep skwir's own standard handles (input, output, error) from what
+/// the programs it starts inherit (ADR-074, amended 2026-11-23). Windows
+/// gives a child every inheritable handle its parent holds, and std's
+/// `Command` lets it: started with pipes for its input and output (`skwir
+/// mcp`, a script reading `skwir cmd`), skwir would pass them to every
+/// helper, and whoever reads skwir's output to its end would wait for the
+/// last helper to go. A program asked to share them is given copies, as
+/// std duplicates a handle it is to inherit. Called once, at start, before
+/// any program is started; elsewhere nothing, as Unix gives a child the
+/// descriptors it is told to (std sets the rest close-on-exec).
+pub fn keep_own_handles() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            #[allow(
+                unsafe_code,
+                reason = "Win32 calls on the process's own standard handles: no pointer is passed, a missing handle is skipped, and one that cannot be changed stays as it was"
+            )]
+            // SAFETY: `GetStdHandle` takes no pointer and returns the
+            // process's handle or null; `SetHandleInformation` changes one
+            // flag of a handle this process holds, checked first.
+            unsafe {
+                let handle = GetStdHandle(id);
+                if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+    }
+}
+
 /// Windows' `CREATE_NO_WINDOW` for [`command`]; elsewhere nothing: no
 /// console opens a window of its own there.
 fn without_console(command: &mut Command) {
@@ -2085,6 +2122,71 @@ impl<Reply: serde::de::DeserializeOwned + Send + 'static> Helper<Reply> {
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
     use super::*;
+
+    /// What a role of [`a_program_started_holds_none_of_skwir_s_own_handles`]
+    /// the test program plays when it starts itself.
+    #[cfg(windows)]
+    const ROLE: &str = "SKWIR_TEST_HANDLES_ROLE";
+
+    /// skwir started with its output a pipe, which starts a helper that
+    /// outlives it, then ends: whoever reads skwir's output sees its end
+    /// when skwir ends, not when the helper does (ADR-074, amended). The
+    /// test program plays skwir and the helper, started again with
+    /// [`ROLE`]. Under Wine it fails without `keep_own_handles` (the
+    /// reader waited for the helper, 15.7 s), and passes with it; nextest
+    /// calls it leaky there all the same, the helper still holding
+    /// nextest's own output though both processes keep theirs, which
+    /// points at how Wine starts processes (not seen on Windows itself).
+    #[cfg(windows)]
+    #[test]
+    fn a_program_started_holds_none_of_skwir_s_own_handles() {
+        const HELPER_STAYS: Duration = Duration::from_secs(15);
+        let me = std::env::current_exe().unwrap();
+        let again = |role: &str| {
+            let mut c = command(&me);
+            c.args([
+                "--exact",
+                "process::tests::a_program_started_holds_none_of_skwir_s_own_handles",
+                "--nocapture",
+            ])
+            .env(ROLE, role);
+            c
+        };
+        match std::env::var(ROLE).as_deref() {
+            Ok("helper") => {
+                std::thread::sleep(HELPER_STAYS);
+                return;
+            }
+            Ok("skwir") => {
+                keep_own_handles();
+                again("helper")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap();
+                print!("started");
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+        // The reader keeps its own (nextest's pipes) from what it starts,
+        // as a client of skwir's should: else skwir, then its helper, hold
+        // them, and nextest waits for the helper.
+        keep_own_handles();
+        let started = Instant::now();
+        let out = again("skwir")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        let took = started.elapsed();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("started"));
+        assert!(
+            took < HELPER_STAYS / 2,
+            "skwir's output ended with skwir, not its helper: {took:?}"
+        );
+    }
 
     #[cfg(unix)]
     #[test]

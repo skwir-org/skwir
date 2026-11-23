@@ -23064,3 +23064,28 @@ database"). Checked: the footer's test, rustfmt and clippy on skwir-ui,
 the catalogs' check. Left before a release: the French, Italian and
 Simplified Chinese drafts of what steps A and B added (the catalogs'
 script says each language lacks them).
+
+## 2026-11-23: what skwir starts on Windows inherits none of its handles (ADR-074 amended)
+
+skwird's session found, writing its engine's tests under Wine, that
+std's `Command` gives a child every inheritable handle of its parent's:
+an engine its client started held the client's standard output. Skwir
+starts every program through `process::command`, so a helper outliving
+`skwir mcp` or a `skwir cmd` a script reads would have held their pipes.
+
+- **Fixed at the source:** `process::keep_own_handles`, called by `main`
+  after `attach_console`, marks skwir's standard input, output and error
+  not inheritable (`SetHandleInformation`). A program asked to share one
+  is still given it: std duplicates a handle a child is to inherit
+  (`Stdio::Inherit`, read in std 1.99.1's source). Nothing elsewhere:
+  Unix gives a child the descriptors it is told to, std setting the rest
+  close-on-exec.
+- **Checked:** under Wine (`just test-windows`),
+  `a_program_started_holds_none_of_skwir_s_own_handles`: the test
+  program plays skwir (its output a pipe) and a helper that stays 15 s.
+  Without the call it fails, the reader waiting 15.7 s for the helper;
+  with it, it passes in 1.7 s. nextest calls it leaky under Wine either
+  way: the helper holds nextest's own output though both processes keep
+  theirs, which points at how Wine starts processes; not seen on
+  Windows. Clippy `-D warnings` on skwir-platform and skwir for Linux,
+  and on skwir-platform for `x86_64-pc-windows-gnu`; rustfmt.
