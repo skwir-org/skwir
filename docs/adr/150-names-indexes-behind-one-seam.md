@@ -7,7 +7,9 @@ behind a seam core owns; the user's folders and bookmarks kept live,
 taken off; the fake engine in tests and a check against the real one;
 an index's answer shown at once and proven after, "as long as it
 doesn't create some confusing flicker or unpredictable reordering"; and,
-asked, a context-menu entry beside the command). Not built. Amends
+asked, a context-menu entry beside the command). Built in part the same
+day: 1, 2, 4 and 5 (`docs/PLAN.md`, step A), sizes and times not yet
+asked of an index (a link's are its target's). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 

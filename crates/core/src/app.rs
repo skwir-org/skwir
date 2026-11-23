@@ -502,6 +502,9 @@ pub struct App {
     pub vcs: Arc<crate::vcs::StatesProviders>,
     /// Indexes a search asks where files may be first (ADR-026).
     pub hints: Arc<crate::hints::Hints>,
+    /// Indexes of names a search asks whether they cover its root, and
+    /// how far (ADR-150): skwird's, plocate's.
+    pub names: Arc<crate::names::NameIndexes>,
     /// Where files' notes are kept, and how each place is read and
     /// written (ADR-027).
     pub notes: Arc<crate::notes::NoteStores>,
@@ -647,6 +650,7 @@ impl App {
             fields,
             vcs: Arc::new(crate::vcs::StatesProviders::gated(Arc::clone(&gate))),
             hints: Arc::new(crate::hints::Hints::gated(Arc::clone(&gate))),
+            names: Arc::new(crate::names::NameIndexes::gated(Arc::clone(&gate))),
             notes: Arc::new(crate::notes::NoteStores::default()),
             companions: Arc::new(crate::companions::Companions::gated(Arc::clone(&gate))),
             transfers: Arc::default(),
@@ -1103,6 +1107,7 @@ impl App {
         self.fields.unregister_owner(owner);
         self.vcs.unregister_owner(owner);
         self.hints.unregister_owner(owner);
+        self.names.unregister_owner(owner);
         self.notes.unregister_owner(owner);
         for key in self.notes.take_declared(owner) {
             self.settings.undeclare(&key);
@@ -1534,6 +1539,7 @@ impl App {
                 metadata: Arc::clone(&self.metadata),
                 fields: Arc::clone(&self.fields),
                 hints: Arc::clone(&self.hints),
+                names: Arc::clone(&self.names),
                 companions: Arc::clone(&self.companions),
                 hidden_shown,
                 reads_metadata,
@@ -2608,6 +2614,9 @@ impl App {
             metadata: Arc::clone(&self.metadata),
             fields: Arc::clone(&self.fields),
             hints,
+            // A lens finds no names (`lens::is_lens`): no names index
+            // answers what it asks.
+            names: Arc::default(),
             companions: Arc::clone(&self.companions),
             hidden_shown: asked.show_hidden,
             reads_metadata: false,
@@ -2855,7 +2864,7 @@ impl App {
             "total": order.len(),
             "entries": entries,
         });
-        say_as_of(&mut answer, listing.as_of());
+        say_rests_on(&mut answer, listing.rests_on());
         say_left_out(&mut answer, listing.left_out());
         Ok(Outcome::Value(answer))
     }
@@ -4503,20 +4512,38 @@ fn say_left_out(answer: &mut serde_json::Value, left_out: usize) {
     }
 }
 
-/// An `entries` answer that is an index's says so, and as of when
-/// (`Listing::as_of`); one that is the files as they are says nothing.
-fn say_as_of(answer: &mut serde_json::Value, as_of: Option<&crate::location::AsOf>) {
-    let (Some(as_of), Some(answer)) = (as_of, answer.as_object_mut()) else {
+/// An `entries` answer an index gave says so (`Listing::rests_on`):
+/// `index`, which and how far it is proven (`proof`: `live`, `checked` or
+/// `as_of`; `at` in seconds since 1970), and `as_of` as it always said, for
+/// a snapshot; one a walk gave says nothing (ADR-150, 1).
+fn say_rests_on(answer: &mut serde_json::Value, rests_on: Option<&crate::location::RestsOn>) {
+    use crate::coverage::Proof;
+    let (Some(rests_on), Some(answer)) = (rests_on, answer.as_object_mut()) else {
         return;
     };
-    let updated = as_of
-        .updated
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs());
+    let seconds = |t: std::time::SystemTime| {
+        t.duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+    };
+    let proof = match rests_on.proof {
+        Proof::Live { .. } => "live",
+        Proof::Checked { .. } => "checked",
+        Proof::AsOf { .. } => "as_of",
+        // A walk answered there: it rests on no index.
+        Proof::NotCovered(_) => return,
+    };
+    let at = rests_on.proof.at().and_then(seconds);
     answer.insert(
-        "as_of".into(),
-        serde_json::json!({ "by": as_of.by, "updated": updated }),
+        "index".into(),
+        serde_json::json!({ "by": rests_on.by, "proof": proof, "at": at }),
     );
+    if proof == "as_of" {
+        answer.insert(
+            "as_of".into(),
+            serde_json::json!({ "by": rests_on.by, "updated": at }),
+        );
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
@@ -5783,7 +5810,7 @@ mod builtin {
                 note = "An action's name, for scripts and agents."
             ),
             words!(
-                app_entries_description = "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › Exclusions, caches, trash, network folders); `excluded:yes` in the search walks those folders too",
+                app_entries_description = "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `index`, when present: an index gave the answer (`by` says which; `proof` how far it is proven: `live`, the files as they are, `checked`, compared with its folders at `at`, or `as_of`, as of `at`, so a file made, renamed or removed since is not in it; `at` in seconds since 1970). `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970). `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › Exclusions, caches, trash, network folders); `excluded:yes` in the search walks those folders too",
                 note = "kind: whether an entry is a file, a folder or a link, the field's name in the answer."
             ),
             |a, app| {
@@ -5843,7 +5870,7 @@ mod builtin {
                     "selected": p.selection.iter().filter(|id| !withheld.contains(id)).count(),
                     "entries": entries,
                 });
-                say_as_of(&mut answer, p.listing.as_of());
+                say_rests_on(&mut answer, p.listing.rests_on());
                 say_left_out(&mut answer, p.listing.left_out());
                 Ok(Outcome::Value(answer))
             },

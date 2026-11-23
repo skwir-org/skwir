@@ -10,7 +10,8 @@
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, div, prelude::*};
-use skwir_core::location::AsOf;
+use skwir_core::coverage::Proof;
+use skwir_core::location::RestsOn;
 
 use crate::elements::clip::clipped;
 use crate::format;
@@ -106,14 +107,47 @@ impl Shell {
 /// A pane footer's height.
 pub const HEIGHT: f32 = 26.;
 
-/// What the footer says of an answer that is an index's (`Listing::as_of`),
-/// and its tooltip: `as of Today 03:00`, then what answered and what that
+/// What the footer says of an answer an index gave (`Listing::rests_on`,
+/// ADR-150), and its tooltip: `up to date` where it is live, `checked
+/// Today 14:02`, `as of Today 03:00`, then what answered and what that
 /// leaves out. The moment is said as the list says its dates
 /// (`format::friendly_arg`), the exact one as written; what answered as
-/// its plugin said it.
-fn as_of_said(as_of: &AsOf, now: &jiff::ZonedDateTime) -> (Words, Words) {
-    match as_of.updated {
-        Some(updated) => (
+/// its plugin said it. Nothing where no index answered.
+fn rests_on_said(rests_on: &RestsOn, now: &jiff::ZonedDateTime) -> Option<(Words, Words)> {
+    let index = || rests_on.by.clone();
+    Some(match rests_on.proof {
+        Proof::Live { .. } => (
+            words!(
+                status_live = "up to date",
+                note = "In a pane's footer, after its count, when an index that follows every \
+                        change (skwird's) answered a search."
+            ),
+            words!(
+                status_live_tip = "Found in { $index }, which follows every change: this \
+                                   answer is the files as they are now.",
+                index = index(),
+                note = "The tooltip of a footer's \"up to date\": index: what answered \
+                        (skwird's index)."
+            ),
+        ),
+        Proof::Checked { at } => (
+            words!(
+                status_checked = "checked { $when }",
+                when = format::friendly_arg(at, now),
+                note = "In a pane's footer, after its count, when an index answered a search \
+                        and had compared what it knew with the folders; when: the moment \
+                        (Today 14:02)."
+            ),
+            words!(
+                status_checked_tip = "Found in { $index }, which compared what it knew with \
+                                      the folders { $when }.",
+                index = index(),
+                when = format::exact_time(at),
+                note = "The tooltip of a footer's \"checked\": index: what answered (skwird's \
+                        index); when: the moment it compared."
+            ),
+        ),
+        Proof::AsOf { at: Some(updated) } => (
             words!(
                 status_as_of = "as of { $when }",
                 when = format::friendly_arg(updated, now),
@@ -124,16 +158,16 @@ fn as_of_said(as_of: &AsOf, now: &jiff::ZonedDateTime) -> (Words, Words) {
                 status_as_of_tip = "Found in { $index }, last brought up to date { $when }: \
                                     what was made, renamed or removed since is not in this \
                                     answer.",
-                index = as_of.by.clone(),
+                index = index(),
                 when = format::exact_time(updated),
                 note = "The tooltip of a footer's \"as of\": index: what answered (plocate's \
                         database); when: the moment it was last brought up to date."
             ),
         ),
-        None => (
+        Proof::AsOf { at: None } => (
             words!(
                 status_as_of_index = "as of { $index }",
-                index = as_of.by.clone(),
+                index = index(),
                 note = "In a pane's footer, after its count: what answered a search, an index \
                         whose last update cannot be told (plocate's database)."
             ),
@@ -141,12 +175,14 @@ fn as_of_said(as_of: &AsOf, now: &jiff::ZonedDateTime) -> (Words, Words) {
                 status_as_of_index_tip = "Found in { $index }, whose last update cannot be \
                                           told: what was made, renamed or removed since is not \
                                           in this answer.",
-                index = as_of.by.clone(),
+                index = index(),
                 note = "The tooltip of a footer's \"as of\": index: what answered (plocate's \
                         database)."
             ),
         ),
-    }
+        // A walk answered there.
+        Proof::NotCovered(_) => return None,
+    })
 }
 
 /// The footer of the pane being rendered; `window` adds the window's own
@@ -167,7 +203,7 @@ pub(crate) fn render(
         is_query,
         sweep,
         total,
-        as_of,
+        rests_on,
         reads,
         left_out,
         looking,
@@ -192,7 +228,7 @@ pub(crate) fn render(
                     // Filtered (its lens, words typed): how many there are in all.
                     p.is_filtered()
                         .then(|| p.listing.order_shown(p.sorting()).len()),
-                    p.listing.as_of().cloned(),
+                    p.listing.rests_on().cloned(),
                     p.read_filter().is_some_and(|r| r.metadata),
                     p.listing.left_out(),
                     p.looks_below(),
@@ -325,9 +361,9 @@ pub(crate) fn render(
         ),
         None => items,
     };
-    // An index's answer says as of when (ADR-050): what was made, renamed
-    // or removed since is not in it.
-    let as_of = as_of.map(|as_of| as_of_said(&as_of, &skwir_core::locale::now()));
+    // An index's answer says how far it is proven (ADR-050, ADR-150): as
+    // of when, what was made, renamed or removed since not in it.
+    let as_of = rests_on.and_then(|r| rests_on_said(&r, &skwir_core::locale::now()));
     // What a search walked past (ADR-125): said, never silently.
     let left_out = (left_out > 0).then(|| {
         words!(
@@ -693,7 +729,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_index_s_answer_says_as_of_when_and_what_it_leaves_out() {
+    fn an_index_s_answer_says_how_far_it_is_proven() {
         // The zone UTC: what the English below writes. The moment is an
         // argument of the words, said in English's own formats (a 12-hour
         // time), whatever the window's locale.
@@ -703,25 +739,58 @@ mod tests {
             .to_zoned_datetime(jiff::tz::TimeZone::UTC);
         let an_hour_before = std::time::SystemTime::UNIX_EPOCH
             + std::time::Duration::from_secs(1_800_000_007 - 3600);
-        let as_of = AsOf {
-            by: Words::as_written("plocate's database"),
-            updated: Some(an_hour_before),
+        let said = |by: &'static str, proof| {
+            let (text, tip) = rests_on_said(
+                &RestsOn {
+                    by: Words::as_written(by),
+                    proof,
+                },
+                &now,
+            )
+            .expect("an index answered");
+            (text.english(), tip.english())
         };
-        let (text, tip) = as_of_said(&as_of, &now);
-        let (text, tip) = (text.english(), tip.english());
+
+        let (text, tip) = said(
+            "plocate's database",
+            Proof::AsOf {
+                at: Some(an_hour_before),
+            },
+        );
         assert_eq!(text, "as of Today 7:00\u{202f}AM");
         assert!(tip.starts_with("Found in plocate's database, last brought up to date "));
         assert!(tip.ends_with("is not in this answer."), "{tip}");
 
-        let (text, tip) = as_of_said(
-            &AsOf {
-                updated: None,
-                ..as_of
-            },
-            &now,
-        );
-        let (text, tip) = (text.english(), tip.english());
+        let (text, tip) = said("plocate's database", Proof::AsOf { at: None });
         assert_eq!(text, "as of plocate's database");
         assert!(tip.contains("whose last update cannot be told"), "{tip}");
+
+        let (text, tip) = said("skwird's index", Proof::Checked { at: an_hour_before });
+        assert_eq!(text, "checked Today 7:00\u{202f}AM");
+        assert!(
+            tip.starts_with("Found in skwird's index, which compared"),
+            "{tip}"
+        );
+
+        let (text, tip) = said(
+            "skwird's index",
+            Proof::Live {
+                since: an_hour_before,
+            },
+        );
+        assert_eq!(text, "up to date");
+        assert!(tip.ends_with("the files as they are now."), "{tip}");
+
+        assert!(
+            rests_on_said(
+                &RestsOn {
+                    by: Words::as_written("skwird's index"),
+                    proof: Proof::NotCovered(skwir_core::coverage::Why::Denied),
+                },
+                &now,
+            )
+            .is_none(),
+            "a walk answered: nothing said"
+        );
     }
 }

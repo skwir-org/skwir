@@ -195,7 +195,7 @@ and `notes.agree` are core `notes.*` commands.
   of a file (`Below::names_files`).
   `excluded:yes` (the "Excluded files and folders" choice of the where pill) walks
   the rules' folders, never a trash nor a mount; `hidden:` keeps its
-  meaning. The index's hints, plocate's answer and what a change brings
+  meaning. The index's hints, a names index's answer and what a change brings
   are left out alike (`Below::stops_above`, `in_walk`). Each run says how
   many files and folders it walked past (`ListingEvent::LeftOut`, the footer's "·
   N excluded", `entries`' `excluded`), none included.
@@ -376,9 +376,22 @@ and `notes.agree` are core `notes.*` commands.
   index hints, the walk answers. One exception: whether a folder holds
   anything a lens keeps is answered by an index that covers it
   (`HintProvider::covers`, ADR-126), as the sidebar's counts are.
-- **An answer that is an index's says so (ADR-050).** A search of `/`
-  that plocate answers does not walk; each run says what its answer
-  rests on (`ListingEvent::AsOf`: the index and when it was last brought
-  up to date, or `None` for a walk), and the footer and `entries` say it.
-  A provider that answers from an index without walking says it the same
+- **A names index answers where it proves it (ADR-050, ADR-150).** A
+  search asks the names indexes (`skwir_core::names`: plocate's, skwird's)
+  whether they cover its root, the strongest proof first, with what of
+  its AND they can answer (`Query::named`: names and kinds, a link asked
+  for with folders and files, `whole` where that is all): what the one
+  that answers names is considered as the walk would have found it
+  (`Reach`: hidden, depth, links, network mounts, what the walk leaves
+  out, a file gone since), and the walk is skipped. Live, it is synced
+  first; checked or as of, what it names is shown at once, then synced
+  and asked again; one that cannot be synced (plocate, `/`, name
+  substrings alone) stands as of when it is; a failed sync, an answer cut
+  short or none walks, skipping what was considered, so nothing shown is
+  taken back. Its holes are walked, but for a snapshot below the folder
+  searched (unless `excluded:yes`). Each run says what its answer rests
+  on once it is whole (`ListingEvent::RestsOn`: the index and its proof,
+  or `None` for a walk), and the footer ("up to date", "checked …", "as
+  of …") and `entries` (`index`, and `as_of` as it always was) say it. A
+  provider that answers from an index without walking says it the same
   way; the shell shows it whatever the scheme.

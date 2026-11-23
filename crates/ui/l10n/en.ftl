@@ -7456,6 +7456,12 @@ status_as_of_index_tip = Found in { $index }, whose last update cannot be told: 
 # The tooltip of a footer's "as of": index: what answered (plocate's database); when: the moment it was last brought up to date.
 status_as_of_tip = Found in { $index }, last brought up to date { $when }: what was made, renamed or removed since is not in this answer.
 
+# In a pane's footer, after its count, when an index answered a search and had compared what it knew with the folders; when: the moment (Today 14:02).
+status_checked = checked { $when }
+
+# The tooltip of a footer's "checked": index: what answered (skwird's index); when: the moment it compared.
+status_checked_tip = Found in { $index }, which compared what it knew with the folders { $when }.
+
 # In the window's footer: how many items wait to be copied by a paste.
 status_copied = { $count ->
         [one] { $count } item copied
@@ -7494,6 +7500,12 @@ status_items = { $count ->
 
 # A pane's footer, nothing selected: how many items it lists (12 items), then what the files shown weigh.
 status_items_weigh = { $items } · { $size }
+
+# In a pane's footer, after its count, when an index that follows every change (skwird's) answered a search.
+status_live = up to date
+
+# The tooltip of a footer's "up to date": index: what answered (skwird's index).
+status_live_tip = Found in { $index }, which follows every change: this answer is the files as they are now.
 
 # A pane's footer while its folder is read, before anything was.
 status_loading = Loading…

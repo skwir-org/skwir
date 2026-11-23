@@ -1681,6 +1681,7 @@ mod tests {
             metadata: Arc::clone(&app.metadata),
             fields: Arc::clone(&app.fields),
             hints: Arc::clone(&app.hints),
+            names: Arc::clone(&app.names),
             companions: Arc::clone(&app.companions),
             hidden_shown: false,
             reads_metadata,

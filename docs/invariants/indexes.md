@@ -23,11 +23,11 @@ what is built.
 
 ## Coverage is never overstated
 
-- Every answer from an index carries a proof (`harvest::Proof`): live
+- Every answer from an index carries a proof (`coverage::Proof`): live
   since a time (every change applied up to a barrier), checked at a time
   (reconciled against the folders then), as of a time (loaded, not yet
   reconciled), or not covered and why. The four words are skwird's; the
-  footer says them (`location::AsOf`), and `entries` answers them.
+  footer says them (`location::RestsOn`), and `entries` answers them.
 - A claim never skips the scan; a proof does (ADR-050). Under a covered
   root a search considers what the index names and nothing else; under
   any other it hints and scans, or, for meaning, lists what it has and

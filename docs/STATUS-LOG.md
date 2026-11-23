@@ -22862,3 +22862,57 @@ section rewritten around them (steps A to F):
   each file checked first, then proves it by a sync; the user's
   condition: no confusing flicker or unpredictable reordering, met by
   never taking a row back and saying the proof once.
+
+## 2026-11-23: one way of saying coverage, names indexes behind one seam (ADR-150, step A)
+
+ADR-150's points 1, 2, 4 and 5, built the same day as decided.
+
+- **Core.** `skwir_core::coverage`: `Proof` (live since, checked at, as
+  of, not covered), `Why` (skwird's reasons; a snapshot alone passed
+  over), `Hole`, `Coverage` (names and kinds; sizes and times).
+  `location::AsOf` grew into `RestsOn { by, proof }`
+  (`ListingEvent::RestsOn`, `Listing::rests_on`). `skwir_core::names`:
+  `NameIndex` (`by`, `syncs`, `open` a root), a `Session` for each
+  search (`sync`, `query` in batches), `NameIndexes` (`App::names`,
+  `OpenContext::names`, withdrawn with its owner); the lens's own search
+  gets none, finding no names. `entries` gains `index` (`by`, `proof`,
+  `at`) and keeps `as_of` as it was.
+- **The query plugin.** `Query::named`: the names and kinds of the AND
+  (a `type:` asking for links too, as `type:dir` finds a link to a
+  folder), `whole` when they are all; `None` when it holds neither.
+  `Shared::named`: the indexes opened, the strongest proof first; live,
+  synced then asked; checked or as of, asked, shown, synced, asked
+  again; an index that cannot be synced stands as of; a failed or
+  unproven sync, an answer cut short or none, walked, skipping what was
+  considered. `walk_holes`: each hole once, a snapshot passed over
+  unless `excluded:yes`, what the walk would not reach left. `Reach`:
+  the walk's check of what an index names (hidden, depth, links, network
+  mounts, what is left out, counted, a file gone since), which the tag
+  hints use too. plocate became `plocate::Index` (`/`, the whole search
+  name substrings, as before; as of a time read once it answered);
+  `try_locate` and `name_substrings` went.
+- **Said.** The footer: "up to date" (live), "checked Today 14:02",
+  "as of …" as before, each with its tooltip; the screen reader's status
+  line with them. The English catalogs made again (`status_live`,
+  `status_checked` and their tips; the `entries` description).
+- **Checked:** `crates/plugins/query/tests/names_index.rs`, seven tests
+  with a fake index: a proven answer with holes, extra names, a hidden
+  file and one gone equals the walk's; a proof skips the walk; an answer
+  shown at once, proven after, nothing taken back, each file and the
+  proof said once and in that order; as of standing where no sync can
+  prove it, walked where one failed or proved nothing; the walk where no
+  index covers, where one declines or cuts its answer short, and none
+  asked for a search of tags alone; a snapshot passed over, walked with
+  `excluded:yes` and when searched in; the strongest proof answering.
+  The plocate tests moved onto the index (`a_search_plocate_answers_is_as_of_its_database`
+  saying `index` beside `as_of`); `Query::named`'s own test; the
+  footer's words for each proof. Green: rustfmt; clippy `-D warnings`
+  on skwir-core, skwir-plugin-query, skwir-ui and skwir (all targets);
+  skwir-core's 1,015 tests, skwir-plugin-query's 145, `plugins_toggle`
+  (7, the names indexes in its snapshot), `search_hints`,
+  `network_mounts_below` and `lens_folders` (19), the footer's test;
+  `tools/words/extract.py --check`. Not run: `just release-check`, a
+  search in a window, a screen reader reading the new words.
+- **Left:** sizes and times are not asked of an index yet (a link's are
+  its target's, which an index does not hold); the tags index's
+  coverage in the same words.

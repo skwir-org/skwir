@@ -155,7 +155,7 @@ ADR-077 (which revises ADR-021).
   network mount below their root (`reach::is_point`, told before the
   point is stat-ed, which its server answers), nor answer what an index
   learned there (the points below the root, from `reach::all`): a
-  search's hints and plocate's answer, the tags index's counts and tag
+  search's hints and a names index's answer, the tags index's counts and tag
   locations leave out what a pane shown there taught them. Usage asks
   before measuring a remote. On a remote a walk never looks up the folder
   rules' markers or siblings (`walks::Below` without probing, ADR-125):

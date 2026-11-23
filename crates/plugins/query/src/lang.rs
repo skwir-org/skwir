@@ -1764,26 +1764,49 @@ impl Query {
         }
     }
 
-    /// The names the query asks for, every one of them as a substring: what
-    /// a locate database answers (`plocate`). One holding what plocate
-    /// reads as a glob (`*`, `?`, `[`, `\`) is not one, even where it does
-    /// not compile as a glob here and is searched for as written (`a[b`):
-    /// plocate would match it whole, as a glob.
-    pub fn name_substrings(&self) -> Option<Vec<String>> {
-        let substring = |e: &Expr| match e {
-            Expr::Term(Term::Name(p))
-                if p.glob.is_none()
-                    && !p.text.is_empty()
-                    && !p.text.contains(['*', '?', '[', '\\']) =>
-            {
-                Some(p.text.clone())
-            }
-            _ => None,
+    /// What of the query a names index can answer (ADR-150, 2), below
+    /// `root` (its real path): the name terms and kinds of its AND, a name
+    /// as written and matched as [`NamePat`] matches it. A kind asked is
+    /// the entry's own or what a link to it is (`type:dir` finds a link to
+    /// a folder), so links are asked for too. `None` where it asks neither:
+    /// an index would name every file, which the walk does better. `whole`
+    /// where those are all it asks.
+    pub fn named(&self, root: PathBuf) -> Option<skwir_core::names::Query> {
+        let items: Vec<&Expr> = match self.expr.as_ref()? {
+            Expr::And(items) => items.iter().collect(),
+            e => vec![e],
         };
-        match self.expr.as_ref()? {
-            Expr::And(items) => items.iter().map(substring).collect(),
-            e => substring(e).map(|s| vec![s]),
+        let mut names = Vec::new();
+        let mut kinds: Option<Vec<EntryKind>> = None;
+        let mut whole = true;
+        for e in items {
+            match e {
+                Expr::Term(Term::Name(p)) if !p.text.is_empty() => {
+                    names.push(skwir_core::names::NameTerm {
+                        text: p.text.clone(),
+                        case_sensitive: p.case_sensitive,
+                    });
+                }
+                Expr::Term(Term::Type(sel)) => {
+                    let these = match sel {
+                        KindSel::File => vec![EntryKind::File, EntryKind::Symlink],
+                        KindSel::Dir => vec![EntryKind::Directory, EntryKind::Symlink],
+                        KindSel::Symlink => vec![EntryKind::Symlink],
+                    };
+                    kinds = Some(match kinds {
+                        None => these,
+                        Some(before) => before.into_iter().filter(|k| these.contains(k)).collect(),
+                    });
+                }
+                _ => whole = false,
+            }
         }
+        (!names.is_empty() || kinds.is_some()).then_some(skwir_core::names::Query {
+            root,
+            names,
+            kinds,
+            whole,
+        })
     }
 }
 
@@ -2772,15 +2795,52 @@ mod tests {
         assert!(q("tag:x OR tag:y").required_tags().is_empty());
         assert!(q("-tag:x tag:*").required_tags().is_empty());
         assert!(q("content:x").needs_content());
-        assert_eq!(q("foo").name_substrings().unwrap(), ["foo"]);
-        assert_eq!(q("foo bar").name_substrings().unwrap(), ["foo", "bar"]);
-        // A locate database ANDs its patterns: anything else needs the walk.
-        for s in ["foo OR bar", "foo *.png", "foo ext:png", "NOT foo", "-foo"] {
-            assert!(q(s).name_substrings().is_none(), "{s}");
-        }
-        // Searched for as written here, a glob to plocate: the walk answers.
-        for s in ["a[b", "a\\b", "it's [x"] {
-            assert!(q(s).name_substrings().is_none(), "{s}");
+    }
+
+    /// What a names index is asked (ADR-150): the names and kinds of the
+    /// AND, links asked for with folders and files, and whether they are
+    /// all the search asks.
+    #[test]
+    fn a_names_index_is_asked_the_names_and_kinds_of_the_and() {
+        use skwir_core::names::NameTerm;
+        let named = |s: &str| q(s).named(PathBuf::from("/r"));
+        let term = |text: &str| NameTerm {
+            text: text.into(),
+            case_sensitive: false,
+        };
+        let foo = named("foo").unwrap();
+        assert_eq!(foo.root, PathBuf::from("/r"));
+        assert_eq!(foo.names, [term("foo")]);
+        assert_eq!((foo.kinds, foo.whole), (None, true));
+        let both = named("foo *.png").unwrap();
+        assert_eq!(both.names, [term("foo"), term("*.png")]);
+        assert!(both.whole);
+        let partly = named("foo ext:png tag:x").unwrap();
+        assert_eq!(partly.names, [term("foo")]);
+        assert!(!partly.whole, "the rest is the search's to check");
+        let folders = named("type:dir").unwrap();
+        assert_eq!(
+            folders.kinds,
+            Some(vec![EntryKind::Directory, EntryKind::Symlink])
+        );
+        assert!(folders.whole && folders.names.is_empty());
+        assert_eq!(
+            named("report type:file type:dir").unwrap().kinds,
+            Some(vec![EntryKind::Symlink]),
+            "only a link can be both"
+        );
+        assert!(named("Foo case:sensitive").unwrap().names[0].case_sensitive);
+        // Nothing an index can answer: the walk does better than naming
+        // every file.
+        for s in [
+            "foo OR bar",
+            "NOT foo",
+            "-foo",
+            "tag:x",
+            "ext:pdf",
+            "size>1k",
+        ] {
+            assert!(named(s).is_none(), "{s}");
         }
     }
 

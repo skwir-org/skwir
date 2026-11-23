@@ -2,8 +2,9 @@
 //! it is installed: it answers in milliseconds what a walk takes minutes for.
 //!
 //! The database knows nothing of our options, so its answer is a superset
-//! that the caller still matches: we only drop what `hidden:` and `depth:`
-//! exclude, which a walk would never have visited.
+//! that the search still matches, as it matches any names index's
+//! (ADR-150): what `hidden:` and `depth:` exclude, which a walk would never
+//! have visited, it drops.
 //!
 //! Its answer is as of the database's last update (`updatedb`, usually
 //! daily), which the search says (ADR-050): a file made, renamed or
@@ -13,8 +14,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use skwir_core::cancel::CancelToken;
-
-use crate::lang::Query;
+use skwir_core::coverage::Coverage;
+use skwir_core::names::{Answer, NameIndex, Opened, Session};
 
 /// How long the database may take to answer before the walk is used.
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -26,7 +27,7 @@ const ANSWER: u64 = 64 << 20;
 const HELP_TIMEOUT: Duration = Duration::from_secs(5);
 const HELP: u64 = 64 << 10;
 
-/// What answered (`AsOf::by`).
+/// What answered (`RestsOn::by`).
 pub fn by() -> skwir_core::words::Words {
     skwir_core::words!(
         query_plocate_database = "plocate's database",
@@ -34,69 +35,101 @@ pub fn by() -> skwir_core::words::Words {
     )
 }
 
-/// What `plocate` answered: the paths it names, and when its databases
-/// were last brought up to date, as far as that can be told.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Located {
-    pub paths: Vec<PathBuf>,
-    /// The oldest of its databases' updates: what the answer is as of.
-    pub updated: Option<SystemTime>,
-    /// The folders its answer named that the walk would leave out
-    /// (`walks::Below`), what they held not kept.
-    pub left_out: usize,
+/// plocate's database as a names index (ADR-150, 4): it covers `/` as of
+/// its databases' update, and answers a search all of whose terms are name
+/// substrings, as it did before the seam. It cannot be synced: its answer
+/// is taken as of when it is, and dated.
+#[derive(Default)]
+pub struct Index {
+    /// The program asked; `None` for the `plocate` on the `PATH`.
+    program: Option<PathBuf>,
 }
 
-/// Candidate paths from `plocate`, or `None` when it does not apply: not
-/// installed, root is not `/`, the query is not an AND of name substrings,
-/// or the database could not answer, in time and in a bounded answer (the
-/// walk is used instead). Stops with the search.
-pub fn try_locate(
-    q: &Query,
-    below: &skwir_core::walks::Below,
-    cancel: &CancelToken,
-) -> Option<Located> {
-    if q.root != Path::new("/") {
+impl Index {
+    /// The index of the database `program` reads (a test's stand-in).
+    #[cfg(test)]
+    pub fn at(program: PathBuf) -> Index {
+        Index {
+            program: Some(program),
+        }
+    }
+}
+
+impl NameIndex for Index {
+    fn id(&self) -> &'static str {
+        "plocate"
+    }
+
+    fn by(&self) -> skwir_core::words::Words {
+        by()
+    }
+
+    fn syncs(&self) -> bool {
+        false
+    }
+
+    fn open(&self, root: &Path, cancel: &CancelToken) -> Option<Opened> {
+        if root != Path::new("/") {
+            return None;
+        }
+        let bin = match &self.program {
+            Some(program) => program.clone(),
+            None => skwir_core::os_path::find_program("plocate")?,
+        };
+        Some(Opened {
+            // As of a time read once it answered (`Session::query`): no
+            // process is started for a search it cannot answer.
+            coverage: Coverage::as_of(None),
+            session: Box::new(Located {
+                bin,
+                cancel: cancel.clone(),
+            }),
+        })
+    }
+}
+
+/// A search of `/` asked of plocate.
+struct Located {
+    bin: PathBuf,
+    cancel: CancelToken,
+}
+
+impl Session for Located {
+    fn sync(&mut self) -> Option<Coverage> {
+        None
+    }
+
+    fn query(
+        &mut self,
+        q: &skwir_core::names::Query,
+        each: &mut dyn FnMut(Vec<PathBuf>) -> bool,
+    ) -> Option<Answer> {
+        let patterns = substrings(q)?;
+        let case_sensitive = q.names.iter().any(|n| n.case_sensitive);
+        let paths = locate_with(&self.bin, &patterns, case_sensitive, &self.cancel)?;
+        each(paths);
+        Some(Answer {
+            coverage: Coverage::as_of(updated(&databases(&self.bin, &self.cancel))),
+            truncated: false,
+        })
+    }
+}
+
+/// The names a search asks for, every one of them as a substring, when
+/// they are all it asks: what a locate database answers. One holding what
+/// plocate reads as a glob (`*`, `?`, `[`, `\`) is not one, even where it
+/// does not compile as a glob here and is searched for as written (`a[b`):
+/// plocate would match it whole, as a glob.
+fn substrings(q: &skwir_core::names::Query) -> Option<Vec<String>> {
+    if !q.whole || q.kinds.is_some() || q.names.is_empty() {
         return None;
     }
-    let patterns = q.name_substrings()?;
-    let bin = skwir_core::os_path::find_program("plocate")?;
-    let paths = locate_with(&bin, &patterns, q.case_sensitive, cancel)?;
-    // What a walk of `/` would not enter, its database may have indexed.
-    let unreached = crate::provider::mounts_below(&q.root);
-    let (kept, left) = left_out(
-        paths.into_iter().filter(|p| {
-            visible(p, q.hidden, q.depth) && !unreached.iter().any(|point| p.starts_with(point))
-        }),
-        |p| {
-            below
-                .stops_above(p)
-                .or_else(|| below.leaves_out_path(p).then(|| p.to_path_buf()))
-        },
-    );
-    Some(Located {
-        paths: kept,
-        updated: updated(&databases(&bin, cancel)),
-        left_out: left,
-    })
-}
-
-/// `paths` less those the walk leaves out (`stops_above`: the folder it
-/// would stop at, or the file itself), and how many there were.
-fn left_out(
-    paths: impl Iterator<Item = PathBuf>,
-    stops_above: impl Fn(&Path) -> Option<PathBuf>,
-) -> (Vec<PathBuf>, usize) {
-    let mut folders = std::collections::HashSet::new();
-    let kept = paths
-        .filter(|p| match stops_above(p) {
-            Some(folder) => {
-                folders.insert(folder);
-                false
-            }
-            None => true,
+    q.names
+        .iter()
+        .map(|n| {
+            (!n.text.is_empty() && !n.text.contains(['*', '?', '[', '\\'])).then(|| n.text.clone())
         })
-        .collect();
-    (kept, folders.len())
+        .collect()
 }
 
 /// The databases `bin` reads when given none, as plocate (and mlocate

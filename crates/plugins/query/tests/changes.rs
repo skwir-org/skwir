@@ -28,6 +28,7 @@ impl Search {
             metadata: Arc::default(),
             fields: Arc::default(),
             hints: Arc::default(),
+            names: Arc::default(),
             companions: Arc::default(),
             hidden_shown: false,
             reads_metadata: false,

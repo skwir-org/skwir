@@ -19,8 +19,10 @@ Most of the architecture was decided before any of this, and holds:
   its protocol. Skwir walks without it.
 - **An index hints, the walk answers; a proven coverage answers**
   (ADR-026, ADR-050): `skwir_core::hints::HintProvider`, and a listing
-  that says what its answer rests on (`location::AsOf`,
-  `ListingEvent::AsOf`, the footer's "as of").
+  that says what its answer rests on (`location::RestsOn`,
+  `ListingEvent::RestsOn`, the footer's "as of"; ADR-150 made coverage
+  `skwir_core::coverage` and the names indexes a seam of their own,
+  `skwir_core::names`).
 - **Fields read on demand** (ADR-023): `skwir_core::fields`, a
   `FieldProvider` per key, answers kept by file identity and version in
   memory and in the deletable cache, never read per row or per frame.
@@ -272,7 +274,7 @@ and the agent plugin never lets it name a tool.
 - `fields::Fields::teach(key, identity, value)`: a value learned
   elsewhere (a preview's text) kept as the registered provider's answer
   at its current version; dropped when no provider answers `key`.
-- `location::AsOf` carries `unread: Option<u64>` so the footer can say
+- `location::RestsOn` carries `unread: Option<u64>` so the footer can say
   "by meaning, as of 14:02; 1,204 files not yet read".
 
 ## Plugins
@@ -757,4 +759,4 @@ should record:
 - **A query by kinds, size and time under a root** is how the harvest
   enumerates without a walk; it is in the protocol sketch already.
 - **Coverage words are shared:** live since, checked at, as of, not
-  covered and why. Skwir's `harvest::Proof` uses the same four.
+  covered and why. Skwir's `coverage::Proof` uses the same four.

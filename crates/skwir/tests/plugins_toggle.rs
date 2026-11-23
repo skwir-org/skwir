@@ -54,6 +54,9 @@ struct Snapshot {
     vcs: Vec<&'static str>,
     /// Indexes a search asks first (the tags plugin's, Baloo).
     hints: Vec<&'static str>,
+    /// Indexes of names a search asks whether they cover its root
+    /// (ADR-150: plocate's, skwird's).
+    names: Vec<&'static str>,
     /// Where notes are kept (ADR-027: the desktop's attributes, the Finder's).
     notes: Vec<&'static str>,
     /// Files beside a file (ADR-028: a Mac's `._` files).
@@ -135,6 +138,7 @@ fn snapshot(app: &App) -> Snapshot {
         fields: app.fields.ids(),
         vcs: app.vcs.ids(),
         hints: app.hints.ids(),
+        names: app.names.ids(),
         notes: app.notes.ids(),
         companions: app.companions.ids(),
         transfers: app.transfers.names(),

@@ -733,7 +733,7 @@ pub static CATALOGS: &[skwir_core::words::Shipped] = &[
 pub static SHARES: &[skwir_core::words::Share] = &[
     skwir_core::words::Share {
         language: "fr",
-        messages: 7_001,
+        messages: 7_005,
         translated: 7_001,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
@@ -741,7 +741,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
     },
     skwir_core::words::Share {
         language: "it",
-        messages: 7_001,
+        messages: 7_005,
         translated: 7_001,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,
@@ -749,7 +749,7 @@ pub static SHARES: &[skwir_core::words::Share] = &[
     },
     skwir_core::words::Share {
         language: "zh-Hans",
-        messages: 7_001,
+        messages: 7_005,
         translated: 7_001,
         reviewed: 0,
         offered: skwir_core::words::Offer::Draft,

@@ -193,17 +193,18 @@ impl fmt::Display for Location {
     }
 }
 
-/// What a listing's answer rests on when it is not the files as they are
-/// now: an index as it stood when it was last brought up to date
-/// (ADR-050). A search of `/` that plocate answers is as of its database's
-/// update, so what was made, renamed or removed since is not in it.
+/// What a listing's answer rests on when an index gave it, not a walk
+/// (ADR-050, ADR-150): which index, and how far its names are proven. A
+/// search of `/` that plocate answers is as of its database's update, so
+/// what was made, renamed or removed since is not in it; one skwird
+/// answers is live or checked, the files as they are.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AsOf {
+pub struct RestsOn {
     /// What answered: "plocate's database", said where it is shown.
     pub by: Words,
-    /// When it was last brought up to date; `None` when that cannot be
-    /// told.
-    pub updated: Option<std::time::SystemTime>,
+    /// How far its answer is proven: live, checked or as of a time, never
+    /// "not covered" (a walk answers there, and rests on nothing).
+    pub proof: crate::coverage::Proof,
 }
 
 /// What an open location streams. Every variant is a batch.
@@ -238,11 +239,11 @@ pub enum ListingEvent {
     /// permissions, times or attributes (its tags). Whoever describes the
     /// location reads it again (`Listing::itself_version`).
     Changed,
-    /// What the answer rests on: an index as of its last update, or
-    /// `None` for the files as they are (a walk). Said by each run of a
+    /// What the answer rests on: an index, as far as it proves it, or
+    /// `None` for the files as a walk finds them. Said by each run of a
     /// listing that may rest on either, so a run that walks takes back
     /// what an earlier one said.
-    AsOf(Option<AsOf>),
+    RestsOn(Option<RestsOn>),
     /// How many folders below the root a walk left out (ADR-125: the list
     /// of `walks::LeftOut`, caches, trash, network mounts), said so rather
     /// than silently. Said by each run of a listing that walks, none
@@ -277,6 +278,9 @@ pub struct OpenContext {
     pub fields: Arc<crate::fields::Fields>,
     /// Indexes a search asks first (see [`crate::hints`]): a `tag:`.
     pub hints: Arc<crate::hints::Hints>,
+    /// Indexes of names a search asks whether they cover its root (see
+    /// [`crate::names`], ADR-150): skwird's, plocate's.
+    pub names: Arc<crate::names::NameIndexes>,
     /// Files beside a file (see [`crate::companions`]): a listing marks
     /// them.
     pub companions: Arc<crate::companions::Companions>,
@@ -3083,9 +3087,9 @@ pub struct Listing {
     entries: Arc<crate::hashing::IndexMap<EntryId, Slot>>,
     complete: bool,
     error: Option<ListingError>,
-    /// What the answer rests on, when not the files as they are
-    /// (`ListingEvent::AsOf`).
-    as_of: Option<AsOf>,
+    /// What the answer rests on, when an index gave it
+    /// (`ListingEvent::RestsOn`).
+    rests_on: Option<RestsOn>,
     /// How many folders the walk left out (`ListingEvent::LeftOut`).
     left_out: usize,
     /// Incremented on every change, so views know when to recompute. An
@@ -3257,7 +3261,7 @@ impl Default for Listing {
             entries: Arc::default(),
             complete: false,
             error: None,
-            as_of: None,
+            rests_on: None,
             left_out: 0,
             version: id,
             names_version: id,
@@ -3935,9 +3939,9 @@ impl Listing {
                 self.itself_version = stamp();
                 delta.any = true;
             }
-            ListingEvent::AsOf(as_of) => {
-                delta.any = self.as_of != as_of;
-                self.as_of = as_of;
+            ListingEvent::RestsOn(rests_on) => {
+                delta.any = self.rests_on != rests_on;
+                self.rests_on = rests_on;
             }
             ListingEvent::LeftOut(n) => {
                 delta.any = self.left_out != n;
@@ -4741,10 +4745,10 @@ impl Listing {
         self.error.as_ref().map(|error| error.kind)
     }
 
-    /// What the answer rests on when it is an index's as of its last
-    /// update, not the files as they are now.
-    pub fn as_of(&self) -> Option<&AsOf> {
-        self.as_of.as_ref()
+    /// What the answer rests on when an index gave it: which, and how far
+    /// it is proven.
+    pub fn rests_on(&self) -> Option<&RestsOn> {
+        self.rests_on.as_ref()
     }
 
     /// How many folders below the root the walk left out.
@@ -5376,25 +5380,38 @@ mod tests {
     #[test]
     fn what_an_answer_rests_on_is_kept_until_a_run_says_otherwise() {
         let mut listing = Listing::default();
-        assert_eq!(listing.as_of(), None, "the files as they are");
-        let as_of = AsOf {
+        assert_eq!(listing.rests_on(), None, "the files as they are");
+        let as_of = RestsOn {
             by: Words::as_written("an index"),
-            updated: Some(std::time::SystemTime::UNIX_EPOCH),
+            proof: crate::coverage::Proof::AsOf {
+                at: Some(std::time::SystemTime::UNIX_EPOCH),
+            },
         };
         let before = listing.version();
-        assert!(listing.apply(ListingEvent::AsOf(Some(as_of.clone()))));
-        assert_eq!(listing.as_of(), Some(&as_of));
+        assert!(listing.apply(ListingEvent::RestsOn(Some(as_of.clone()))));
+        assert_eq!(listing.rests_on(), Some(&as_of));
         assert_ne!(listing.version(), before, "who draws it sees it");
         let said = listing.version();
-        assert!(!listing.apply(ListingEvent::AsOf(Some(as_of.clone()))));
+        assert!(!listing.apply(ListingEvent::RestsOn(Some(as_of.clone()))));
         assert_eq!(listing.version(), said, "said again, nothing changed");
         assert!(listing.apply(ListingEvent::Complete));
-        assert_eq!(listing.as_of(), Some(&as_of), "complete keeps it");
+        assert_eq!(listing.rests_on(), Some(&as_of), "complete keeps it");
+        let checked = RestsOn {
+            proof: crate::coverage::Proof::Checked {
+                at: std::time::SystemTime::UNIX_EPOCH,
+            },
+            ..as_of
+        };
         assert!(
-            listing.apply(ListingEvent::AsOf(None)),
+            listing.apply(ListingEvent::RestsOn(Some(checked.clone()))),
+            "a proof replaces a snapshot"
+        );
+        assert_eq!(listing.rests_on(), Some(&checked));
+        assert!(
+            listing.apply(ListingEvent::RestsOn(None)),
             "a walk takes it back"
         );
-        assert_eq!(listing.as_of(), None);
+        assert_eq!(listing.rests_on(), None);
     }
 
     #[test]

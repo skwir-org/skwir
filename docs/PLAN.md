@@ -173,7 +173,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 5: Cross-platform](#phase-5-cross-platform) | 5a gate passed 2026-10-06; 5b waits for machines | ~6 weeks |
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
-| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (ADR-050 amended); the user's choices made that day (ADR-150); A, B, D, E and F not built; skwird's phases 1 to 3 done | — |
+| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (ADR-050 amended); the user's choices made that day (ADR-150); A built that day (the coverage type, the names indexes' seam, plocate behind it); B, D, E and F not built; skwird's phases 1 to 3 done | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05; the desktop shells' colors (G) 2026-11-07 (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
@@ -3652,7 +3652,7 @@ what is left.
 
 ADR-050, ADR-150. Step C built 2026-10-20; skwird's client copied
 2026-11-23 (ADR-050 amended); the user's choices made the same day
-(ADR-150); A, B, D, E and F not built. skwird's phases 0 to 3 are done
+(ADR-150); A built that day; B, D, E and F not built. skwird's phases 0 to 3 are done
 (its repository, 2026-11-23): a user's engine started by its first
 client, a user service with live folders (inotify), and the system
 service (fanotify on whole filesystems, each user answered what they
@@ -3676,8 +3676,21 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   Tested with a fake index: covering some roots and not others, naming
   more than matches, stale, with holes; the answer equals the walk's;
   no row shown is taken back; what plocate answered stays as it was.
-  Then: the tags index's coverage (`HintProvider::covers`) said in the
-  same words.
+  **Built 2026-11-23:** `skwir_core::coverage` (`Proof`, `Why`, `Hole`,
+  `Coverage`); `location::RestsOn`, what `AsOf` was, its proof inside
+  (`ListingEvent::RestsOn`, `Listing::rests_on`); `skwir_core::names`
+  (`NameIndex`, a `Session` a search, `NameIndexes` in `App::names` and
+  `OpenContext::names`, withdrawn with their owner, in
+  `plugins_toggle`); in the query plugin, `Query::named` (the names and
+  kinds of the AND, links asked for with folders and files, `whole`),
+  `Shared::named` and `walk_holes`, and `Reach`, the walk's check of what
+  an index names, which the tag hints take too; plocate's `Index`, its
+  rule kept (`/`, the whole search name substrings), as of a time read
+  once it answered; the footer's "up to date" and "checked …"; `entries`'
+  `index`, `as_of` as it was. Left: sizes and times are not yet asked of
+  an index (a link's are its target's, which an index does not hold); the
+  tags index's coverage (`HintProvider::covers`) said in the same words;
+  a screen reader reading the new footer words; a search in a window.
 - **B. The skwird plugin** (ADR-150, 3), speaking protocol 0 through the
   copied client. It finds a system service, then a user's, then starts
   skwird on demand where it is installed.

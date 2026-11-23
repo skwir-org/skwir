@@ -14,11 +14,12 @@ use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
+use skwir_core::coverage::{Hole, Proof};
 use skwir_core::entry::{Entry, EntryId, EntryKind};
 use skwir_core::fs::{Dir, Statter, reach};
 use skwir_core::location::{
-    AsOf, EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext,
-    OpenLocation,
+    EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+    RestsOn,
 };
 use skwir_core::op::Change;
 use skwir_core::scheduler::{Lane, Priority};
@@ -1187,6 +1188,110 @@ impl Reached {
     }
 }
 
+/// What a names index proved of a search (`Shared::named`): what its
+/// answer rests on, what it does not cover, and how many folders what it
+/// named fell in that the walk leaves out.
+struct Proven {
+    rests_on: RestsOn,
+    holes: Vec<Hole>,
+    left_out: usize,
+}
+
+/// Whether a path an index names (a real path below the search's real
+/// root) is one the walk would find, and as which path: hidden names and
+/// depth as it would, never through a link, nor into a network mount
+/// below the root, nor below what it leaves out (counted as it counts
+/// them). Each folder asked once: an index names many files of one.
+struct Reach<'a> {
+    q: &'a Query,
+    real_root: &'a Path,
+    below: &'a Below,
+    statter: Statter,
+    linked: HashMap<PathBuf, bool>,
+    marked: HashMap<PathBuf, bool>,
+    unreached: Vec<PathBuf>,
+    /// The folders (or files) left out that what it named fell in.
+    left: HashSet<PathBuf>,
+}
+
+impl<'a> Reach<'a> {
+    fn new(q: &'a Query, real_root: &'a Path, below: &'a Below) -> Self {
+        Reach {
+            q,
+            real_root,
+            below,
+            statter: Statter::default(),
+            linked: HashMap::new(),
+            marked: HashMap::new(),
+            unreached: mounts_below(real_root),
+            left: HashSet::new(),
+        }
+    }
+
+    /// How many folders or files left out what it named fell in.
+    fn left_out(&self) -> usize {
+        self.left.len()
+    }
+
+    /// Consider `real` as the walk would have found it, unless it was
+    /// (`considered`, which gains it), or the walk would not find it, or it
+    /// is gone since the index saw it.
+    fn consider(
+        &mut self,
+        real: &Path,
+        considered: &mut HashSet<PathBuf>,
+        batcher: &Batcher<'_>,
+        deferred: &Deferred<'_>,
+    ) {
+        let q = self.q;
+        let Ok(relative) = real.strip_prefix(self.real_root) else {
+            return;
+        };
+        if !crate::plocate::visible(relative, q.hidden, q.depth)
+            || self.unreached.iter().any(|point| real.starts_with(point))
+        {
+            return;
+        }
+        let path = q.root.join(relative);
+        if let Some(folder) = self.below.stops_above(&path) {
+            self.left.insert(folder);
+            return;
+        }
+        if self.below.leaves_out_path(&path) {
+            self.left.insert(path);
+            return;
+        }
+        if considered.contains(&path) {
+            return;
+        }
+        // A folder on the way that is a link: the walk would not go there.
+        let through_link = real.parent().is_none_or(|parent| {
+            *self.linked.entry(parent.to_path_buf()).or_insert_with(|| {
+                skwir_core::os_path::canonical(parent).ok().as_deref() != Some(parent)
+            })
+        });
+        let Some(name) = real.file_name() else {
+            return;
+        };
+        if through_link || (!q.hidden && marked_hidden(real, self.real_root, &mut self.marked)) {
+            return;
+        }
+        // Gone since the index saw it: the walk will not find it either.
+        let Some(known) = Known::stated(&path, &mut self.statter) else {
+            return;
+        };
+        consider(
+            q,
+            &path,
+            (name, known),
+            batcher,
+            deferred,
+            &mut self.statter,
+        );
+        considered.insert(path);
+    }
+}
+
 /// What the cheap checks decided about a path.
 enum First {
     No,
@@ -1223,13 +1328,14 @@ impl Shared {
         }
     }
 
-    /// Say what this run's answer rests on (`ListingEvent::AsOf`): an
-    /// index as of its last update, or the files as the walk finds them.
-    /// Each run says it, so a walk takes back what plocate said before.
-    fn rests_on(&self, cancel: &CancelToken, as_of: Option<AsOf>) {
+    /// Say what this run's answer rests on (`ListingEvent::RestsOn`): an
+    /// index, as far as it proves it, or the files as the walk finds them.
+    /// Each run says it once its answer is whole, so a walk takes back what
+    /// an index said before, and the footer says the proof once.
+    fn rests_on(&self, cancel: &CancelToken, rests_on: Option<RestsOn>) {
         let _walk = self.walk.lock();
         if !cancel.is_cancelled() {
-            self.tx.send(ListingEvent::AsOf(as_of));
+            self.tx.send(ListingEvent::RestsOn(rests_on));
         }
     }
 
@@ -1284,36 +1390,163 @@ impl Shared {
             batcher.finish();
             return;
         }
-        if let Some(located) = crate::plocate::try_locate(q, &below, cancel) {
-            self.left_out(cancel, located.left_out);
-            self.rests_on(
-                cancel,
-                Some(AsOf {
-                    by: crate::plocate::by(),
-                    updated: located.updated,
-                }),
-            );
-            let mut statter = Statter::default();
-            for p in located.paths {
-                if cancel.is_cancelled() {
-                    return;
-                }
-                if hinted.contains(&p) {
-                    continue;
-                }
-                let Some(name) = p.file_name() else { continue };
-                let Some(known) = Known::stated(&p, &mut statter) else {
-                    continue;
-                };
-                consider(q, &p, (name, known), &batcher, &deferred, &mut statter);
-            }
+        // What a names index proves, considered instead of a walk; what it
+        // does not cover walked (ADR-150, 5).
+        let mut considered = hinted;
+        if let Some(Proven {
+            rests_on,
+            holes,
+            left_out,
+        }) = self.named(q, &below, &batcher, &deferred, &mut considered)
+        {
+            let walked = Self::walk_holes(q, &below, &holes, &considered, &batcher, &deferred);
+            self.left_out(cancel, left_out + walked);
+            self.rests_on(cancel, Some(rests_on));
         } else {
-            self.rests_on(cancel, None);
-            let left_out = Self::walk_below(q, &q.root, &below, &hinted, &batcher, &deferred);
+            let left_out = Self::walk_below(q, &q.root, &below, &considered, &batcher, &deferred);
             self.left_out(cancel, left_out);
+            self.rests_on(cancel, None);
         }
         deferred.finish();
         batcher.finish();
+    }
+
+    /// Ask the names indexes for `q` (ADR-150, 2 and 5), the strongest
+    /// proof first, and consider what the one that answers names, as the
+    /// walk would have found it; `considered` gains each. `None` where none
+    /// answered whole: the walk then answers, skipping what was considered,
+    /// so nothing shown is taken back.
+    ///
+    /// Live, it is synced (a barrier) and asked. Checked or as of, it is
+    /// asked at once, what it names shown; then synced and asked again, what
+    /// is new considered. One that cannot be synced (plocate) answers as of
+    /// when it is; one that can and fails is walked.
+    fn named(
+        &self,
+        q: &Query,
+        below: &Below,
+        batcher: &Batcher<'_>,
+        deferred: &Deferred<'_>,
+        considered: &mut HashSet<PathBuf>,
+    ) -> Option<Proven> {
+        let cancel = batcher.cancel;
+        let real_root = skwir_core::os_path::canonical(&q.root).ok()?;
+        let asked = q.named(real_root.clone())?;
+        let mut reach = Reach::new(q, &real_root, below);
+        for skwir_core::names::Asked {
+            index,
+            coverage,
+            mut session,
+        } in self.ctx.names.open(&real_root, cancel)
+        {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            let mut ask = |session: &mut Box<dyn skwir_core::names::Session>,
+                           considered: &mut HashSet<PathBuf>| {
+                session.query(&asked, &mut |paths| {
+                    for real in paths {
+                        if cancel.is_cancelled() {
+                            return false;
+                        }
+                        reach.consider(&real, considered, batcher, deferred);
+                    }
+                    true
+                })
+            };
+            let before = considered.len();
+            let answer = if matches!(coverage.names, Proof::Live { .. }) {
+                // Live: the barrier first, then what it holds.
+                match session.sync() {
+                    Some(synced) if synced.names.proves() => ask(&mut session, considered),
+                    _ => continue,
+                }
+            } else {
+                let Some(first) = ask(&mut session, considered) else {
+                    // Nothing shown of it: the next index may answer.
+                    if considered.len() == before {
+                        continue;
+                    }
+                    return None;
+                };
+                // Shown at once, before the proof.
+                deferred.finish();
+                batcher.flush();
+                if index.syncs() {
+                    match session.sync() {
+                        Some(synced) if synced.names.proves() => ask(&mut session, considered),
+                        // Not proven: the walk answers what it named not.
+                        _ => return None,
+                    }
+                } else {
+                    Some(first)
+                }
+            };
+            let answer = answer?;
+            // One that can be synced stands proven; one that cannot, as of.
+            let stands = if index.syncs() {
+                answer.coverage.names.proves()
+            } else {
+                answer.coverage.names.answers()
+            };
+            if answer.truncated || !stands || cancel.is_cancelled() {
+                return None;
+            }
+            return Some(Proven {
+                rests_on: RestsOn {
+                    by: index.by(),
+                    proof: answer.coverage.names,
+                },
+                holes: answer.coverage.holes,
+                left_out: reach.left_out(),
+            });
+        }
+        None
+    }
+
+    /// Walk what a names index said it does not cover below the root
+    /// (`holes`, real paths), as the walk would have, skipping what was
+    /// considered: each once (one inside another walked with it), a
+    /// snapshot passed over unless `excluded:yes` (ADR-150, 5), what the
+    /// walk would not reach (hidden, too deep, left out, a network mount)
+    /// left. Returns how many folders the walks left out.
+    fn walk_holes(
+        q: &Query,
+        below: &Arc<Below>,
+        holes: &[Hole],
+        considered: &HashSet<PathBuf>,
+        batcher: &Batcher<'_>,
+        deferred: &Deferred<'_>,
+    ) -> usize {
+        let Ok(real_root) = skwir_core::os_path::canonical(&q.root) else {
+            return 0;
+        };
+        let mut holes: Vec<&Path> = holes
+            .iter()
+            .filter(|h| q.excluded || !h.why.passed_over())
+            .filter_map(|h| h.path.strip_prefix(&real_root).ok())
+            .collect();
+        holes.sort_unstable();
+        let mut left_out = 0;
+        let mut walked: Option<&Path> = None;
+        for relative in holes {
+            if batcher.cancel.is_cancelled() {
+                return left_out;
+            }
+            // Sorted, a folder's holes follow it.
+            if walked.is_some_and(|above| relative.starts_with(above)) {
+                continue;
+            }
+            walked = Some(relative);
+            let path = q.root.join(relative);
+            if !relative.as_os_str().is_empty()
+                && (in_walk(q, below, &path).is_none() || below.leaves_out(&path))
+            {
+                continue;
+            }
+            left_out += Self::walk_below(q, &path, below, considered, batcher, deferred);
+        }
+        left_out
     }
 
     /// Whether asking if anything is there at all needs no walk: an index
@@ -1451,9 +1684,8 @@ impl Shared {
     }
 
     /// Consider the files the indexes name for the query's tag (ADR-026),
-    /// as the walk would have (hidden files and depth as it would, never
-    /// through a link, nor into a network mount below the root), and
-    /// return them for the walk to skip.
+    /// as the walk would have (`Reach`), and return them for the walk to
+    /// skip.
     fn hinted(
         &self,
         q: &Query,
@@ -1478,45 +1710,12 @@ impl Shared {
             return hinted;
         };
         let started = Instant::now();
-        let mut statter = Statter::default();
-        let mut linked: HashMap<PathBuf, bool> = HashMap::new();
-        let mut marked: HashMap<PathBuf, bool> = HashMap::new();
-        let unreached = mounts_below(&real_root);
+        let mut reach = Reach::new(q, &real_root, below);
         for real in paths {
             if cancel.is_cancelled() {
                 break;
             }
-            let Ok(relative) = real.strip_prefix(&real_root) else {
-                continue;
-            };
-            if !crate::plocate::visible(relative, q.hidden, q.depth)
-                || unreached.iter().any(|point| real.starts_with(point))
-                || below.stops_above(&q.root.join(relative)).is_some()
-                || below.leaves_out_path(&q.root.join(relative))
-            {
-                continue;
-            }
-            // A folder on the way that is a link: the walk would not go
-            // there. Asked once per folder: an index names many files of
-            // one.
-            let through_link = real.parent().is_none_or(|parent| {
-                *linked.entry(parent.to_path_buf()).or_insert_with(|| {
-                    skwir_core::os_path::canonical(parent).ok().as_deref() != Some(parent)
-                })
-            });
-            let Some(name) = real.file_name() else {
-                continue;
-            };
-            if through_link || (!q.hidden && marked_hidden(&real, &real_root, &mut marked)) {
-                continue;
-            }
-            let path = q.root.join(relative);
-            // Gone since the index saw it: the walk will not find it either.
-            let Some(known) = Known::stated(&path, &mut statter) else {
-                continue;
-            };
-            consider(q, &path, (name, known), batcher, deferred, &mut statter);
-            hinted.insert(path);
+            reach.consider(&real, &mut hinted, batcher, deferred);
         }
         tracing::debug!(
             hinted = hinted.len(),
@@ -1836,6 +2035,7 @@ mod tests {
             metadata,
             fields: Arc::default(),
             hints: Arc::default(),
+            names: Arc::default(),
             companions: Arc::default(),
             hidden_shown: false,
             reads_metadata: false,
@@ -1860,7 +2060,7 @@ mod tests {
                 | ListingEvent::Unreadable(_)
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
-                | ListingEvent::AsOf(_)
+                | ListingEvent::RestsOn(_)
                 | ListingEvent::LeftOut(_)
                 | ListingEvent::Redirect(_)
                 | ListingEvent::Moved(_) => {}

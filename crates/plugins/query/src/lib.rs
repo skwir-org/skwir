@@ -952,6 +952,8 @@ impl Plugin for QueryPlugin {
             previous.cancel();
         }
         let searches = provider::Searches::default();
+        // plocate's database, a names index of `/` (ADR-150, 4).
+        app.names.register(ID, Arc::new(plocate::Index::default()));
         app.register_provider(
             ID,
             Arc::new(QueryProvider::new(
@@ -1788,7 +1790,7 @@ mod tests {
                 | ListingEvent::Unreadable(_)
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
-                | ListingEvent::AsOf(_)
+                | ListingEvent::RestsOn(_)
                 | ListingEvent::LeftOut(_)
                 | ListingEvent::Redirect(_)
                 | ListingEvent::Moved(_) => {}
@@ -3186,6 +3188,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn plocate_is_used_for_name_only_queries_over_root() {
+        use skwir_core::coverage::Proof;
+        use skwir_core::names::NameIndex as _;
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let bin = tmp.path().join("bin");
@@ -3199,42 +3203,50 @@ mod tests {
         std::fs::write(bin.join("plocate"), script).unwrap();
         std::fs::set_permissions(bin.join("plocate"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
-        let q = lang::parse("report in:/").unwrap();
         let never = skwir_core::cancel::CancelToken::new();
-        let paths = plocate::locate_with(
-            &bin.join("plocate"),
-            &q.name_substrings().unwrap(),
-            false,
-            &never,
-        )
-        .unwrap();
-        assert_eq!(
-            paths,
-            vec![
-                hit.clone(),
-                std::path::PathBuf::from("/nonexistent/report.txt")
-            ]
-        );
-        let nothing_left_out = std::sync::Arc::new(skwir_core::walks::LeftOut::none())
-            .below(std::path::Path::new("/"), false);
+        let answered = vec![
+            hit.clone(),
+            std::path::PathBuf::from("/nonexistent/report.txt"),
+        ];
+        let paths =
+            plocate::locate_with(&bin.join("plocate"), &["report".into()], false, &never).unwrap();
+        assert_eq!(paths, answered);
+        // A names index of `/` (ADR-150, 4), answering what it did before
+        // the seam: a search all of whose terms are name substrings.
+        let index = plocate::Index::at(bin.join("plocate"));
         assert!(
-            plocate::try_locate(
-                &lang::parse("report in:/tmp").unwrap(),
-                &nothing_left_out,
-                &never
-            )
-            .is_none(),
+            index.open(Path::new("/tmp"), &never).is_none(),
             "only over /"
         );
-        assert!(
-            plocate::try_locate(
-                &lang::parse("report size>1k in:/").unwrap(),
-                &nothing_left_out,
-                &never
-            )
-            .is_none(),
-            "only name-only"
+        let mut opened = index.open(Path::new("/"), &never).expect("over /");
+        assert_eq!(
+            opened.coverage.names,
+            Proof::AsOf { at: None },
+            "as of a time read once it answered"
         );
+        let named = |s: &str| lang::parse(s).unwrap().named("/".into()).unwrap();
+        let mut found = Vec::new();
+        let answer = opened
+            .session
+            .query(&named("report in:/"), &mut |paths| {
+                found.extend(paths);
+                true
+            })
+            .expect("name-only");
+        assert_eq!(found, answered);
+        assert!(!answer.truncated);
+        for s in [
+            "report size>1k in:/",
+            "report type:file in:/",
+            "report *.txt in:/",
+            "a[b in:/",
+        ] {
+            assert!(
+                opened.session.query(&named(s), &mut |_| true).is_none(),
+                "only name substrings: {s}"
+            );
+        }
+        assert!(opened.session.sync().is_none(), "it cannot be synced");
         // A database that cannot answer (it says why) is not "no matches".
         std::fs::write(
             bin.join("broken"),
@@ -3260,7 +3272,8 @@ mod tests {
     #[test]
     #[allow(unsafe_code)]
     fn a_search_plocate_answers_is_as_of_its_database() {
-        use skwir_core::location::AsOf;
+        use skwir_core::coverage::Proof;
+        use skwir_core::location::RestsOn;
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let bin = tmp.path().join("bin");
@@ -3308,35 +3321,41 @@ mod tests {
             else {
                 panic!("entries answers a value");
             };
-            let as_of = app
+            let rests_on = app
                 .workspace
                 .read()
                 .pane(pane)
                 .unwrap()
                 .listing
-                .as_of()
+                .rests_on()
                 .cloned();
-            (as_of, answer)
+            (rests_on, answer)
         };
 
-        let (as_of, answer) = search(Path::new("/"));
+        let (rests_on, answer) = search(Path::new("/"));
         assert_eq!(
-            as_of,
-            Some(AsOf {
+            rests_on,
+            Some(RestsOn {
                 by: plocate::by(),
-                updated: Some(updated),
+                proof: Proof::AsOf { at: Some(updated) },
             })
         );
         assert_eq!(
             answer["as_of"],
-            serde_json::json!({"by": "plocate's database", "updated": 1_800_000_007})
+            serde_json::json!({"by": "plocate's database", "updated": 1_800_000_007}),
+            "said as it always was"
+        );
+        assert_eq!(
+            answer["index"],
+            serde_json::json!({"by": "plocate's database", "proof": "as_of", "at": 1_800_000_007})
         );
         assert_eq!(answer["total"], 1);
         assert_eq!(answer["entries"][0]["path"], hit.to_str().unwrap());
 
-        let (as_of, answer) = search(tmp.path());
-        assert_eq!(as_of, None, "a walk is the files as they are");
+        let (rests_on, answer) = search(tmp.path());
+        assert_eq!(rests_on, None, "a walk is the files as they are");
         assert!(answer.get("as_of").is_none(), "{answer}");
+        assert!(answer.get("index").is_none(), "{answer}");
         assert_eq!(answer["entries"][0]["path"], hit.to_str().unwrap());
     }
 

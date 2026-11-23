@@ -100,7 +100,9 @@ The Consequences' "will say its answer is as of the last update", built
 - **In the core,** a listing keeps what its answer rests on:
   `location::AsOf` (what answered, in the user's words, and when it was
   last brought up to date) through `ListingEvent::AsOf(Option<AsOf>)`,
-  read with `Listing::as_of`. Each run of a search says it, `None` for a
+  read with `Listing::as_of` (grown by ADR-150 into `location::RestsOn`,
+  its proof live, checked or as of: `ListingEvent::RestsOn`,
+  `Listing::rests_on`). Each run of a search says it, `None` for a
   walk, so a refresh that walks takes back what plocate said. Point 3's
   coverage (live, checked) is to extend this, not to add another way of
   saying it.
