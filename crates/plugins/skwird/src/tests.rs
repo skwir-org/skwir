@@ -222,3 +222,33 @@ fn what_is_kept_out_is_sent_to_the_engine() {
     ];
     assert!(keep_out(&mut client, &folders));
 }
+
+/// A root skwird is still reading (a first build) says so at once, and is
+/// asked nothing more: the search walks it, never syncing it, as a sync
+/// waits for the build's end.
+#[test]
+fn a_root_being_read_is_walked_and_never_synced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = PathBuf::from("/fixture/root");
+    let unread = protocol::Coverage {
+        names: protocol::Proof::NotCovered(protocol::Why::Unread),
+        attrs: protocol::Proof::NotCovered(protocol::Why::Unread),
+        holes: Vec::new(),
+    };
+    let fake = Fake::start(
+        tmp.path().join("socket"),
+        Script {
+            roots: vec![root.clone()],
+            coverage: vec![(root.clone(), unread)],
+            entries: vec![entry(&root.join("a report.txt"), protocol::Kind::File)],
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    let indexes = skwir_core::names::NameIndexes::default();
+    indexes.register(ID, Arc::new(index(Engines::At(fake.socket.clone()))));
+    assert!(
+        indexes.open(&root, &CancelToken::new()).is_empty(),
+        "not covered: the search walks"
+    );
+}

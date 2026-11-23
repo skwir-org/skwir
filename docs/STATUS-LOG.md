@@ -22982,4 +22982,10 @@ own behind step A's seam.
   before).
 - **Asked of skwird's session:** that an engine's first build not hold a
   client's `coverage` (6 to 20 s on the user's home, longer than the
-  walk), answering "not covered: unread" meanwhile.
+  walk). Answered the same day, at skwird 58609b2: it never did.
+  `hello`, `coverage` and `query` answer at once during a first build
+  ("not covered: unread"); only `sync` waits for it, by design. The seam
+  asks a root not covered nothing more (`NameIndexes::open` keeps only
+  what answers), so no search syncs one: it walks. A test holds it
+  (`a_root_being_read_is_walked_and_never_synced`). The 6 to 20 s
+  measured were until a query found something, not a first answer.

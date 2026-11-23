@@ -3752,8 +3752,11 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     `App::index_services`), so no test depends on what the machine runs
     nor starts one. The packages' notices tell Skwir's crates by the
     workspace, no longer by a name starting `skwir` (skwird's copies
-    did). Left: the window and the screen reader above; the first search
-    waits through an engine's first build (asked of skwird's session).
+    did). Left: the window and the screen reader above. An engine's
+    first build holds no search: skwird answers `coverage` at once, "not
+    covered: unread", and the seam asks a root not covered nothing more,
+    so the search walks; only a `sync` waits for a build, by skwird's
+    design (its session, 2026-11-23).
 - **C. plocate as of its time.** A search of `/` that plocate answers
   says when its database was last updated. **Built 2026-10-20**
   (ADR-050's amendment): a listing keeps what its answer rests on
