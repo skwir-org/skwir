@@ -447,7 +447,23 @@ configuration names is run, and nothing is written to it.
   used too. On Windows, a drive BitLocker locked opens Windows' own
   dialog, whose "Automatically unlock on this PC" is Windows' to keep. A
   drive mounted for you has an eject button, which writes out what is
-  pending and unmounts it.
+  pending and unmounts it; while a copy of Skwir's is still under way
+  there, Eject names it and unmounts nothing.
+- **A folder whose drive or server goes** stays in its pane, which says
+  the drive was unmounted or removed, or the server disconnected, with
+  Mount (Unlock for a locked drive, Connect for a server) and Go Home.
+  Once it is back, mounted by Skwir or by any other program (Files,
+  Dolphin, `udisksctl` in a terminal), the folder shows again by itself;
+  on Windows, as the window comes to the front. Skwir's own Eject and
+  Disconnect leave the panes as they are, the same way. Skwir keeps
+  nothing open on a drive you can unplug, nor on a server, between the
+  times it reads them, so another program's unmount is not refused
+  because of a folder Skwir shows. When GNOME or KDE asks to unmount one,
+  Skwir first closes what it previews or plays there, and the terminal
+  panel's shell leaves it; a copy of its own still under way there is
+  named in a notice with Cancel. If an unmount from a terminal is
+  refused once all the same, Skwir says it no longer uses the drive:
+  unmount it again.
 
 ## Servers, phones and cameras
 
@@ -502,8 +518,10 @@ it knows is remote.
   proved it fast; its menu's Thumbnails, or Folders and views ›
   Thumbnails in remote folders, choose otherwise. A server that stops
   answering says so above its files, with Go Back and Disconnect, and
-  holds nothing else up. `Delete` there deletes for good, and asks first:
-  nothing of a server is carried to this machine's Trash.
+  holds nothing else up. One whose connection is lost (an sshfs mount
+  whose server went away) says so as a folder of it fails, above the
+  files still shown, with Connect. `Delete` there deletes for good, and
+  asks first: nothing of a server is carried to this machine's Trash.
 - **Copies** to and from a server go in batches (through rsync over the
   ssh connection, sftp or gio where those are faster, several files at
   once), a large file comes down in several parts at once, and a copy
@@ -627,6 +645,18 @@ PDFs and office documents, books, comics, e-mail, notebooks, pictures,
 audio and video, fonts, 3D models, circuit boards, maps and tracks,
 archives, and the bytes of any file.
 
+- **Pictures** are drawn at the size they are shown, as sharp as the
+  screen allows, however large the picture: zoomed in, a photo stays
+  sharp. Stepping through photos is quick: the next one is read ahead and
+  those just seen are kept, and a large one shows at once, blurred for a
+  moment. JPEG XL, HEIC, AVIF and a camera's raw file (by the photo the
+  camera stored in it) are shown as any picture is, thumbnails included.
+  HEIC and AVIF need the `skwir-heif` package where Skwir comes from
+  Debian's, Ubuntu's or Fedora's packages (HEIC on Fedora with RPM
+  Fusion's `libheif-freeworld` too), and `libheif` on Arch;
+  [Previews](previews.md#pictures) says which raw files are read. A
+  document's or a comic's page zoomed in is drawn sharp at that zoom too,
+  however tall the page.
 - A folder shows its README in the preview, or the cover of an album or
   of a photo folder (`cover.jpg`, `folder.jpg`), when it holds one: the
   folder selected, or the one you are in while nothing is selected. Its
