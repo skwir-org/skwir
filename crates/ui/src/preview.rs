@@ -1985,17 +1985,22 @@ impl Drop for Taken {
 }
 
 impl Turn {
-    /// Wait for this turn, or for `cancel`: `None` once cancelled, whether
-    /// before the wait or during it.
-    fn take(self, cancel: &CancelToken) -> Option<Taken> {
+    /// Whether this turn is taken, and who waits for it.
+    fn turns(self) -> &'static parking_lot::Mutex<Turns> {
         static SHOWN: parking_lot::Mutex<Turns> = Turns::free();
         static AHEAD: parking_lot::Mutex<Turns> = Turns::free();
         static ZOOMED: parking_lot::Mutex<Turns> = Turns::free();
-        let turn = match self {
+        match self {
             Self::Shown => &SHOWN,
             Self::Ahead => &AHEAD,
             Self::Zoomed => &ZOOMED,
-        };
+        }
+    }
+
+    /// Wait for this turn, or for `cancel`: `None` once cancelled, whether
+    /// before the wait or during it.
+    fn take(self, cancel: &CancelToken) -> Option<Taken> {
+        let turn = self.turns();
         loop {
             let woken = {
                 let mut turns = turn.lock();
@@ -10375,6 +10380,16 @@ mod tests {
         assert_eq!((size.width.0, size.height.0), (1000, 14));
     }
 
+    /// Wait until `ready` holds, a few seconds at most: `what` fails the
+    /// test then.
+    fn within_seconds(ready: impl Fn() -> bool, what: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ready() {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
     /// A request waiting for a decode's turn gives it up as soon as it is
     /// cancelled, while the decode before it still runs: it never holds its
     /// worker until the turn is free. The turn let go, the next takes it.
@@ -10383,16 +10398,20 @@ mod tests {
         use skwir_core::cancel::CancelToken;
         let running = CancelToken::new();
         let taken = super::Turn::Zoomed.take(&running).expect("a free turn");
+        // A waiter is in the turn's list once it waits: told so, not slept
+        // for.
+        let waiters = || super::Turn::Zoomed.turns().lock().waiting.len();
         let waiting = |cancel: CancelToken| {
-            std::thread::spawn(move || super::Turn::Zoomed.take(&cancel).is_some())
+            let before = waiters();
+            let thread = std::thread::spawn(move || super::Turn::Zoomed.take(&cancel).is_some());
+            within_seconds(|| waiters() > before, "a waiter waits");
+            thread
         };
         let given_up = CancelToken::new();
         let first = waiting(given_up.clone());
-        std::thread::sleep(std::time::Duration::from_millis(20));
         given_up.cancel();
         assert!(!first.join().unwrap(), "cancelled while the turn is taken");
         let next = waiting(CancelToken::new());
-        std::thread::sleep(std::time::Duration::from_millis(20));
         assert!(!next.is_finished(), "waits while the turn is taken");
         drop(taken);
         assert!(next.join().unwrap(), "takes the turn let go");

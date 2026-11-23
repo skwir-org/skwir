@@ -2458,11 +2458,23 @@ mod tests {
         let started = std::time::Instant::now();
         assert_eq!(area.room_for(1, &none), None);
         assert!(started.elapsed() >= Area::WAIT);
-        let waiting = {
-            let (area, none) = (Arc::clone(&area), none.clone());
-            std::thread::spawn(move || area.room_for(1, &none))
+        // A job asking for the room of preview `generation`, on a thread of
+        // its own, once it waits: seen in the area's list, never slept for.
+        let wait_for = |generation: u64| {
+            let waiters = || area.state.lock().waiting.len();
+            let before = waiters();
+            let thread = {
+                let (area, none) = (Arc::clone(&area), none.clone());
+                std::thread::spawn(move || area.room_for(generation, &none))
+            };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while waiters() == before {
+                assert!(std::time::Instant::now() < deadline, "the job waits");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            thread
         };
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        let waiting = wait_for(1);
         area.measured(1, 1024, ROOM);
         assert_eq!(waiting.join().unwrap(), Some(ROOM));
         // Laid out for this preview or a later one: at once.
@@ -2476,11 +2488,7 @@ mod tests {
             ..ROOM
         };
         area.measured(1, 1024, strip);
-        let waiting = {
-            let (area, none) = (Arc::clone(&area), none.clone());
-            std::thread::spawn(move || area.room_for(2, &none))
-        };
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        let waiting = wait_for(2);
         area.measured(2, 1024, ROOM);
         assert_eq!(waiting.join().unwrap(), Some(ROOM));
         // Shown elsewhere (the whole screen): laid out there first.
@@ -2490,11 +2498,7 @@ mod tests {
             ..ROOM
         };
         area.moved();
-        let waiting = {
-            let (area, none) = (Arc::clone(&area), none.clone());
-            std::thread::spawn(move || area.room_for(2, &none))
-        };
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        let waiting = wait_for(2);
         area.measured(2, 1024, screen);
         assert_eq!(waiting.join().unwrap(), Some(screen));
         assert_eq!(area.last_room(), Some(screen));
