@@ -13,7 +13,7 @@ shrink_as_small = { $name } è già il più piccolo possibile: non è stata crea
 shrink_at_most = Al massimo
 
 # draft
-shrink_at_most_placeholder = Nessun limite, oppure una dimensione: 2 MB, 500 KB
+shrink_at_most_placeholder = Nessun limite, oppure una dimensione: 2 MB, 500 KB
 
 # draft
 shrink_at_most_refused = Al massimo: { $why }
@@ -157,7 +157,7 @@ shrink_reduce = Crea copie ridotte
 shrink_reduce_ask_description = Chiede quanto ridurre, poi crea una copia ridotta di ogni immagine e PDF accanto a esso, come fa `shrink.reduce`
 
 # draft
-shrink_reduce_description = Crea una copia ridotta di ogni immagine (JPEG, PNG) e PDF accanto a esso, o in `dest`, chiamata `name (reduced).ext`: `quality` lossless, print (immagini di 3840 pixel di larghezza, immagini di un PDF a 300 dpi), screen (1920, 150 dpi) o small (1280, 96 dpi); `gray`; `strip`, che esclude i dettagli di posizione e fotocamera di un’immagine; `at_most`, una dimensione entro cui ogni copia deve rientrare, provando passaggi via via più piccoli. Una copia che non sarebbe più piccola non viene creata (piano)
+shrink_reduce_description = Crea una copia ridotta di ogni immagine (JPEG, PNG) e PDF accanto a esso, o in `dest`, chiamata `name (reduced).ext`: `quality` lossless, print (immagini di 3840 pixel di larghezza, immagini di un PDF a 300 dpi), screen (1920, 150 dpi) o small (1280, 96 dpi); `gray`; `strip`, che esclude i dettagli di posizione e fotocamera di un’immagine; `at_most`, una dimensione entro cui ogni copia deve rientrare, provando passaggi via via più piccoli. Una copia che non sarebbe più piccola non viene creata (piano)
 
 # draft
 shrink_reduce_size = Riduci dimensione…

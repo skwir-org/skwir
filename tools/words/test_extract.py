@@ -140,6 +140,62 @@ class Messages(unittest.TestCase):
         # Other languages write no such spaces here.
         self.assertEqual(extract.spacing_problems(Path("sample/de.ftl"), "de", "a = Keine : nichts"), [])
 
+    def test_a_message_s_lines_are_read_with_where_they_begin(self):
+        source = "# draft\na = un\n  deux\nb = { $n ->\n   *[other] trois\n}\na = autre\n"
+        self.assertEqual(
+            extract.bodies_of(source),
+            {
+                "a": (True, [(2, 3, " un"), (3, 0, "  deux")]),
+                "b": (False, [(4, 3, " { $n ->"), (5, 0, "   *[other] trois"), (6, 0, "}")]),
+            },
+        )
+
+    def test_a_translation_keeps_on_one_line_the_numbers_its_english_joins(self):
+        nbsp, narrow = " ", " "
+        english = "\n".join(
+            [
+                f"mp = 12 to 24{nbsp}MP",
+                f"sizes = No limit, or a size: 2{nbsp}MB, 500{nbsp}KB",
+                f"time = after 1.5{nbsp}s",
+                f"dims = 1920{nbsp}×{nbsp}1080",
+                "loose = 3 files, 4 more",
+                f"both = 30{nbsp}MB, or 30 more",
+                f"lines = {{ $n ->\n    [one] 1{nbsp}MB\n   *[other] {{ $n }}{nbsp}MB\n}}",
+            ]
+        )
+        source = "\n".join(
+            [
+                "# 24 MP: a comment writes as it likes",
+                "mp = da 12 a 24 MP",
+                f"sizes = Nessun limite: 2 MB, 500{narrow}KB",
+                "time = dopo 1,5 s",
+                f"dims = 1920 ×{nbsp}1080",
+                "loose = 3 file, 4 altri",
+                "both = 30 MB, o 30 altri",
+                "lines = { $n ->\n    [one] 1 MB\n   *[other] { $n } MB\n}",
+                "gone = 9 MB, a message the English has not",
+            ]
+        )
+        problems = extract.joined_problems(Path("sample/it.ftl"), source, english)
+        self.assertEqual(
+            [problem.split(": ", 1)[0] for problem in problems],
+            [
+                "sample/it.ftl:2:14",
+                "sample/it.ftl:3:24",
+                "sample/it.ftl:4:13",
+                "sample/it.ftl:5:8",
+                "sample/it.ftl:9:11",
+            ],
+        )
+        self.assertIn("`mp` parts 24 from what follows by a plain space", problems[0])
+        self.assertIn("`time` parts 1,5 from what follows", problems[2])
+        self.assertIn("`lines` parts 1 from what follows", problems[4])
+        # Joined as the English joins them: nothing.
+        self.assertEqual(
+            extract.joined_problems(Path("sample/fr.ftl"), f"mp = de 12 à 24{narrow}Mpx", english),
+            [],
+        )
+
     def test_the_program_s_own_catalogs_are_read_whole(self):
         # Every message begins a line of its own: each is found, and every
         # draft, marked on the line above it.

@@ -291,13 +291,13 @@ query_forget_recent_description = Rimuove una ricerca da quelle che la barra deg
 query_group_100_to_1 = da 100 { $unit } a 1 { $next }
 
 # draft
-query_group_12_to_24_mp = da 12 a 24 MP
+query_group_12_to_24_mp = da 12 a 24 MP
 
 # draft
 query_group_1_to_100 = da 1 a 100 { $unit }
 
 # draft
-query_group_1_to_4_mp = da 1 a 4 MP
+query_group_1_to_4_mp = da 1 a 4 MP
 
 # draft
 query_group_1_to_5_minutes = da 1 a 5 minuti
@@ -306,7 +306,7 @@ query_group_1_to_5_minutes = da 1 a 5 minuti
 query_group_20_minutes_to_1_hour = da 20 minuti a 1 ora
 
 # draft
-query_group_4_to_12_mp = da 4 a 12 MP
+query_group_4_to_12_mp = da 4 a 12 MP
 
 # draft
 query_group_5_to_20_minutes = da 5 a 20 minuti
@@ -375,7 +375,7 @@ query_group_over_1 = Oltre 1 { $unit }
 query_group_over_1_hour = Oltre 1 ora
 
 # draft
-query_group_over_24_mp = Oltre 24 MP
+query_group_over_24_mp = Oltre 24 MP
 
 # draft
 query_group_state_unknown = Sconosciuto
@@ -399,7 +399,7 @@ query_group_under_100 = Meno di 100 { $unit }
 query_group_under_1_minute = Meno di 1 minuto
 
 # draft
-query_group_under_1_mp = Meno di 1 MP
+query_group_under_1_mp = Meno di 1 MP
 
 # draft
 query_group_unknown_type = Tipo sconosciuto

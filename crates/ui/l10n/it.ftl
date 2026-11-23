@@ -982,7 +982,7 @@ commands_activity_cancel_all = Annulla tutte le azioni
 commands_activity_cancel_all_description = Annulla ogni azione in corso e ogni azione in attesa del suo turno: ciò che ciascuna ha fatto resta, annullabile, e ciò che ha lasciato a metà viene ripristinato
 
 # draft
-commands_activity_description = Apri Attività sopra la sua striscia nel piè di pagina, con la tastiera, oppure riducila quando ha la tastiera: ciò che è in corso, con Pausa e Annulla, ciò che è in attesa e ciò che è terminato in questa sessione e che la cronologia delle modifiche non conserva (ciò che è fallito, è stato annullato o non si può annullare, e le risposte che non sono di alcuna azione), con Riprova o Annulla. Resta aperta finché non viene ridotta e si apre da sola quando un’azione richiesta nella finestra dura a lungo (Apri Attività dopo, 1,5 s per impostazione predefinita) (ADR-114)
+commands_activity_description = Apri Attività sopra la sua striscia nel piè di pagina, con la tastiera, oppure riducila quando ha la tastiera: ciò che è in corso, con Pausa e Annulla, ciò che è in attesa e ciò che è terminato in questa sessione e che la cronologia delle modifiche non conserva (ciò che è fallito, è stato annullato o non si può annullare, e le risposte che non sono di alcuna azione), con Riprova o Annulla. Resta aperta finché non viene ridotta e si apre da sola quando un’azione richiesta nella finestra dura a lungo (Apri Attività dopo, 1,5 s per impostazione predefinita) (ADR-114)
 
 # draft
 commands_activity_earlier = Mostra In precedenza in Attività

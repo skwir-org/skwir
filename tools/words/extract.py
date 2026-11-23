@@ -56,7 +56,10 @@ A translation writes the spaces its language puts beside its punctuation,
 where it puts one there at all (French's, `docs/glossary-fr.md`: a no-break
 space before `:`, a narrow one before `; ! ?` and `»` and after `«`): a
 plain space there, where a line may break, or the other no-break space, is
-refused in either mode.
+refused in either mode. So is a translation that parts by a plain space a
+number written in it from what its English joins it to by a no-break space
+(`24\u{a0}MP`, `1920\u{a0}×\u{a0}1080`), the unit translated or not: an
+argument so joined is the catalogs' test's to hold.
 Messages of tests (in a tests.rs or a tests/ folder, or whose id begins
 with `test_`) are not a crate's. Also refused: a plugin whose
 `enabled_by_default` answers anything but a literal, and a record naming a
@@ -304,7 +307,15 @@ def messages_of(source):
     is open, until a line where Fluent begins anew (a comment, a message's
     or a term's first line), as the program's own index reads it
     (`crates/core/src/words/catalog.rs`)."""
-    found, comment = {}, []
+    return {id_: draft for id_, (draft, _) in bodies_of(source).items()}
+
+
+def bodies_of(source):
+    """Each message of a catalog's `source`, by its id, read as
+    `messages_of` reads them: whether it is a draft, and its lines, each
+    with its number (from 1) and the column (from 0) its text begins at,
+    the first one's after its `=`."""
+    found, comment, lines = {}, [], None
     open_message, depth, in_string, escaped = False, 0, False, False
 
     def braces(text):
@@ -326,13 +337,15 @@ def messages_of(source):
             elif c == '"' and depth:
                 in_string = True
 
-    for line in source.splitlines():
+    for number, line in enumerate(source.splitlines(), 1):
         if (
             open_message
             and not BEGINS_ANEW.match(line)
             and (depth or line.startswith((" ", "\t", "[", "*", ".", "}")) or not line.strip())
         ):
             braces(line)
+            if lines is not None:
+                lines.append((number, 0, line))
             continue
         open_message, depth, in_string, escaped = False, 0, False, False
         if line.startswith("#"):
@@ -341,14 +354,72 @@ def messages_of(source):
             comment = comment + [line[1:].strip()] if line == "#" or line.startswith("# ") else []
             continue
         message = MESSAGE.match(line)
+        lines = None
         if message:
             # An id written twice is said as its first copy (the catalogs'
             # test refuses it): its draft mark is the first's.
-            found.setdefault(message.group(1), "draft" in comment)
+            if message.group(1) not in found:
+                lines = [(number, message.end(), line[message.end() :])]
+                found[message.group(1)] = ("draft" in comment, lines)
             open_message = True
             braces(line[message.end() :])
         comment = []
     return found
+
+
+# A number written in a message (digits, a decimal or grouping mark between
+# them): what the English keeps on one line with what is beside it by a
+# no-break space (`24\u{a0}MP`, `1920\u{a0}×\u{a0}1080`) stays there in a
+# translation. An argument is the catalogs' test's to hold so
+# (`crates/core/src/words/tests.rs`).
+DIGITS = re.compile(r"(?<![\d.,])\d+(?:[.,]\d+)*(?![\d])")
+JOINING = "  ⁠"
+
+
+def number_sides(text):
+    """The numbers `text` writes, each keyed by its digits (a comma read as
+    a point: `1,5` and `1.5` are one number), with the sides where a plain
+    space parts it from what is beside it and those where a no-break space
+    joins it to it: `>` after it, `<` before it. Each found with where it is
+    in `text`."""
+    for found in DIGITS.finditer(text):
+        key = found.group(0).replace(",", ".")
+        after = text[found.end() : found.end() + 1]
+        before = text[found.start() - 1 : found.start()] if found.start() else ""
+        for side, beside in ((">", after), ("<", before)):
+            if beside == " ":
+                yield key + side, "parted", found
+            elif beside and beside in JOINING:
+                yield key + side, "joined", found
+
+
+def joined_problems(path, source, english):
+    """Where the catalog `source`, at `path`, parts a number from what is
+    beside it by a plain space, where a line may break, that the English
+    catalog's text `english` joins to it by a no-break space (and never
+    parts): a number and its unit, a dimension's numbers and their `×`."""
+    given = bodies_of(english)
+    problems = []
+    for id_, (_, lines) in bodies_of(source).items():
+        if id_ not in given:
+            continue
+        joined, parted = set(), set()
+        for _, _, text in given[id_][1]:
+            for side, how, _ in number_sides(text):
+                (joined if how == "joined" else parted).add(side)
+        kept = joined - parted
+        if not kept:
+            continue
+        for number, column, text in lines:
+            for side, how, found in number_sides(text):
+                if how == "parted" and side in kept:
+                    words = "what follows" if side.endswith(">") else "what comes before"
+                    problems.append(
+                        f"{shown(path)}:{number}:{column + found.start() + 1}: `{id_}` parts"
+                        f" {found.group(0)} from {words} by a plain space, where the English joins"
+                        " them by a no-break space (U+00A0), which keeps them on one line"
+                    )
+    return problems
 
 
 def spacing_problems(path, language, source):
@@ -687,6 +758,14 @@ def main():
             path = folder / "l10n" / f"{language}.ftl"
             if path.exists():
                 problems += spacing_problems(path, language, path.read_text())
+    # Every translation, a plugin's from outside's too, keeps on one line
+    # the numbers its English joins to what is beside them.
+    for english in sorted((ROOT / "crates").glob("**/l10n/en.ftl")):
+        if "target" in english.relative_to(ROOT).parts:
+            continue
+        for path in sorted(english.parent.glob("*.ftl")):
+            if path != english:
+                problems += joined_problems(path, path.read_text(), english.read_text())
     known = {share["language"] for share in language_shares}
     problems += [
         f"{shown(OFFERED)}: {tag} is no language a catalog is in" for tag in record if tag not in known

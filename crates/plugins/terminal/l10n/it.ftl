@@ -31,7 +31,7 @@ terminal_scrollback = Cronologia
 terminal_scrollback_description = Quante righe puoi far scorrere all’indietro, per i terminali aperti da ora in poi, al massimo { $most }.
 
 # draft
-terminal_scrollback_description_more = Una volta piena, ogni { $lines } righe di un terminale largo occupano circa 30 MB.
+terminal_scrollback_description_more = Una volta piena, ogni { $lines } righe di un terminale largo occupano circa 30 MB.
 
 # draft
 terminal_scrollback_lines = { $n ->

@@ -506,7 +506,7 @@ print_smaller = File più piccolo
 print_smaller_folder = Una cartella in cui ridurre il PDF
 
 # draft
-print_smaller_help = Immagini al massimo a 150 dpi, come Schermo di Riduci dimensione
+print_smaller_help = Immagini al massimo a 150 dpi, come Schermo di Riduci dimensione
 
 # draft
 print_then = { $said }. { $then }

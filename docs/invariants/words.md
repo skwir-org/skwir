@@ -172,9 +172,11 @@ sentence, never a sentence assembled from pieces.
   a no-break space, `\u{a0}` in the English (`{ $n }\u{a0}MB`, `about
   { $minutes }\u{a0}min left`), and a dimension's numbers to their sign
   (`{ $width }\u{a0}×\u{a0}{ $height }`); gpui wraps at a plain space
-  only. `just words --check` refuses an English that parts them, and
-  the catalogs' test a translation that parts an argument its English
-  joins. A unit written as a word ("pixels") is prose, which may break.
+  only. `just words --check` refuses an English that parts them, and a
+  translation that parts a number written in it from what its English
+  joins it to; the catalogs' test a translation that parts an argument its
+  English joins. A unit written as a word ("pixels") is prose, which may
+  break.
   English writes a percent sign right after its number, with no space
   (`{ $n }%`, "100%"); a language that spaces it joins it (French
   « 42 % », a narrow no-break space).
@@ -358,6 +360,10 @@ sentence, never a sentence assembled from pieces.
     its narrow one before `; ! ?` and `»` and after `«`,
     `docs/glossary-fr.md`; `just words --check`): a plain space, where a
     line may break, or the other no-break space is refused;
+  - a translation keeps on one line what its English joins by a no-break
+    space: an argument and what is beside it (the catalogs' test), and a
+    number written in the message and its unit or `×`, translated or not
+    (`24\u{a0}MP`, Italian `da 12 a 24\u{a0}MP`; `just words --check`);
   - no catalog keeps an id the code no longer says;
   - the languages' shares counted and the record current; for a
     release, no language offered under 75% reviewed.

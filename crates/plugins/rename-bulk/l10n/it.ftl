@@ -164,7 +164,7 @@ rename_bulk_recipe_spaces = Spazi in trattini bassi → { $shown }
 rename_bulk_recipe_start = Rimuovi un inizio (IMG_)
 
 # draft
-rename_bulk_recipe_swap = Scambia due parti attorno a “ - ” → { $shown }
+rename_bulk_recipe_swap = Scambia due parti attorno a « - » → { $shown }
 
 # draft
 rename_bulk_recipe_underscores = Trattini bassi in spazi → uno spazio
