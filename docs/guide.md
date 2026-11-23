@@ -152,8 +152,9 @@ work where the keyboard is, by topic.
   you type, each key switches to its side and keeps the words, as the
   switch at the top of the list does. Either way the files show what the
   words keep as you type: the folder filtered at once, or, below it, the
-  search after a short pause (one that reads the files, `content:`, or
-  looks below a folder on a server, waits for `Enter`). `Enter` keeps
+  search after a short pause (one that reads the files, `content:`,
+  looks below a folder on a server, or over the whole disk where no
+  index answers it at once, waits for `Enter`). `Enter` keeps
   it and gives the files the keys (type a name to reach it); `Escape`
   goes back to how it was. Words typed after `Ctrl+L` filter the folder
   shown.
@@ -585,7 +586,8 @@ it, **+ Filter** adds one, and the text can be typed as is:
   them, `hidden:false` never does.
 - A search walks past the folders tools fill with what they manage
   themselves (`node_modules`, `.git`, `~/.cargo/registry`, caches, the
-  Trash): Settings › Exclusions lists them, by kind, each with what it
+  Trash), the kernel's own (`/proc`, `/sys`) and the Nix store:
+  Settings › Exclusions lists them, by kind, each with what it
   holds, and lets you add your own files and folders (a name, a path, a
   pattern such as `*.log` or `cmake-build-*`, a name only where a tool's
   file is beside it, as `target` beside `Cargo.toml`; `?` or `F1` in a

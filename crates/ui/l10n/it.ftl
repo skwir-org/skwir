@@ -3238,6 +3238,9 @@ exclusions_more = Altro
 exclusions_more_tooltip = Altro (tasto Menu)
 
 # draft
+exclusions_mounted_kernel = i filesystem del kernel
+
+# draft
 exclusions_move_to = Sposta in
 
 # draft

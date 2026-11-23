@@ -1532,15 +1532,19 @@ impl SettingsView {
                     return items;
                 };
                 let of = |what: &str| serde_json::json!({ "do": what, "entry": id });
-                items.push(item(
-                    words!(
-                        exclusions_menu_duplicate = "Duplicate",
-                        note = "A row's menu on the Exclusions page: makes a copy of the exclusion, the user's to edit."
-                    ),
-                    "copy",
-                    100,
-                    of("duplicate"),
-                ));
+                // Where filesystems of a kind are mounted is no pattern to
+                // edit: no copy of it (`model::duplicated`).
+                if !matches!(entry.matcher, skwir_core::exclusions::Matcher::Mounted(_)) {
+                    items.push(item(
+                        words!(
+                            exclusions_menu_duplicate = "Duplicate",
+                            note = "A row's menu on the Exclusions page: makes a copy of the exclusion, the user's to edit."
+                        ),
+                        "copy",
+                        100,
+                        of("duplicate"),
+                    ));
+                }
                 if !entry.builtin {
                     items.push(item(
                         words!(

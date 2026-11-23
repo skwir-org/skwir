@@ -3228,6 +3228,9 @@ exclusions_more = Plus
 exclusions_more_tooltip = Plus (touche Menu)
 
 # draft
+exclusions_mounted_kernel = les systèmes de fichiers du noyau
+
+# draft
 exclusions_move_to = Déplacer vers
 
 # draft

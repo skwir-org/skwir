@@ -1035,6 +1035,9 @@ exclusions_said_beside = { $what } beside a { $sibling }
 # What an exclusion means, on the Exclusions page: the file's name as written (a .nosearch, a CACHEDIR.TAG).
 exclusions_said_holding = any folder holding a { $file }
 
+# What an exclusion means, on the Exclusions page: the folders where the system mounts the kernel's filesystems, whose names are the running system's state. proc, sysfs and cgroup are the filesystems' names, as written.
+exclusions_said_kernel = where the kernel's own filesystems are mounted: proc, sysfs, cgroup and the like
+
 # What an exclusion means, on the Exclusions page: what it names and the pattern of its name as written (*.kdbx).
 exclusions_said_like = { $names ->
         [files] any file

@@ -6,7 +6,7 @@ Windows compiled only. Replaces the private folders' list of ADR-044
 (`privacy.folders`, `privacy.marker`, read on as a 0.3.1 file's) and
 ADR-092's `extract.exclude` (the Index role); amends ADR-026 (what a
 search's walk does not reach). Amended 2026-11-23 (14: a snapshot by
-what it is). Amended 2026-11-12 (see Amendments: the
+what it is; 15: the kernel's filesystems and the Nix store). Amended 2026-11-12 (see Amendments: the
 page lists by name).
 
 ## Context
@@ -177,6 +177,26 @@ walked into btrfs snapshot stores, which no entry names):
    `excluded:yes` (ADR-150, 5, says the same of skwird's snapshot holes).
    Every tool's store alike (snapper's `/.snapshots`, timeshift's,
    btrbk's), and no list to keep. Linux's (btrfs); elsewhere nothing is.
+
+15. **What indexes leave out is left out of searches too** (the user's
+   choice, 2026-11-23, from ADR-150's D1: a search of `/` walked /proc,
+   about 820,000 entries on the machine measured, /sys, 97,000, and
+   NixOS's store, millions, which plocate's database and skwird's system
+   service never hold, so no index could answer the whole disk at once).
+   Two categories, each with its switch:
+   - **Kernel filesystems:** the kernel's own (proc, sysfs, devtmpfs,
+     cgroup, debugfs and the like, `fs::reach::kernel_filesystem`), told
+     by their type in the mount table wherever they are mounted (a
+     chroot's `/proc` as well), never by a name: an entry of a kind of its
+     own (`Matcher::Mounted`, `mounted = "kernel"` in `builtin.toml`),
+     Skwir's alone, never copied into the user's (no Duplicate). The
+     memory filesystems (tmpfs at `/tmp`, `/run`) are walked: people put
+     files there, and a removable volume is mounted below `/run/media`.
+   - **Nix store:** `/nix/store`, a path.
+   Both kept from searches, tag counts and the timeline, and from an
+   index's harvest; not from agents. Found by their own name, walked when
+   searched in and with `excluded:yes`, counted among what a walk left
+   out, as every exclusion is. Linux and macOS (devfs there).
 
 ## Consequences
 

@@ -15,7 +15,7 @@ page comes with 6), checked in a window through a real engine; then 6
 and the evening's 8 to 12 (the Index page, Kept live, the switch, the
 menu's entry, skwird-check), checked in the release window. Amended the
 same evening (the Index page, steps E and F, the footer's
-words). Amends
+words), and again (13: step D's whole disk as typed). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 
@@ -189,4 +189,27 @@ The user's answers once steps A and B were built:
     to date", "index checked 15:51", "index as of 15 Jan 2027"; an index
     whose time cannot be told is named already ("as of plocate's
     database").
+
+### 2026-11-23, night: step D, its uses one at a time
+
+The user asked for step D's uses in the order judged best, skwird's
+session asked what it needs (a query's links unfiltered by size and
+time, folder totals: agreed with it, built on its side next).
+
+13. **The whole disk shows as its words are typed where an index answers
+    it at once** (amends ADR-098's amendment of 2026-10-27, which kept
+    every search of `/` for Enter): asked on the field's worker as each
+    key is typed, of the indexes as they run (`NameIndex::covers`: plocate
+    stats its database, skwird asks an engine already running, within
+    half a second, none started), and of the search's own planner
+    (`provider::answered_at_once`): the index a search asks first answers
+    with no check before it (live, its sync a barrier; or one that cannot
+    sync, as of), the search has names to ask, and every hole it says is
+    one the walk passes over (`holes_walked`, the one function the walk
+    uses too). Checked, its sync a check of the whole disk at each pause,
+    it waits for Enter. That the walk could pass over every hole of `/`
+    took ADR-125's point 15 (the kernel's filesystems and the Nix store
+    left out, the user's choice): before it, `/proc`, `/sys` and the Nix
+    store, which no index holds, were walked at each pause. A folder on a
+    server still waits; any other folder showed as typed already.
 

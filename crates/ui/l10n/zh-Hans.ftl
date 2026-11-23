@@ -3089,6 +3089,9 @@ exclusions_more = 更多
 exclusions_more_tooltip = 更多（Menu 键）
 
 # draft
+exclusions_mounted_kernel = 内核的文件系统
+
+# draft
 exclusions_move_to = 移到
 
 # draft

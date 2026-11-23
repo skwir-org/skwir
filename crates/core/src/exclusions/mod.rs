@@ -190,6 +190,30 @@ pub enum Matcher {
     },
     /// A folder holding this file.
     Holding(String),
+    /// Where filesystems of a kind are mounted, wherever that is (ADR-125,
+    /// 15): skwir's alone, never written by the user, never copied.
+    Mounted(Filesystems),
+}
+
+/// Filesystems told by their type, wherever they are mounted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Filesystems {
+    /// The kernel's own (`fs::reach::kernel_filesystem`): proc, sysfs,
+    /// cgroup, devpts and the like.
+    Kernel,
+}
+
+impl Filesystems {
+    /// As `builtin.toml` writes it.
+    pub fn key(self) -> &'static str {
+        match self {
+            Filesystems::Kernel => "kernel",
+        }
+    }
+
+    fn of_key(key: &str) -> Option<Filesystems> {
+        [Filesystems::Kernel].into_iter().find(|f| f.key() == key)
+    }
 }
 
 /// What stops the rules reading a matcher ([`Matcher::check`]):
@@ -246,6 +270,7 @@ impl Matcher {
                 }
                 Ok(())
             }
+            Matcher::Mounted(_) => Ok(()),
             Matcher::Holding(file) => {
                 if file.trim().is_empty() || file.contains(['/', '\\']) {
                     Err(of_pattern(words!(
@@ -289,6 +314,12 @@ impl Matcher {
     /// Cargo.toml", "~/.cargo/registry".
     pub fn words(&self) -> Words {
         let (text, beside, names) = match self {
+            Matcher::Mounted(Filesystems::Kernel) => {
+                return words!(
+                    exclusions_said_kernel = "where the kernel's own filesystems are mounted: proc, sysfs, cgroup and the like",
+                    note = "What an exclusion means, on the Exclusions page: the folders where the system mounts the kernel's filesystems, whose names are the running system's state. proc, sysfs and cgroup are the filesystems' names, as written."
+                );
+            }
             Matcher::Holding(file) => {
                 return words!(
                     exclusions_said_holding = "any folder holding a { $file }",
@@ -562,6 +593,9 @@ struct ShippedEntry {
     /// `files` or `both`; a shipped pattern names folders otherwise.
     names: Option<String>,
     holding: Option<String>,
+    /// Where filesystems of a kind are mounted (`kernel`), instead of a
+    /// pattern.
+    mounted: Option<String>,
     beside: Option<String>,
     group: Option<String>,
     systems: Option<Vec<String>>,
@@ -679,6 +713,10 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
             .and_then(Names::of_key)
             .unwrap_or(Names::Folders);
         let matcher = match (&e.pattern, &e.holding) {
+            (None, None) => match e.mounted.as_deref().and_then(Filesystems::of_key) {
+                Some(filesystems) => Matcher::Mounted(filesystems),
+                None => continue,
+            },
             (Some(folder), None) => {
                 let text = match e.under.as_deref() {
                     None => folder.clone(),
@@ -1092,6 +1130,8 @@ impl Catalog {
                     Matcher::Holding(file) => {
                         table.insert("holding".into(), toml::Value::String(file.clone()));
                     }
+                    // Skwir's alone: no entry of the user's holds one.
+                    Matcher::Mounted(_) => {}
                 }
                 // The user's own as written; what skwir wrote for them (an
                 // older list's) in English, as a setting's value is.
@@ -2155,6 +2195,8 @@ pub struct Rule {
     listed_set: HashSet<PathBuf>,
     beside: Vec<BesideRule>,
     holding: Vec<OsString>,
+    /// Whether the kernel's own filesystems are named, wherever mounted.
+    kernel: bool,
     fingerprint: u64,
 }
 
@@ -2265,8 +2307,13 @@ impl Rule {
         let mut beside = Vec::new();
         let mut holding = Vec::new();
         let mut said: Vec<String> = Vec::new();
+        let mut kernel = false;
         for matcher in matchers {
             match matcher {
+                Matcher::Mounted(Filesystems::Kernel) => {
+                    kernel = true;
+                    said.push("mounted:kernel".to_owned());
+                }
                 Matcher::Holding(file) => {
                     holding.push(OsString::from(file));
                     said.push(format!("holding:{file}"));
@@ -2333,8 +2380,16 @@ impl Rule {
             listed,
             beside,
             holding,
+            kernel,
             fingerprint,
         }
+    }
+
+    /// Whether the kernel's own filesystems are named, wherever they are
+    /// mounted (`Matcher::Mounted`): a walk asks the mount table which are
+    /// below its root (`fs::reach::kernel_points_below`).
+    pub fn kernel(&self) -> bool {
+        self.kernel
     }
 
     /// Only these folders, by their path: whatever their names hold, never
@@ -2892,8 +2947,8 @@ pub fn exposed_words(before: &Catalog, after: &Catalog) -> Vec<Words> {
 }
 
 /// What two entries must share to exclude the same things, what each
-/// names of them aside.
-type Same<'a> = (&'a str, Option<&'a str>, bool);
+/// names of them aside: the text, the sibling, and which kind of matcher.
+type Same<'a> = (&'a str, Option<&'a str>, u8);
 
 fn same_of(matcher: &Matcher) -> (Same<'_>, Names) {
     match matcher {
@@ -2901,7 +2956,8 @@ fn same_of(matcher: &Matcher) -> (Same<'_>, Names) {
             text,
             beside,
             names,
-        } => ((text.trim(), beside.as_deref(), false), *names),
-        Matcher::Holding(file) => ((file.trim(), None, true), Names::Folders),
+        } => ((text.trim(), beside.as_deref(), 0), *names),
+        Matcher::Holding(file) => ((file.trim(), None, 1), Names::Folders),
+        Matcher::Mounted(filesystems) => ((filesystems.key(), None, 2), Names::Folders),
     }
 }

@@ -173,7 +173,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 5: Cross-platform](#phase-5-cross-platform) | 5a gate passed 2026-10-06; 5b waits for machines | ~6 weeks |
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
-| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (ADR-050 amended); the user's choices made that day (ADR-150); A built that day (the coverage type, the names indexes' seam, plocate behind it), B too (the `skwird` plugin, checked in a window), E (Kept live, the Index page) and F (`just skwird-check`); D not built; skwird's phases 1 to 3 done | — |
+| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (ADR-050 amended); the user's choices made that day (ADR-150); A built that day (the coverage type, the names indexes' seam, plocate behind it), B too (the `skwird` plugin, checked in a window), E (Kept live, the Index page) and F (`just skwird-check`); D begun (D1 built, the whole disk as typed); skwird's phases 1 to 3 done | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05; the desktop shells' colors (G) 2026-11-07 (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
@@ -3770,13 +3770,31 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   (`ListingEvent::AsOf`), the footer says "as of Yesterday 03:00" with a
   tooltip, `entries` answers `as_of`. Not checked: Orca reading the
   footer; a real system database (none on the reference machine).
-- **D. Then, each decided on its own:** the address field searching as
-  one types, Usage of a tree from skwird's folder totals, "recently
-  changed" (with it, sizes and times asked of an index, A's leftover),
-  the tags index's checks (with them, its coverage said in A's words);
-  the harvest's enumeration and its journal (ADR-089, "Indexing and AI"
-  below), through the seam. Usage from folder totals needs a message
-  protocol 0 does not have.
+- **D. Then, each decided on its own** (the user asked for all five on
+  2026-11-23, in the order judged best, skwird's session asked what each
+  needs):
+  - **D1, the whole disk as typed:** *built 2026-11-23* (ADR-150, 13):
+    `/` shows as its words are typed where the index a search asks first
+    answers it at once (live, or as of where it cannot sync) and every
+    hole it says is one the walk passes over (`NameIndex::covers`,
+    `provider::answered_at_once`, `holes_walked`); with it ADR-125's
+    point 15, the user's choice: the kernel's filesystems (by type,
+    wherever mounted) and the Nix store left out of searches, two
+    categories. Not checked: in a window against skwird's system
+    service, which this machine does not run (unit tests of the field's
+    rows; plocate's case by its database's stat).
+  - **D2, "recently changed"** (sizes and times asked of an index, A's
+    leftover): to build on `Query.size`/`mtime`; a link's dates are its
+    target's, so skwird adds `links: "unfiltered"` (agreed with its
+    session 2026-11-23), its links stat-ed by the search.
+  - **D3, Usage from skwird's folder totals:** a `totals` message
+    skwird's session designs and builds after its phase 4 step 7 (shape
+    agreed 2026-11-23: each child's subtree totals, by extension, nlink
+    kept so `shared` counts as Usage does, holes by path, freshness by
+    `changes`).
+  - **D4, the tags index's checks** through skwird's journal, its
+    coverage said in A's words; **D5, the journal through the seam**, for
+    it and the harvest's enumeration (ADR-089, "Indexing and AI" below).
 - **E. Kept live** (ADR-150, 6): the list on the plugin's settings page
   (Your folders and Bookmarks followed, each switched; Added by you;
   rows ticked, a followed row unticked kept by its path), each row's

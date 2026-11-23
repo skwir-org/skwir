@@ -11,6 +11,9 @@
 //!   whatever the rules say: the Trash is a place of its own.
 //! - **A snapshot** (ADR-125, 14), a read-only btrfs subvolume, told by
 //!   what it is ([`Below::passes_over`]), but with `excluded:yes`.
+//! - **The kernel's own filesystems** (ADR-125, 15), where the rules name
+//!   them (a category of the Exclusions page): told by their type in the
+//!   mount table, wherever mounted ([`Below::named`]).
 //!
 //! Only what is below a walk's root is left out ([`Below`]): a search or a
 //! count asked of a folder the rules name walks it.
@@ -119,6 +122,11 @@ impl LeftOut {
             rule: Arc::clone(self),
             root: root.to_owned(),
             mounts: mounts_below(root).into_iter().collect(),
+            kernel: if self.rule.kernel() {
+                reach::kernel_points_below(root).into_iter().collect()
+            } else {
+                HashSet::new()
+            },
             probe,
             looked: Mutex::default(),
             // Read once a walk: no stat of a folder where no btrfs is.
@@ -159,6 +167,9 @@ pub struct Below {
     rule: Arc<LeftOut>,
     root: PathBuf,
     mounts: HashSet<PathBuf>,
+    /// Where the kernel's own filesystems are mounted below the root, where
+    /// the rules name them.
+    kernel: HashSet<PathBuf>,
     probe: bool,
     looked: Mutex<HashMap<PathBuf, bool>>,
     /// Whether the walk may meet a snapshot: it reads folders, passes a
@@ -230,10 +241,12 @@ impl Below {
         self.leaves_out_file(path) && !std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
     }
 
-    /// Whether the rules name `dir` (a mount, a trash, a name, a path, a
-    /// pattern): what is known without reading.
+    /// Whether the rules name `dir` (a network mount, one of the kernel's
+    /// filesystems, a trash, a name, a path, a pattern): what is known
+    /// without reading.
     pub fn named(&self, dir: &Path) -> bool {
-        dir != self.root && (self.mounts.contains(dir) || self.rule.names(dir))
+        dir != self.root
+            && (self.mounts.contains(dir) || self.kernel.contains(dir) || self.rule.names(dir))
     }
 
     /// Whether the walk looks up markers and siblings.
@@ -492,5 +505,30 @@ mod tests {
             LeftOut::listed(["node_modules"]).fingerprint()
         );
         assert_ne!(a.fingerprint(), LeftOut::none().fingerprint());
+    }
+
+    /// The kernel's own filesystems are left out where the rules name them,
+    /// told by the mount table wherever they are mounted, never by a name;
+    /// a walk asked of one walks it.
+    #[test]
+    fn the_kernel_filesystems_are_left_out_where_the_rules_name_them() {
+        let root = Path::new("/pretended for kernel mounts");
+        let proc = root.join("chroot/proc");
+        crate::fs::reach::pretend_kernel_mount(&proc);
+        let named = Arc::new(LeftOut::ruled(Rule::of(&[Matcher::Mounted(
+            crate::exclusions::Filesystems::Kernel,
+        )])));
+        assert!(named.below(root, false).leaves_out(&proc));
+        assert!(
+            !named
+                .below(root, false)
+                .leaves_out(&root.join("chroot/home/proc")),
+            "a folder named so is no mount"
+        );
+        assert!(!named.below(&proc, false).leaves_out(&proc), "its own root");
+        let unnamed = Arc::new(LeftOut::ruled(Rule::default()));
+        assert!(!unnamed.below(root, false).leaves_out(&proc), "unticked");
+        assert!(!LeftOut::none().fingerprint().eq(&named.fingerprint()));
+        assert_ne!(named.fingerprint(), unnamed.fingerprint());
     }
 }

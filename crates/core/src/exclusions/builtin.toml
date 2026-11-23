@@ -12,8 +12,9 @@
 # or a glob of either (`*` within a name, `**` across names). `names =
 # "files"` says it names files (`*.kdbx`); without it, folders. `beside`
 # asks for a sibling, a name or a glob; `holding`, instead of `pattern`, a
-# file a folder holds. `systems` limits an entry to some systems; without
-# it, it holds on every one. In a category kept from agents, an entry a
+# file a folder holds; `mounted`, instead of either, where filesystems of
+# a kind are mounted (`kernel`). `systems` limits an entry to some
+# systems; without it, it holds on every one. In a category kept from agents, an entry a
 # variable moved stays excluded where it was too.
 #
 # A tool's folder is listed whole only where nobody writes in it: where
@@ -6546,6 +6547,41 @@ id = "caches.ccache-legacy"
 category = "caches"
 what = "ccache: the cache in its older place"
 pattern = "~/.ccache"
+
+# What indexes leave out (plocate's PRUNEFS, skwird's system service;
+# ADR-125, 15, the user's choice of 2026-11-23): the kernel's own
+# filesystems, told by their type wherever they are mounted (`mounted`,
+# instead of a pattern: `fs::reach::kernel_filesystem` names them), and
+# the Nix store. Memory filesystems (tmpfs, at /tmp and /run) are walked:
+# people put files there, and a removable volume is mounted below /run.
+
+[[category]]
+id = "kernel"
+name = "Kernel filesystems"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "kernel.filesystems"
+category = "kernel"
+what = "The kernel's own: a folder for each process, the devices, control groups"
+mounted = "kernel"
+systems = ["linux", "macos"]
+
+[[category]]
+id = "nix-store"
+name = "Nix store"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "nix.store"
+category = "nix-store"
+what = "Nix: the store, millions of read-only files its builds alone change"
+pattern = "/nix/store"
+systems = ["linux", "macos"]
 
 [[category]]
 id = "system"

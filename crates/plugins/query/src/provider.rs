@@ -1188,6 +1188,75 @@ impl Reached {
     }
 }
 
+/// The holes of a names index's answer (real paths) a search of `q` walks
+/// (ADR-150, 5), as paths below its root as written, each once (one inside
+/// another walked with it): a snapshot passed over unless `excluded:yes`,
+/// and what the walk would not reach (hidden, too deep, left out, a
+/// network mount) left. The root itself, where it is one, is all of it.
+fn holes_walked(q: &Query, below: &Below, holes: &[Hole], real_root: &Path) -> Vec<PathBuf> {
+    let mut holes: Vec<&Path> = holes
+        .iter()
+        .filter(|h| q.excluded || !h.why.passed_over())
+        .filter_map(|h| h.path.strip_prefix(real_root).ok())
+        .collect();
+    holes.sort_unstable();
+    let mut walked = Vec::new();
+    let mut above: Option<&Path> = None;
+    for relative in holes {
+        // Sorted, a folder's holes follow it.
+        if above.is_some_and(|above| relative.starts_with(above)) {
+            continue;
+        }
+        above = Some(relative);
+        let path = q.root.join(relative);
+        if !relative.as_os_str().is_empty()
+            && (in_walk(q, below, &path).is_none() || below.leaves_out(&path))
+        {
+            continue;
+        }
+        walked.push(path);
+    }
+    walked
+}
+
+/// Whether a search of `q` would be answered at once by a names index,
+/// walking nothing (ADR-150, D1): the index a search asks first answers
+/// with no check before it (live, its sync a barrier; or one that cannot
+/// sync, as of when it is), and every hole it says is one the walk passes
+/// over (`holes_walked`). Asked of the indexes as they run now
+/// (`NameIndexes::covers`: nothing started), on a worker: what the
+/// address field asks before it shows a search of the whole disk as its
+/// words are typed, which would otherwise walk it all at each pause.
+pub(crate) fn answered_at_once(app: &App, q: &Query, cancel: &CancelToken) -> bool {
+    if q.within.is_some() || skwir_core::fs::reach::of(&q.root).is_some() {
+        return false;
+    }
+    let Ok(real_root) = skwir_core::os_path::canonical(&q.root) else {
+        return false;
+    };
+    let Some(asked) = q.named(real_root.clone()) else {
+        return false;
+    };
+    let Some((index, coverage)) = app.names.covers(&asked, cancel).into_iter().next() else {
+        return false;
+    };
+    let at_once = if index.syncs() {
+        matches!(coverage.names, Proof::Live { .. })
+    } else {
+        coverage.names.answers()
+    };
+    if !at_once || cancel.is_cancelled() {
+        return false;
+    }
+    let rule = if q.excluded {
+        Arc::new(LeftOut::none())
+    } else {
+        app.left_out()
+    };
+    let below = rule.below(&q.root, true);
+    holes_walked(q, &below, &coverage.holes, &real_root).is_empty()
+}
+
 /// What a names index proved of a search (`Shared::named`): what its
 /// answer rests on, what it does not cover, and how many folders what it
 /// named fell in that the walk leaves out.
@@ -1521,28 +1590,10 @@ impl Shared {
         let Ok(real_root) = skwir_core::os_path::canonical(&q.root) else {
             return 0;
         };
-        let mut holes: Vec<&Path> = holes
-            .iter()
-            .filter(|h| q.excluded || !h.why.passed_over())
-            .filter_map(|h| h.path.strip_prefix(&real_root).ok())
-            .collect();
-        holes.sort_unstable();
         let mut left_out = 0;
-        let mut walked: Option<&Path> = None;
-        for relative in holes {
+        for path in holes_walked(q, below, holes, &real_root) {
             if batcher.cancel.is_cancelled() {
                 return left_out;
-            }
-            // Sorted, a folder's holes follow it.
-            if walked.is_some_and(|above| relative.starts_with(above)) {
-                continue;
-            }
-            walked = Some(relative);
-            let path = q.root.join(relative);
-            if !relative.as_os_str().is_empty()
-                && (in_walk(q, below, &path).is_none() || below.leaves_out(&path))
-            {
-                continue;
             }
             left_out += Self::walk_below(q, &path, below, considered, batcher, deferred);
         }

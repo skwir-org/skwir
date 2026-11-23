@@ -2696,6 +2696,9 @@ exclusions_more = More
 # The tooltip of a row's menu button on the Exclusions page: the Menu key opens it too.
 exclusions_more_tooltip = More (Menu key)
 
+# A row of the Exclusions page, where a path is written for other rows: the folders where the system mounts the kernel's own filesystems (proc, sysfs), wherever they are.
+exclusions_mounted_kernel = the kernel's filesystems
+
 # A submenu of a row's menu on the Exclusions page: the categories the folder may move to.
 exclusions_move_to = Move to
 

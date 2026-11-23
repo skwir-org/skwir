@@ -55,7 +55,7 @@ impl SuggestSource for Field {
         true
     }
 
-    fn suggest(&self, app: &App, ask: &Ask, _: &CancelToken) -> Answer {
+    fn suggest(&self, app: &App, ask: &Ask, cancel: &CancelToken) -> Answer {
         match ask.typed {
             Typed::Nothing => before_typing(app, ask),
             Typed::Scope => Answer {
@@ -66,7 +66,7 @@ impl SuggestSource for Field {
                 rows: crate::reference::rows(ask),
                 spans: Vec::new(),
             },
-            _ => typed(app, ask, &self.tags),
+            _ => typed(app, ask, &self.tags, cancel),
         }
     }
 }
@@ -183,25 +183,44 @@ pub fn search(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Invocation 
 
 /// The search of `expr` in `scope` shown as its words are typed (ADR-098):
 /// in place of the step the pane shows, not remembered. None where each
-/// search costs: one that reads the files, the whole disk, a folder on a
-/// server (each walk round trips); those wait for Enter.
-fn live(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Option<Invocation> {
+/// search costs: one that reads the files, a folder on a server (each walk
+/// round trips), the whole disk unless an index answers it at once,
+/// walking nothing (ADR-150, D1); those wait for Enter.
+fn live(
+    app: &App,
+    expr: &str,
+    scope: &Location,
+    ask: &Ask,
+    cancel: &CancelToken,
+) -> Option<Invocation> {
     if lang::parse(expr).ok()?.reads_files() {
         return None;
     }
-    if let Some(path) = scope.path()
-        && (path.parent().is_none() || skwir_core::fs::reach::of(&path).is_some())
-    {
-        return None;
-    }
     let mut run = search(app, expr, scope, ask);
+    if let Some(path) = scope.path() {
+        if skwir_core::fs::reach::of(&path).is_some() {
+            return None;
+        }
+        if path.parent().is_none() {
+            // What Enter searches, the lens's words with it; hidden files
+            // counted in, as the pane may show them.
+            let mut q = lang::parse(run.args["expr"].as_str()?).ok()?;
+            if !q.root_given {
+                q.root = path;
+            }
+            q.hidden = q.hidden_asked.unwrap_or(true);
+            if !crate::provider::answered_at_once(app, &q, cancel) {
+                return None;
+            }
+        }
+    }
     run.args["remember"] = false.into();
     run.args["in_place"] = true.into();
     Some(run)
 }
 
 /// The rows for words typed.
-fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
+fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers, cancel: &CancelToken) -> Answer {
     let text = ask.text.as_str();
     let words = ask.words();
     let caret = ask.caret.min(text.len());
@@ -291,7 +310,7 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
             row.completion = Some(with(item));
             row.rest = rest_of(item);
         } else {
-            row.live = live(app, &expr, &scope, ask);
+            row.live = live(app, &expr, &scope, ask, cancel);
         }
         rows.push(row);
     }
@@ -769,6 +788,133 @@ mod tests {
             .suggest(&app, &disk, &CancelToken::new())
             .rows;
         assert!(r[0].run.is_some() && r[0].live.is_none());
+    }
+
+    /// A names index that says it covers what it is asked as `coverage`.
+    struct Covering(skwir_core::coverage::Coverage, bool);
+
+    impl skwir_core::names::NameIndex for Covering {
+        fn id(&self) -> &'static str {
+            "covering"
+        }
+        fn by(&self) -> skwir_core::words::Words {
+            skwir_core::words::Words::as_written("covering")
+        }
+        fn syncs(&self) -> bool {
+            self.1
+        }
+        fn open(&self, _: &Path, _: &CancelToken) -> Option<skwir_core::names::Opened> {
+            None
+        }
+        fn covers(
+            &self,
+            _: &skwir_core::names::Query,
+            _: &CancelToken,
+        ) -> Option<skwir_core::coverage::Coverage> {
+            Some(self.0.clone())
+        }
+    }
+
+    /// The whole disk shows as its words are typed where an index answers
+    /// it at once, walking nothing (ADR-150, D1): live, or as of where it
+    /// cannot sync; never checked (its sync is a check), nor where a hole
+    /// is walked, nor where the index cannot answer the search.
+    #[test]
+    fn the_whole_disk_shows_as_typed_where_an_index_answers_it_at_once() {
+        use skwir_core::coverage::{Coverage, Hole, Proof, Why};
+        let at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_007);
+        let disk = || {
+            let mut disk = ask("dunes");
+            disk.scope = Some(Location::from_path(std::path::MAIN_SEPARATOR_STR));
+            disk
+        };
+        let shown = |names: Proof, syncs: bool, holes: Vec<Hole>, text: &str| {
+            let tmp = tempfile::tempdir().unwrap();
+            let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+            let coverage = Coverage {
+                names,
+                attrs: Proof::AsOf { at: None },
+                holes,
+            };
+            app.names
+                .register("test", std::sync::Arc::new(Covering(coverage, syncs)));
+            let mut ask = disk();
+            ask.text = text.to_owned();
+            ask.caret = text.len();
+            Field::default()
+                .suggest(&app, &ask, &CancelToken::new())
+                .rows[0]
+                .live
+                .is_some()
+        };
+        let root = PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+        let hole = |at: &str, why| Hole {
+            path: root.join(at),
+            why,
+        };
+        let live = || Proof::Live { since: at };
+        assert!(shown(live(), true, Vec::new(), "dunes"));
+        assert!(shown(
+            Proof::AsOf { at: Some(at) },
+            false,
+            Vec::new(),
+            "dunes"
+        ));
+        assert!(
+            !shown(Proof::Checked { at }, true, Vec::new(), "dunes"),
+            "checked first"
+        );
+        assert!(!shown(
+            Proof::AsOf { at: Some(at) },
+            true,
+            Vec::new(),
+            "dunes"
+        ));
+        assert!(
+            !shown(live(), true, vec![hole("srv/made up", Why::Mount)], "dunes"),
+            "a hole walked"
+        );
+        assert!(
+            shown(
+                live(),
+                true,
+                vec![hole("srv/made up", Why::Snapshot)],
+                "dunes"
+            ),
+            "a snapshot passed over"
+        );
+        assert!(
+            !shown(
+                live(),
+                true,
+                vec![hole("srv/made up", Why::Snapshot)],
+                "dunes excluded:yes"
+            ),
+            "walked with excluded:yes"
+        );
+        assert!(
+            shown(
+                live(),
+                true,
+                vec![hole("nix/store", Why::Excluded)],
+                "dunes"
+            ),
+            "the Nix store left out (ADR-125, 15)"
+        );
+        if cfg!(target_os = "linux") {
+            assert!(
+                shown(live(), true, vec![hole("proc", Why::Mount)], "dunes"),
+                "the kernel's filesystems left out"
+            );
+        }
+        assert!(
+            !shown(live(), true, Vec::new(), "size>1M"),
+            "no name to ask"
+        );
+        assert!(
+            !shown(live(), true, Vec::new(), "content:dunes"),
+            "reads the files"
+        );
     }
 
     #[test]

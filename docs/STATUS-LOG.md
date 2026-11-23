@@ -23279,3 +23279,39 @@ share, the engine, the system service), marked drafted.
   `plugins_toggle`.
 - **Also checked since step E:** `just check-cross` (clippy for Windows
   and macOS, the whole workspace) green.
+
+## 2026-11-23: the whole disk as typed where an index answers it (ADR-150, 13; ADR-125, 15)
+
+Step D's first use. A search of `/` waited for Enter (ADR-098), as each
+pause would walk the whole disk. It now shows as typed where the index a
+search asks first answers it at once and nothing is left to walk.
+
+- **What was found first:** even with an index, `/` walked what none
+  holds: `/proc` (821,645 entries by `find` on this machine, 184 ms),
+  `/sys` (97,354), and the Nix store (millions), which plocate's database
+  and skwird's system service leave out. The user chose to leave them
+  out of searches too (ADR-125, 15): two categories, Kernel filesystems
+  (by type in the mount table, wherever mounted: `Matcher::Mounted`,
+  `fs::reach::kernel_filesystem`, `Below` asks `kernel_points_below`)
+  and Nix store (`/nix/store`). Memory filesystems stay walked (`/tmp`,
+  `/run`, where a removable volume is mounted).
+- **The decision is the search's own:** the holes a search walks are one
+  function (`holes_walked`), used by the walk and by
+  `provider::answered_at_once`, which the field asks on its worker. The
+  seam gained `NameIndex::covers`: plocate stats its database (its help,
+  naming it, asked once a program), skwird asks an engine already
+  running, a half-second silence, nothing started or sent.
+- **Checked:** the field's rows for `/` against a stand-in index (live,
+  as of without a sync, checked, a hole walked, a snapshot, the Nix
+  store, `/proc` on Linux, `excluded:yes`, no names, contents); the walk
+  leaving out a pretended kernel mount and walking a folder named so;
+  the real table naming `/proc`; the shipped list (kernel mounts and the
+  store kept from searches, not agents); skwir-core's exclusions, walks,
+  names, reach and words tests (166), the query and skwird plugins' tests
+  (158), the UI's exclusions tests, `plugins_toggle`; clippy on core, ui,
+  query and skwird; the two new messages drafted in French, Italian and
+  Chinese (`--release` green).
+- **Not checked:** a window against skwird's system service, which this
+  machine does not run; nor plocate here, not installed.
+- **skwird's session, asked:** a query's `links: "unfiltered"` (for D2)
+  and a `totals` message (for D3), shapes agreed; built on its side next.

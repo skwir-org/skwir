@@ -1123,6 +1123,9 @@ exclusions_said_beside = 旁边有 { $sibling } 的 { $what }
 exclusions_said_holding = 任何包含 { $file } 的文件夹
 
 # draft
+exclusions_said_kernel = 内核自身文件系统的挂载位置：proc、sysfs、cgroup 等
+
+# draft
 exclusions_said_like = { $names ->
         [files] 任何名称类似 { $pattern } 的文件
         [folders] 任何名称类似 { $pattern } 的文件夹

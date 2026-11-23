@@ -45,6 +45,11 @@ const CLIENT: &str = "skwir";
 /// stops its call at once, through its token.
 const SILENCE: Duration = Duration::from_secs(60);
 
+/// How long an engine may take to say how far it covers a root, asked as
+/// each key is typed (`NameIndex::covers`): a round trip, its hello
+/// included; one busier than that is not counted on.
+const PROBE_SILENCE: Duration = Duration::from_millis(500);
+
 /// What answered, said where the answer is (`RestsOn::by`).
 pub fn by() -> Words {
     skwir_core::words!(
@@ -258,6 +263,20 @@ impl NameIndex for Index {
                 _stop: stop,
             }),
         })
+    }
+
+    /// What a running engine says of `q.root`: no engine started, nothing
+    /// sent but the question, given up on past a round trip.
+    fn covers(&self, q: &Query, cancel: &CancelToken) -> Option<Coverage> {
+        let mut find = find(&self.engines, false)?;
+        find.silence = Some(PROBE_SILENCE);
+        if cancel.is_cancelled() {
+            return None;
+        }
+        let mut client = Client::connect(&find).ok()?;
+        let stopper = client.stopper().ok()?;
+        let _stop = cancel.on_cancel(move || stopper.stop());
+        client.coverage(&q.root).ok().map(coverage_of)
     }
 }
 

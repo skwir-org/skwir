@@ -1133,6 +1133,9 @@ exclusions_said_beside = { $what } à côté d’un { $sibling }
 exclusions_said_holding = tout dossier contenant un fichier { $file }
 
 # draft
+exclusions_said_kernel = là où sont montés les systèmes de fichiers propres au noyau : proc, sysfs, cgroup et les autres
+
+# draft
 exclusions_said_like = { $names ->
         [files] tout fichier
         [folders] tout dossier

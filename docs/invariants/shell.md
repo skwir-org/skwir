@@ -728,9 +728,12 @@ asks the direction.
     place of one step of the pane's history, the field's own
     (`App::step_here`, then `navigate_in_place`): Back from it goes to
     what was shown before. A search that reads the files (contents, a
-    picture's date or place), looks over the whole disk, or below a
-    folder on a server (each walk round trips) waits for Enter, and the
-    first row says so (the query plugin leaves `live` empty).
+    picture's date or place), looks below a folder on a server (each walk
+    round trips), or over the whole disk where no index answers it at
+    once, walking nothing (ADR-150, 13: live, or as of where it cannot
+    sync, every hole one the walk passes over; asked of what runs, nothing
+    started) waits for Enter, and the first row says so (the query plugin
+    leaves `live` empty).
   - Enter with no row chosen keeps what the words show and gives the
     files the keyboard: the folder filtered; the search shown, now
     remembered (`query.search` leaves a search shown as it is), or run

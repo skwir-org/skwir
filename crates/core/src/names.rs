@@ -96,6 +96,17 @@ pub trait NameIndex: Send + Sync {
     /// (no engine, another root). Blocking, on the search's worker; given
     /// up on with `cancel`.
     fn open(&self, root: &Path, cancel: &CancelToken) -> Option<Opened>;
+
+    /// How far it would answer `q` now, from what already runs: never
+    /// starting anything, nor telling it anything, and answering within a
+    /// socket's round trip or not at all (ADR-150, D1). What the address
+    /// field asks as each key is typed, on a worker, to show a search of
+    /// the whole disk at once where an index would answer it. `None`
+    /// (the default): it cannot tell without opening, or would not answer
+    /// `q`.
+    fn covers(&self, _q: &Query, _cancel: &CancelToken) -> Option<Coverage> {
+        None
+    }
 }
 
 /// An index opened for a search: which, how far it covers, its session.
@@ -153,6 +164,25 @@ impl NameIndexes {
         asked.sort_by_key(|a| std::cmp::Reverse(a.coverage.names.strength()));
         asked
     }
+
+    /// What each index would answer of `q` now ([`NameIndex::covers`]),
+    /// the strongest proof of names first, as [`open`](Self::open) sorts
+    /// them; none that cannot tell or does not cover it.
+    pub fn covers(&self, q: &Query, cancel: &CancelToken) -> Vec<(Arc<dyn NameIndex>, Coverage)> {
+        let mut covered: Vec<(Arc<dyn NameIndex>, Coverage)> = Vec::new();
+        for index in self.list.all() {
+            if cancel.is_cancelled() {
+                return Vec::new();
+            }
+            if let Some(coverage) = index.covers(q, cancel)
+                && coverage.names.answers()
+            {
+                covered.push((index, coverage));
+            }
+        }
+        covered.sort_by_key(|(_, c)| std::cmp::Reverse(c.names.strength()));
+        covered
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +220,9 @@ mod tests {
                 session: Box::new(Nothing),
             })
         }
+        fn covers(&self, _: &Query, _: &CancelToken) -> Option<Coverage> {
+            Some(self.1.clone())
+        }
     }
 
     #[test]
@@ -224,6 +257,18 @@ mod tests {
             .map(|a| a.index.id())
             .collect();
         assert_eq!(asked, ["live", "checked", "checked too", "as of"]);
+        let q = Query {
+            root: PathBuf::from("/"),
+            names: Vec::new(),
+            kinds: None,
+            whole: true,
+        };
+        let covered: Vec<_> = indexes
+            .covers(&q, &CancelToken::new())
+            .into_iter()
+            .map(|(index, _)| index.id())
+            .collect();
+        assert_eq!(covered, asked, "told as they are opened");
         indexes.unregister_owner("d");
         assert_eq!(indexes.ids(), ["as of", "denied", "checked", "checked too"]);
     }

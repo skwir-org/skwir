@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use skwir_core::collate;
 use skwir_core::exclusions::{
-    Catalog, Category, Entry, Matcher, Names, Role, Switches, Unreadable, Written, YOURS, unique_id,
+    Catalog, Category, Entry, Filesystems, Matcher, Names, Role, Switches, Unreadable, Written,
+    YOURS, unique_id,
 };
 use skwir_core::words;
 use skwir_core::words::{List, Words};
@@ -55,6 +56,10 @@ pub(crate) fn pattern_of(matcher: &Matcher) -> Words {
             file = file.clone(),
             note = "A row of the Exclusions page: any folder holding this file, the file's name as written (.nosearch). holding is also the field's name in the settings file."
         ),
+        Matcher::Mounted(Filesystems::Kernel) => words!(
+            exclusions_mounted_kernel = "the kernel's filesystems",
+            note = "A row of the Exclusions page, where a path is written for other rows: the folders where the system mounts the kernel's own filesystems (proc, sysfs), wherever they are."
+        ),
     }
 }
 
@@ -65,6 +70,7 @@ fn id_source(matcher: &Matcher) -> String {
     match matcher {
         Matcher::Pattern { text, .. } => skwir_core::exclusions::shown(text),
         Matcher::Holding(file) => format!("holding {file}"),
+        Matcher::Mounted(filesystems) => format!("mounted {}", filesystems.key()),
     }
 }
 
@@ -695,6 +701,8 @@ impl Draft {
                 Names::Folders,
             ),
             Matcher::Holding(file) => (Kind::Holding, none(), none(), file.clone(), Names::Folders),
+            // Skwir's alone, never edited: the form opens on none.
+            Matcher::Mounted(_) => (Kind::Pattern, none(), none(), none(), Names::Folders),
         };
         Draft {
             kind,
@@ -885,6 +893,11 @@ pub(crate) fn duplicated(catalog: &Catalog, id: &str) -> (Catalog, Option<String
         return (next, None);
     };
     let original = next.entries[at].clone();
+    // Where filesystems of a kind are mounted is no pattern the user could
+    // edit: no copy of it.
+    if matches!(original.matcher, Matcher::Mounted(_)) {
+        return (next, None);
+    }
     // An id is an identifier: made from the English.
     let what = original.what.english();
     let new_id = unique_id(

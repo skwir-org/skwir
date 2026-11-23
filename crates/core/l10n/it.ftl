@@ -1126,6 +1126,9 @@ exclusions_said_beside = { $what } accanto a { $sibling }
 exclusions_said_holding = qualsiasi cartella che contiene { $file }
 
 # draft
+exclusions_said_kernel = dove sono montati i filesystem propri del kernel: proc, sysfs, cgroup e simili
+
+# draft
 exclusions_said_like = { $names ->
         [files] qualsiasi file
         [folders] qualsiasi cartella

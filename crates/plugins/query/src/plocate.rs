@@ -43,6 +43,9 @@ pub fn by() -> skwir_core::words::Words {
 pub struct Index {
     /// The program asked; `None` for the `plocate` on the `PATH`.
     program: Option<PathBuf>,
+    /// The databases a program reads, as its help named them, asked once
+    /// a program ([`NameIndex::covers`] is asked at each key typed).
+    databases: parking_lot::Mutex<Option<(PathBuf, Vec<PathBuf>)>>,
 }
 
 impl Index {
@@ -51,7 +54,29 @@ impl Index {
     pub fn at(program: PathBuf) -> Index {
         Index {
             program: Some(program),
+            databases: parking_lot::Mutex::default(),
         }
+    }
+
+    fn program(&self) -> Option<PathBuf> {
+        match &self.program {
+            Some(program) => Some(program.clone()),
+            None => skwir_core::os_path::find_program("plocate"),
+        }
+    }
+
+    /// The databases `bin` reads, its help asked once.
+    fn databases_of(&self, bin: &Path, cancel: &CancelToken) -> Vec<PathBuf> {
+        if let Some((known, databases)) = self.databases.lock().as_ref()
+            && known == bin
+        {
+            return databases.clone();
+        }
+        let databases = databases(bin, cancel);
+        if !cancel.is_cancelled() {
+            *self.databases.lock() = Some((bin.to_path_buf(), databases.clone()));
+        }
+        databases
     }
 }
 
@@ -72,10 +97,7 @@ impl NameIndex for Index {
         if root != Path::new("/") {
             return None;
         }
-        let bin = match &self.program {
-            Some(program) => program.clone(),
-            None => skwir_core::os_path::find_program("plocate")?,
-        };
+        let bin = self.program()?;
         Some(Opened {
             // As of a time read once it answered (`Session::query`): no
             // process is started for a search it cannot answer.
@@ -85,6 +107,19 @@ impl NameIndex for Index {
                 cancel: cancel.clone(),
             }),
         })
+    }
+
+    /// As of its databases' update where it would answer `q`: a search of
+    /// `/` whose terms are all name substrings, a database there to read
+    /// (a stat; its help, which names it, asked once).
+    fn covers(&self, q: &skwir_core::names::Query, cancel: &CancelToken) -> Option<Coverage> {
+        if q.root != Path::new("/") {
+            return None;
+        }
+        substrings(q)?;
+        let bin = self.program()?;
+        let at = updated(&self.databases_of(&bin, cancel))?;
+        Some(Coverage::as_of(Some(at)))
     }
 }
 

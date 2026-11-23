@@ -73,6 +73,18 @@ fn skwirs_list_reads_and_each_entry_is_in_a_category() {
     assert!(searches.names(Path::new("/anywhere/.git")));
     assert!(!searches.names(&home.join(".ssh")));
     assert!(searches.markers().contains(&OsString::from(CACHEDIR_TAG)));
+    // What indexes leave out (ADR-125, 15): the kernel's filesystems,
+    // wherever mounted, and the Nix store, kept from searches, never from
+    // agents.
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(searches.kernel());
+        assert!(searches.names(Path::new("/nix/store")));
+        assert!(!searches.names(Path::new("/nix")));
+        assert!(!agents.kernel());
+        assert!(!agents.names(Path::new("/nix/store")));
+    } else {
+        assert!(!searches.kernel());
+    }
 }
 
 fn shipped_entry<'a>(catalog: &'a Catalog, text: &str) -> &'a Entry {

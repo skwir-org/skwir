@@ -389,7 +389,10 @@ and `notes.agree` are core `notes.*` commands.
   substrings alone) stands as of when it is; a failed sync, an answer cut
   short or none walks, skipping what was considered, so nothing shown is
   taken back. Its holes are walked, but for a snapshot below the folder
-  searched (unless `excluded:yes`). Each run says what its answer rests
+  searched (unless `excluded:yes`) and what the walk leaves out anyway
+  (`holes_walked`, one function for the walk and for the address field,
+  which shows a search of `/` as typed only where it walks nothing:
+  ADR-150, 13). Each run says what its answer rests
   on once it is whole (`ListingEvent::RestsOn`: the index and its proof,
   or `None` for a walk), and the footer ("index up to date", "index
   checked …", "index as of …") and `entries` (`index`, and `as_of` as it

@@ -661,6 +661,9 @@ pub struct Mount {
     /// mounted as it is looked up, and let go of once nothing uses it a
     /// while, which is no volume going (ADR-149).
     pub on_demand: bool,
+    /// One of the kernel's own filesystems ([`kernel_filesystem`]): its
+    /// names are the running system's state, not files kept.
+    pub kernel: bool,
 }
 
 impl Mount {
@@ -674,8 +677,77 @@ impl Mount {
             id: id.finish(),
             remote: false,
             on_demand: fstype == "autofs",
+            kernel: kernel_filesystem(fstype),
         }
     }
+}
+
+/// Whether `fstype` is one of the kernel's own filesystems, whose names
+/// are the running system's state, never files kept: a process each
+/// (proc), the devices (sysfs, devtmpfs, devfs), control groups, the
+/// kernel's switches and traces (ADR-125, 15). Not the memory ones (tmpfs,
+/// ramfs), which hold what people put there; nor a FUSE program's, nor an
+/// image's (squashfs), which hold files.
+pub fn kernel_filesystem(fstype: &str) -> bool {
+    const KERNEL: &[&str] = &[
+        "proc",
+        "sysfs",
+        "devtmpfs",
+        "devpts",
+        "devfs",
+        "cgroup",
+        "cgroup2",
+        "debugfs",
+        "tracefs",
+        "securityfs",
+        "pstore",
+        "bpf",
+        "configfs",
+        "fusectl",
+        "hugetlbfs",
+        "mqueue",
+        "binfmt_misc",
+        "efivarfs",
+        "selinuxfs",
+        "rpc_pipefs",
+        "nfsd",
+        "nsfs",
+    ];
+    KERNEL.contains(&fstype)
+}
+
+/// Where the kernel's own filesystems are mounted below `root`, `root`
+/// itself aside ([`Mount::kernel`]): from the table in memory, nothing
+/// read. None on Windows, which lists no table.
+pub fn kernel_points_below(root: &Path) -> Vec<PathBuf> {
+    #[cfg(test)]
+    let pretended: Vec<PathBuf> = PRETENDED_KERNEL
+        .lock()
+        .iter()
+        .filter(|point| *point != root && point.starts_with(root))
+        .cloned()
+        .collect();
+    #[cfg(not(test))]
+    let pretended = Vec::new();
+    table()
+        .points
+        .iter()
+        .filter(|m| m.kernel && m.point != root && m.point.starts_with(root))
+        .map(|m| m.point.clone())
+        .chain(pretended)
+        .collect()
+}
+
+/// The kernel's mounts this test's process pretends are there
+/// ([`pretend_kernel_mount`]).
+#[cfg(test)]
+static PRETENDED_KERNEL: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Say, for this test's process, that one of the kernel's filesystems is
+/// mounted at `point`.
+#[cfg(test)]
+pub(crate) fn pretend_kernel_mount(point: &Path) {
+    PRETENDED_KERNEL.lock().push(point.to_path_buf());
 }
 
 /// Whether what holds `path` is mounted on demand: the deepest mount point
@@ -1552,6 +1624,20 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    /// The kernel's own filesystems are told by the table, wherever they
+    /// are mounted: `/proc` on every Linux, never `/` itself.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_kernels_filesystems_are_told_by_the_table() {
+        let below = super::kernel_points_below(std::path::Path::new("/"));
+        assert!(
+            below.iter().any(|p| p == std::path::Path::new("/proc")),
+            "{below:?}"
+        );
+        assert!(!below.iter().any(|p| p == std::path::Path::new("/")));
+        assert!(super::kernel_filesystem("sysfs") && !super::kernel_filesystem("tmpfs"));
+    }
+
     /// A mount made and let go of by another program is told, once each,
     /// and the table read again by then. Run in a mount namespace of the
     /// test's own (`the_table_is_followed`), where it mounts as root: it
