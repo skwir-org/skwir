@@ -22839,3 +22839,26 @@ none will be published.
   as before; clippy on them silent. skwird's `tools/vendor-client`
   removes the folders whole, `README.skwir.md` included: restored from
   git after the copy.
+
+## 2026-11-23: skwird's provider decided (ADR-150)
+
+The user's answers to four questions, recorded as ADR-150 (amending
+ADR-050 point 7 and ADR-026's amendment of 2026-10-10), the plan's
+section rewritten around them (steps A to F):
+
+- **Where the provider lives:** a plugin of its own, `skwird`, behind a
+  seam core owns (coverage, sync, query; the journal later), which the
+  query plugin asks; plocate becomes the seam's second index.
+- **What skwird keeps live:** the user's folders and bookmarks, each
+  source followed or not by a switch, any folder added or taken off, a
+  row of a followed source unticked kept by its path; each row's state
+  and the share's use; a command and, asked, a context-menu entry. The
+  user asked that it be "fully tweakable"; skwird's session asked
+  (2026-11-23) for `watching` to say each folder's state and the share.
+- **Tests:** the fake engine in the ordinary tests, `just skwird-check`
+  against a real one, failing where there is none; no flake input
+  (skwird has no remote).
+- **A search on an index not yet proven** shows what it names at once,
+  each file checked first, then proves it by a sync; the user's
+  condition: no confusing flicker or unpredictable reordering, met by
+  never taking a row back and saying the proof once.

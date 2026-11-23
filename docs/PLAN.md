@@ -173,7 +173,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 5: Cross-platform](#phase-5-cross-platform) | 5a gate passed 2026-10-06; 5b waits for machines | ~6 weeks |
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
-| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (B, ADR-050 amended); A, B's provider and D not built, skwird's phases 1 to 3 done | — |
+| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (ADR-050 amended); the user's choices made that day (ADR-150); A, B, D, E and F not built; skwird's phases 1 to 3 done | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05; the desktop shells' colors (G) 2026-11-07 (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
@@ -3650,80 +3650,72 @@ what is left.
 
 ## Names indexed by skwird
 
-ADR-050. Step C built 2026-10-20; B's copies of skwird's client made
-2026-11-23 (ADR-050 amended); A, B's provider and D not built. skwird's
-phases 0 to 3 are done (its repository, 2026-11-23): a user's engine
-started by its first client, a user service with live folders
-(inotify), and the system service (fanotify on whole filesystems, each
-user answered what they could list). Windows and macOS are its phases 4
-and 5.
+ADR-050, ADR-150. Step C built 2026-10-20; skwird's client copied
+2026-11-23 (ADR-050 amended); the user's choices made the same day
+(ADR-150); A, B, D, E and F not built. skwird's phases 0 to 3 are done
+(its repository, 2026-11-23): a user's engine started by its first
+client, a user service with live folders (inotify), and the system
+service (fanotify on whole filesystems, each user answered what they
+could list). Windows and macOS are its phases 4 and 5.
 
 **Goal:** name searches that answer from an index where it proves it is
 current, and walk only where it does not. skwird is a project of its
 own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
 
-- **A. Coverage in the hints** (ADR-026, amended). `HintProvider` says,
-  for a root and the facts a search needs, whether it covers them (live,
-  checked, as of a time, not covered and why). A search under a covered
-  root considers what the provider names and does not walk there.
-  Tested with a fake provider that covers some roots and not others: the
-  answer equals the walk's.
-- **B. A skwird provider**, speaking protocol 0 through skwird's client
-  crate. It finds a system service, then a user's, then starts skwird on
-  demand where it is installed. Tests use a fake skwird on a socket of
-  the test's own, plus the real engine where it is installed.
+- **A. One way of saying coverage, and the names indexes' seam**
+  (ADR-150, 1, 2, 4 and 5). In core: coverage for a root (names and
+  kinds; sizes and times), live, checked, as of, not covered and why,
+  with the holes; `location::AsOf` grown into it, the footer, the status
+  line and `entries` saying it (fields added, none renamed); the seam
+  (coverage, sync, query), registered by owner. In the query plugin:
+  every index asked, the strongest proof taken; a covered search
+  considers what the index names, shows it at once where it is not yet
+  proven, syncs, asks again and walks only the holes (a snapshot below
+  the folder searched passed over); sizes and times asked only where
+  live. plocate becomes the seam's second index, the special case gone.
+  Tested with a fake index: covering some roots and not others, naming
+  more than matches, stale, with holes; the answer equals the walk's;
+  no row shown is taken back; what plocate answered stays as it was.
+  Then: the tags index's coverage (`HintProvider::covers`) said in the
+  same words.
+- **B. The skwird plugin** (ADR-150, 3), speaking protocol 0 through the
+  copied client. It finds a system service, then a user's, then starts
+  skwird on demand where it is installed.
   - **The copies, made 2026-11-23:** `vendor/skwird-protocol` and
-    `vendor/skwird-client` from skwird 40f7f87, by its
-    `tools/vendor-client`, outside the workspace, `skwird-client` in
-    `[workspace.dependencies]` (ADR-050's amendment of that day). Built
-    alone with Skwir's toolchain and lockfile, their tests green,
-    compiled for Windows and macOS. Nothing takes them yet.
-  - **The provider waits for the user's choices:** where it lives (the
-    query plugin, as ADR-050 point 7 says, or a plugin of its own
-    behind a seam core owns, which Usage and the harvest could ask
-    too); which folders it asks skwird to keep live (`watch`: skwird
-    advises what the panes show, then the harvest's scope, since a home
-    does not fit the watches); whether tests get the real engine from
-    the development shell or only where it is installed.
-  - **skwird's client, asked of its session 2026-11-23,** gave four of
-    five the same day (skwird accc113, copied again): a call given up
-    on, after a silence of the engine's (`Find.silence`) or from another
-    thread (`Client::stopper`); the engine it starts reaped, and started
-    in `/`; empty or relative XDG variables naming nothing, and
-    `Find.runtime` and `Find.state` in their place. Left for skwird's
-    phase 4: Windows' programs started without a console (ADR-074).
-    For the provider:
-    - a search stops its call through the `Stopper`, from its cancel
-      token; `silence` is only a backstop, longer than an engine's first
-      build (6 to 20 s on the user's home, saying nothing meanwhile);
-    - a stop closes the whole connection, so two searches never share
-      one;
-    - `Find.runtime` and `Find.state` come from `skwir_core::xdg`
-      (`runtime_dir`, `state_home`);
-    - tests always name the fake's socket (`Find.socket`): `connect`
-      asks the system service's `/run/skwird/socket` first, which the
-      test folders do not move.
-  - **What it takes in,** from skwird's notes (2026-11-21 to 11-23):
-    - it connects at the first search, never at start (ADR-128,
-      ADR-141): an index read back answers "as of" in about 0.6 s, and
-      a sync proves "checked" after (0.43 s warm on the user's home);
-    - a sync before each query: a barrier where live (0.02 to 0.1 s),
-      the check elsewhere; after one of Skwir's plans, its answer holds
-      the plan's changes (which may lift ADR-126 point 10's limit);
-    - what is not covered is walked (ADR-026), except a `snapshot`,
-      passed over below the folder searched and walked when searched in,
-      as ADR-125's `searches` role does; `denied` at the system service
-      is walked as the user;
-    - the system service's limits: 100,000 results a query
-      (`done.truncated`), `busy` past 4 queries at once or a sync a
-      second: then it walks. Every error is no engine, and it walks;
-      for `/`, plocate after skwird;
-    - Secrets folders (ADR-125) registered through `exclude`, folders and
-      never patterns; tool stores are indexed, and Skwir leaves them out
-      of searches as now;
-    - kept alike with skwird, its session told first of a change:
-      `NamePat`'s matching (`query/src/lang.rs`) and
-      `fs::reach::network`'s rule.
+    `vendor/skwird-client`, by skwird's `tools/vendor-client` (from
+    40f7f87, again from accc113), outside the workspace, `skwird-client`
+    in `[workspace.dependencies]`. Built alone with Skwir's toolchain and
+    lockfile, their tests green, compiled for Windows and macOS. Nothing
+    takes them yet. skwird's session gave, at accc113, the client's
+    calls given up on (`Find.silence`, `Client::stopper`), the engine
+    reaped and started in `/`, and the XDG variables read as the spec
+    has them (`Find.runtime`, `Find.state`); Windows' console waits for
+    its phase 4.
+  - **Its connection:** made at the first search, never at start
+    (ADR-128, ADR-141): an index read back answers "as of" in about
+    0.6 s, and a sync proves "checked" after (0.43 s warm on the user's
+    home). One per search; the search's cancel token stops it through
+    the `Stopper`; `silence` only a backstop, longer than a first build
+    (6 to 20 s on the user's home, saying nothing meanwhile). None kept
+    while idle. `Find.runtime` and `Find.state` from `skwir_core::xdg`
+    (`runtime_dir`, `state_home`).
+  - **Its answers:** a sync before each query, a barrier where live
+    (0.02 to 0.1 s), the check elsewhere; after one of Skwir's plans its
+    answer holds the plan's changes (which may lift ADR-126 point 10's
+    limit). `denied` at the system service is walked as the user. The
+    system service's limits (100,000 results a query, `done.truncated`;
+    `busy` past 4 queries at once or a sync a second) and every error
+    leave the search walking.
+  - **Its registrations:** the Secrets folders (ADR-125) through
+    `exclude`, folders and never patterns; tool stores are indexed, and
+    Skwir leaves them out of searches as now.
+  - **Kept alike with skwird,** its session told first of a change:
+    `NamePat`'s matching (`query/src/lang.rs`) and `fs::reach::network`'s
+    rule.
+  - **Tests:** the client's fake engine, on each test's own socket
+    (`Find.socket`: `connect` asks the system service's
+    `/run/skwird/socket` first, which the test folders do not move), a
+    silent fake for a search stopped while the engine says nothing.
 - **C. plocate as of its time.** A search of `/` that plocate answers
   says when its database was last updated. **Built 2026-10-20**
   (ADR-050's amendment): a listing keeps what its answer rests on
@@ -3733,9 +3725,21 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
 - **D. Then, each decided on its own:** the address field searching as
   one types, Usage of a tree from skwird's folder totals, "recently
   changed", the tags index's checks; the harvest's enumeration and its
-  journal (ADR-089, "Indexing and AI" below), which step A's proof
-  words serve too. Usage from folder totals needs a message protocol 0
-  does not have.
+  journal (ADR-089, "Indexing and AI" below), through the seam. Usage
+  from folder totals needs a message protocol 0 does not have.
+- **E. Kept live** (ADR-150, 6): the list on the plugin's settings page
+  (Your folders and Bookmarks followed, each switched; Added by you;
+  rows ticked, a followed row unticked kept by its path), each row's
+  state, the share's use once skwird's `watching` says it (asked
+  2026-11-23: each folder's state, the folders it takes, the share and
+  its use, and whether the order Skwir registers in decides); the
+  differences sent, what skwird lists that the settings no longer name
+  taken back at each connection; dimmed with the system service; the
+  command and the context menu's `Keep live for searches` (1xx, beside
+  the bookmarks).
+- **F. `just skwird-check`** (ADR-150, 7): the plugin's tests against a
+  real `skwird` (on the `PATH`, or `SKWIRD`), failing where there is
+  none; into `release-check` once skwird is packaged.
 - **Found on the way** (skwird's note of 2026-11-22, checked 2026-11-23):
   Skwir's own exclusions (`exclusions/builtin.toml`) hold no rule for
   btrfs snapshot stores (snapper's `/.snapshots`, timeshift's,

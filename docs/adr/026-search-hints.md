@@ -122,7 +122,9 @@ A claim still never skips the walk; a proof does. Not built.
   the walk, as before, but dates its answer to the database's update
   (built 2026-10-20, ADR-050's amendment).
 - `HintProvider` gains coverage; skwird is the first provider; the tags
-  count could be a second.
+  count could be a second. (2026-11-23, ADR-150: coverage is a seam of
+  its own, the names indexes', not `HintProvider`'s; skwird and plocate
+  are its indexes.)
 - 2026-11-08 (ADR-125): what the walk would not reach is no longer every
   hidden entry but the exclusions kept from searches below the root (and
   a trash, and the network mounts), unless `excluded:yes`; hidden entries

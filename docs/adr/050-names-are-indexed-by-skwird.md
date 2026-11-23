@@ -7,7 +7,9 @@ provider are not built. Amends ADR-026 (an index that proves its
 coverage answers) and the last point of ADR-003 (Skwir may start skwird
 for the session). Amended by ADR-089 (2026-10-26): content stays out of
 skwird; its journal feeds Skwir's derived indexes. Point 7 amended
-2026-11-23: the client is a copy, published nowhere.
+2026-11-23: the client is a copy, published nowhere; and by ADR-150 the
+same day: the provider is a plugin of its own, `skwird`, behind a seam
+core owns, which plocate's answer joins.
 
 ## Context
 
@@ -141,9 +143,8 @@ and Skwir still takes no git dependency. So:
   come from crates.io through Skwir's lockfile and are held to the
   advisories as Skwir's. `tools/deny/vendored.py` holds only copies that
   stand for a release, and these stand for none.
-- **Not yet decided:** which crate takes the client. Point 7 says the
-  query plugin; where the provider lives is decided with it (`docs/PLAN.md`,
-  "Names indexed by skwird", step B).
+- **Which crate takes the client** was decided the same day (ADR-150):
+  a plugin of its own, `skwird`, not the query plugin.
 - **Checked:** the copies of skwird 40f7f87 built alone and offline with
   Skwir's toolchain (Rust 1.99.1) and the serde and serde_json versions
   its lockfile holds; their tests passed (the protocol's transcripts, the
