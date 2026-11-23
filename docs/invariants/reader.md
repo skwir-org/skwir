@@ -266,7 +266,11 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   273 pixels across). Read a page at a time, the page shown is the
   preview's to draw: a shape learned that asks more of it whole has it
   drawn again where it is (`keep_shown_page`, as a zoom does), never
-  into the cache alone, which the panel never showed. Every
+  into the cache alone, which the panel never showed. A page drawn
+  within a hundredth of its whole side holds it (`drawn_whole`): the
+  shape PDFium says of a page moves by a pixel's rounding with the side
+  it was drawn at, and held exactly, a page was drawn again for that
+  pixel. Every
   helper bounds a whole page by the same function; the manager takes at
   most a square page's pixels at `MAX_SIDE`.
 - **Past it, what shows is drawn apart** (ADR-147). Each page element

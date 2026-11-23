@@ -689,8 +689,18 @@ impl DocumentScroll {
     /// Page `page`, kept rendered at `side` or larger, or at as much as it
     /// may hold whole there: shown at once.
     fn kept(&self, page: u32, side: u32) -> Option<&CachedPage> {
-        let whole = self.whole_side(page, side);
-        self.pages.get(&page).filter(|kept| kept.side >= whole)
+        self.pages
+            .get(&page)
+            .filter(|kept| self.drawn_whole(page, kept.side, side))
+    }
+    /// Whether page `page`, drawn whole at `drawn`, holds what it may whole
+    /// when pages are drawn at `side` (`whole_side`), to a hundredth: the
+    /// shape an engine says of a page may move by a pixel's rounding with
+    /// the side it was drawn at (`PDFium`'s, from its whole pixels), and held
+    /// exactly, a page was drawn again for that pixel, once or twice. A
+    /// step between sides (512 pixels) is more than that at any side.
+    fn drawn_whole(&self, page: u32, drawn: u32, side: u32) -> bool {
+        drawn as f32 * 1.01 >= self.whole_side(page, side) as f32
     }
     /// The side page `page` is drawn whole at when pages are drawn at
     /// `side`: as much as a page of its shape may hold
@@ -1368,13 +1378,11 @@ impl Shell {
         }
         if self.preview.reader.scroll.continuous {
             self.request_document_page();
-        } else if self.preview.reader.shown_side
-            < self
-                .preview
-                .reader
-                .scroll
-                .whole_side(self.preview.page, side)
-        {
+        } else if !self.preview.reader.scroll.drawn_whole(
+            self.preview.page,
+            self.preview.reader.shown_side,
+            side,
+        ) {
             // The page shown is drawn again, where it is.
             self.cancel_pending_preview();
             self.preview.refresh = true;
@@ -1549,9 +1557,8 @@ impl Shell {
         // again, where it is (`keep_shown_page`): drawn here, it went only
         // into the cache, the panel showing it as it was.
         let initial = initial.filter(|page| {
-            !self.preview.reader.scroll.continuous
-                || self.preview.reader.shown_side
-                    >= self.preview.reader.scroll.whole_side(*page, side)
+            let reader = &self.preview.reader;
+            !reader.scroll.continuous || reader.scroll.drawn_whole(*page, reader.shown_side, side)
         });
         let scroll = &mut self.preview.reader.scroll;
         if scroll.pending.is_some() {
@@ -1562,7 +1569,7 @@ impl Shell {
                 && scroll
                     .pages
                     .get(p)
-                    .is_none_or(|cached| cached.side < scroll.whole_side(*p, side))
+                    .is_none_or(|cached| !scroll.drawn_whole(*p, cached.side, side))
                 && !scroll.errors.contains_key(p)
         }) else {
             return;
@@ -1763,7 +1770,9 @@ impl Shell {
                 !reader.scroll.continuous
                     && reader.session.is_some()
                     && page.page == self.preview.page
-                    && reader.shown_side < reader.scroll.whole_side(page.page, side)
+                    && !reader
+                        .scroll
+                        .drawn_whole(page.page, reader.shown_side, side)
             }
             _ => false,
         }
@@ -2242,6 +2251,14 @@ mod tests {
         Rc::make_mut(&mut state.sizes).insert(9, (600., 800.));
         assert_eq!(state.whole_side(10, 30_208), 4096);
         assert_eq!(state.whole_side(4, 30_208), tall, "the nearest before");
+        // A page drawn a pixel short of its whole side, its shape said
+        // after a rounding, holds it; one a step short does not.
+        Rc::make_mut(&mut state.sizes).insert(3, (793.3, 1122.7));
+        let whole = state.whole_side(3, 8704);
+        assert!(state.drawn_whole(3, whole - 1, 8704));
+        assert!(state.drawn_whole(3, whole, 8704));
+        assert!(!state.drawn_whole(3, 3584, 4096));
+        assert!(!state.drawn_whole(1, tall - 512, 30_208));
     }
 
     /// A page covering more than its pixels drawn whole hold has what shows
