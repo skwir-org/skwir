@@ -112,6 +112,18 @@ pub fn read_only(path: &Path) -> Option<bool> {
     }
 }
 
+/// Ask the volume `path` is on how full it is (`statvfs`), for whether it
+/// answers rather than for the answer: the system's error where it does
+/// not, by which a FUSE program says its server is gone (sshfs: an
+/// input/output error, or `ENOTCONN`), sshfs asking its server, never its
+/// cache. I/O: in the remote's lane, where it may wait for a server.
+#[cfg(unix)]
+pub fn answers(path: &Path) -> std::io::Result<()> {
+    rustix::fs::statvfs(path)
+        .map(|_| ())
+        .map_err(std::io::Error::from)
+}
+
 /// [`is_removable`] on Windows: the drive letter `path` is on is one
 /// Windows calls removable (`GetDriveTypeW`: a USB stick, a card reader;
 /// a USB disk Windows calls fixed is not). Asks the system, not the drive.

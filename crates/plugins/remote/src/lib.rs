@@ -2138,15 +2138,13 @@ fn cut_off(remote: &reach::Remote) -> bool {
     if remote.fstype == sshfs::FSTYPE {
         use rustix::io::Errno;
         let cut = |error: Errno| matches!(error, Errno::IO | Errno::NOTCONN);
-        if rustix::fs::statvfs(point).is_err_and(cut) {
+        let errno = |error: &std::io::Error| error.raw_os_error().map(Errno::from_raw_os_error);
+        if skwir_core::fs::volume::answers(point).is_err_and(|error| errno(&error).is_some_and(cut))
+        {
             return true;
         }
         let listed = std::fs::read_dir(point).and_then(|mut entries| entries.next().transpose());
-        return listed.is_err_and(|error| {
-            error
-                .raw_os_error()
-                .is_some_and(|code| cut(Errno::from_raw_os_error(code)))
-        });
+        return listed.is_err_and(|error| errno(&error).is_some_and(cut));
     }
     std::fs::symlink_metadata(point).is_err_and(|error| lost(&error))
 }
