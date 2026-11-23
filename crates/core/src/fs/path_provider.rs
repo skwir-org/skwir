@@ -594,7 +594,7 @@ impl PathLocation {
                     };
                     match result {
                         Ok(Some(shared)) if !shared.is_lost() => {
-                            shared.list(&ctx.cancel, previous.take());
+                            shared.list(&ctx.cancel, previous.take(), true);
                         }
                         // Lost as it opened (its volume gone meanwhile):
                         // what was listed before goes with it.
@@ -650,7 +650,7 @@ impl PathLocation {
             "fs.list",
             cancel.clone(),
             move || {
-                s.list(&cancel, previous);
+                s.list(&cancel, previous, false);
             },
         );
     }
@@ -732,10 +732,30 @@ impl Shared {
         self.dir.read().clone()
     }
 
+    /// Its listing failed with `error`. What was handed on to it to take
+    /// out (`taken`: rows of the folder it was opened again in place of,
+    /// `reopen`) goes first, those it did not list again, never shown
+    /// beside the failure; a refresh's own rows stay, the files it read
+    /// still shown under it.
+    fn fail(&self, error: &std::io::Error, taken: Option<Vec<EntryId>>) {
+        if let Some(ids) = taken {
+            self.send(ListingEvent::Removed(ids));
+        }
+        self.send(ListingEvent::Error(crate::ListingError::of_io(error)));
+    }
+
     /// Stream the directory in batches. `previous` (on refresh) lets us emit
     /// `Removed` for entries that disappeared; the entries that stayed are
     /// stat-ed again afterwards, since the listing keeps their old metadata.
-    fn list(self: &Arc<Self>, cancel: &CancelToken, previous: Option<Vec<EntryId>>) {
+    /// `handed_on`: `previous` are another folder's rows, handed on by
+    /// the listing it was opened again in place of (`reopen`), taken out
+    /// with a failure too; a refresh's are its own, kept beside it.
+    fn list(
+        self: &Arc<Self>,
+        cancel: &CancelToken,
+        previous: Option<Vec<EntryId>>,
+        handed_on: bool,
+    ) {
         if cancel.is_cancelled() || self.is_lost() {
             return;
         }
@@ -743,14 +763,14 @@ impl Shared {
         let folder = match self.opened() {
             Ok(folder) => folder,
             Err(e) => {
-                self.send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                self.fail(&e, previous.filter(|_| handed_on));
                 return;
             }
         };
         let mut dir = match folder.read() {
             Ok(d) => d,
             Err(e) => {
-                self.send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                self.fail(&e, previous.filter(|_| handed_on));
                 return;
             }
         };
@@ -773,7 +793,7 @@ impl Shared {
             let ent = match ent {
                 Ok(e) => e,
                 Err(e) => {
-                    self.send(ListingEvent::Error(crate::ListingError::of_io(&e)));
+                    self.fail(&e, previous.filter(|_| handed_on));
                     return;
                 }
             };
@@ -1292,7 +1312,7 @@ impl Shared {
             // re-listed keeps what its row held: those marked are told
             // again, unmarked, as any change of them is.
             let marked = std::mem::take(&mut *self.writing.lock());
-            self.list(&self.ctx.cancel.child(), Some(prev));
+            self.list(&self.ctx.cancel.child(), Some(prev), false);
             if !marked.is_empty() {
                 self.apply_changes(watch::Changes {
                     names: marked,
@@ -1897,6 +1917,52 @@ mod tests {
             !told.iter().any(|e| matches!(e, ListingEvent::Removed(_))),
             "{told:?}"
         );
+        open.close();
+    }
+
+    /// A folder opened again whose listing fails once it is open (read by
+    /// its path, it cannot be read again) takes out the rows it was handed
+    /// on, another folder's, never left beside its failure; a refresh that
+    /// fails keeps its own, the files it read still shown under the error.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_listing_that_fails_takes_out_only_what_was_handed_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let volume = tmp.path().join("a server");
+        let shown = volume.join("it's shown, été");
+        std::fs::create_dir_all(&shown).unwrap();
+        std::fs::write(shown.join("a.txt"), "a").unwrap();
+        crate::fs::reach::pretend_remote(&volume);
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = opened_here(&app, &shown, false);
+        events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        let shared = open.shared.lock().clone().expect("listed");
+        assert!(matches!(*shared.folder.read(), Folder::ByPath));
+        // Read by its path, it cannot be opened for its listing now.
+        std::fs::set_permissions(&shown, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if Dir::open(&shown).is_ok() {
+            // As root, whom no mode refuses: nothing to try here.
+            std::fs::set_permissions(&shown, std::fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+        let another = EntryId::in_folder(FileId::new(1, 2), FileId::new(1, 3), OsStr::new("b"));
+
+        shared.list(&CancelToken::new(), Some(vec![another]), true);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Error(_)));
+        assert!(
+            told.iter()
+                .any(|e| matches!(e, ListingEvent::Removed(ids) if *ids == [another])),
+            "{told:?}"
+        );
+
+        shared.list(&CancelToken::new(), Some(vec![another]), false);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Error(_)));
+        assert!(
+            !told.iter().any(|e| matches!(e, ListingEvent::Removed(_))),
+            "{told:?}"
+        );
+        std::fs::set_permissions(&shown, std::fs::Permissions::from_mode(0o755)).unwrap();
         open.close();
     }
 
