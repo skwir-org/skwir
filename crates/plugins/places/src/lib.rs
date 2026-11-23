@@ -619,7 +619,9 @@ pub fn scan() -> Vec<Place> {
 
 impl Places {
     /// Whether Skwir itself is unmounting the volume at `point` (Eject):
-    /// what another program says of it then is its own unmount's.
+    /// what another program says of it then is its own unmount's. From
+    /// memory, under the publisher's lock, which nothing holds across I/O:
+    /// asked on the bus's thread as a notice comes (`follow_unmounts`).
     #[cfg_attr(windows, allow(dead_code))]
     fn unmounting(&self, point: &Path) -> bool {
         let location = Location::from_path(point);
@@ -1284,6 +1286,40 @@ fn not_unmounted(name: Name, error: anyhow::Error) -> Words {
     )
 }
 
+/// How long a forced unmount waits for the actions it cancelled to end
+/// (`cut_or_refuse`): a copy stops within the file it copies.
+const CUT: Duration = Duration::from_secs(10);
+
+/// Skwir's own actions under way on the volume at `point`, before Skwir
+/// lets go of it to unmount it (ADR-149, decision 10): they hold files
+/// open there, so the system would refuse the unmount as busy, and say
+/// another program holds it. Named and refused; with `force` (an agent's,
+/// a script's), cancelled as Cancel stops them, those running after the
+/// file they are at. How many were cancelled, for the unmount to wait
+/// for them (`wait_cut`).
+fn cut_or_refuse(app: &App, point: &Path, force: bool) -> anyhow::Result<usize> {
+    if force {
+        return Ok(app.executor.cancel_under(point));
+    }
+    app.executor
+        .refuse_under_way(point)
+        .map_err(|error| anyhow::Error::from(not_unmounted(Name::of(point), error)))?;
+    Ok(0)
+}
+
+/// Wait, on a worker, until no action of Skwir's is under way at or below
+/// `point` any more, or [`CUT`] passed, or `lifetime` ended: what
+/// `cut_or_refuse` cancelled lets go of its files.
+fn wait_cut(app: &App, point: &Path, lifetime: Option<&CancelToken>) {
+    let deadline = std::time::Instant::now() + CUT;
+    while !app.executor.under_way_in(point).is_empty()
+        && std::time::Instant::now() < deadline
+        && !lifetime.is_none_or(CancelToken::is_cancelled)
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Follow what other programs say of unmounting a volume
 /// (`places::follow_unmounts`: GIO's and Solid's notices, udisks's jobs)
 /// and let go of it first, on a worker (`App::release`, ADR-149 amended):
@@ -1299,12 +1335,43 @@ fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
     /// How long an announced unmount is the desktop's to retry and say.
     const ANNOUNCED: Duration = Duration::from_secs(30);
     let (weak, jobs, places) = (app.weak(), lifetime.clone(), places.clone());
-    let announced: Arc<Mutex<Vec<(PathBuf, std::time::Instant)>>> = Arc::default();
+    let announced: Mutex<Vec<(PathBuf, std::time::Instant)>> = Mutex::default();
     skwir_platform::places::follow_unmounts(lifetime, move |notice| {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        let (weak, places, announced) = (app.weak(), places.clone(), Arc::clone(&announced));
+        // Judged as it is told, on the bus's thread (from memory, under
+        // short locks): udisks tells of its job before it answers the
+        // call, so Skwir's own Eject still marks the volume then, which it
+        // no longer may once the job is run on a worker.
+        let now = std::time::Instant::now();
+        let (points, refused) = {
+            let mut announced = announced.lock();
+            announced.retain(|(_, at)| now.duration_since(*at) < ANNOUNCED);
+            let (mut points, refused) = match notice {
+                UnmountNotice::Announced(points) => {
+                    announced.extend(points.iter().map(|point| (point.clone(), now)));
+                    (points, false)
+                }
+                UnmountNotice::Begun(points) => (points, false),
+                UnmountNotice::Refused(points) => (points, true),
+            };
+            // Skwir's own Eject: it let go first, and says itself.
+            points.retain(|point| !places.unmounting(point));
+            // A refusal a desktop announced is the desktop's to say.
+            let told: Vec<(PathBuf, bool)> = points
+                .into_iter()
+                .map(|point| {
+                    let desktops = announced.iter().any(|(at, _)| *at == point);
+                    (point, desktops)
+                })
+                .collect();
+            (told, refused)
+        };
+        if points.is_empty() {
+            return;
+        }
+        let weak = app.weak();
         app.scheduler.spawn(
             Priority::Visible,
             "places-unmount-told",
@@ -1313,26 +1380,8 @@ fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
                 let Some(app) = weak.upgrade() else {
                     return;
                 };
-                let now = std::time::Instant::now();
-                announced
-                    .lock()
-                    .retain(|(_, at)| now.duration_since(*at) < ANNOUNCED);
-                let (points, refused) = match notice {
-                    UnmountNotice::Announced(points) => {
-                        announced
-                            .lock()
-                            .extend(points.iter().map(|point| (point.clone(), now)));
-                        (points, false)
-                    }
-                    UnmountNotice::Begun(points) => (points, false),
-                    UnmountNotice::Refused(points) => (points, true),
-                };
                 let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
-                for point in points {
-                    // Skwir's own Eject: it let go first, and says itself.
-                    if places.unmounting(&point) {
-                        continue;
-                    }
+                for (point, desktops) in points {
                     let named: Vec<Words> = app
                         .executor
                         .under_way_in(&point)
@@ -1346,7 +1395,6 @@ fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
                         })
                         .collect();
                     if refused {
-                        let desktops = announced.lock().iter().any(|(at, _)| *at == point);
                         if named.is_empty() && !desktops && shows_below(&app, &point) {
                             app.notify(
                                 NotifyLevel::Warning,
@@ -1411,7 +1459,7 @@ struct PathArgs {
     #[serde(default)]
     path: Option<PathArg>,
     /// Unmount it even while Skwir's own actions are under way there
-    /// (a copy to it), which are cut.
+    /// (a copy to it), which are cancelled first, as Cancel stops them.
     #[serde(default)]
     force: bool,
 }
@@ -2047,13 +2095,7 @@ impl Plugin for PlacesPlugin {
                 // Skwir's own work there is named, not cut, unless asked
                 // (an agent's, a script's `force`): the system would refuse
                 // the unmount as busy all the same.
-                if !args.force {
-                    app.executor
-                        .refuse_under_way(&mount.path)
-                        .map_err(|error| {
-                            anyhow::Error::from(not_unmounted(Name::of(&mount.path), error))
-                        })?;
-                }
+                let cut = cut_or_refuse(app, &mount.path, args.force)?;
                 let this = places.clone();
                 let location = Location::from_path(&mount.path);
                 places.start_busy_as(
@@ -2076,6 +2118,11 @@ impl Plugin for PlacesPlugin {
                     // A volume the user mounted is called by its folder's
                     // name, its label as written.
                     let named = || Name::of(&mount.path);
+                    // What `force` cancelled ends first: it holds files
+                    // there until then.
+                    if cut > 0 {
+                        wait_cut(app, &mount.path, lifetime.as_ref());
+                    }
                     // Written first, while still mounted: the row stays busy
                     // until the drive has it all, and a write that fails is
                     // reported instead of lost.
@@ -3123,6 +3170,66 @@ mod tests {
         let inside =
             Opened::new(None, false, Some(PathArg::from(Path::new("photos/été")))).unwrap();
         assert_eq!(inside.below.as_deref(), Some(Path::new("photos/été")));
+    }
+
+    /// A copy under way to a drive holds it: Eject names it and is
+    /// refused; forced (an agent's, a script's), it cancels the copy,
+    /// which ends before the unmount is asked (ADR-149, decision 10).
+    #[test]
+    fn a_forced_unmount_cancels_what_skwir_does_there_and_a_plain_one_names_it() {
+        let base = skwir_core::os_path::home()
+            .expect("home")
+            .join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("t-")
+            .tempdir_in(base)
+            .unwrap();
+        let from = tmp.path().join("many, été");
+        std::fs::create_dir_all(&from).unwrap();
+        let names: Vec<PathBuf> = (0..3000)
+            .map(|i| {
+                let path = from.join(format!("it's {i}.txt"));
+                std::fs::write(&path, [b'x'; 64]).unwrap();
+                path
+            })
+            .collect();
+        let drive = tmp.path().join("a drive");
+        std::fs::create_dir_all(&drive).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        let Outcome::Plan(plan) = app
+            .dispatch(&Invocation::with_args(
+                "copy",
+                &serde_json::json!({ "entries": names, "dest": drive }),
+            ))
+            .unwrap()
+        else {
+            panic!("a copy is a plan");
+        };
+        app.executor.execute(plan, CancelToken::new());
+        let deadline = std::time::Instant::now() + WAIT;
+        while app.executor.under_way_in(&drive).is_empty() {
+            assert!(std::time::Instant::now() < deadline, "never under way");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // Named, and left to go on.
+        let refused = cut_or_refuse(&app, &drive, false).unwrap_err();
+        assert!(
+            refused.to_string().contains("was not unmounted"),
+            "{refused}"
+        );
+        assert!(!app.executor.under_way_in(&drive).is_empty());
+        // Forced: cancelled, and over once waited for.
+        assert!(cut_or_refuse(&app, &drive, true).unwrap() > 0);
+        wait_cut(&app, &drive, None);
+        assert!(
+            app.executor.under_way_in(&drive).is_empty(),
+            "still under way"
+        );
+        let copied = std::fs::read_dir(&drive).unwrap().count();
+        assert!(copied < names.len(), "stopped before the end: {copied}");
+        // Nothing under way: nothing to refuse or cut.
+        assert_eq!(cut_or_refuse(&app, &drive, false).unwrap(), 0);
     }
 
     /// Asked from anywhere but the window (a script, an agent), Forget
