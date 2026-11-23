@@ -167,6 +167,10 @@ impl Shell {
         window.focus(&self.shown_focus().unwrap_or(canvas), cx);
         self.preview.menu = None;
         self.arm_fullscreen_hide(window, cx);
+        // What was read ahead for the panel is read again for the screen:
+        // its room, laid out first (`Area::moved`, `room_for`).
+        self.let_ahead_go(window, cx);
+        self.preview.area.moved();
         self.read_ahead_next(window, cx);
         cx.notify();
     }
@@ -176,6 +180,8 @@ impl Shell {
             return;
         };
         self.let_ahead_go(window, cx);
+        // Laid out in the panel or peek again.
+        self.preview.area.moved();
         if restore.entered && window.is_fullscreen() {
             window.toggle_fullscreen();
         }

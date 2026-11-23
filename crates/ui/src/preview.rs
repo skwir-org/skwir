@@ -46,9 +46,10 @@ const MAX_ZOOM: f32 = 4.0;
 /// a provider is asked to draw (`PreviewRequest::max_side`).
 const IMAGE_MAX_SIDE: u32 = 2048;
 
-/// The room a picture is fitted in: the content's area as last laid out
-/// (`watch_area`), its width and height in device pixels, and the window's
-/// scale, the device pixels a picture's own pixel covers at 100 %.
+/// The room a picture is fitted in: the content's area as laid out for its
+/// preview (`watch_area`, `Area::room_for`), its width and height in device
+/// pixels, and the window's scale, the device pixels a picture's own pixel
+/// covers at 100 %.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Room {
     pub(crate) width: f32,
@@ -115,16 +116,6 @@ impl Cover {
         match self {
             Self::Quick(_) => (side as f32 * QUICK_SHORT).ceil() as u32,
             Self::Fit(_) | Self::Side(_) => side,
-        }
-    }
-
-    /// Whether a picture decoded for this covers what `other` asks.
-    fn holds(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Fit(room), Self::Fit(other) | Self::Quick(other))
-            | (Self::Quick(room), Self::Quick(other)) => room.holds(other),
-            (Self::Side(side), Self::Side(other)) => side >= other,
-            _ => false,
         }
     }
 }
@@ -241,36 +232,48 @@ const KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(60);
 pub(crate) struct Ahead {
     key: PreviewKey,
     version: Version,
-    /// What it is decoded to cover: the room the step will show it in, as
-    /// the content's area was last laid out (none known: as a request
-    /// would decode it).
-    cover: Option<Cover>,
     cancel: CancelToken,
     slot: Arc<parking_lot::Mutex<AheadSlot>>,
 }
 
 impl Ahead {
-    /// The side a zoom had asked, which `Sharpen` asks above: none for a
-    /// picture fitted in its room.
-    fn asked_side(&self) -> u32 {
-        match self.cover {
-            Some(Cover::Side(side)) => side,
-            _ => 0,
+    /// Whether it is read for `room`, the room the step would show it in
+    /// as the content's area was last laid out: still asking (it waits for
+    /// the room laid out for the preview it was asked from, `Area::room_for`),
+    /// claimed by a provider, or fitted in a room that holds it.
+    fn fits(&self, room: Option<Room>) -> bool {
+        match &*self.slot.lock() {
+            AheadSlot::Asking | AheadSlot::Claimed => true,
+            AheadSlot::Decoding { room: read, .. } | AheadSlot::Read { room: read, .. } => {
+                match (read, room) {
+                    (Some(read), Some(asked)) => read.holds(&asked),
+                    (read, asked) => *read == asked,
+                }
+            }
+            AheadSlot::Adopted { .. } | AheadSlot::Done => false,
         }
     }
 }
 
 /// Where the worker reading ahead stands, and where its picture goes.
 enum AheadSlot {
-    /// Asking whether a provider shows the file.
+    /// Asking whether a provider shows the file, then the room it is
+    /// fitted in.
     Asking,
     /// One does: nothing is read ahead.
     Claimed,
-    /// Decoding, with what stands for it once there is one (a progressive
-    /// JPEG's eighth), for a step that takes it meanwhile.
-    Decoding(Option<PreviewContent>),
-    /// Decoded, waiting for the step.
-    Read(PreviewContent),
+    /// Decoding, fitted in `room` (none known: as a request would decode
+    /// it), with what stands for it once there is one (a progressive JPEG's
+    /// eighth), for a step that takes it meanwhile.
+    Decoding {
+        stand: Option<PreviewContent>,
+        room: Option<Room>,
+    },
+    /// Decoded, fitted in `room`, waiting for the step.
+    Read {
+        content: PreviewContent,
+        room: Option<Room>,
+    },
     /// The step came while it decoded: it is the preview's request now,
     /// and its picture goes the request's way.
     Adopted {
@@ -3815,8 +3818,9 @@ impl Shell {
     /// arrived (the two never wait for each other's decode): on the whole
     /// screen the next picture the way the last step went; in the panel and
     /// in peek the next entry of a walk (`Walk`). Either fitted in the room
-    /// the content's area was last laid out with, the screen's or the
-    /// panel's (ADR-146). Nothing to read ahead, or `reading.read_ahead`
+    /// the content's area is laid out with for the preview shown, the
+    /// screen's or the panel's (ADR-146), waited for on the worker
+    /// (`Area::room_for`). Nothing to read ahead, or `reading.read_ahead`
     /// off, lets what was read go.
     pub(crate) fn read_ahead_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = if !self.prefs.read_ahead {
@@ -3831,8 +3835,7 @@ impl Shell {
         match next {
             None => self.let_ahead_go(window, cx),
             Some(id) if self.preview.phase == PreviewPhase::Idle => {
-                let cover = self.preview.area.last_room().map(Cover::Quick);
-                self.read_ahead(id, cover, window, cx);
+                self.read_ahead(id, window, cx);
             }
             Some(_) => {}
         }
@@ -4656,15 +4659,17 @@ impl Shell {
                         is_dir,
                         request.mime.as_deref(),
                         &code,
-                        // The side a zoom asked, else the room the area
-                        // was last laid out with, asked only of a picture.
+                        // The side a zoom asked, else the room the area is
+                        // laid out with for this preview (the frame after
+                        // the step, never what the file before drew),
+                        // asked only of a picture.
                         &|| {
                             if picture_side > 0 {
                                 Some(Cover::Side(picture_side))
                             } else if exact {
-                                area.room(&cancel).map(Cover::Fit)
+                                area.room_for(generation, &cancel).map(Cover::Fit)
                             } else {
-                                area.room(&cancel).map(Cover::Quick)
+                                area.room_for(generation, &cancel).map(Cover::Quick)
                             }
                         },
                         // What stands for a picture while it is decoded,
@@ -4720,19 +4725,14 @@ impl Shell {
 
     /// Read ahead picture `id` of the pane the panel previews, for the step
     /// taken next (`read_ahead_next`): decoded on a worker as the panel's
-    /// request would decode it, to `cover`, and shown at once when stepped
-    /// to (`take_ahead`). Only a picture skwir decodes itself, whose type
-    /// its name settles: a file a provider shows (by another program, as
-    /// pages, as a film) is never opened before it is asked for. One at
-    /// most; another lets the last go. It is the pane's: the pane showing
-    /// another location stops it.
-    pub(crate) fn read_ahead(
-        &mut self,
-        id: EntryId,
-        cover: Option<Cover>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// request would decode it, fitted in the room the content's area is
+    /// laid out with for the preview shown (`Area::room_for`), and shown at
+    /// once when stepped to (`take_ahead`). Only a picture skwir decodes
+    /// itself, whose type its name settles: a file a provider shows (by
+    /// another program, as pages, as a film) is never opened before it is
+    /// asked for. One at most; another lets the last go. It is the pane's:
+    /// the pane showing another location stops it.
+    pub(crate) fn read_ahead(&mut self, id: EntryId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.preview.pane() else {
             return;
         };
@@ -4750,13 +4750,9 @@ impl Shell {
         // Its type as the panel would take it, settled by the name alone
         // (`sync_preview`): bytes to read first are the request's to read.
         let mime = skwir_platform::mime::of_entry(&entry);
+        let room = self.preview.area.last_room();
         if self.preview.ahead.as_ref().is_some_and(|ahead| {
-            ahead.key == key
-                && !ahead.version.rewritten(&version)
-                && match (&ahead.cover, &cover) {
-                    (Some(read), Some(asked)) => read.holds(asked),
-                    (read, asked) => read == asked,
-                }
+            ahead.key == key && !ahead.version.rewritten(&version) && ahead.fits(room)
         }) {
             return;
         }
@@ -4809,6 +4805,7 @@ impl Shell {
         let wake = self.waker();
         let job = Arc::clone(&slot);
         let token = cancel.clone();
+        let (area, generation) = (Arc::clone(&self.preview.area), self.preview.generation);
         self.app.scheduler.spawn_in(
             lane,
             Priority::Background,
@@ -4818,6 +4815,12 @@ impl Shell {
                 // A provider that takes the file shows it its own way, when
                 // asked: the request goes there then.
                 let claimed = !previews.accepting(&request).is_empty();
+                // Fitted in the room the step will show it in: as laid out
+                // for the preview shown, there (the whole screen entered
+                // just now is laid out first), never the panel's before.
+                let room = (!claimed)
+                    .then(|| area.room_for(generation, &token))
+                    .flatten();
                 {
                     let mut slot = job.lock();
                     if !matches!(*slot, AheadSlot::Asking) {
@@ -4826,18 +4829,19 @@ impl Shell {
                     *slot = if claimed {
                         AheadSlot::Claimed
                     } else {
-                        AheadSlot::Decoding(None)
+                        AheadSlot::Decoding { stand: None, room }
                     };
                 }
                 if claimed {
                     return;
                 }
+                let cover = room.map(Cover::Quick);
                 // What stands for it while it decodes, kept for a step
                 // that takes it meanwhile, or sent to the one that took it.
                 let stand_in = |content: PreviewContent| {
                     let mut slot = job.lock();
                     match &mut *slot {
-                        AheadSlot::Decoding(stand) => *stand = Some(content),
+                        AheadSlot::Decoding { stand, .. } => *stand = Some(content),
                         AheadSlot::Adopted { generation, tx } => {
                             let _ = tx.send(PreviewResult {
                                 generation: *generation,
@@ -4882,7 +4886,7 @@ impl Shell {
                 }
                 let mut slot = job.lock();
                 match std::mem::replace(&mut *slot, AheadSlot::Done) {
-                    AheadSlot::Decoding(_) => *slot = AheadSlot::Read(content),
+                    AheadSlot::Decoding { room, .. } => *slot = AheadSlot::Read { content, room },
                     AheadSlot::Adopted { generation, tx } => {
                         drop(slot);
                         let _ = tx.send(PreviewResult {
@@ -4903,11 +4907,10 @@ impl Shell {
                 }
             },
         );
-        tracing::debug!(path = %key.path.display(), ?cover, "picture read ahead");
+        tracing::debug!(path = %key.path.display(), "picture read ahead");
         self.preview.ahead = Some(Ahead {
             key,
             version,
-            cover,
             cancel,
             slot,
         });
@@ -5027,10 +5030,11 @@ impl Shell {
         self.preview.asked = skwir_core::inspection::InspectRequest::default();
         let mut slot = ahead.slot.lock();
         match std::mem::replace(&mut *slot, AheadSlot::Done) {
-            AheadSlot::Read(content) => {
+            AheadSlot::Read { content, .. } => {
                 drop(slot);
                 tracing::debug!("picture read ahead shown");
-                self.preview.picture_side = ahead.asked_side();
+                // Fitted in its room, as a file first looked at is.
+                self.preview.picture_side = 0;
                 let result = PreviewResult {
                     generation,
                     content,
@@ -5046,7 +5050,7 @@ impl Shell {
                 self.preview_arrived(result, window, cx);
                 true
             }
-            AheadSlot::Decoding(stand) => {
+            AheadSlot::Decoding { stand, .. } => {
                 *slot = AheadSlot::Adopted {
                     generation,
                     tx: self.preview.tx.clone(),
@@ -5056,7 +5060,7 @@ impl Shell {
                     stand_in = stand.is_some(),
                     "picture read ahead taken while decoding"
                 );
-                self.preview.picture_side = ahead.asked_side();
+                self.preview.picture_side = 0;
                 self.preview.cancel = Some(ahead.cancel);
                 self.preview.phase = PreviewPhase::Loading;
                 // Its eighth, decoded already, stands for it at once.
@@ -5092,7 +5096,11 @@ impl Shell {
         };
         ahead.cancel.cancel();
         let read = std::mem::replace(&mut *ahead.slot.lock(), AheadSlot::Done);
-        if let AheadSlot::Read(PreviewContent::Image { image, .. }) = read {
+        if let AheadSlot::Read {
+            content: PreviewContent::Image { image, .. },
+            ..
+        } = read
+        {
             cx.drop_image(image, Some(window));
         }
     }
@@ -6906,6 +6914,8 @@ impl Shell {
         window.focus(self.preview.media.focus.as_ref().unwrap_or(&focus), cx);
         self.preview.peek_focus = Some(focus);
         self.preview.peek = true;
+        // Laid out in peek from now on: what is asked fits there.
+        self.preview.area.moved();
         cx.notify();
     }
 
@@ -6915,6 +6925,10 @@ impl Shell {
             let _ = session.control(skwir_core::media::Control::Play(false));
         }
         self.preview.menu = None;
+        if self.preview.peek {
+            // Laid out in the panel again.
+            self.preview.area.moved();
+        }
         self.preview.peek = false;
         self.preview.peek_focus = None;
         self.preview.peek_press = None;
@@ -9777,12 +9791,11 @@ mod tests {
         assert_eq!(fit.side((6000, 4000)), 1000);
         assert_eq!(side.side((6000, 4000)), 4096);
         // What was read ahead for a room holds a smaller one's step.
-        let smaller = super::Cover::Fit(super::Room {
+        let smaller = super::Room {
             width: 900.,
             ..room
-        });
-        assert!(fit.holds(&smaller) && !smaller.holds(&fit));
-        assert!(!fit.holds(&side));
+        };
+        assert!(room.holds(&smaller) && !smaller.holds(&room));
     }
 
     /// The worker's own step for text no provider presents: the type it

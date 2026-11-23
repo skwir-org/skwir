@@ -10,7 +10,8 @@ same day, 5 to 7 that night (2026-11-22); each checked in a window on
 Xvfb. Amended the next night (2026-11-22), as the user chose for its
 leftovers: a JPEG's region decoded from its rows alone (5), what a zoom
 asks in a turn of its own (8), a picture read ahead keeping its eighth
-(6).
+(6). Amended by the review before 0.6.1 (2026-11-23): the room is the
+one laid out for the picture's own preview (1).
 
 ## Context
 
@@ -47,19 +48,24 @@ Measured in release on synthetic photos of about three bits a pixel
 1. **One rule wherever a picture is shown** (the panel, peek, the whole
    screen, zoomed): it is held at the device pixels it covers, in both
    directions, never more than its own. Fitted, that is what its room
-   gives it (`preview::Room`: the content's area as last laid out,
-   measured with the window's scale; `Room::side`, as Fit lays it out,
-   never past 100 %), worked out on the worker once its header says its
-   size (`Cover::Fit`); zoomed or in a larger room, the side the zoom
+   gives it (`preview::Room`: the content's area as laid out for its
+   own preview, in the place it is shown, measured with the window's
+   scale; `Room::side`, as Fit lays it out, never past 100 %), worked
+   out on the worker once its header says its size (`Cover::Fit`). The
+   job waits for that frame (`Area::room_for`, 200 ms at most, as a
+   first page does): what the area held before is no measure of it (the
+   line saying why the last file was not shown made a photo stepped to
+   from it decode at 80 pixels, then again as a zoom), nor is the
+   panel's once the whole screen or peek shows the preview
+   (`Area::moved`). Zoomed or in a larger room, the side the zoom
    asks (`Cover::Side`, `Sharpen`, as before). It is decoded at the
    cheapest decoder scale covering that (a JPEG's eighth, quarter, half
    or whole, `picture::decode_fitted`), then shrunk to it once. A
    drawing (SVG) is drawn at that side, past its own pixels when zoomed.
    `IMAGE_MAX_SIDE` is only what a picture is asked at while no room
-   was ever laid out (`Area::room` waits a frame, 200 ms at most, for
-   the first). What is read ahead is fitted in the same room: the
-   screen's on the whole screen, the panel's in the panel
-   (`screen_side` is gone).
+   was ever laid out. What is read ahead is fitted in the same room,
+   waited for the same way: the screen's on the whole screen, laid out
+   there first, the panel's in the panel (`screen_side` is gone).
 2. **What is held of a picture is bounded by its pixels, not by a side**
    (`limits::PICTURE_HELD`, 4096 × 4096, 64 MiB as RGBA: the memory the
    side allowed a square picture). A tall or wide picture is held at as
@@ -127,7 +133,7 @@ Measured in release on synthetic photos of about three bits a pixel
 - A small panel holds and uploads less: a 24-megapixel photo in a room
   1200 pixels wide is a quarter-scale decode shrunk to 1200, not a half
   shrunk to 2048.
-- A picture is decoded for the room last laid out: a panel made larger
+- A picture is decoded for the room laid out for it: a panel made larger
   afterwards, or the whole screen entered, asks for more as a zoom does,
   in place. A room made smaller keeps the larger picture, shrunk by the
   GPU.

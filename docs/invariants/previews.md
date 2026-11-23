@@ -263,14 +263,19 @@ A name that says nothing is not a binary file.
   `picture::decode`, which every shown picture passes.
 - **A picture is held at the pixels it covers** (ADR-146;
   `decode_image`, through `picture::decode_fitted`, as a thumbnail is):
-  fitted in its room (`preview::Room`: the content's area as last laid
-  out, `watch_area`, with the window's scale; `Room::side`, never past
-  100 %), or at the side a zoom asked (`Cover::Side`), worked out on the
+  fitted in its room (`preview::Room`: the content's area as laid out
+  for its own preview, in the place it is shown, `watch_area`, with the
+  window's scale; `Room::side`, never past 100 %), or at the side a zoom
+  asked (`Cover::Side`), worked out on the
   worker once the header says its size; never more than its own pixels,
   nor than `limits::PICTURE_HELD` of them (`picture::side_within`: a
   count, never a side, so a tall or wide picture is held as a square
-  one is). `IMAGE_MAX_SIDE` only while no room was ever laid out
-  (`Area::room` waits for the first layout, `Area::WAIT` at most). A
+  one is). The job waits for the frame that lays the area out for its
+  preview (`Area::room_for`, `Area::WAIT` at most, then the room last
+  laid out), as a first page does: what the area held before (a line
+  saying why the last file was not shown) or the panel's room once the
+  whole screen or peek shows it (`Area::moved`) is never a picture's
+  room. `IMAGE_MAX_SIDE` only while no room was ever laid out. A
   JPEG twice that side and more is decoded at its least reduced scale
   still covering it (a 24-megapixel photo computes and holds a quarter
   of its pixels), any other whole, a lossless JPEG too (it has no
@@ -333,8 +338,10 @@ A name that says nothing is not a binary file.
   in peek, the entry the next step reaches (`preview::Walk`): the way
   the last step went in the pane's order (Down, a grid's row down), the
   next one before any step, as image viewers preload it (ADR-146, 7).
-  Either fitted in the room the content's area was last laid out with
-  (`Area::last_room`, `Cover::Quick`): the screen's, the panel's. Only once the one shown has
+  Either fitted in the room the content's area is laid out with for the
+  preview shown, waited for on its worker (`Area::room_for`,
+  `Cover::Quick`): the screen's, laid out first when the whole screen is
+  entered, the panel's. Only once the one shown has
   arrived: the two never wait for each other's decode, and an arrow held
   down, its steps quicker than a photo's decode, starts none. One at most, `PreviewState::ahead`, kept
   beside the preview since a step replaces the preview. It is keyed as
