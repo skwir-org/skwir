@@ -49,7 +49,7 @@ pub fn embedded_jpeg<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<u8>> {
     let (found, orientation) = if head.starts_with(b"FUJIFILMCCD-RAW") {
         (raf(raw)?, None)
     } else if is_cr3(&head) {
-        (cr3(raw)?, None)
+        cr3(raw)?
     } else {
         let walk = tiff(raw, &head)?;
         (walk.found, walk.orientation)
@@ -68,7 +68,7 @@ pub fn embedded_jpeg<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<u8>> {
     raw.seek(SeekFrom::Start(offset))?;
     raw.read_exact(&mut jpeg)?;
     Ok(match orientation {
-        Some(turn) if turn != 1 && !has_exif(&jpeg) => with_orientation(&jpeg, turn),
+        Some(turn) if turn != 1 && orientation_of(&jpeg).is_none() => with_orientation(&jpeg, turn),
         _ => jpeg,
     })
 }
@@ -131,25 +131,52 @@ fn jpeg_pixels<R: Read + Seek>(raw: &mut R, offset: u64, length: u64) -> Option<
     None
 }
 
-/// Whether a JPEG's segments before its frame hold EXIF.
-fn has_exif(jpeg: &[u8]) -> bool {
+/// A JPEG's segments before its scan: marker, and where the segment
+/// starts and ends (its marker included). A marker without a length, or a
+/// segment past the end, ends them.
+fn segments(jpeg: &[u8]) -> Vec<(u8, usize, usize)> {
+    let mut found = Vec::new();
     let mut at = 2;
-    while at + 10 < jpeg.len() && jpeg[at] == 0xFF {
-        let marker = jpeg[at + 1];
+    while at + 4 <= jpeg.len() && jpeg[at] == 0xFF && !matches!(jpeg[at + 1], 0xDA | 0xD9) {
         let size = usize::from(u16::from_be_bytes([jpeg[at + 2], jpeg[at + 3]]));
-        if marker == 0xE1 && jpeg[at + 4..].starts_with(b"Exif\0\0") {
-            return true;
+        let end = at + 2 + size;
+        if size < 2 || end > jpeg.len() {
+            break;
         }
-        if marker == 0xDA {
-            return false;
-        }
-        at += 2 + size;
+        found.push((jpeg[at + 1], at, end));
+        at = end;
     }
-    false
+    found
+}
+
+/// The Orientation a JPEG's EXIF says, `None` where it has no EXIF or its
+/// EXIF says none.
+fn orientation_of(jpeg: &[u8]) -> Option<u16> {
+    segments(jpeg).into_iter().find_map(|(marker, start, end)| {
+        if marker != 0xE1 {
+            return None;
+        }
+        exif_orientation(jpeg[start + 4..end].strip_prefix(b"Exif\0\0")?)
+    })
+}
+
+/// The Orientation of IFD0 in `tiff`, a TIFF held whole (an EXIF block, a
+/// CR3's `CMT1`).
+fn exif_orientation(tiff: &[u8]) -> Option<u16> {
+    let head = tiff.first_chunk::<16>().copied().or_else(|| {
+        let mut head = [0u8; 16];
+        head.get_mut(..tiff.len())?.copy_from_slice(tiff);
+        Some(head)
+    })?;
+    self::tiff(&mut std::io::Cursor::new(tiff), &head)
+        .ok()?
+        .orientation
 }
 
 /// `jpeg` with an EXIF segment saying Orientation `turn` right after its
-/// start: how the raw file says to turn what its camera stored.
+/// start, in place of any EXIF it had (which said none): how the raw
+/// file says to turn what its camera stored. What the camera wrote of the
+/// picture is read from the raw file itself (`exif::details`).
 fn with_orientation(jpeg: &[u8], turn: u16) -> Vec<u8> {
     let mut tiff = b"II*\0\x08\0\0\0".to_vec();
     tiff.extend_from_slice(&1u16.to_le_bytes());
@@ -165,7 +192,16 @@ fn with_orientation(jpeg: &[u8], turn: u16) -> Vec<u8> {
     out.extend_from_slice(&[0xFF, 0xE1]);
     out.extend_from_slice(&u16::try_from(segment.len() + 2).unwrap_or(0).to_be_bytes());
     out.extend_from_slice(&segment);
-    out.extend_from_slice(&jpeg[2..]);
+    // Each EXIF segment of its own left out: a decoder reads one, maybe
+    // the camera's, which says nothing of turning.
+    let mut at = 2;
+    for (marker, start, end) in segments(jpeg) {
+        if marker == 0xE1 && jpeg[start + 4..end].starts_with(b"Exif\0\0") {
+            out.extend_from_slice(&jpeg[at..start]);
+            at = end;
+        }
+    }
+    out.extend_from_slice(&jpeg[at..]);
     out
 }
 
@@ -355,12 +391,20 @@ fn raf<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<(u64, u64)>> {
     Ok(vec![(u64::from(offset), u64::from(length))])
 }
 
+/// Canon's box in a CR3's `moov`, which holds its metadata.
+const CANON: [u8; 16] = [
+    0x85, 0xc0, 0xb6, 0x87, 0x82, 0x0f, 0x11, 0xe0, 0x81, 0x11, 0xf4, 0xce, 0x46, 0x2b, 0x6a, 0x48,
+];
+/// The most read of a CR3's `CMT1`, its IFD0: a few kilobytes.
+const CMT1_BYTES: u64 = 1 << 20;
+
 /// A Canon CR3's JPEG: the first track's one sample (ISO's media format:
 /// `moov` / `trak` / `mdia` / `minf` / `stbl`, its size in `stsz`, its
-/// place in `co64`).
-fn cr3<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<(u64, u64)>> {
+/// place in `co64`), and its Orientation, which its JPEG does not say.
+fn cr3<R: Read + Seek>(raw: &mut R) -> anyhow::Result<(Vec<(u64, u64)>, Option<u16>)> {
     let end = raw.seek(SeekFrom::End(0))?;
     let moov = child(raw, 0, end, *b"moov")?;
+    let orientation = cr3_orientation(raw, moov);
     let trak = child(raw, moov.0, moov.1, *b"trak")?;
     let mdia = child(raw, trak.0, trak.1, *b"mdia")?;
     let minf = child(raw, mdia.0, mdia.1, *b"minf")?;
@@ -381,7 +425,33 @@ fn cr3<R: Read + Seek>(raw: &mut R) -> anyhow::Result<Vec<(u64, u64)>> {
     raw.seek(SeekFrom::Start(co64.0))?;
     raw.read_exact(&mut chunk)?;
     let offset = u64::from_be_bytes(chunk[8..16].try_into()?);
-    Ok(vec![(offset, size)])
+    Ok((vec![(offset, size)], orientation))
+}
+
+/// A CR3's Orientation: its IFD0's, a TIFF Canon keeps in the `CMT1` box
+/// of its own `uuid` box in `moov` (`moov` its content's start and end).
+fn cr3_orientation<R: Read + Seek>(raw: &mut R, (start, end): (u64, u64)) -> Option<u16> {
+    // Canon's among the `uuid` boxes, each named by the 16 bytes it starts
+    // with, as many at most as `child` looks through.
+    let mut at = start;
+    let mut canon = None;
+    for _ in 0..256 {
+        let found = child(raw, at, end, *b"uuid").ok()?;
+        let mut id = [0u8; 16];
+        raw.seek(SeekFrom::Start(found.0)).ok()?;
+        raw.read_exact(&mut id).ok()?;
+        if id == CANON {
+            canon = Some(found);
+            break;
+        }
+        at = found.1;
+    }
+    let canon = canon?;
+    let (from, to) = child(raw, canon.0.checked_add(16)?, canon.1, *b"CMT1").ok()?;
+    let mut ifd0 = vec![0u8; usize::try_from(to.checked_sub(from)?.min(CMT1_BYTES)).ok()?];
+    raw.seek(SeekFrom::Start(from)).ok()?;
+    raw.read_exact(&mut ifd0).ok()?;
+    exif_orientation(&ifd0)
 }
 
 /// The box named `name` among those from `start` to `end`: where its
@@ -508,9 +578,39 @@ mod tests {
         assert_eq!(size_of(&shown), (64, 48));
     }
 
-    /// A Canon CR3's JPEG is its first track's sample.
+    /// A little-endian TIFF whose one directory says Orientation `turn`:
+    /// an EXIF block, a CR3's `CMT1`.
+    fn ifd0_turned(turn: u16) -> Vec<u8> {
+        let mut tiff = b"II*\0\x08\0\0\0".to_vec();
+        tiff.extend_from_slice(&1u16.to_le_bytes());
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+        tiff.extend_from_slice(&3u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&u32::from(turn).to_le_bytes());
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff
+    }
+
+    /// A Canon CR3's JPEG is its first track's sample, turned as its
+    /// `CMT1` says (Canon's JPEG says nothing of it).
     #[test]
     fn a_cr3_shows_its_first_track() {
+        let unturned = cr3_file(None);
+        assert_eq!(
+            size_of(&embedded_jpeg(&mut Cursor::new(&unturned)).unwrap()),
+            (80, 60)
+        );
+        let turned = cr3_file(Some(6));
+        assert_eq!(
+            size_of(&embedded_jpeg(&mut Cursor::new(&turned)).unwrap()),
+            (60, 80),
+            "turned a quarter, as CMT1 says"
+        );
+    }
+
+    /// A CR3 holding a JPEG of 80 × 60, its `moov` led by Canon's `uuid`
+    /// box with a `CMT1` saying Orientation `turn`, where there is one.
+    fn cr3_file(turn: Option<u16>) -> Vec<u8> {
         let inner = jpeg(80, 60);
         let boxed = |name: &[u8; 4], content: &[u8]| {
             let mut b = ((content.len() + 8) as u32).to_be_bytes().to_vec();
@@ -532,19 +632,55 @@ mod tests {
             c.extend_from_slice(&at.to_be_bytes());
             boxed(b"co64", &c)
         };
+        // Another's `uuid` box first, then Canon's.
+        let canon = turn.map_or_else(Vec::new, |turn| {
+            let other = boxed(b"uuid", &[[7u8; 16].as_slice(), b"nothing"].concat());
+            let cmt1 = boxed(b"CMT1", &ifd0_turned(turn));
+            [other, boxed(b"uuid", &[CANON.as_slice(), &cmt1].concat())].concat()
+        });
         let moov = |at: u64| {
             let stbl = boxed(b"stbl", &[stsz(inner.len() as u32), co64(at)].concat());
             let minf = boxed(b"minf", &stbl);
             let mdia = boxed(b"mdia", &minf);
             let trak = boxed(b"trak", &mdia);
-            boxed(b"moov", &trak)
+            boxed(b"moov", &[canon.clone(), trak].concat())
         };
         let at = (ftyp.len() + moov(0).len() + 8) as u64;
         let mut cr3 = ftyp;
         cr3.extend(moov(at));
         cr3.extend(boxed(b"mdat", &inner));
-        let shown = embedded_jpeg(&mut Cursor::new(&cr3)).unwrap();
-        assert_eq!(size_of(&shown), (80, 60));
+        cr3
+    }
+
+    /// A raw file's JPEG with EXIF that says nothing of turning is turned
+    /// as the raw file says, its own EXIF given way to the one saying so;
+    /// one whose EXIF says how is left as it says.
+    #[test]
+    fn a_jpeg_whose_exif_says_no_turn_takes_the_raw_file_s() {
+        let picture = jpeg(160, 120);
+        let with_exif = |tiff: &[u8]| {
+            let segment = [b"Exif\0\0".as_slice(), tiff].concat();
+            let mut out = picture[..2].to_vec();
+            out.extend_from_slice(&[0xFF, 0xE1]);
+            out.extend_from_slice(&((segment.len() + 2) as u16).to_be_bytes());
+            out.extend_from_slice(&segment);
+            out.extend_from_slice(&picture[2..]);
+            out
+        };
+        // An IFD0 of no entries.
+        let silent = with_exif(b"II*\0\x08\0\0\0\0\0\0\0\0\0");
+        assert_eq!(orientation_of(&silent), None);
+        let turned = with_orientation(&silent, 6);
+        assert_eq!(orientation_of(&turned), Some(6));
+        let exif = segments(&turned)
+            .into_iter()
+            .filter(|&(marker, start, end)| {
+                marker == 0xE1 && turned[start + 4..end].starts_with(b"Exif\0\0")
+            })
+            .count();
+        assert_eq!(exif, 1, "one EXIF segment");
+        assert_eq!(size_of(&turned), (120, 160));
+        assert_eq!(orientation_of(&with_exif(&ifd0_turned(3))), Some(3));
     }
 
     /// A file that is no raw file this reads, or holds no JPEG: an error.

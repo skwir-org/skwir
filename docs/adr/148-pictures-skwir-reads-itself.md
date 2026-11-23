@@ -85,7 +85,10 @@ asked, in the preview as in the grid (decision 3).
    `JPEGInterchangeFormat`, by a strip compressed as one, or Panasonic's
    `JpgFromRaw`), Fuji's RAF header, Canon CR3's first track; the largest
    by its frame header's size. The raw file's Orientation is written into
-   the JPEG where it says none. The JPEG then takes the JPEG path
+   the JPEG where it says none (amended: a CR3's read from the `CMT1` box
+   Canon keeps its IFD0 in, its JPEG saying nothing of it; a JPEG whose
+   EXIF names no Orientation is turned too, its EXIF given way to one
+   that says it). The JPEG then takes the JPEG path
    (`picture::open_typed`): its reduced scales, a region, read ahead and
    kept. The types read are listed (`raw::RAW`); an Olympus ORF (its
    preview in its maker note), a Canon CRW, a Sigma X3F stay with the
