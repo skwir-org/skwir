@@ -41,7 +41,11 @@ on Xvfb.
    drawn at the side it covers (`reader_scroll::part_wanted`,
    `Shell::document_parts`), up to `MAX_PART_SIDE`, over the page in its
    place (`DocumentElement::part`). One part a page, one asked at a time
-   beside the whole pages, kept while the page shows, let go with it.
+   beside the whole pages, kept while the page shows and needs one, let
+   go with it; what is drawn apart is chosen again whenever what shows
+   changes, a part comes back or a search ends (amended 2026-11-23:
+   chosen only as the view moved, a second page in view, or a view moved
+   while a part was drawn, kept the whole enlarged).
    The user chose this over holding pages larger (the pictures' 16.7
    megapixels, or twice the cache): the reader's 64 MiB stays.
 3. **A part is the protocol's**: `WorkerRequest::Render` carries an

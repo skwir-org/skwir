@@ -269,8 +269,23 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   `request_document_part`), over the page in its place
   (`DocumentElement::part`). One part a page (`DocumentScroll::parts`),
   one asked at a time beside the whole pages, not asked again while what
-  is drawn or asked holds what shows; a page that leaves the view lets
-  its part go, atlas entry and all, as the cache does pages.
+  is drawn or asked holds what shows; a page that leaves the view, or
+  needs no part at the zoom it shows at, lets its part go, atlas entry
+  and all, as the cache does pages, and one drawn at more than twice the
+  side wanted is drawn again.
+- **What is drawn apart is state, chosen again whenever it may change**
+  (`DocumentScroll::choose_part`, `Shell::want_part`): as what shows
+  changes, as a part comes back or fails, as a search it waited for ends.
+  Chosen only as the view moved, the second page in view never had its
+  part, nor the view a part asked for one it had left. A part being
+  drawn that is no longer what would be asked gives way; only the
+  answer of the one last asked is taken (`PendingPart::serial`). A part
+  has its own cancel, apart from the whole pages' (`DocumentScroll::
+  cancel` gives up pages read ahead, not what shows). A part that fails
+  is not asked again until the page is visited or the pages refreshed;
+  a part waits while a search runs, never cancelling a find the user
+  started. What a page said twice in a frame (gpui's list lays out
+  again after an autoscroll) counts as its last.
 - **A part is asked in shares, never pixels** (`document::Part`,
   `WorkerRequest::Render`'s `part`): each engine lays its own pixels on the
   page at the side, draws the whole pixels round the part, and says the
