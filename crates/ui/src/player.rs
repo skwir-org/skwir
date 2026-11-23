@@ -386,6 +386,22 @@ impl Pinned {
         }
     }
 
+    /// What the pin plays or would play from the volumes at `points`, about
+    /// to be let go of (`App::letting_go_now`), as taken away: the track
+    /// playing, and each of the queue there, so what follows it is not
+    /// opened there in its stead (an album played from a USB stick).
+    /// Empty when nothing of it is there.
+    fn letting_go(&self, points: &[PathBuf]) -> HashMap<PathBuf, Option<PathBuf>> {
+        if points.is_empty() {
+            return HashMap::new();
+        }
+        std::iter::once(&self.path)
+            .chain(self.queue.iter())
+            .filter(|track| points.iter().any(|point| track.starts_with(point)))
+            .map(|track| (track.clone(), None))
+            .collect()
+    }
+
     /// Follow where `went` says its tracks went (each path moved, or taken
     /// away: `None`): the queue goes with them and without those taken
     /// away, a shuffle keeping its order of those left, and the track to go
@@ -2111,17 +2127,19 @@ impl Shell {
         }
         // What plays from a volume about to be let go of ends, as at its
         // end: the file it holds open would keep the volume busy (ADR-149).
-        let (_, version) = self.app.letting_go_now();
+        // What the queue holds there goes with it, so what follows is not
+        // opened there either.
+        let (letting, version) = self.app.letting_go_now();
         if self.player.letting_seen != version {
             self.player.letting_seen = version;
-            if let Some(path) = self
+            let went = self
                 .player
                 .pinned
                 .as_ref()
-                .filter(|pinned| !pinned.ended && self.app.letting_go(&pinned.path))
-                .map(|pinned| pinned.path.clone())
-            {
-                let went = HashMap::from([(path, None)]);
+                .filter(|pinned| !pinned.ended)
+                .map(|pinned| pinned.letting_go(&letting))
+                .unwrap_or_default();
+            if !went.is_empty() {
                 self.pin_follows(&went, None, window, cx);
             }
         }
@@ -2815,6 +2833,49 @@ mod tests {
         let fate = same.follow(&went(&[("b.ogg", Some("c.ogg"))]), Continue::Stop);
         assert_eq!((fate, same.path.clone()), (Fate::Same, track("a.ogg")));
         assert_eq!(names(&same), ["a.ogg", "c.ogg"]);
+    }
+
+    /// An album played from a drive about to be let go of ends there, as
+    /// at its end, and goes on with no track of that drive (ADR-149): what
+    /// follows it there would hold the drive again. Played from elsewhere,
+    /// it plays on, the drive's tracks out of its queue.
+    #[test]
+    fn a_pin_lets_go_of_every_track_on_a_volume_let_go_of() {
+        let drive = PathBuf::from("/run/media/me/it's USB");
+        let points = [drive.clone()];
+        let on_drive = |name: &str| drive.join(name);
+        let pinned = |paths: Vec<PathBuf>, index: usize| {
+            let mut pinned = pin(&["a.ogg"], 0, &[]);
+            pinned.path = paths[index].clone();
+            pinned.queue = paths.into();
+            pinned.index = index;
+            pinned
+        };
+        // Nothing there, nothing let go of.
+        let elsewhere = pinned(vec![track("a.ogg"), track("b.ogg")], 0);
+        assert!(elsewhere.letting_go(&points).is_empty());
+        assert!(elsewhere.letting_go(&[]).is_empty());
+        // The album on the drive: it ends, nothing of it opened next.
+        let mut album = pinned(
+            vec![on_drive("1.ogg"), on_drive("2.ogg"), on_drive("3.ogg")],
+            0,
+        );
+        let went = album.letting_go(&points);
+        assert_eq!(went.len(), 3);
+        assert_eq!(album.follow(&went, Continue::Next), Fate::Gone);
+        // Mixed: it goes on with the next track elsewhere.
+        let mut mixed = pinned(
+            vec![on_drive("1.ogg"), on_drive("2.ogg"), track("b.ogg")],
+            0,
+        );
+        let went = mixed.letting_go(&points);
+        assert_eq!(mixed.follow(&went, Continue::Next), Fate::Next(0));
+        assert_eq!(names(&mixed), ["b.ogg"]);
+        // Playing from elsewhere: on, without the drive's tracks.
+        let mut on = pinned(vec![track("a.ogg"), on_drive("2.ogg"), track("b.ogg")], 0);
+        let went = on.letting_go(&points);
+        assert_eq!(on.follow(&went, Continue::Next), Fate::Same);
+        assert_eq!(names(&on), ["a.ogg", "b.ogg"]);
     }
 
     /// Another program's rename moves the pin when it renames the name the
