@@ -1923,7 +1923,10 @@ impl Drop for PreviewState {
 /// (`decode_region`), either a whole picture at up to its full size; a
 /// step taken meanwhile decodes the next picture beside it, and what the
 /// zoom asked, let go, is dropped as it ends. At most three pictures
-/// decode at once.
+/// decode at once. A request waiting for its turn gives it up as soon as it
+/// is cancelled, never once the turn is free: a region asked at each half
+/// view scrolled past would otherwise hold a scheduler worker each, blocked
+/// until the decode before them ended.
 #[derive(Clone, Copy)]
 enum Turn {
     Shown,
@@ -1931,19 +1934,66 @@ enum Turn {
     Zoomed,
 }
 
+/// Whether a turn is taken, and who waits for it: each a child of its
+/// request's cancel, cancelled as the turn is let go, so one wait ends on
+/// either (`Turn::take`).
+struct Turns {
+    taken: bool,
+    waiting: Vec<CancelToken>,
+}
+
+impl Turns {
+    const fn free() -> parking_lot::Mutex<Turns> {
+        parking_lot::const_mutex(Turns {
+            taken: false,
+            waiting: Vec::new(),
+        })
+    }
+}
+
+/// A turn taken (`Turn::take`): let go when dropped, a decode that panicked
+/// included.
+struct Taken(&'static parking_lot::Mutex<Turns>);
+
+impl Drop for Taken {
+    fn drop(&mut self) {
+        let mut turns = self.0.lock();
+        turns.taken = false;
+        for waiting in turns.waiting.drain(..) {
+            waiting.cancel();
+        }
+    }
+}
+
 impl Turn {
-    fn take(self) -> std::sync::MutexGuard<'static, ()> {
-        static SHOWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        static AHEAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        static ZOOMED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// Wait for this turn, or for `cancel`: `None` once cancelled, whether
+    /// before the wait or during it.
+    fn take(self, cancel: &CancelToken) -> Option<Taken> {
+        static SHOWN: parking_lot::Mutex<Turns> = Turns::free();
+        static AHEAD: parking_lot::Mutex<Turns> = Turns::free();
+        static ZOOMED: parking_lot::Mutex<Turns> = Turns::free();
         let turn = match self {
             Self::Shown => &SHOWN,
             Self::Ahead => &AHEAD,
             Self::Zoomed => &ZOOMED,
         };
-        // A decode that panicked held nothing worth protecting: take it.
-        turn.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        loop {
+            let woken = {
+                let mut turns = turn.lock();
+                if cancel.is_cancelled() {
+                    return None;
+                }
+                if !turns.taken {
+                    turns.taken = true;
+                    return Some(Taken(turn));
+                }
+                let woken = cancel.child();
+                turns.waiting.push(woken.clone());
+                woken
+            };
+            // Received once the turn is let go or the request cancelled.
+            let _ = woken.subscribe().receiver().recv();
+        }
     }
 }
 
@@ -2053,10 +2103,9 @@ fn decode_image(
             skwir_platform::inspection::limits::PICTURE_HELD,
         ),
     );
-    let _turn = turn.take();
-    if cancel.is_cancelled() {
+    let Some(_turn) = turn.take(cancel) else {
         anyhow::bail!("cancelled");
-    }
+    };
     let started = std::time::Instant::now();
     let least = cover.map_or(side, |cover| cover.least(side));
     let covers = |longer: u32| longer >= least.min(side);
@@ -2143,10 +2192,9 @@ fn decode_region(
     side: u32,
     cancel: &CancelToken,
 ) -> anyhow::Result<Arc<RenderImage>> {
-    let _turn = Turn::Zoomed.take();
-    if cancel.is_cancelled() {
+    let Some(_turn) = Turn::Zoomed.take(cancel) else {
         anyhow::bail!("cancelled");
-    }
+    };
     let started = std::time::Instant::now();
     let img = skwir_platform::picture::decode_region(
         skwir_platform::picture::open_typed(held, mime)?,
@@ -10107,6 +10155,32 @@ mod tests {
         assert_eq!(width, 4200, "its own size is still what 100% is");
         let size = image.size(0);
         assert_eq!((size.width.0, size.height.0), (1000, 14));
+    }
+
+    /// A request waiting for a decode's turn gives it up as soon as it is
+    /// cancelled, while the decode before it still runs: it never holds its
+    /// worker until the turn is free. The turn let go, the next takes it.
+    #[test]
+    fn a_turn_waited_for_is_given_up_once_cancelled() {
+        use skwir_core::cancel::CancelToken;
+        let running = CancelToken::new();
+        let taken = super::Turn::Zoomed.take(&running).expect("a free turn");
+        let waiting = |cancel: CancelToken| {
+            std::thread::spawn(move || super::Turn::Zoomed.take(&cancel).is_some())
+        };
+        let given_up = CancelToken::new();
+        let first = waiting(given_up.clone());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        given_up.cancel();
+        assert!(!first.join().unwrap(), "cancelled while the turn is taken");
+        let next = waiting(CancelToken::new());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(!next.is_finished(), "waits while the turn is taken");
+        drop(taken);
+        assert!(next.join().unwrap(), "takes the turn let go");
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        assert!(super::Turn::Zoomed.take(&cancelled).is_none());
     }
 
     /// What the next step reaches is read ahead: the way the last step went

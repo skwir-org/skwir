@@ -335,8 +335,11 @@ A name that says nothing is not a binary file.
   never its scale: thumbnails, a comic's pages and contact sheets, many
   at once, decode on their own thread; the preview's own, waited for
   alone, take a thread a component. The preview's own decodes take
-  turns (`preview::Turn`): one at a time, and a request whose turn came
-  after the panel moved on gives it up.
+  turns (`preview::Turn`): one at a time, and a request cancelled while
+  it waits for its turn (the panel moved on, a region asked anew) gives
+  it up at once (`Turn::take`), never holding its worker until the turn
+  is let go: a region asked at each half view scrolled past held a
+  scheduler worker each while the decode before them ran.
 - **The next picture is read ahead** (`Shell::read_ahead_next`,
   `read_ahead`), `reading.read_ahead` on (the default). On the whole
   screen, the next picture the way the last step went; in the panel and
