@@ -203,6 +203,16 @@ pub fn probe() -> bool {
 /// What `probe` answered.
 static WORKS: OnceLock<bool> = OnceLock::new();
 
+/// What `probe` answered, `None` while it has not.
+pub fn probed() -> Option<bool> {
+    WORKS.get().copied()
+}
+
+/// Whether `mime` is a type the helper reads, whether it works or not.
+pub fn is_type(mime: &str) -> bool {
+    TYPES.contains(mime)
+}
+
 /// What `probe` answered, or no while it has not, the probe started.
 fn works() -> bool {
     static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

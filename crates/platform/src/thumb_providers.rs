@@ -117,7 +117,7 @@ impl ThumbnailProvider for FreedesktopCache {
     fn failed_before(&self, req: &ThumbRequest) -> bool {
         self.cache
             .as_ref()
-            .is_some_and(|cache| cache.failed(&req.entry.path, tools_stamp()))
+            .is_some_and(|cache| cache.failed(&req.entry.path, &failure_stamp(req)))
     }
 
     fn store_failure(&self, req: &ThumbRequest) {
@@ -131,7 +131,7 @@ impl ThumbnailProvider for FreedesktopCache {
                 .ok()
         });
         let Some(mtime) = mtime else { return };
-        if let Err(e) = cache.store_failed(&req.entry.path, mtime, tools_stamp()) {
+        if let Err(e) = cache.store_failed(&req.entry.path, mtime, &failure_stamp(req)) {
             tracing::debug!(path = %req.entry.path.display(), "thumbnail failure not kept: {e:#}");
         }
     }
@@ -210,6 +210,25 @@ pub fn tools_stamp() -> &'static str {
     })
 }
 
+/// What a failure to draw `req`'s thumbnail is kept with: the tools that
+/// could draw it (`tools_stamp`), and, for a HEIC or an AVIF, what Skwir's
+/// HEIF helper's probe answered, or that it had not yet (`heif::probed`):
+/// one failed before it answered, while its types were the fallbacks',
+/// or while it said no, is tried again once it says yes, rather than kept
+/// failed until the file or the tools change.
+fn failure_stamp(req: &ThumbRequest) -> std::borrow::Cow<'static, str> {
+    let stamp = tools_stamp();
+    if !mime_of(req).is_some_and(|mime| crate::heif::is_type(&mime)) {
+        return stamp.into();
+    }
+    let probed = match crate::heif::probed() {
+        Some(true) => "works",
+        Some(false) => "fails",
+        None => "unasked",
+    };
+    format!("{stamp}-heif-{probed}").into()
+}
+
 // ------------------------------------------------------------- image decoder
 
 /// Decodes in-process what `decodes` lists: rasters with the `image`
@@ -252,6 +271,17 @@ static DRAWINGS: crate::mime::Types =
 /// (`decodes_file`), and one without a JPEG goes to the fallbacks.
 pub fn decodes(mime: &str) -> bool {
     raster(mime) || is_drawing(mime) || crate::heif::reads(mime)
+}
+
+/// As `decodes`, asked on a worker, where waiting is allowed: for a HEIC
+/// or an AVIF, the HEIF helper's probe answered first (`heif::probe`),
+/// so a type it reads is not left out for being asked before it answered
+/// (a comic's pages listed just after the program started).
+pub fn decodes_on_worker(mime: &str) -> bool {
+    if crate::heif::is_type(mime) {
+        crate::heif::probe();
+    }
+    decodes(mime)
 }
 
 /// Whether skwir decodes the picture of type `mime` whose first bytes are
@@ -922,6 +952,26 @@ mod tests {
             "image/x-nikon-nef",
             b"II*\0\x08\0\0\0\0\0\0\0\0\0\0\0"
         ));
+    }
+
+    /// A HEIC's failure is kept with what the HEIF helper's probe said:
+    /// one kept before it answered is not one after; any other type's is
+    /// kept with the tools alone.
+    #[test]
+    fn a_heif_failure_is_kept_with_what_its_probe_said() {
+        let r = |p: &str, mime: &str| ThumbRequest {
+            entry: EntryRef::new(skwir_core::FileId::new(0, 0), p),
+            mime: Some(mime.into()),
+            mtime: None,
+            size: CoreSize::Normal,
+        };
+        let (heic, png) = (r("/x/a.heic", "image/heic"), r("/x/a.png", "image/png"));
+        assert_eq!(failure_stamp(&png), tools_stamp());
+        let unasked = failure_stamp(&heic).into_owned();
+        assert_ne!(unasked, tools_stamp());
+        crate::heif::probe();
+        assert_ne!(failure_stamp(&heic), unasked, "asked again once it answers");
+        assert_eq!(failure_stamp(&png), tools_stamp());
     }
 
     #[test]

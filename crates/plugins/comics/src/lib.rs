@@ -369,11 +369,12 @@ fn is_page(member: &archive::Member) -> bool {
     member.regular
         && !member.encrypted
         && !left_beside(&member.name)
-        // A picture the decoder reads, as a thumbnail's is.
+        // A picture the decoder reads, as a thumbnail's is (on a worker: a
+        // HEIC page once the HEIF helper's probe has answered).
         && std::path::Path::new(&member.name)
             .file_name()
             .and_then(mime::by_name)
-            .is_some_and(|mime| thumb_providers::decodes(mime.as_str()))
+            .is_some_and(|mime| thumb_providers::decodes_on_worker(mime.as_str()))
 }
 /// Whether the member `name` is what a tool left beside a book: in a
 /// Mac's `__MACOSX`, or hidden (an `AppleDouble` twin, a thumbnail, a
