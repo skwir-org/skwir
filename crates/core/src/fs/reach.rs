@@ -1556,11 +1556,20 @@ mod tests {
     /// and the table read again by then. Run in a mount namespace of the
     /// test's own (`the_table_is_followed`), where it mounts as root: it
     /// does nothing anywhere else.
+    ///
+    /// Its namespace holds a copy of every mount there was as it was made,
+    /// and another namespace removing the folder one of them is on (a test
+    /// beside it taking its fixture away once it let go of its FUSE mount)
+    /// detaches the copy here too: a change of this table, told as any is.
+    /// So each call is held to the table having changed since the call
+    /// before, as the follower read it then (`points`): a call for a table
+    /// that did not change fails, a burst being one call, whatever else
+    /// another namespace makes this table tell.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_mount_made_or_let_go_of_is_told() {
         use std::process::Command;
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
         if !crate::testing::in_namespace() {
             return;
         }
@@ -1572,24 +1581,45 @@ mod tests {
         let point = tempfile::tempdir().unwrap();
         let point = point.path().join("a mount's point");
         std::fs::create_dir(&point).unwrap();
+        let mounted_here = || super::volume_of(&point).as_deref() == Some(point.as_path());
         // Read before: kept until told.
-        assert_ne!(super::volume_of(&point).as_deref(), Some(point.as_path()));
+        assert!(!mounted_here());
+        let mut last = super::points();
+        // A call, the table read again for it changed since the call before.
+        let mut told = |within: Duration| -> bool {
+            if rx.recv_timeout(within).is_err() {
+                return false;
+            }
+            let now = super::points();
+            assert_ne!(now, last, "told with nothing changed");
+            last = now;
+            true
+        };
         let mounted = Command::new("mount")
             .args(["-t", "tmpfs", "skwir-test"])
             .arg(&point)
             .status()
             .unwrap();
         assert!(mounted.success());
-        rx.recv_timeout(Duration::from_secs(10))
-            .expect("the mount was told");
-        assert_eq!(super::volume_of(&point).as_deref(), Some(point.as_path()));
+        // Told, as many times as other namespaces changed the table too,
+        // until the table read again for a call holds it.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let left = |deadline: Instant| deadline.saturating_duration_since(Instant::now());
+        assert!(told(left(deadline)), "the mount was told");
+        while !mounted_here() {
+            assert!(told(left(deadline)), "the mount was told");
+        }
         let let_go = Command::new("umount").arg(&point).status().unwrap();
         assert!(let_go.success());
-        rx.recv_timeout(Duration::from_secs(10))
-            .expect("letting go of it was told");
-        assert_ne!(super::volume_of(&point).as_deref(), Some(point.as_path()));
-        // A burst is one call: nothing more was told.
-        assert!(rx.recv_timeout(Duration::from_millis(600)).is_err());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        assert!(told(left(deadline)), "letting go of it was told");
+        while mounted_here() {
+            assert!(told(left(deadline)), "letting go of it was told");
+        }
+        // A burst is one call: what is told now is another change, never
+        // this one again.
+        let quiet = Instant::now() + Duration::from_secs(10);
+        while told(Duration::from_millis(600)) && Instant::now() < quiet {}
     }
 
     /// A follower whose lifetime ended is let go of as another follows,
