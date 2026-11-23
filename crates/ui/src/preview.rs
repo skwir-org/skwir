@@ -4144,8 +4144,13 @@ impl Shell {
         let media_side = media_box.0.max(media_box.1).max(picture_side);
         let media_fit = (picture_side == 0).then_some(media_box);
         // A document's page is rendered at the side pages are shown at, or
-        // before any was, at the side the content's area says.
-        let page_side = self.preview.page_side;
+        // before any was, at the side the content's area says; whole, as
+        // much as a page of its shape may hold (`whole_side`, ADR-147),
+        // what shows past that drawn apart.
+        let page_side = self
+            .preview
+            .page_side
+            .map(|side| self.preview.reader.scroll.whole_side(self.preview.page, side));
         let area = Arc::clone(&self.preview.area);
         // A folder's is the file standing for it, known on the worker.
         let open_document = !self.preview.reader.tried;

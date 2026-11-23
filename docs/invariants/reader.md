@@ -256,9 +256,14 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   most `PAGE_PIXELS` (an A4 page at `MAX_SIDE`), never fewer than
   `MAX_SIDE` on its longer side (`document::held_side`): a tall page (a
   webtoon's) whole at its own width. The reader asks each page at that
-  (`DocumentScroll::whole_side`, its shape as its engine said it), and
-  every helper bounds a whole page by the same function; the manager
-  takes at most a square page's pixels at `MAX_SIDE`.
+  (`DocumentScroll::whole_side`), the page shown by the preview's job
+  too, never the side shown however large (a plugin from outside Skwir
+  was asked 8192 pixels and its picture refused): its shape as its
+  engine said it, else as the nearest page known (the page shown's from
+  the start, `keep_shown_page`), never ISO's once one is known (a
+  webtoon's every page was drawn twice, first 273 pixels across). Every
+  helper bounds a whole page by the same function; the manager takes at
+  most a square page's pixels at `MAX_SIDE`.
 - **Past it, what shows is drawn apart** (ADR-147). Each page element
   says in prepaint what of it shows within its view, what it covers and
   what its drawing whole holds (`document::Seen`), read once laid out

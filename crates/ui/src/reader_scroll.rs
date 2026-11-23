@@ -619,12 +619,18 @@ impl DocumentScroll {
     /// The side page `page` is drawn whole at when pages are drawn at
     /// `side`: as much as a page of its shape may hold
     /// (`document::held_side`), what shows of it past that drawn apart
-    /// (ADR-147). Its shape as the engine said it, else an upright page of
-    /// ISO's shape until it is known.
+    /// (ADR-147). Its shape as the engine said it, else that of the nearest
+    /// page known before it, or after (the one shown first at worst,
+    /// `keep_shown_page`), as a row counts a page not drawn yet as one that
+    /// was; an upright page of ISO's shape only before any is known.
+    /// Counted as ISO's until each came, a webtoon's every page was drawn
+    /// whole twice, first 273 pixels across.
     pub(crate) fn whole_side(&self, page: u32, side: u32) -> u32 {
         let (width, height) = self
             .sizes
             .get(&page)
+            .or_else(|| self.sizes.range(..page).next_back().map(|(_, size)| size))
+            .or_else(|| self.sizes.range(page..).next().map(|(_, size)| size))
             .copied()
             .unwrap_or((1., std::f32::consts::SQRT_2));
         skwir_core::document::held_side(width, height, side)
@@ -1609,6 +1615,20 @@ impl Shell {
     /// side it was rendered at, and the pages after and before it are read
     /// ahead: a turn to either shows it at once (`turn_from_kept`).
     pub(crate) fn keep_shown_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Read either way, the shape of the page shown is known from now
+        // on, for it and the pages near it drawn whole (`whole_side`).
+        if let Some(PreviewContent::Image {
+            document: Some(page),
+            ..
+        }) = &self.preview.content
+        {
+            let size = (page.width, page.height);
+            let scroll = &mut self.preview.reader.scroll;
+            if scroll.sizes.get(&page.page) != Some(&size) {
+                Rc::make_mut(&mut scroll.sizes).insert(page.page, size);
+                scroll.widest = scroll.widest.max(size.0);
+            }
+        }
         let reader = &self.preview.reader;
         if reader.scroll.continuous || reader.session.is_none() {
             return;
@@ -2035,8 +2055,17 @@ mod tests {
         assert_eq!(page_side(10_000.), 9728);
         assert_eq!(page_side(100_000.), MAX_PART_SIDE);
         // A page whole is held as much as its shape may hold.
-        let state = DocumentScroll::default();
+        let mut state = DocumentScroll::default();
         assert_eq!(state.whole_side(1, 9728), 4096, "an A4 page, unknown yet");
+        // A webtoon's: the pages not seen yet are counted as the nearest
+        // known, never as ISO's.
+        Rc::make_mut(&mut state.sizes).insert(1, (800., 12_000.));
+        let tall = state.whole_side(1, 30_208);
+        assert!(tall > 13_000, "{tall}");
+        assert_eq!(state.whole_side(5, 30_208), tall);
+        Rc::make_mut(&mut state.sizes).insert(9, (600., 800.));
+        assert_eq!(state.whole_side(10, 30_208), 4096);
+        assert_eq!(state.whole_side(4, 30_208), tall, "the nearest before");
     }
 
     /// A page covering more than its pixels drawn whole hold has what shows
