@@ -167,9 +167,9 @@ impl Shell {
         window.focus(&self.shown_focus().unwrap_or(canvas), cx);
         self.preview.menu = None;
         self.arm_fullscreen_hide(window, cx);
-        // What was read ahead for the panel is read again for the screen:
-        // its room, laid out first (`Area::moved`, `room_for`).
-        self.let_ahead_go(window, cx);
+        // What was read ahead for the panel is read again for the screen,
+        // in its room, laid out first (`Area::moved`, `room_for`): read for
+        // another place, it does not fit there (`Ahead::fits`).
         self.preview.area.moved();
         self.read_ahead_next(window, cx);
         cx.notify();

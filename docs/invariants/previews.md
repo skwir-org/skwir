@@ -287,7 +287,11 @@ A name that says nothing is not a binary file.
   laid out), as a first page does: what the area held before (a line
   saying why the last file was not shown) or the panel's room once the
   whole screen or peek shows it (`Area::moved`) is never a picture's
-  room. `IMAGE_MAX_SIDE` only while no room was ever laid out. A
+  room. The room measured is the area's own bounds (`content_area`'s
+  canvas), never what its child takes, and is not measured while
+  Properties says why nothing is shown (`properties::alone`), taking
+  the room a picture would have. `IMAGE_MAX_SIDE` only while no room
+  was ever laid out. A
   JPEG twice that side and more is decoded at its least reduced scale
   still covering it (a 24-megapixel photo computes and holds a quarter
   of its pixels), any other whole, a lossless JPEG too (it has no
@@ -367,7 +371,11 @@ A name that says nothing is not a binary file.
   Either fitted in the room the content's area is laid out with for the
   preview shown, waited for on its worker (`Area::room_for`,
   `Cover::Quick`): the screen's, laid out first when the whole screen is
-  entered, the panel's. Only once the one shown has
+  entered, peek's, the panel's. Read for one place, it is let go in
+  another (`Ahead::place`, `fits`, `take_ahead`): fitted in another's
+  room, it would be shown too small and decoded again as a zoom, or held
+  larger than shown; entering or leaving the whole screen or peek reads
+  it again there. Only once the one shown has
   arrived: the two never wait for each other's decode, and an arrow held
   down, its steps quicker than a photo's decode, starts none. One at most, `PreviewState::ahead`, kept
   beside the preview since a step replaces the preview. It is keyed as

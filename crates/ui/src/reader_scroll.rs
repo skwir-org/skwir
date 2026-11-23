@@ -136,6 +136,12 @@ impl Area {
         self.state.lock().place += 1;
     }
 
+    /// Where the area is shown now, counted (`moved`): what was fitted in
+    /// a room of another place is not fitted in this one.
+    pub(crate) fn place(&self) -> u64 {
+        self.state.lock().place
+    }
+
     /// The side measured for the preview `generation`, or for a later one
     /// (the same area, laid out for the preview that followed), waiting
     /// `WAIT` at most for the frame that lays it out; else the last

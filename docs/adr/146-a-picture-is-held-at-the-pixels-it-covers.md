@@ -59,7 +59,10 @@ Measured in release on synthetic photos of about three bits a pixel
    line saying why the last file was not shown made a photo stepped to
    from it decode at 80 pixels, then again as a zoom), nor is the
    panel's once the whole screen or peek shows the preview
-   (`Area::moved`). Zoomed or in a larger room, the side the zoom
+   (`Area::moved`): the area's own bounds are measured, never its
+   child's, and not while Properties says why nothing is shown. A
+   picture read ahead for one place is not shown in another. Zoomed or
+   in a larger room, the side the zoom
    asks (`Cover::Side`, `Sharpen`, as before). It is decoded at the
    cheapest decoder scale covering that (a JPEG's eighth, quarter, half
    or whole, `picture::decode_fitted`), then shrunk to it once. A

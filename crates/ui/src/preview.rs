@@ -238,14 +238,22 @@ pub(crate) struct Ahead {
     /// it (`PreviewState::hold`), so the picture decoded again where it is
     /// (settled, zoomed, its region) never reads the file twice (ADR-101).
     held: HeldSlot,
+    /// Where the content's area was shown as it was asked (`Area::place`):
+    /// the panel, peek or the whole screen. Read for one, it is not taken in
+    /// another, where its room is another's.
+    place: u64,
 }
 
 impl Ahead {
     /// Whether it is read for `room`, the room the step would show it in
-    /// as the content's area was last laid out: still asking (it waits for
-    /// the room laid out for the preview it was asked from, `Area::room_for`),
-    /// claimed by a provider, or fitted in a room that holds it.
-    fn fits(&self, room: Option<Room>) -> bool {
+    /// as the content's area was last laid out in `place`, where it is
+    /// shown now: asked there, and still asking (it waits for the room laid
+    /// out for the preview it was asked from, `Area::room_for`), claimed by
+    /// a provider, or fitted in a room that holds it.
+    fn fits(&self, room: Option<Room>, place: u64) -> bool {
+        if self.place != place {
+            return false;
+        }
         match &*self.slot.lock() {
             AheadSlot::Asking | AheadSlot::Claimed => true,
             AheadSlot::Decoding { room: read, .. } | AheadSlot::Read { room: read, .. } => {
@@ -4841,9 +4849,9 @@ impl Shell {
         // Its type as the panel would take it, settled by the name alone
         // (`sync_preview`): bytes to read first are the request's to read.
         let mime = skwir_platform::mime::of_entry(&entry);
-        let room = self.preview.area.last_room();
+        let (room, place) = (self.preview.area.last_room(), self.preview.area.place());
         if self.preview.ahead.as_ref().is_some_and(|ahead| {
-            ahead.key == key && !ahead.version.rewritten(&version) && ahead.fits(room)
+            ahead.key == key && !ahead.version.rewritten(&version) && ahead.fits(room, place)
         }) {
             return;
         }
@@ -5007,6 +5015,7 @@ impl Shell {
             cancel,
             slot,
             held,
+            place,
         });
     }
 
@@ -5111,7 +5120,12 @@ impl Shell {
         let Some(ahead) = self.preview.ahead.take_if(|ahead| ahead.key == *key) else {
             return false;
         };
+        // Read for another place (the panel, peek or the whole screen,
+        // entered or left since): fitted in another's room, it would be
+        // shown too small, then decoded again as a zoom, or held larger than
+        // it is shown.
         if ahead.version.rewritten(version)
+            || ahead.place != self.preview.area.place()
             || !self.preview.nested.is_empty()
             || self.preview.descend.is_some()
         {
@@ -7028,8 +7042,10 @@ impl Shell {
         window.focus(self.preview.media.focus.as_ref().unwrap_or(&focus), cx);
         self.preview.peek_focus = Some(focus);
         self.preview.peek = true;
-        // Laid out in peek from now on: what is asked fits there.
+        // Laid out in peek from now on: what is asked fits there, and what
+        // was read ahead for the panel is read again for it.
         self.preview.area.moved();
+        self.read_ahead_next(window, cx);
         cx.notify();
     }
 
@@ -7039,13 +7055,19 @@ impl Shell {
             let _ = session.control(skwir_core::media::Control::Play(false));
         }
         self.preview.menu = None;
-        if self.preview.peek {
+        let left = self.preview.peek;
+        if left {
             // Laid out in the panel again.
             self.preview.area.moved();
         }
         self.preview.peek = false;
         self.preview.peek_focus = None;
         self.preview.peek_press = None;
+        // What was read ahead for peek is read again for the panel, where
+        // it still shows.
+        if left && self.preview.panel_open() {
+            self.read_ahead_next(window, cx);
+        }
         window.focus(&self.ui().focus, cx);
         cx.notify();
     }
@@ -7595,34 +7617,40 @@ pub(crate) fn content_area(
                 })
             },
         )
-        // Measured where it is used: the panel, peek or the whole screen,
-        // not the copy drawn behind peek.
-        .when(interactive, |d| {
-            d.on_children_prepainted(watch_area(shell, cx))
-        })
         .child(inner)
+        // Measured where it is used (the panel, peek or the whole screen,
+        // not the copy drawn behind peek), as laid out for what a picture,
+        // a page or a film is shown in: its own bounds, never what its
+        // child takes (a line saying why a file is not shown), and not
+        // while Properties says why nothing is shown, taking the room a
+        // picture would have (`properties::alone`).
+        .when(interactive && !alone, |d| {
+            d.relative().child(
+                gpui::canvas(watch_area(shell, cx), |_, (), _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
+        })
         .into_any_element()
 }
 
-/// What the content's area hands the shell once laid out (its one child
-/// fills it): the box a film's picture is asked to fit there (`media_box`),
-/// when it crosses a step, and the side a page shown there is rendered at
-/// (`area`), for the preview it is laid out for.
+/// What the content's area hands the shell once laid out, measured over
+/// the whole of it (`content_area`): the box a film's picture is asked to
+/// fit there (`media_box`), when it crosses a step, the side a page shown
+/// there is rendered at and the room a picture is fitted in (`area`), for
+/// the preview it is laid out for.
 fn watch_area(
     shell: &Shell,
     cx: &mut Context<Shell>,
-) -> impl Fn(Vec<gpui::Bounds<gpui::Pixels>>, &mut Window, &mut gpui::App) + 'static {
+) -> impl FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut gpui::App) + 'static {
     let known = shell.preview.media_box;
     let (area, generation) = (Arc::clone(&shell.preview.area), shell.preview.generation);
     let shell = cx.entity().downgrade();
     move |bounds, window, cx| {
-        // Nothing to show takes no room, and says nothing of the area.
-        let Some(bounds) = bounds
-            .first()
-            .filter(|b| b.size.width > gpui::px(0.) && b.size.height > gpui::px(0.))
-        else {
+        // An area with no room says nothing of the room.
+        if !(bounds.size.width > gpui::px(0.) && bounds.size.height > gpui::px(0.)) {
             return;
-        };
+        }
         let device = |side: gpui::Pixels| f32::from(side) * window.scale_factor();
         let (width, height) = (device(bounds.size.width), device(bounds.size.height));
         area.measured(
