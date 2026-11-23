@@ -770,7 +770,7 @@ impl OpenLocation for TrashFolder {
         self.inner.path_of(id).map(|path| folder_location(&path))
     }
 
-    fn holds(&self) -> Option<&std::path::Path> {
+    fn holds(&self) -> Option<std::path::PathBuf> {
         self.inner.holds()
     }
 

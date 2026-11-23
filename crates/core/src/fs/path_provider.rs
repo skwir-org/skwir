@@ -56,6 +56,9 @@ impl LocationProvider for PathProvider {
 struct Shared {
     /// Where the directory is now: it follows the directory when it moves.
     dir: RwLock<PathBuf>,
+    /// Where the system resolved it as it was opened (a link on the way
+    /// followed): the volume it holds, a read of it too (`Held`).
+    at: PathBuf,
     /// The directory, held open or opened for each read: names are
     /// stat-ed relative to it.
     folder: RwLock<Folder>,
@@ -340,10 +343,11 @@ fn as_now(names: &Names, event: ListingEvent) -> Vec<ListingEvent> {
 pub struct PathLocation {
     location: Location,
     dir: PathBuf,
-    /// The folder held open as the system resolved it once opened (a link
-    /// on the way followed): what is compared with a volume's mount point
+    /// The folder held open as the system resolved it at its latest open
+    /// (a link on the way followed, which may lead elsewhere once it is
+    /// opened again): what is compared with a volume's mount point
     /// (`OpenLocation::holds`).
-    held: Arc<std::sync::OnceLock<PathBuf>>,
+    held: Arc<RwLock<Option<PathBuf>>>,
     ctx: OpenContext,
     tx: EventSink,
     shared: Arc<Mutex<Option<Arc<Shared>>>>,
@@ -389,7 +393,7 @@ fn open_folder(
     tx: &EventSink,
     slot: &Arc<Mutex<Option<Arc<Shared>>>>,
     opening: &Arc<Mutex<Opening>>,
-    held: &std::sync::OnceLock<PathBuf>,
+    held: &RwLock<Option<PathBuf>>,
     lane: Lane,
 ) -> anyhow::Result<Option<Arc<Shared>>> {
     // Opening/stat-ing a sleeping disk and installing a watch are I/O.
@@ -409,18 +413,19 @@ fn open_folder(
     };
     // Where it is held, by the folder's path the system
     // knows: `~/Music` a link into a drive is held there.
-    let at = held.get_or_init(|| folder.path_now().unwrap_or_else(|| dir.to_path_buf()));
+    let at = folder.path_now().unwrap_or_else(|| dir.to_path_buf());
     // A volume the user may let go of is never held between reads
     // (ADR-149, amended): an unmount by any program finds it free. Nor one
     // about to be let go of.
     let hold_nothing = opening.lock().hold_nothing;
-    let folder = if lane.is_shared() && !hold_nothing && !super::volume::lets_go(at) {
-        Folder::Held(Arc::new((folder, Held::new(dir, at))))
+    let folder = if lane.is_shared() && !hold_nothing && !super::volume::lets_go(&at) {
+        Folder::Held(Arc::new((folder, Held::new(dir, &at))))
     } else {
         Folder::ByPath
     };
     let shared = Arc::new(Shared {
         dir: RwLock::new(dir.to_path_buf()),
+        at,
         folder: RwLock::new(folder),
         id,
         names: Mutex::new(Names::default()),
@@ -455,6 +460,8 @@ fn open_folder(
             return Ok(None);
         }
         *slot = Some(Arc::clone(&shared));
+        // What its listing says it holds, the folder held now.
+        *held.write() = Some(shared.at.clone());
     }
     // Decided while it opened, and asked of it: held to it now.
     let (hold_nothing, gone, wanted) = {
@@ -1077,7 +1084,9 @@ impl Shared {
         #[cfg(test)]
         self.opens.fetch_add(1, Ordering::Relaxed);
         let opened = Dir::open(&dir)?;
-        let held = Held::new(&dir, &dir);
+        // Counted by where the system resolved it too: a read through a
+        // link holds the volume the link leads to.
+        let held = Held::new(&dir, &self.at);
         Ok(Opened::Now {
             dir: opened,
             _held: held,
@@ -1493,8 +1502,8 @@ impl OpenLocation for PathLocation {
         &self.location
     }
 
-    fn holds(&self) -> Option<&Path> {
-        Some(self.held.get().unwrap_or(&self.dir))
+    fn holds(&self) -> Option<PathBuf> {
+        Some(self.held.read().clone().unwrap_or_else(|| self.dir.clone()))
     }
 
     fn events(&self) -> &Receiver<ListingEvent> {

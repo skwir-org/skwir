@@ -4610,7 +4610,7 @@ impl Pane {
             k.open
                 .as_ref()
                 .and_then(|open| open.holds())
-                .or(k.path.as_deref())
+                .or_else(|| k.path.clone())
                 .is_some_and(|p| p.starts_with(path))
         });
         if left_there {

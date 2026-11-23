@@ -1878,6 +1878,9 @@ fn a_folder_opened_again_shows_what_its_path_leads_to_now() {
         (names.as_slice(), gone),
         (["two.txt".to_owned()].as_slice(), 1)
     );
+    // What it holds is the folder its link leads to now: a volume let go
+    // of there reaches it, never one the link led to before.
+    assert_eq!(open.holds(), Some(std::fs::canonicalize(&second).unwrap()));
     open.close();
 }
 

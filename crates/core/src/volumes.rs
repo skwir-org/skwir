@@ -230,7 +230,7 @@ fn gone(remote: bool) -> ListingError {
 /// as the system resolved it (a link on the way followed) and the path its
 /// location names.
 fn paths_of(open: &Arc<dyn OpenLocation>) -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = open.holds().map(Path::to_path_buf).into_iter().collect();
+    let mut paths: Vec<PathBuf> = open.holds().into_iter().collect();
     if let Some(path) = open.location().path()
         && !paths.contains(&path)
     {

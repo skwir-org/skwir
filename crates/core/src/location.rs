@@ -494,8 +494,10 @@ pub trait OpenLocation: Send + Sync {
     /// location lists through it (a trashed folder's). As the system
     /// resolved it once opened, a link on the way followed: what
     /// `App::release` compares with a volume's mount point, and lets go of
-    /// before it is unmounted, whatever its scheme.
-    fn holds(&self) -> Option<&Path> {
+    /// before it is unmounted, whatever its scheme. The folder held now:
+    /// one opened again through a link that leads elsewhere holds the
+    /// other.
+    fn holds(&self) -> Option<std::path::PathBuf> {
         None
     }
 

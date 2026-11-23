@@ -65,8 +65,8 @@ impl OpenLocation for Open {
             .find(|name| id == EntryId::place(name.len() as u64))
             .map(|name| Location::new(SCHEME, format!("/{name}")))
     }
-    fn holds(&self) -> Option<&Path> {
-        self.holds.as_deref()
+    fn holds(&self) -> Option<PathBuf> {
+        self.holds.clone()
     }
     fn refresh(&self) {}
     fn close(&self) {}

@@ -3845,7 +3845,6 @@ impl App {
     pub fn release(&self, path: &Path, to: &Location) -> anyhow::Result<()> {
         let under = |open: &Arc<dyn crate::location::OpenLocation>| {
             open.holds()
-                .map(Path::to_path_buf)
                 .or_else(|| open.location().path())
                 .is_some_and(|held| held.starts_with(path))
         };
