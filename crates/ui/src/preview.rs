@@ -2565,7 +2565,7 @@ fn compute(
     mime: Option<&str>,
     code: &crate::code_preview::CodeTheme,
     cover: &dyn Fn() -> Option<Cover>,
-    first: &dyn Fn(PreviewContent),
+    first: Option<&dyn Fn(PreviewContent)>,
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> PreviewContent {
@@ -2594,7 +2594,7 @@ fn compute(
             } else {
                 Turn::Shown
             };
-            decode_image(&held, mime, cover, bounds, turn, Some(first), cancel)
+            decode_image(&held, mime, cover, bounds, turn, first, cancel)
                 .unwrap_or_else(failure_content)
         }
         // Every text file is read the way structured code is: a gutter,
@@ -4759,8 +4759,11 @@ impl Shell {
                             }
                         },
                         // What stands for a picture while it is decoded,
-                        // kept aside as the desktop's thumbnail is.
-                        &|content| {
+                        // kept aside as the desktop's thumbnail is: only
+                        // before anything of the file is shown, never for a
+                        // picture decoded again where it is (settled,
+                        // sharpened), which stands for itself.
+                        show_thumbnail.then_some(&|content: PreviewContent| {
                             if !cancel.is_cancelled() {
                                 let _ = tx.send(PreviewResult {
                                     generation,
@@ -4776,7 +4779,7 @@ impl Shell {
                                 });
                                 wake();
                             }
-                        },
+                        }),
                         Bounds::of(&inspection),
                         &cancel,
                     ),
@@ -10051,7 +10054,7 @@ mod tests {
             mime,
             &crate::code_preview::CodeTheme::own(false),
             &|| Some(super::Cover::Side(1024)),
-            &|_| {},
+            None,
             skwir_platform::inspection::limits::Bounds::QUICK,
             &skwir_core::CancelToken::new(),
         ) {
@@ -10083,7 +10086,7 @@ mod tests {
                 Some("image/svg+xml"),
                 &crate::code_preview::CodeTheme::own(false),
                 &|| (side > 0).then_some(super::Cover::Side(side)),
-                &|_| {},
+                None,
                 skwir_platform::inspection::limits::Bounds::QUICK,
                 &cancel,
             );
@@ -10167,7 +10170,7 @@ mod tests {
             mime,
             &crate::code_preview::CodeTheme::own(false),
             &|| Some(super::Cover::Side(1024)),
-            &|_| {},
+            None,
             skwir_platform::inspection::limits::Bounds::QUICK,
             &cancel,
         ) {
