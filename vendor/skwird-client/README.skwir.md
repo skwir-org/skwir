@@ -25,7 +25,10 @@ skwird commit it was copied from.
   come from crates.io through Skwir's lockfile, held to the advisories
   as Skwir's own (`just deny`). `tools/deny/vendored.py` holds only the
   copies that stand for a release; this one stands for none.
-- **Every system.** Off Unix, `Client::connect` answers `NoEngine`,
-  naming the system: skwird runs on Linux so far (its phases 4 and 5 are
-  Windows and macOS). On macOS it finds no engine and starts none that
-  answers.
+- **Every system.** On Windows the client reaches an engine over the
+  user's named pipe (`\\.\pipe\skwird-<SID>`, or `SKWIRD_PIPE`),
+  checks that the pipe's server runs as the same user before saying
+  anything, and starts an engine without a console (ADR-074), through
+  windows-sys (its only dependency there, from Skwir's lockfile). No
+  engine serves on Windows yet (skwird's phase 4), so it finds none. On
+  macOS it finds no engine and starts none that answers (phase 5).

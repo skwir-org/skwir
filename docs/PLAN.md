@@ -3700,14 +3700,17 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   skwird on demand where it is installed.
   - **The copies, made 2026-11-23:** `vendor/skwird-protocol` and
     `vendor/skwird-client`, by skwird's `tools/vendor-client` (from
-    40f7f87, again from accc113, then 94a6d65), outside the workspace, `skwird-client`
-    in `[workspace.dependencies]`. Built alone with Skwir's toolchain and
-    lockfile, their tests green, compiled for Windows and macOS. Nothing
-    takes them yet. skwird's session gave, at accc113, the client's
-    calls given up on (`Find.silence`, `Client::stopper`), the engine
-    reaped and started in `/`, and the XDG variables read as the spec
-    has them (`Find.runtime`, `Find.state`); Windows' console waits for
-    its phase 4.
+    40f7f87, again from accc113, 94a6d65, then 5384fc9), outside the
+    workspace, `skwird-client` in `[workspace.dependencies]`. Built alone
+    with Skwir's toolchain and lockfile, their tests green, compiled for
+    Windows and macOS; the skwird plugin takes them. skwird's session
+    gave, at accc113, the client's calls given up on (`Find.silence`,
+    `Client::stopper`), the engine reaped and started in `/`, and the XDG
+    variables read as the spec has them (`Find.runtime`, `Find.state`);
+    at 5384fc9, the client on Windows: the user's named pipe, its server
+    checked to run as the same user, an engine started without a console
+    (ADR-074), through windows-sys (already in the lockfile). No engine
+    serves on Windows yet (skwird's phase 4).
   - **Its connection:** made at the first search, never at start
     (ADR-128, ADR-141): an index read back answers "as of" in about
     0.6 s, and a sync proves "checked" after (0.43 s warm on the user's

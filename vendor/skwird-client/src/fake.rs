@@ -31,15 +31,16 @@ pub struct Script {
 /// A fake engine serving until dropped.
 pub struct Fake {
     pub socket: PathBuf,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod imp {
     use std::io::BufReader;
+    #[cfg(unix)]
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
     use std::sync::Arc;
@@ -50,6 +51,7 @@ mod imp {
     };
 
     use super::{Fake, Script};
+    use crate::Conn;
 
     fn outside() -> Coverage {
         Coverage {
@@ -68,7 +70,7 @@ mod imp {
             .map_or_else(outside, |(_, c)| c.clone())
     }
 
-    fn answer(script: &Script, ask: Ask, out: &mut UnixStream, id: u64) -> std::io::Result<()> {
+    fn answer(script: &Script, ask: Ask, out: &mut Conn, id: u64) -> std::io::Result<()> {
         let mut say = |answer| wire::write(out, &Response { id, answer });
         match ask {
             Ask::Hello(_) => say(Answer::Hello(Welcome {
@@ -129,7 +131,7 @@ mod imp {
         }
     }
 
-    fn serve(stream: UnixStream, script: &Script) {
+    fn serve(stream: Conn, script: &Script) {
         let Ok(mut out) = stream.try_clone() else {
             return;
         };
@@ -146,6 +148,7 @@ mod imp {
 
     impl Fake {
         /// A fake engine on `socket`, answering as `script` says.
+        #[cfg(unix)]
         pub fn start(socket: PathBuf, script: Script) -> std::io::Result<Fake> {
             let _ = std::fs::remove_file(&socket);
             let listener = UnixListener::bind(&socket)?;
@@ -170,6 +173,31 @@ mod imp {
                 thread: Some(thread),
             })
         }
+
+        /// A fake engine on the pipe `socket` names, answering as `script`
+        /// says.
+        #[cfg(windows)]
+        pub fn start(socket: PathBuf, script: Script) -> std::io::Result<Fake> {
+            let server = crate::pipe::Server::bind(socket.as_os_str())?;
+            let stop = Arc::new(AtomicBool::new(false));
+            let thread = {
+                let stop = Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    while let Ok(Some(stream)) = server.accept(None) {
+                        if stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let script = script.clone();
+                        std::thread::spawn(move || serve(stream, &script));
+                    }
+                })
+            };
+            Ok(Fake {
+                socket,
+                stop,
+                thread: Some(thread),
+            })
+        }
     }
 
     use std::path::PathBuf;
@@ -178,21 +206,28 @@ mod imp {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::Relaxed);
             // Wake the listener so that it sees it is to stop.
+            #[cfg(unix)]
             let _ = UnixStream::connect(&self.socket);
+            #[cfg(windows)]
+            let _ = crate::pipe::Stream::connect(
+                self.socket.as_os_str(),
+                Some(std::time::Duration::from_secs(1)),
+            );
             if let Some(t) = self.thread.take() {
                 let _ = t.join();
             }
+            #[cfg(unix)]
             let _ = std::fs::remove_file(&self.socket);
         }
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl Fake {
     pub fn start(_: PathBuf, _: Script) -> std::io::Result<Fake> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "skwird's client speaks to engines on Unix sockets so far",
+            "skwird's client speaks to engines on Linux, macOS and Windows alone",
         ))
     }
 }

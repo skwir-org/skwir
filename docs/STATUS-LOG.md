@@ -23019,3 +23019,24 @@ skwird engine, heard and seen.
   with no lens term; nothing to change in Skwir.
 - **Not checked:** the footer's tooltips (hovered); Orca itself (the
   status line read over AT-SPI as it reads it).
+
+## 2026-11-23: skwird's client copied at 5384fc9, on Windows too
+
+skwird's session made its client work on Windows, the last of the five
+asked of it that morning: the user's named pipe (`\\.\pipe\skwird-<SID>`
+or `SKWIRD_PIPE`), its server checked to run as the same user before a
+word, an engine started without a console (ADR-074), from
+`%SystemRoot%`. It takes windows-sys 0.61.2 there, which Skwir's lockfile
+already held: `Cargo.lock` gains the edge alone, `deny` and the notices
+are as they were. No engine serves on Windows yet (skwird's phase 4), so
+the plugin finds none there, as before.
+
+Checked: the diff read (the Unix path the same code behind a
+`connect_to` of each system's); in a crate of its own with Skwir's
+lockfile, offline, the copies' five tests green and `cargo check` for
+Windows and macOS clean, clippy silent; `cargo-zigbuild clippy` of
+skwir-plugin-skwird for `x86_64-pc-windows-gnu`, all targets, `-D
+warnings`, as `check-cross` runs it; the plugin's eight tests and
+`skwird_search`; `just deny`; `notices.py --check`. Not run: the
+plugin's tests under Wine (they are Unix's; the fake engine serves on a
+pipe there now, `\\.\pipe\skwir-test-<label>-<pid>`).

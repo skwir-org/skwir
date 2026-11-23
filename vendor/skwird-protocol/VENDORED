@@ -1,6 +1,7 @@
 A copy of skwird's skwird-protocol, made by skwird's tools/vendor-client from
-94a6d651d69a6697f0357806af5bd7a3fdbc583c.
+5384fc9bbc8dac71790f5f8232abf04c8857abc1.
 
 Do not change it here: change skwird, and copy it again. It depends on
-serde and serde_json alone (and the client on the protocol's copy beside
-it), at versions a client's lockfile resolves.
+serde and serde_json (and the client on the protocol's copy beside it,
+and on Windows on windows-sys), at versions a client's lockfile
+resolves.

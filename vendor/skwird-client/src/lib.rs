@@ -7,28 +7,35 @@
 //! error to do without, never a reason to stop. An engine that speaks no
 //! version the client speaks is done without too.
 //!
+//! On Windows, an engine is reached by a named pipe ([`pipe`]), the
+//! user's own, its server checked to run as the user. No system service
+//! runs there yet (phase 4, step 7): its pipe is not asked.
+//!
 //! Every call can be given up on: after a silence of the engine's
 //! ([`Find::silence`]), or from another thread ([`Client::stopper`]).
 //!
 //! [`fake`] is an engine of a test's making, for clients' tests.
 //!
-//! Like `skwird-protocol`, this crate needs `serde` and `serde_json` alone,
-//! so that a client may keep a copy of both in its own tree.
+//! Like `skwird-protocol`, this crate needs `serde` and `serde_json`, and
+//! on Windows `windows-sys` (its pipes), so that a client may keep a copy
+//! of both in its own tree.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::Arc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub use skwird_protocol as protocol;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use skwird_protocol::Request;
 use skwird_protocol::{Answer, Ask, Changes, Coverage, Done, Entry, Query, Welcome, WirePath};
 
 pub mod fake;
+#[cfg(windows)]
+pub mod pipe;
 
 /// Why a client got no answer.
 #[derive(Debug)]
@@ -79,7 +86,9 @@ pub struct Find {
     pub client: String,
     /// The program to start where no engine answers: none, to start none.
     pub start: Option<PathBuf>,
-    /// A socket to ask, in place of the system's and the user's.
+    /// A socket to ask, in place of the system's and the user's: on
+    /// Windows, a pipe's name, which an engine started is given to serve
+    /// on (`SKWIRD_PIPE`).
     pub socket: Option<PathBuf>,
     /// How long a started engine is waited for.
     pub wait: Duration,
@@ -91,10 +100,11 @@ pub struct Find {
     pub silence: Option<Duration>,
     /// The user's runtime folder, in place of `XDG_RUNTIME_DIR`: where the
     /// user's engine's socket is looked for, and what an engine started is
-    /// given, so that it serves where it is looked for.
+    /// given, so that it serves where it is looked for. Unix's alone.
     pub runtime: Option<PathBuf>,
     /// The user's state folder, in place of `XDG_STATE_HOME`: where an
-    /// engine started logs, and keeps what clients registered.
+    /// engine started logs, and keeps what clients registered. On
+    /// Windows, where an engine started logs alone.
     pub state: Option<PathBuf>,
 }
 
@@ -120,6 +130,44 @@ impl Find {
             .clone()
             .or_else(|| absolute(std::env::var_os("XDG_RUNTIME_DIR")))
     }
+
+    /// Where to look for an engine, in turn, where no socket is given.
+    #[cfg(unix)]
+    fn sockets(&self) -> Vec<PathBuf> {
+        std::iter::once(system_socket())
+            .chain(self.runtime().map(|r| socket_in(&r)))
+            .collect()
+    }
+
+    /// Where to look for an engine where no pipe is given: the user's. No
+    /// system service runs on Windows yet (phase 4, step 7), and a pipe of
+    /// its name may be anyone's: it is not asked.
+    #[cfg(windows)]
+    // The same call as on Unix, which reads the runtime folder given.
+    #[allow(clippy::unused_self)]
+    fn sockets(&self) -> Vec<PathBuf> {
+        pipe::user_pipe().into_iter().collect()
+    }
+
+    /// Where an engine started serves.
+    #[cfg(unix)]
+    fn started(&self) -> Result<PathBuf, Error> {
+        match &self.socket {
+            Some(s) => Ok(s.clone()),
+            None => self.runtime().map(|r| socket_in(&r)).ok_or_else(|| {
+                Error::NoEngine("XDG_RUNTIME_DIR is not set, or not absolute".into())
+            }),
+        }
+    }
+
+    /// Where an engine started serves.
+    #[cfg(windows)]
+    fn started(&self) -> Result<PathBuf, Error> {
+        self.socket
+            .clone()
+            .or_else(pipe::user_pipe)
+            .ok_or_else(|| Error::NoEngine("this user's SID cannot be read".into()))
+    }
 }
 
 /// A folder an environment variable names, read as the XDG base folders
@@ -132,26 +180,72 @@ fn absolute(value: Option<OsString>) -> Option<PathBuf> {
         .filter(|p| p.is_absolute())
 }
 
-/// The system service's socket (phase 3).
+/// The system service's socket (phase 3); on Windows, its pipe, which no
+/// service makes yet.
 pub fn system_socket() -> PathBuf {
-    PathBuf::from("/run/skwird/socket")
+    if cfg!(windows) {
+        PathBuf::from(r"\\.\pipe\skwird")
+    } else {
+        PathBuf::from("/run/skwird/socket")
+    }
 }
 
 /// The user's engine's socket, where the user has a runtime folder
-/// (`XDG_RUNTIME_DIR`, absolute).
+/// (`XDG_RUNTIME_DIR`, absolute); on Windows, the user's pipe.
 pub fn user_socket() -> Option<PathBuf> {
+    #[cfg(windows)]
+    return pipe::user_pipe();
+    #[cfg(not(windows))]
     absolute(std::env::var_os("XDG_RUNTIME_DIR")).map(|r| socket_in(&r))
 }
 
+#[cfg(not(windows))]
 fn socket_in(runtime: &Path) -> PathBuf {
     runtime.join("skwird").join("socket")
 }
 
-/// A connection to an engine.
+/// What a connection runs over: a Unix socket, or a named pipe on Windows.
 #[cfg(unix)]
+pub(crate) type Conn = std::os::unix::net::UnixStream;
+#[cfg(windows)]
+pub(crate) type Conn = pipe::Stream;
+
+/// A connection to `at`, each read and write waited for at most `silence`.
+#[cfg(unix)]
+fn connect_to(at: &Path, silence: Option<Duration>) -> std::io::Result<Conn> {
+    let stream = std::os::unix::net::UnixStream::connect(at)?;
+    // The socket's own, so its clone's too.
+    stream.set_read_timeout(silence)?;
+    stream.set_write_timeout(silence)?;
+    Ok(stream)
+}
+
+/// A connection to the pipe `at`, each read and write waited for at most
+/// `silence`; a free instance of it, as long, or 5 s.
+#[cfg(windows)]
+fn connect_to(at: &Path, silence: Option<Duration>) -> std::io::Result<Conn> {
+    let busy = silence.unwrap_or(Duration::from_secs(5));
+    let mut stream = pipe::Stream::connect(at.as_os_str(), Some(busy))?;
+    stream.set_timeout(silence);
+    Ok(stream)
+}
+
+/// Stop every read and write on the connection, from any thread.
+#[cfg(unix)]
+fn shut(conn: &Conn) {
+    let _ = conn.shutdown(std::net::Shutdown::Both);
+}
+
+#[cfg(windows)]
+fn shut(conn: &Conn) {
+    conn.shutdown();
+}
+
+/// A connection to an engine.
+#[cfg(any(unix, windows))]
 pub struct Client {
-    reader: std::io::BufReader<std::os::unix::net::UnixStream>,
-    writer: std::os::unix::net::UnixStream,
+    reader: std::io::BufReader<Conn>,
+    writer: Conn,
     next: u64,
     welcome: Welcome,
     silence: Option<Duration>,
@@ -163,9 +257,9 @@ pub struct Client {
     silent: bool,
 }
 
-/// A connection to an engine, which no system but Unix makes yet (rule
-/// 7): [`Client::connect`] says so.
-#[cfg(not(unix))]
+/// A connection to an engine, which this system does not make (rule 7):
+/// [`Client::connect`] says so.
+#[cfg(not(any(unix, windows)))]
 pub struct Client {
     never: std::convert::Infallible,
 }
@@ -174,27 +268,33 @@ pub struct Client {
 /// with [`Client::stopper`]: a call waiting on the engine returns at once
 /// with [`Error::Stopped`], and so does every call after. A search given
 /// up on stops so, whatever the engine is doing.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Stopper {
-    #[cfg(unix)]
-    stream: Arc<std::os::unix::net::UnixStream>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
+    conn: Arc<Conn>,
+    #[cfg(any(unix, windows))]
     stopped: Arc<AtomicBool>,
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     never: std::convert::Infallible,
+}
+
+impl std::fmt::Debug for Stopper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Stopper")
+    }
 }
 
 impl Stopper {
     /// Stop the connection's call, and every call after: the connection is
     /// closed.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        shut(&self.conn);
     }
 
     /// Stop the connection's call, and every call after.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub fn stop(&self) {
         match self.never {}
     }
@@ -203,13 +303,11 @@ impl Stopper {
 impl Client {
     /// The first engine that answers as `find` says, started if none does
     /// and `find` says so.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn connect(find: &Find) -> Result<Client, Error> {
         let sockets: Vec<PathBuf> = match &find.socket {
             Some(s) => vec![s.clone()],
-            None => std::iter::once(system_socket())
-                .chain(find.runtime().map(|r| socket_in(&r)))
-                .collect(),
+            None => find.sockets(),
         };
         for socket in &sockets {
             match Client::open(socket, &find.client, find.silence) {
@@ -221,12 +319,7 @@ impl Client {
         let Some(program) = &find.start else {
             return Err(Error::NoEngine("none answers".into()));
         };
-        let socket = match &find.socket {
-            Some(s) => s.clone(),
-            None => find.runtime().map(|r| socket_in(&r)).ok_or_else(|| {
-                Error::NoEngine("XDG_RUNTIME_DIR is not set, or not absolute".into())
-            })?,
-        };
+        let socket = find.started()?;
         start(program, find)?;
         // Until the engine binds its socket: a start's wait, not a loop
         // that idles.
@@ -245,31 +338,28 @@ impl Client {
         }
     }
 
-    /// No engine runs elsewhere than Linux yet (rule 7).
-    #[cfg(not(unix))]
+    /// No engine runs on this system (rule 7).
+    #[cfg(not(any(unix, windows)))]
     pub fn connect(_: &Find) -> Result<Client, Error> {
         Err(Error::NoEngine(
-            "skwird runs on Linux so far: Windows comes with phase 4".into(),
+            "skwird runs on Linux, macOS and Windows alone".into(),
         ))
     }
 
     /// The engine at `socket`, said hello to, waited on as long as it
     /// takes.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn at(socket: &Path, client: &str) -> Result<Client, Error> {
         Client::open(socket, client, None)
     }
 
     /// The engine at `socket`, said hello to, each call given up on after
     /// `silence` without a word from it.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn open(socket: &Path, client: &str, silence: Option<Duration>) -> Result<Client, Error> {
-        let stream = std::os::unix::net::UnixStream::connect(socket)?;
         // A timeout of zero is refused: the shortest there is, instead.
         let silence = silence.map(|d| d.max(Duration::from_millis(1)));
-        // The socket's own, so the writer's too.
-        stream.set_read_timeout(silence)?;
-        stream.set_write_timeout(silence)?;
+        let stream = connect_to(socket, silence)?;
         let writer = stream.try_clone()?;
         let mut c = Client {
             reader: std::io::BufReader::new(stream),
@@ -300,34 +390,34 @@ impl Client {
     }
 
     /// What the engine said of itself.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn welcome(&self) -> &Welcome {
         &self.welcome
     }
 
     /// What the engine said of itself.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub fn welcome(&self) -> &Welcome {
         match self.never {}
     }
 
     /// What stops this connection's calls from another thread.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn stopper(&self) -> Result<Stopper, Error> {
         Ok(Stopper {
-            stream: Arc::new(self.writer.try_clone()?),
+            conn: Arc::new(self.writer.try_clone()?),
             stopped: Arc::clone(&self.stopped),
         })
     }
 
     /// What stops this connection's calls from another thread.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub fn stopper(&self) -> Result<Stopper, Error> {
         match self.never {}
     }
 
     /// Why no call can be made on this connection any more, if none can.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn closed(&self) -> Option<Error> {
         if self.stopped.load(Ordering::Acquire) {
             Some(Error::Stopped)
@@ -340,7 +430,7 @@ impl Client {
 
     /// What a read or a write that failed means: a stop, the engine's
     /// silence (the connection closed), or the error itself.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn failed(&mut self, e: std::io::Error) -> Error {
         if self.stopped.load(Ordering::Acquire) {
             return Error::Stopped;
@@ -348,14 +438,14 @@ impl Client {
         match (e.kind(), self.silence) {
             (std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut, Some(d)) => {
                 self.silent = true;
-                let _ = self.writer.shutdown(std::net::Shutdown::Both);
+                shut(&self.writer);
                 Error::Silent(d)
             }
             _ => Error::Io(e),
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn ask(&mut self, ask: Ask) -> Result<u64, Error> {
         if let Some(e) = self.closed() {
             return Err(e);
@@ -366,7 +456,7 @@ impl Client {
         Ok(id)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn answer(&mut self, id: u64) -> Result<Answer, Error> {
         loop {
             let response: protocol::Response = match protocol::read(&mut self.reader) {
@@ -383,12 +473,12 @@ impl Client {
         }
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn ask(&mut self, _: Ask) -> Result<u64, Error> {
         match self.never {}
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn answer(&mut self, _: u64) -> Result<Answer, Error> {
         match self.never {}
     }
@@ -481,6 +571,32 @@ impl Client {
     }
 }
 
+/// The program to start, a path relative to the client's folder made
+/// absolute: from the folder the engine starts in, it would name another
+/// program. A bare name is looked for on the `PATH`.
+#[cfg(any(unix, windows))]
+fn program_path(program: &Path) -> Result<PathBuf, Error> {
+    Ok(
+        if program.is_relative() && program.components().count() > 1 {
+            std::env::current_dir()?.join(program)
+        } else {
+            program.to_owned()
+        },
+    )
+}
+
+/// The engine's log, in `state`'s `skwird` folder, appended to.
+#[cfg(any(unix, windows))]
+fn log_in(state: Option<PathBuf>) -> Option<std::fs::File> {
+    let dir = state?.join("skwird");
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("engine.log"))
+        .ok()
+}
+
 /// Start the engine, apart from this process: in a process group of its
 /// own, so that a signal to the client's terminal does not reach it; its
 /// output to its log, never the client's; at `/`, so that it holds no
@@ -490,28 +606,13 @@ impl Client {
 #[cfg(unix)]
 fn start(program: &Path, find: &Find) -> Result<(), Error> {
     use std::os::unix::process::CommandExt;
-    let log = find
-        .state
-        .clone()
-        .or_else(|| absolute(std::env::var_os("XDG_STATE_HOME")))
-        .or_else(|| absolute(std::env::var_os("HOME")).map(|h| h.join(".local/state")))
-        .map(|d| d.join("skwird"))
-        .and_then(|d| {
-            std::fs::create_dir_all(&d).ok()?;
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(d.join("engine.log"))
-                .ok()
-        });
-    // A path relative to the client's folder, made absolute: from `/` it
-    // would name another program. A bare name is looked for on the PATH.
-    let program = if program.is_relative() && program.components().count() > 1 {
-        std::env::current_dir()?.join(program)
-    } else {
-        program.to_owned()
-    };
-    let mut command = std::process::Command::new(program);
+    let log = log_in(
+        find.state
+            .clone()
+            .or_else(|| absolute(std::env::var_os("XDG_STATE_HOME")))
+            .or_else(|| absolute(std::env::var_os("HOME")).map(|h| h.join(".local/state"))),
+    );
+    let mut command = std::process::Command::new(program_path(program)?);
     command
         .arg("serve")
         .current_dir("/")
@@ -539,6 +640,43 @@ fn start(program: &Path, find: &Find) -> Result<(), Error> {
             let _ = engine.wait();
         });
     Ok(())
+}
+
+/// Start the engine, apart from this process: no console window (as
+/// skwir's ADR-074 starts every program), in a process group of its own,
+/// so that a console's interrupt does not reach it; its output to its
+/// log, never the client's; in the system's folder, so that it holds no
+/// folder of the client's busy; serving the pipe `find` names, if it
+/// names one. Windows keeps no zombie: the engine's handle is let go of.
+#[cfg(windows)]
+fn start(program: &Path, find: &Find) -> Result<(), Error> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    let log = log_in(
+        find.state
+            .clone()
+            .or_else(|| absolute(std::env::var_os("LOCALAPPDATA"))),
+    );
+    let folder = absolute(std::env::var_os("SystemRoot")).unwrap_or_else(|| PathBuf::from(r"C:\"));
+    let mut command = std::process::Command::new(program_path(program)?);
+    command
+        .arg("serve")
+        .current_dir(folder)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    if let Some(socket) = &find.socket {
+        command.env("SKWIRD_PIPE", socket);
+    }
+    match log {
+        Some(file) => command.stderr(file),
+        None => command.stderr(std::process::Stdio::null()),
+    };
+    command
+        .spawn()
+        .map(drop)
+        .map_err(|e| Error::NoEngine(format!("cannot start it: {e}")))
 }
 
 #[cfg(test)]

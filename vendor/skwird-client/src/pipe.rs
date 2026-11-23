@@ -1,0 +1,495 @@
+//! The named pipe an engine is reached by on Windows (`docs/DESIGN.md`,
+//! Protocol; `docs/PLAN.md`, phase 4, step 4).
+//!
+//! - **Its name is its user's:** `\\.\pipe\skwird-<SID>`, or the one
+//!   `SKWIRD_PIPE` names (a test's own, as `XDG_RUNTIME_DIR` is on Unix).
+//! - **A connection can be given up on:** every read and write is
+//!   overlapped, waited for at most the silence given, and cancelled from
+//!   another thread by [`Stream::shutdown`].
+//! - **The server is checked before anything is said:** its process runs
+//!   as this user, or the connection is refused. Any user may make a pipe
+//!   of any name first; a client that spoke to one another user made would
+//!   tell it what it searches for. The client is identified to the server,
+//!   never impersonated (`SECURITY_IDENTIFICATION`).
+//! - **The engine's side** ([`Server`]): every instance its user's alone
+//!   (a security descriptor granting that user's SID alone), the first
+//!   made only if no other process holds the name
+//!   (`FILE_FLAG_FIRST_PIPE_INSTANCE`), remote clients refused.
+
+#![allow(unsafe_code)] // Windows' pipes have no safe binding; each block says why it is sound.
+
+use std::ffi::{OsStr, c_void};
+use std::io::{Read, Write};
+use std::os::windows::ffi::OsStrExt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY,
+    ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GENERIC_WRITE, GetLastError,
+    HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_TIMEOUT,
+};
+use windows_sys::Win32::Security::Authorization::{
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+};
+use windows_sys::Win32::Security::{
+    GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+    TokenUser,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
+    PIPE_ACCESS_DUPLEX, ReadFile, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT, WriteFile,
+};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+use windows_sys::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    WaitNamedPipeW,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, GetCurrentProcess, INFINITE, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION, SetEvent, WaitForSingleObject,
+};
+
+/// The size of each side's buffer, in bytes.
+const BUFFER: u32 = 64 * 1024;
+
+/// A handle, closed once dropped.
+struct Handle(HANDLE);
+
+// SAFETY: a handle names a kernel object, usable from any thread; it is
+// closed once, when dropped, and never used after.
+unsafe impl Send for Handle {}
+// SAFETY: as above; overlapped reads and writes from several threads each
+// have their own structure and event.
+unsafe impl Sync for Handle {}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        // SAFETY: the handle was opened by this process, and is closed here
+        // once.
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// An event, made unsignaled and reset by hand, closed once dropped.
+fn event() -> std::io::Result<Handle> {
+    // SAFETY: no attributes, no name: a new event of this process's own.
+    let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+    if event.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(Handle(event))
+}
+
+fn wide(name: &OsStr) -> Vec<u16> {
+    name.encode_wide().chain([0]).collect()
+}
+
+fn millis(wait: Option<Duration>) -> u32 {
+    wait.map_or(INFINITE, |w| {
+        u32::try_from(w.as_millis()).map_or(INFINITE - 1, |ms| ms.clamp(1, INFINITE - 1))
+    })
+}
+
+/// The pipe's end: its handle, and whether it was shut down.
+struct End {
+    handle: Handle,
+    shut: AtomicBool,
+}
+
+/// A connection over a named pipe, either side's. Clones share it:
+/// [`Stream::try_clone`] gives the reader and the writer their own.
+#[derive(Clone)]
+pub struct Stream {
+    end: Arc<End>,
+    /// The longest a read or a write is waited for: none, as long as it
+    /// takes.
+    timeout: Option<Duration>,
+}
+
+impl Stream {
+    fn of(handle: HANDLE) -> Stream {
+        Stream {
+            end: Arc::new(End {
+                handle: Handle(handle),
+                shut: AtomicBool::new(false),
+            }),
+            timeout: None,
+        }
+    }
+
+    /// The engine at the pipe named `name`, once one of its instances is
+    /// free, waited for at most `wait`: refused unless its process runs as
+    /// this user.
+    pub fn connect(name: &OsStr, wait: Option<Duration>) -> std::io::Result<Stream> {
+        let name = wide(name);
+        loop {
+            // SAFETY: a NUL-terminated name alive for the call, no security
+            // attributes, no template; the handle given is ours to close.
+            let handle = unsafe {
+                CreateFileW(
+                    name.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    0,
+                    std::ptr::null(),
+                    OPEN_EXISTING,
+                    FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle != INVALID_HANDLE_VALUE {
+                let stream = Stream::of(handle);
+                if stream.server_runs_as(&user_sid()?)? {
+                    return Ok(stream);
+                }
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "the pipe is another user's: refused",
+                ));
+            }
+            // SAFETY: no argument.
+            let error = unsafe { GetLastError() };
+            // Every instance busy: one is waited for, then tried again.
+            // SAFETY: a NUL-terminated name alive for the call.
+            if error != ERROR_PIPE_BUSY
+                || unsafe { WaitNamedPipeW(name.as_ptr(), millis(wait)) } == 0
+            {
+                return Err(std::io::Error::from_raw_os_error(
+                    i32::try_from(error).unwrap_or(i32::MAX),
+                ));
+            }
+        }
+    }
+
+    /// Wait at most `timeout` for each read and write from now on; past it,
+    /// the call fails (`TimedOut`). None waits as long as it takes.
+    pub fn set_timeout(&mut self, timeout: Option<Duration>) {
+        self.timeout = timeout;
+    }
+
+    /// Another handle on this connection, for a reader or a writer of its
+    /// own.
+    pub fn try_clone(&self) -> std::io::Result<Stream> {
+        Ok(self.clone())
+    }
+
+    /// Stop every read and write on this connection, now and after, from
+    /// any thread: what waits returns at once, failing.
+    pub fn shutdown(&self) {
+        self.end.shut.store(true, Ordering::Release);
+        // SAFETY: every overlapped call on the handle, whichever thread made
+        // it, is cancelled; each waits for its cancel before it returns.
+        unsafe { CancelIoEx(self.end.handle.0, std::ptr::null()) };
+    }
+
+    /// Whether the process at the other end runs as the user `sid` names.
+    fn server_runs_as(&self, sid: &str) -> std::io::Result<bool> {
+        let mut pid = 0u32;
+        // SAFETY: the handle is a pipe's client end; the id is ours.
+        if unsafe { GetNamedPipeServerProcessId(self.end.handle.0, &raw mut pid) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: the least access that asks of a process's token.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if process.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let process = Handle(process);
+        Ok(token_user(process.0)? == sid)
+    }
+
+    /// One overlapped call, waited for at most the timeout, cancelled past
+    /// it: the bytes it moved.
+    fn overlapped(
+        &self,
+        call: impl FnOnce(HANDLE, *mut OVERLAPPED) -> i32,
+    ) -> std::io::Result<u32> {
+        if self.end.shut.load(Ordering::Acquire) {
+            return Err(std::io::ErrorKind::ConnectionAborted.into());
+        }
+        let handle = self.end.handle.0;
+        let event = event()?;
+        // SAFETY: an all-zero structure is a valid one, before its event.
+        let mut ov: OVERLAPPED = unsafe { std::mem::zeroed() };
+        ov.hEvent = event.0;
+        if call(handle, &raw mut ov) == 0 {
+            // SAFETY: no argument.
+            let error = unsafe { GetLastError() };
+            if error != ERROR_IO_PENDING {
+                return Err(failed(error));
+            }
+            // SAFETY: the event is ours, alive for the wait.
+            if unsafe { WaitForSingleObject(event.0, millis(self.timeout)) } == WAIT_TIMEOUT {
+                let mut moved = 0;
+                // SAFETY: the call's own structure, alive until its cancel has
+                // landed, which the wait for its result waits for.
+                unsafe {
+                    CancelIoEx(handle, &raw const ov);
+                    GetOverlappedResult(handle, &raw const ov, &raw mut moved, 1);
+                }
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+        }
+        let mut moved = 0;
+        // SAFETY: the call's own structure; its result is waited for.
+        if unsafe { GetOverlappedResult(handle, &raw const ov, &raw mut moved, 1) } == 0 {
+            // SAFETY: no argument.
+            return Err(failed(unsafe { GetLastError() }));
+        }
+        Ok(moved)
+    }
+}
+
+/// A failed call's error: a stop is an abort, the other end gone the end.
+fn failed(error: u32) -> std::io::Error {
+    match error {
+        ERROR_OPERATION_ABORTED => std::io::ErrorKind::ConnectionAborted.into(),
+        ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED => std::io::ErrorKind::BrokenPipe.into(),
+        e => std::io::Error::from_raw_os_error(i32::try_from(e).unwrap_or(i32::MAX)),
+    }
+}
+
+impl Read for Stream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+        let ptr = buf.as_mut_ptr();
+        // SAFETY: the buffer and its length, alive and ours until the call
+        // has completed or its cancel has landed.
+        let read =
+            self.overlapped(|h, ov| unsafe { ReadFile(h, ptr, len, std::ptr::null_mut(), ov) });
+        match read {
+            Ok(n) => Ok(n as usize),
+            // The other end gone: the end of what it says.
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(0),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl Write for Stream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+        let ptr = buf.as_ptr();
+        // SAFETY: the bytes and their length, alive until the call has
+        // completed or its cancel has landed.
+        self.overlapped(|h, ov| unsafe { WriteFile(h, ptr, len, std::ptr::null_mut(), ov) })
+            .map(|n| n as usize)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The SID of the user `process` runs as, as a string (`S-1-5-21-...`).
+fn token_user(process: HANDLE) -> std::io::Result<String> {
+    let mut token: HANDLE = std::ptr::null_mut();
+    // SAFETY: a process handle of ours; the token given is ours to close.
+    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let token = Handle(token);
+    let mut buffer = vec![0u64; 64];
+    let mut needed = 0u32;
+    loop {
+        let size = u32::try_from(buffer.len() * 8).unwrap_or(u32::MAX);
+        // SAFETY: the buffer, aligned for the structure, and its size.
+        let ok = unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                buffer.as_mut_ptr().cast::<c_void>(),
+                size,
+                &raw mut needed,
+            )
+        };
+        if ok != 0 {
+            break;
+        }
+        if needed as usize <= buffer.len() * 8 {
+            return Err(std::io::Error::last_os_error());
+        }
+        buffer.resize((needed as usize).div_ceil(8), 0);
+    }
+    // SAFETY: the call wrote a TOKEN_USER at the buffer's start, aligned.
+    let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
+    let mut text: *mut u16 = std::ptr::null_mut();
+    // SAFETY: the SID the structure points to, inside the buffer; the
+    // string given is ours to free.
+    if unsafe { ConvertSidToStringSidW(user.User.Sid, &raw mut text) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // A SID's text is under 200 units.
+    // SAFETY: a NUL-terminated string the call made, read to its NUL.
+    let len = (0..512)
+        .take_while(|&i| unsafe { *text.add(i) } != 0)
+        .count();
+    // SAFETY: `len` units, read before the string is freed.
+    let sid = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, len) });
+    // SAFETY: the string the call made, freed once.
+    unsafe { LocalFree(text.cast()) };
+    Ok(sid)
+}
+
+/// The SID of the user this process runs as.
+pub fn user_sid() -> std::io::Result<String> {
+    // SAFETY: a pseudo-handle on this process, never closed.
+    token_user(unsafe { GetCurrentProcess() })
+}
+
+/// The pipe of this user's engine: the one `SKWIRD_PIPE` names, or
+/// `\\.\pipe\skwird-<SID>`.
+pub fn user_pipe() -> Option<std::path::PathBuf> {
+    if let Some(name) = std::env::var_os("SKWIRD_PIPE").filter(|v| !v.is_empty()) {
+        return Some(name.into());
+    }
+    user_sid()
+        .ok()
+        .map(|sid| format!(r"\\.\pipe\skwird-{sid}").into())
+}
+
+/// A security descriptor, freed once dropped.
+struct Descriptor(PSECURITY_DESCRIPTOR);
+
+// SAFETY: a descriptor in memory of this process's, read alone once made.
+unsafe impl Send for Descriptor {}
+// SAFETY: as above.
+unsafe impl Sync for Descriptor {}
+
+impl Drop for Descriptor {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor the conversion made, freed once.
+        unsafe { LocalFree(self.0.cast()) };
+    }
+}
+
+/// A connection being waited for: its instance, and its overlapped call,
+/// at a place of its own while it is pending.
+struct Pending {
+    pipe: Handle,
+    event: Handle,
+    ov: Box<OVERLAPPED>,
+}
+
+// SAFETY: the structure is the pending call's alone, used by one thread at
+// a time under the server's lock.
+unsafe impl Send for Pending {}
+
+/// The engine's side of a pipe: its instances, each its user's alone.
+pub struct Server {
+    name: Vec<u16>,
+    security: Descriptor,
+    pending: Mutex<Option<Pending>>,
+}
+
+impl Server {
+    /// The pipe named `name`, its first instance made: refused if another
+    /// process holds the name.
+    pub fn bind(name: &OsStr) -> std::io::Result<Server> {
+        // Full access to this user's SID alone, nothing inherited.
+        let sddl = wide(OsStr::new(&format!("D:P(A;;GA;;;{})", user_sid()?)));
+        let mut security: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        // SAFETY: a NUL-terminated string; the descriptor given is ours to
+        // free.
+        let ok = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &raw mut security,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let server = Server {
+            name: wide(name),
+            security: Descriptor(security),
+            pending: Mutex::new(None),
+        };
+        let first = server.instance(true)?;
+        *server
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(first);
+        Ok(server)
+    }
+
+    /// A new instance, waiting for a client.
+    fn instance(&self, first: bool) -> std::io::Result<Pending> {
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(u32::MAX),
+            lpSecurityDescriptor: self.security.0,
+            bInheritHandle: 0,
+        };
+        let mut open = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED;
+        if first {
+            open |= FILE_FLAG_FIRST_PIPE_INSTANCE;
+        }
+        // SAFETY: a NUL-terminated name and the attributes, alive for the
+        // call; the handle given is ours to close.
+        let pipe = unsafe {
+            CreateNamedPipeW(
+                self.name.as_ptr(),
+                open,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                PIPE_UNLIMITED_INSTANCES,
+                BUFFER,
+                BUFFER,
+                0,
+                &raw const attributes,
+            )
+        };
+        if pipe == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error());
+        }
+        let pipe = Handle(pipe);
+        let event = event()?;
+        // SAFETY: an all-zero structure is a valid one, before its event.
+        let mut ov: Box<OVERLAPPED> = Box::new(unsafe { std::mem::zeroed() });
+        ov.hEvent = event.0;
+        // SAFETY: the structure stays at its place until the call is done:
+        // it is boxed, and kept with the instance.
+        if unsafe { ConnectNamedPipe(pipe.0, &raw mut *ov) } == 0 {
+            // SAFETY: no argument.
+            match unsafe { GetLastError() } {
+                ERROR_IO_PENDING => {}
+                // A client came between the instance and the call: no event
+                // will say so, so it is said here.
+                // SAFETY: the event is ours.
+                ERROR_PIPE_CONNECTED => unsafe {
+                    SetEvent(event.0);
+                },
+                e => return Err(failed(e)),
+            }
+        }
+        Ok(Pending { pipe, event, ov })
+    }
+
+    /// The next client, waited for at most `wait`: none if it passed.
+    pub fn accept(&self, wait: Option<Duration>) -> std::io::Result<Option<Stream>> {
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        if pending.is_none() {
+            *pending = Some(self.instance(false)?);
+        }
+        let p = pending.as_ref().expect("an instance waits");
+        // SAFETY: the instance's event, alive while it is pending.
+        if unsafe { WaitForSingleObject(p.event.0, millis(wait)) } == WAIT_TIMEOUT {
+            return Ok(None);
+        }
+        let p = pending.take().expect("an instance waits");
+        let mut moved = 0;
+        // SAFETY: the instance's own call and structure, done.
+        let ok = unsafe { GetOverlappedResult(p.pipe.0, &raw const *p.ov, &raw mut moved, 0) };
+        // SAFETY: no argument.
+        if ok == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
+            return Ok(None);
+        }
+        let Pending { pipe, .. } = p;
+        let handle = pipe.0;
+        std::mem::forget(pipe);
+        Ok(Some(Stream::of(handle)))
+    }
+}
