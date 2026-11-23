@@ -48,12 +48,25 @@ class Checked(Window):
 
     def start(self):
         (self.files / "docs").mkdir(parents=True)
+        (self.files / "plain").mkdir()
+        (self.files / "extra").mkdir()
         for name in ["report 2026.txt", "docs/q3 report.pdf", "notes.txt"]:
             (self.files / name).write_text("fixture\n")
         self.runtime.mkdir(mode=0o700)
         config = self.root / "config" / "skwir"
         config.mkdir(parents=True)
         (config / "settings.toml").write_text("[plugins.control]\nenabled = true\n")
+        # The desktop's folders and a bookmark, which Kept live follows
+        # (ADR-150, 6): Documents is the fixture's `docs`, its `plain`
+        # bookmarked; the fixture itself is kept live by none, so a search
+        # of it is checked until the step that keeps it live.
+        (self.root / "config" / "user-dirs.dirs").write_text(
+            'XDG_DOCUMENTS_DIR="$HOME/files/docs"\n'
+        )
+        (self.root / "config" / "gtk-3.0").mkdir(parents=True)
+        (self.root / "config" / "gtk-3.0" / "bookmarks").write_text(
+            f"file://{self.files / 'plain'} plain\n"
+        )
         # plocate's stand-in: its help names its database, dated; asked, it
         # names the fixture's report.
         self.bin.mkdir()
@@ -101,6 +114,26 @@ class Checked(Window):
         subprocess.run([self.args.magick, "import", "-window", "root", str(out)],
                        env=self.env(), check=True, timeout=60)
         print(f"  shot: {out}")
+
+
+def named(w):
+    """Every node of the window's and its dialogs': its role and its name."""
+    app = w.find_app()
+    stack, found = [app], []
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        found.append((node.get_role_name(), node.get_name() or ""))
+        # What a node is described by, heard after its name.
+        if node.get_description():
+            found.append(("description", node.get_description()))
+        stack.extend(node.get_child_at_index(i) for i in range(node.get_child_count()))
+    return found
+
+
+def says(w, text):
+    return any(text in name for _, name in named(w))
 
 
 def status(w):
@@ -166,6 +199,41 @@ def run(w):
           (answer.get("as_of") or {}).get("updated") == UPDATED
           and (answer.get("index") or {}).get("proof") == "as_of")
     w.shot("3-as-of")
+
+    # The Index page (ADR-150, 6 and 8): Kept live's groups, their
+    # switches, its rows ticked and saying what skwird says, the share.
+    w.cmd("ui.settings", {"page": "index"})
+    check("the Index page shows Kept live's groups, the desktop's and the bookmarks'",
+          until(lambda: says(w, "Your folders") and says(w, "Bookmarks"), 30)
+          or print("  read:", sorted({n for _, n in named(w) if n})[:80]))
+    w.shot("4-index")
+    check("a row says its folder is live, as skwird says",
+          until(lambda: says(w, "~/files/docs · live"), 30)
+          or print("  read:", [n for _, n in named(w) if "·" in n]))
+    # Under the list, below the fold, where the dialog's list draws (and
+    # exposes) nothing until scrolled to: asked of the list's owner.
+    check("the share's use is said under the list",
+          until(lambda: "Watches used:" in str(w.answer("skwird.kept_list").get("note")), 30)
+          or print("  said:", w.answer("skwird.kept_list").get("note")))
+    w.shot("4b-index-note")
+    roles = {(role, name) for role, name in named(w)}
+    print("  switches and ticks:", sorted(r for r in roles if r[0] in ("check box", "toggle button", "switch")))
+    w.cmd("skwird.kept_add", {"path": str(files / "extra")})
+    check("a folder added shows under Added by you",
+          until(lambda: says(w, "Added by you") and says(w, "~/files/extra"), 30)
+          or print("  read:", [n for _, n in named(w) if "extra" in n or "Added" in n]))
+    menu = w.answer("skwird.keep_live_menu", {"path": str(files / "docs")})
+    print("  the folder's menu:", menu)
+    check("a folder's menu offers Keep Live for Searches, ticked while it is",
+          [i.get("checked") for i in menu.get("items", [])] == ["on"])
+    # The list's end in view: the wheel over the dialog's page.
+    if w.args.shots:
+        xdotool = w.args.xdotool
+        subprocess.run([xdotool, "mousemove", "760", "500"], env=w.env(), check=True)
+        subprocess.run([xdotool, "click", "--repeat", "15", "--delay", "40", "5"],
+                       env=w.env(), check=True)
+        time.sleep(0.5)
+    w.shot("5-index-added")
 
 
 def main():

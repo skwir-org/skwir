@@ -1116,6 +1116,10 @@ impl SettingsView {
         if let Some(note) = shape.note {
             block = block.child(
                 div()
+                    .id(gpui::SharedString::from(format!("records-note-{key}")))
+                    // A label a reader reaches, as it reads the screen.
+                    .role(gpui::Role::Label)
+                    .aria_label(note.clone())
                     .w_full()
                     .text_small()
                     .text_color(theme.text_muted)
@@ -1366,6 +1370,8 @@ impl SettingsView {
         let mut heading = inset_row(theme, edge.first)
             .id(gpui::SharedString::from(format!("records-group-heading-{key}-{}", group.id)))
             .role(gpui::Role::Heading)
+            // Named by its title, as a reader moves from heading to heading.
+            .aria_label(group.title.clone())
             .child(
                 div()
                     .flex_none()
@@ -1540,6 +1546,8 @@ impl SettingsView {
                 .id(gpui::SharedString::from(format!("record-tick-{key}-{id}")))
                 .role(gpui::Role::CheckBox)
                 .aria_label(title.clone())
+                // What its line says under its name, heard with it.
+                .when(!detail.is_empty(), |d| d.aria_description(detail.clone()))
                 .aria_toggled(if tick.on {
                     gpui::Toggled::True
                 } else {

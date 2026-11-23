@@ -23207,3 +23207,29 @@ elsewhere (`RecordSource`), which Phase 7's indexed folders can take too.
   withdrawn with the plugin), `skwird_search`, `settings`; rustfmt;
   clippy `-D warnings` on skwir-core, skwir-plugin-skwird, skwir-ui and
   skwir; the catalogs. Not yet: the page in a window (part 6).
+
+## 2026-11-23: Kept live checked in the window (ADR-150; step E, part 6)
+
+`tools/test/skwird_window.py` gained the Index page: its fixture's
+`user-dirs.dirs` makes `files/docs` the window's Documents, its GTK
+bookmarks `files/plain`; then, after the searches, `ui.settings` on the
+Index page, read over AT-SPI.
+
+- **Heard:** the groups' headings by their titles; the switches "Your
+  folders", "Bookmarks", "Start skwird where none runs"; the ticks "docs"
+  and "plain", each described by its line ("~/files/docs · live, inside
+  ~/files"); a folder added (`skwird.kept_add`) under "Added by you";
+  the menu source answering "Keep Live for Searches", checked; the share
+  ("Watches used: 4 of 131,072. Where they run short…"), which is below
+  the fold and so asked of `skwird.kept_list` (the dialog's list exposes
+  what it draws). Seen in screenshots: the page, then scrolled by the
+  wheel to the list's end, Remove on the added folder's row.
+- **Met on the way, fixed:** a list's tick said only its title (now its
+  line too, `aria_description`); a group's heading had no name (now its
+  title); the note under a list was no node (now a label). And the
+  check's first fixture made the searched folder the window's Documents,
+  which Kept live then kept live from the start: the first search was
+  "up to date", not "checked", as it should have been.
+- **Checked:** `SKWIRD=<skwird 58609b2> just skwird-check` green (its
+  two engine tests and the window's twelve steps); rustfmt and clippy
+  `-D warnings` on skwir-ui; the settings dialog's tests; the catalogs.

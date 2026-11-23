@@ -11,8 +11,10 @@ asked, a context-menu entry beside the command). Built in part the same
 day: 1, 2, 4 and 5 (`docs/PLAN.md`, step A), sizes and times not yet
 asked of an index (a link's are its target's); then 3, the plugin (step
 B), with no setting yet (the plugin's switch turns it off; Kept live's
-page comes with 6), checked in a window through a real engine.
-Amended the same evening (the Index page, steps E and F, the footer's
+page comes with 6), checked in a window through a real engine; then 6
+and the evening's 8 to 12 (the Index page, Kept live, the switch, the
+menu's entry, skwird-check), checked in the release window. Amended the
+same evening (the Index page, steps E and F, the footer's
 words). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
