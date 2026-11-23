@@ -207,6 +207,10 @@ pub struct Pinned {
     /// The session ended under it, a plan having taken its file: a track
     /// that then fails to open leaves no pin of a dead session.
     ended: bool,
+    /// The volumes about to be let go of (`App::letting_go_now`): their
+    /// tracks stay in the queue but are stepped over meanwhile, so nothing
+    /// is opened there; there again once the volume stays (ADR-149).
+    held_back: Vec<PathBuf>,
 }
 
 /// Where the track a plan took stood, to take it up again there once the
@@ -345,9 +349,31 @@ impl Pinned {
     }
 
     /// The track `delta` steps away in the order played: the shuffle's
-    /// while shuffling, otherwise the queue's own.
+    /// while shuffling, otherwise the queue's own; the tracks of a volume
+    /// about to be let go of stepped over (`held_back`). One walk.
     pub fn step_target(&self, delta: i64, mode: Continue) -> Option<usize> {
-        step(self.queue.len(), &self.order, self.index, delta, mode)
+        if delta == 0 || self.held_back.is_empty() {
+            return step(self.queue.len(), &self.order, self.index, delta, mode);
+        }
+        let free = |track: &usize| !self.is_held_back(&self.queue[*track]);
+        if mode == Continue::Shuffle && self.order.len() == self.queue.len() {
+            let at = self.order.iter().position(|track| *track == self.index)?;
+            return if delta > 0 {
+                self.order[at + 1..].iter().copied().find(free)
+            } else {
+                self.order[..at].iter().rev().copied().find(free)
+            };
+        }
+        if delta > 0 {
+            (self.index + 1..self.queue.len()).find(free)
+        } else {
+            (0..self.index).rev().find(free)
+        }
+    }
+
+    /// Whether `track` is on a volume about to be let go of (`held_back`).
+    fn is_held_back(&self, track: &Path) -> bool {
+        self.held_back.iter().any(|point| track.starts_with(point))
     }
 
     pub fn can_step(&self, delta: i64, mode: Continue) -> bool {
@@ -384,22 +410,6 @@ impl Pinned {
             self.path = self.queue[index].clone();
             self.queued = None;
         }
-    }
-
-    /// What the pin plays or would play from the volumes at `points`, about
-    /// to be let go of (`App::letting_go_now`), as taken away: the track
-    /// playing, and each of the queue there, so what follows it is not
-    /// opened there in its stead (an album played from a USB stick).
-    /// Empty when nothing of it is there.
-    fn letting_go(&self, points: &[PathBuf]) -> HashMap<PathBuf, Option<PathBuf>> {
-        if points.is_empty() {
-            return HashMap::new();
-        }
-        std::iter::once(&self.path)
-            .chain(self.queue.iter())
-            .filter(|track| points.iter().any(|point| track.starts_with(point)))
-            .map(|track| (track.clone(), None))
-            .collect()
     }
 
     /// Follow where `went` says its tracks went (each path moved, or taken
@@ -996,19 +1006,7 @@ impl Shell {
         let resume = pinned.taken.filter(|taken| Some(taken.plan) == plan);
         let path = pinned.path.clone();
         match fate {
-            Fate::Gone => {
-                // The panel showing this very session keeps it as its own
-                // preview, stopped: its entry is gone, and so does it.
-                if self.preview_is_pinned() {
-                    if let Some(session) = &self.preview.media.session {
-                        let _ = session.control(Control::Play(false));
-                    }
-                    self.unpin_preview();
-                } else {
-                    self.unpin_dead();
-                }
-                self.player.listed_as = None;
-            }
+            Fate::Gone => self.pin_gone(),
             Fate::Next(index) => {
                 if let Some(pinned) = &mut self.player.pinned {
                     pinned.taken = None;
@@ -1039,6 +1037,21 @@ impl Shell {
         let _ = window;
         cx.notify();
         Some(fate)
+    }
+
+    /// The pin's track is gone, and nothing follows it: the pin ends. The
+    /// panel showing this very session keeps it as its own preview,
+    /// stopped: its entry is gone, and so does it.
+    fn pin_gone(&mut self) {
+        if self.preview_is_pinned() {
+            if let Some(session) = &self.preview.media.session {
+                let _ = session.control(Control::Play(false));
+            }
+            self.unpin_preview();
+        } else {
+            self.unpin_dead();
+        }
+        self.player.listed_as = None;
     }
 
     /// Follow what the pin plays and walks through each plan that ends
@@ -1502,6 +1515,7 @@ impl Shell {
             icon: None,
             taken: None,
             ended: false,
+            held_back: Vec::new(),
         };
         // A step in the same folder keeps the shuffle it is walking.
         match self.player.pinned.as_ref() {
@@ -1929,6 +1943,7 @@ impl Shell {
             icon: None,
             taken: None,
             ended: false,
+            held_back: Vec::new(),
         };
         pin.reorder(self.prefs.player.continue_with);
         self.set_pin(Some(pin));
@@ -2127,20 +2142,30 @@ impl Shell {
         }
         // What plays from a volume about to be let go of ends, as at its
         // end: the file it holds open would keep the volume busy (ADR-149).
-        // What the queue holds there goes with it, so what follows is not
-        // opened there either.
+        // The queue keeps that volume's tracks, stepped over meanwhile, so
+        // what follows is not opened there either, and they are there again
+        // once the volume stays.
         let (letting, version) = self.app.letting_go_now();
         if self.player.letting_seen != version {
             self.player.letting_seen = version;
-            let went = self
-                .player
-                .pinned
-                .as_ref()
-                .filter(|pinned| !pinned.ended)
-                .map(|pinned| pinned.letting_go(&letting))
-                .unwrap_or_default();
-            if !went.is_empty() {
-                self.pin_follows(&went, None, window, cx);
+            let mode = self.prefs.player.continue_with;
+            let ends = self.player.pinned.as_mut().and_then(|pinned| {
+                pinned.held_back = letting;
+                (!pinned.ended && pinned.is_held_back(&pinned.path)).then(|| pinned.upcoming(mode))
+            });
+            match ends {
+                None => {}
+                // As a step does: what was opening is late.
+                Some(Some(next)) => {
+                    self.player.generation += 1;
+                    self.player.stepping = 1;
+                    self.pinned_open(next);
+                    cx.notify();
+                }
+                Some(None) => {
+                    self.pin_gone();
+                    cx.notify();
+                }
             }
         }
         while let Ok((track, file, image)) = self.player.cover_rx.try_recv() {
@@ -2797,6 +2822,7 @@ mod tests {
             icon: None,
             taken: None,
             ended: false,
+            held_back: Vec::new(),
         }
     }
 
@@ -2835,47 +2861,58 @@ mod tests {
         assert_eq!(names(&same), ["a.ogg", "c.ogg"]);
     }
 
-    /// An album played from a drive about to be let go of ends there, as
-    /// at its end, and goes on with no track of that drive (ADR-149): what
-    /// follows it there would hold the drive again. Played from elsewhere,
-    /// it plays on, the drive's tracks out of its queue.
+    /// While a drive is about to be let go of (ADR-149), the pin steps
+    /// over its tracks, Next and Previous, the queue's order and a
+    /// shuffle's alike, so nothing is opened there; they stay in the
+    /// queue, there again once the drive stays.
     #[test]
-    fn a_pin_lets_go_of_every_track_on_a_volume_let_go_of() {
+    fn a_pin_steps_over_a_volume_let_go_of_and_keeps_its_tracks() {
         let drive = PathBuf::from("/run/media/me/it's USB");
-        let points = [drive.clone()];
         let on_drive = |name: &str| drive.join(name);
-        let pinned = |paths: Vec<PathBuf>, index: usize| {
-            let mut pinned = pin(&["a.ogg"], 0, &[]);
+        let pinned = |paths: Vec<PathBuf>, index: usize, order: &[usize]| {
+            let mut pinned = pin(&["a.ogg"], 0, order);
             pinned.path = paths[index].clone();
             pinned.queue = paths.into();
             pinned.index = index;
             pinned
         };
-        // Nothing there, nothing let go of.
-        let elsewhere = pinned(vec![track("a.ogg"), track("b.ogg")], 0);
-        assert!(elsewhere.letting_go(&points).is_empty());
-        assert!(elsewhere.letting_go(&[]).is_empty());
-        // The album on the drive: it ends, nothing of it opened next.
+        // An album on the drive: nothing follows its track there.
         let mut album = pinned(
             vec![on_drive("1.ogg"), on_drive("2.ogg"), on_drive("3.ogg")],
             0,
+            &[],
         );
-        let went = album.letting_go(&points);
-        assert_eq!(went.len(), 3);
-        assert_eq!(album.follow(&went, Continue::Next), Fate::Gone);
-        // Mixed: it goes on with the next track elsewhere.
+        assert_eq!(album.upcoming(Continue::Next), Some(1));
+        album.held_back = vec![drive.clone()];
+        assert!(album.is_held_back(&album.path.clone()));
+        assert_eq!(album.upcoming(Continue::Next), None);
+        assert_eq!(names(&album), ["1.ogg", "2.ogg", "3.ogg"], "kept");
+        // Mixed: the next elsewhere, both ways.
         let mut mixed = pinned(
-            vec![on_drive("1.ogg"), on_drive("2.ogg"), track("b.ogg")],
-            0,
+            vec![
+                track("a.ogg"),
+                on_drive("2.ogg"),
+                track("b.ogg"),
+                on_drive("4.ogg"),
+                track("c.ogg"),
+            ],
+            2,
+            &[],
         );
-        let went = mixed.letting_go(&points);
-        assert_eq!(mixed.follow(&went, Continue::Next), Fate::Next(0));
-        assert_eq!(names(&mixed), ["b.ogg"]);
-        // Playing from elsewhere: on, without the drive's tracks.
-        let mut on = pinned(vec![track("a.ogg"), on_drive("2.ogg"), track("b.ogg")], 0);
-        let went = on.letting_go(&points);
-        assert_eq!(on.follow(&went, Continue::Next), Fate::Same);
-        assert_eq!(names(&on), ["a.ogg", "b.ogg"]);
+        mixed.held_back = vec![drive.clone()];
+        assert!(!mixed.is_held_back(&mixed.path.clone()));
+        assert_eq!(mixed.step_target(1, Continue::Next), Some(4));
+        assert_eq!(mixed.step_target(-1, Continue::Next), Some(0));
+        assert_eq!(mixed.upcoming(Continue::Stop), None);
+        // A shuffle walks its own order, stepping over the drive alike.
+        let mut shuffled = pinned(mixed.queue.to_vec(), 2, &[2, 3, 1, 4, 0]);
+        shuffled.held_back = vec![drive.clone()];
+        assert_eq!(shuffled.step_target(1, Continue::Shuffle), Some(4));
+        assert_eq!(shuffled.step_target(-1, Continue::Shuffle), None);
+        // The drive stays: its tracks follow again, none taken away.
+        mixed.held_back.clear();
+        assert_eq!(mixed.step_target(1, Continue::Next), Some(3));
+        assert_eq!(names(&mixed).len(), 5);
     }
 
     /// Another program's rename moves the pin when it renames the name the
