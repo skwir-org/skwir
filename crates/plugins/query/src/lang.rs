@@ -1766,11 +1766,12 @@ impl Query {
 
     /// What of the query a names index can answer (ADR-150, 2), below
     /// `root` (its real path): the name terms and kinds of its AND, a name
-    /// as written and matched as [`NamePat`] matches it. A kind asked is
-    /// the entry's own or what a link to it is (`type:dir` finds a link to
-    /// a folder), so links are asked for too. `None` where it asks neither:
-    /// an index would name every file, which the walk does better. `whole`
-    /// where those are all it asks.
+    /// as written and matched as [`NamePat`] matches it, and its sizes and
+    /// modification times (D2), each kind of term one range, what they all
+    /// allow. A kind asked is the entry's own or what a link to it is
+    /// (`type:dir` finds a link to a folder), so links are asked for too.
+    /// `None` where it asks none of these: an index would name every file,
+    /// which the walk does better. `whole` where those are all it asks.
     pub fn named(&self, root: PathBuf) -> Option<skwir_core::names::Query> {
         let items: Vec<&Expr> = match self.expr.as_ref()? {
             Expr::And(items) => items.iter().collect(),
@@ -1778,9 +1779,35 @@ impl Query {
         };
         let mut names = Vec::new();
         let mut kinds: Option<Vec<EntryKind>> = None;
+        let mut size: Option<(u64, u64)> = None;
+        let mut modified: Option<skwir_core::names::Times> = None;
         let mut whole = true;
         for e in items {
             match e {
+                Expr::Term(Term::Size { min, max, .. }) => {
+                    let (lo, hi) = size.unwrap_or((0, u64::MAX));
+                    size = Some((lo.max(min.unwrap_or(0)), hi.min(max.unwrap_or(u64::MAX))));
+                }
+                Expr::Term(Term::Time {
+                    field: TimeField::Modified,
+                    after,
+                    before,
+                    ..
+                }) => {
+                    // `[after, before)`: the last instant before `before`.
+                    let to = before.and_then(|b| b.checked_sub(std::time::Duration::from_nanos(1)));
+                    let was = modified.unwrap_or(skwir_core::names::Times {
+                        from: None,
+                        to: None,
+                    });
+                    modified = Some(skwir_core::names::Times {
+                        from: was.from.max(*after),
+                        to: match (was.to, to) {
+                            (Some(a), Some(b)) => Some(a.min(b)),
+                            (a, b) => a.or(b),
+                        },
+                    });
+                }
                 Expr::Term(Term::Name(p)) if !p.text.is_empty() => {
                     names.push(skwir_core::names::NameTerm {
                         text: p.text.clone(),
@@ -1801,12 +1828,16 @@ impl Query {
                 _ => whole = false,
             }
         }
-        (!names.is_empty() || kinds.is_some()).then_some(skwir_core::names::Query {
-            root,
-            names,
-            kinds,
-            whole,
-        })
+        (!names.is_empty() || kinds.is_some() || size.is_some() || modified.is_some()).then_some(
+            skwir_core::names::Query {
+                root,
+                names,
+                kinds,
+                size,
+                modified,
+                whole,
+            },
+        )
     }
 }
 
@@ -2838,10 +2869,37 @@ mod tests {
             "-foo",
             "tag:x",
             "ext:pdf",
-            "size>1k",
+            "created>=2026-01-01",
         ] {
             assert!(named(s).is_none(), "{s}");
         }
+    }
+
+    /// Sizes and modification times are asked of a names index too (ADR-150,
+    /// D2), each kind of term one range, both ends included: what all its
+    /// terms allow, a date's end the last instant before it.
+    #[test]
+    fn a_names_index_is_asked_the_sizes_and_times_of_the_and() {
+        let at = |text: &str| q(text).named(PathBuf::from("/r")).unwrap();
+        let sized = at("size>=1000 size<=2000");
+        assert_eq!(sized.size, Some((1000, 2000)));
+        assert!(sized.whole && sized.names.is_empty() && sized.modified.is_none());
+        assert_eq!(at("size>=1kB").size, Some((1000, u64::MAX)));
+        let dated = at("report modified>=2026-01-01 modified<2026-02-01");
+        let times = dated.modified.expect("dated");
+        let (from, to) = (times.from.unwrap(), times.to.unwrap());
+        assert_eq!(
+            to.duration_since(from).unwrap(),
+            std::time::Duration::from_hours(31 * 24) - std::time::Duration::from_nanos(1),
+            "January, its last instant included"
+        );
+        assert!(dated.whole && dated.names.len() == 1);
+        let after = at("modified>=2026-01-01").modified.unwrap();
+        assert!(after.from.is_some() && after.to.is_none());
+        assert!(
+            !at("size>=1000 created>=2026-01-01").whole,
+            "a creation date is the search's"
+        );
     }
 
     // Types from the free desktops' database (step E, ADR-035).

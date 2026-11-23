@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::cancel::CancelToken;
 use crate::coverage::Coverage;
@@ -42,10 +43,55 @@ pub struct Query {
     /// `Symlink` whatever it leads to, so a search for folders asks for
     /// links too, and checks what they lead to itself.
     pub kinds: Option<Vec<EntryKind>>,
+    /// Sizes from the first to the second, both included: what the file
+    /// opens weighs, a link's target's, as the search tests it. An index
+    /// that holds a link's own names its links whatever they weigh, and
+    /// the search stats each (ADR-150, D2).
+    pub size: Option<(u64, u64)>,
+    /// Modification times, both ends included, a link's as for `size`.
+    pub modified: Option<Times>,
     /// Whether these terms are the whole search, nothing else asked of a
     /// file. An index that proves nothing may answer only such a search
     /// (plocate, ADR-050).
     pub whole: bool,
+}
+
+/// Times from `from` to `to`, both included; `None`: no end there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Times {
+    pub from: Option<SystemTime>,
+    pub to: Option<SystemTime>,
+}
+
+impl Query {
+    /// What an index that does not hold sizes and times live is asked
+    /// (ADR-150, 5: a check proves names and kinds only): this without
+    /// them, the search testing them on what it names, and so not the
+    /// whole search. `None` where nothing else is asked.
+    pub fn by_name(&self) -> Option<Query> {
+        if self.size.is_none() && self.modified.is_none() {
+            return Some(self.clone());
+        }
+        if self.names.is_empty() && self.kinds.is_none() {
+            return None;
+        }
+        Some(Query {
+            size: None,
+            modified: None,
+            whole: false,
+            ..self.clone()
+        })
+    }
+
+    /// What `coverage` lets an index be asked of this: sizes and times
+    /// only where it says them live ([`by_name`](Self::by_name) elsewhere).
+    pub fn as_covered(&self, coverage: &Coverage) -> Option<Query> {
+        if matches!(coverage.attrs, crate::coverage::Proof::Live { .. }) {
+            Some(self.clone())
+        } else {
+            self.by_name()
+        }
+    }
 }
 
 /// How an index's answer ended.
@@ -261,6 +307,8 @@ mod tests {
             root: PathBuf::from("/"),
             names: Vec::new(),
             kinds: None,
+            size: None,
+            modified: None,
             whole: true,
         };
         let covered: Vec<_> = indexes
@@ -269,6 +317,34 @@ mod tests {
             .map(|(index, _)| index.id())
             .collect();
         assert_eq!(covered, asked, "told as they are opened");
+        // Sizes and times only of one that holds them live.
+        let dated = Query {
+            modified: Some(Times {
+                from: Some(t),
+                to: None,
+            }),
+            ..q.clone()
+        };
+        let live = Coverage {
+            names: Proof::Live { since: t },
+            attrs: Proof::Live { since: t },
+            holes: Vec::new(),
+        };
+        let checked = Coverage {
+            attrs: Proof::Checked { at: t },
+            ..live.clone()
+        };
+        assert_eq!(dated.as_covered(&live), Some(dated.clone()));
+        assert_eq!(dated.as_covered(&checked), None, "nothing else asked");
+        let named = Query {
+            names: vec![NameTerm {
+                text: "report".into(),
+                case_sensitive: false,
+            }],
+            ..dated
+        };
+        let by_name = named.as_covered(&checked).expect("by its name");
+        assert_eq!((by_name.modified, by_name.whole), (None, false));
         indexes.unregister_owner("d");
         assert_eq!(indexes.ids(), ["as of", "denied", "checked", "checked too"]);
     }

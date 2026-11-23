@@ -10,7 +10,7 @@
 //! | `hello {versions, client}` | `hello {version, scope, engine, roots}` |
 //! | `coverage {root}` | `coverage` |
 //! | `sync {root}` | `coverage`, as of a time after it was asked |
-//! | `query {root, name, kinds, size, mtime, limit}` | `results`…, then `done` |
+//! | `query {root, name, kinds, size, mtime, limit, links}` | `results`…, then `done` |
 //! | `cancel {id}` | the query's `done`, cancelled |
 //! | `changes {root, since}` | `changes {events, token}`, or `too_old` |
 //! | `exclude {add, remove}` | `excluded {folders}` |
@@ -244,6 +244,33 @@ pub struct Query {
     pub mtime: Option<[Instant; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
+    /// How a link meets `size` and `mtime` ([`Links`]): by its own, unless
+    /// asked otherwise. Never written when so, as clients before it wrote
+    /// none.
+    #[serde(default, skip_serializing_if = "Links::is_own")]
+    pub links: Links,
+}
+
+/// How a query's `size` and `mtime` take a link. The engine never follows
+/// one (`docs/DESIGN.md`, Protocol): a link's attributes are its own, and
+/// its target's it cannot prove.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Links {
+    /// By its own size and times, as any entry.
+    #[default]
+    Own,
+    /// Answered whatever `size` and `mtime` say, if the name and kind terms
+    /// hold: for a client that judges a link by what it opens, and stats
+    /// it itself.
+    Unfiltered,
+}
+
+impl Links {
+    /// The default, never written.
+    pub fn is_own(&self) -> bool {
+        *self == Links::Own
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,6 +375,28 @@ pub struct Changes {
     pub events: Vec<Event>,
     /// The token to ask from next.
     pub token: String,
+    /// How far `events` hold every change below the root, from the token
+    /// asked from up to `token`, outside `holes`: computed as it answers,
+    /// so that a client need not judge it from a coverage asked apart.
+    #[serde(default)]
+    pub complete: Complete,
+    /// The folders below the root not covered, whose changes are in no
+    /// event: as a coverage of the root names them now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holes: Vec<Hole>,
+}
+
+/// How far a journal's events are every change ([`Changes::complete`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Complete {
+    /// Every name made, removed or renamed: wherever the root is live now,
+    /// a check having found what changed in any gap before.
+    pub names: bool,
+    /// Every change of size, times or anything else a stat says, a change
+    /// of its change time alone among them (an extended attribute set, a
+    /// mode changed): only where the root has been live since the token
+    /// asked from, as no check finds an attribute changed alone.
+    pub attrs: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -540,6 +589,29 @@ mod tests {
             }
         }
         assert!(lines > 10, "{lines} lines");
+    }
+
+    /// A query's `links` is written only when asked otherwise than by a
+    /// link's own attributes, so that a query as clients before it wrote one
+    /// is the same; read as its own where absent.
+    #[test]
+    fn a_query_says_how_it_takes_links_only_when_asked() {
+        let mut q = Query {
+            root: WirePath(b"/home/user".to_vec()),
+            name: None,
+            kinds: None,
+            size: Some([1, 2]),
+            mtime: None,
+            limit: None,
+            links: Links::Own,
+        };
+        let json = serde_json::to_string(&q).unwrap();
+        assert!(!json.contains("links"), "{json}");
+        assert_eq!(serde_json::from_str::<Query>(&json).unwrap(), q);
+        q.links = Links::Unfiltered;
+        let json = serde_json::to_string(&q).unwrap();
+        assert!(json.contains(r#""links":"unfiltered""#), "{json}");
+        assert_eq!(serde_json::from_str::<Query>(&json).unwrap(), q);
     }
 
     /// A path that is not UTF-8 travels as its bytes, and comes back so.

@@ -183,3 +183,81 @@ fn a_test_s_app_asks_no_engine_of_the_machine_s() {
     assert_eq!(found, BTreeSet::from(["report.txt".into()]));
     assert!(answer.get("index").is_none(), "{answer}");
 }
+
+/// Sizes and times are asked of skwird only where it says them live
+/// (ADR-150, 5 and D2): there a dated search with no name is answered from
+/// its index, each file it names checked; elsewhere a search with a name
+/// is asked of it by that name alone, and one with none walks.
+#[test]
+fn times_are_asked_of_skwird_only_where_it_holds_them_live() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap().join("dated");
+    std::fs::create_dir_all(&root).unwrap();
+    for (name, secs) in [
+        ("new report.txt", 1_900_000_000),
+        ("old report.txt", 1_000_000_000),
+    ] {
+        let path = root.join(name);
+        std::fs::write(&path, "fixture").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(secs))
+            .unwrap();
+    }
+    let since = protocol::Instant {
+        sec: SINCE,
+        nsec: 0,
+    };
+    let answered = |attrs: protocol::Proof, expr: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = Fake::start(
+            dir.path().join("skwird.socket"),
+            Script {
+                roots: vec![root.clone()],
+                coverage: vec![(
+                    root.clone(),
+                    protocol::Coverage {
+                        names: protocol::Proof::Live(since),
+                        attrs,
+                        holes: Vec::new(),
+                    },
+                )],
+                entries: vec![
+                    entry(&root.join("new report.txt")),
+                    entry(&root.join("old report.txt")),
+                ],
+                ..Script::default()
+            },
+        )
+        .unwrap();
+        let app = App::new(AppConfig::ephemeral(dir.path().join("state"))).unwrap();
+        app.plugins
+            .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+        app.plugins.add(
+            Arc::new(skwir_plugin_skwird::SkwirdPlugin::at(fake.socket.clone())),
+            &app,
+        );
+        let (found, answer) = search(&app, expr, &root);
+        (found, answer.get("index").is_some())
+    };
+    let new = BTreeSet::from(["new report.txt".to_owned()]);
+    let dated = "modified>=2030-01-01";
+    assert_eq!(
+        answered(protocol::Proof::Live(since), dated),
+        (new.clone(), true),
+        "live: answered from the index"
+    );
+    let checked = protocol::Proof::Checked(since);
+    assert_eq!(
+        answered(checked, dated),
+        (new.clone(), false),
+        "checked, and no name: walked"
+    );
+    assert_eq!(
+        answered(checked, &format!("report {dated}")),
+        (new, true),
+        "checked: asked by its name, the date tested on what it names"
+    );
+}

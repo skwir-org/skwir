@@ -5,7 +5,9 @@
 //! It answers `hello`; `coverage` and `sync` with the coverage given for
 //! the longest root holding the path asked (`outside` for none); `query`
 //! with the entries given below the root asked, a name matched as a
-//! substring after lowercasing (globs are not its); `changes` as too old;
+//! substring after lowercasing (globs are not its); `changes` with the
+//! script's journal as it stands, or too old where it has none, each root
+//! and token asked kept for the test to read ([`Fake::changes_asked`]);
 //! `exclude` with what was asked; `watch` as the script says, or each
 //! folder asked live since the epoch, with no share. Made `silent`, it
 //! says hello and then nothing, as an engine that hangs: for a client's
@@ -13,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use skwird_protocol::{Coverage, Entry, Watching};
+use skwird_protocol::{Changes, Coverage, Entry, Watching};
 
 /// What the fake engine answers.
 #[derive(Clone, Debug, Default)]
@@ -26,11 +28,17 @@ pub struct Script {
     pub silent: bool,
     /// What every `watch` is answered, if given.
     pub watching: Option<Watching>,
+    /// What every `changes` is answered, whatever its root and token: too
+    /// old where none is given.
+    pub changes: Option<Changes>,
 }
 
 /// A fake engine serving until dropped.
 pub struct Fake {
     pub socket: PathBuf,
+    /// Each `changes` asked, its root and the token it was asked from.
+    #[cfg(any(unix, windows))]
+    asked: std::sync::Arc<std::sync::Mutex<Vec<(PathBuf, String)>>>,
     #[cfg(any(unix, windows))]
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     #[cfg(any(unix, windows))]
@@ -43,8 +51,8 @@ mod imp {
     #[cfg(unix)]
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, PoisonError};
 
     use skwird_protocol::{
         self as wire, Answer, Ask, Coverage, Done, Proof, Request, Response, Welcome, Why, WirePath,
@@ -70,7 +78,16 @@ mod imp {
             .map_or_else(outside, |(_, c)| c.clone())
     }
 
-    fn answer(script: &Script, ask: Ask, out: &mut Conn, id: u64) -> std::io::Result<()> {
+    /// Each `changes` asked: its root and token.
+    type Asked = Arc<Mutex<Vec<(PathBuf, String)>>>;
+
+    fn answer(
+        script: &Script,
+        asked: &Asked,
+        ask: Ask,
+        out: &mut Conn,
+        id: u64,
+    ) -> std::io::Result<()> {
         let mut say = |answer| wire::write(out, &Response { id, answer });
         match ask {
             Ask::Hello(_) => say(Answer::Hello(Welcome {
@@ -112,7 +129,16 @@ mod imp {
                 }))
             }
             Ask::Cancel { .. } => Ok(()),
-            Ask::Changes { .. } => say(Answer::TooOld {}),
+            Ask::Changes { root, since } => {
+                asked
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((root.to_path(), since));
+                say(match &script.changes {
+                    Some(changes) => Answer::Changes(changes.clone()),
+                    None => Answer::TooOld {},
+                })
+            }
             Ask::Exclude { add, .. } => say(Answer::Excluded { folders: add }),
             Ask::Watch { add, .. } => say(Answer::Watching(
                 script.watching.clone().unwrap_or(wire::Watching {
@@ -131,7 +157,7 @@ mod imp {
         }
     }
 
-    fn serve(stream: Conn, script: &Script) {
+    fn serve(stream: Conn, script: &Script, asked: &Asked) {
         let Ok(mut out) = stream.try_clone() else {
             return;
         };
@@ -140,7 +166,7 @@ mod imp {
             if script.silent && !matches!(ask, Ask::Hello(_)) {
                 continue;
             }
-            if answer(script, ask, &mut out, id).is_err() {
+            if answer(script, asked, ask, &mut out, id).is_err() {
                 return;
             }
         }
@@ -153,22 +179,25 @@ mod imp {
             let _ = std::fs::remove_file(&socket);
             let listener = UnixListener::bind(&socket)?;
             let stop = Arc::new(AtomicBool::new(false));
+            let asked: Asked = Arc::default();
             let thread = {
                 let stop = Arc::clone(&stop);
+                let asked = Arc::clone(&asked);
                 std::thread::spawn(move || {
                     for stream in listener.incoming() {
                         if stop.load(Ordering::Relaxed) {
                             break;
                         }
                         if let Ok(stream) = stream {
-                            let script = script.clone();
-                            std::thread::spawn(move || serve(stream, &script));
+                            let (script, asked) = (script.clone(), Arc::clone(&asked));
+                            std::thread::spawn(move || serve(stream, &script, &asked));
                         }
                     }
                 })
             };
             Ok(Fake {
                 socket,
+                asked,
                 stop,
                 thread: Some(thread),
             })
@@ -180,20 +209,23 @@ mod imp {
         pub fn start(socket: PathBuf, script: Script) -> std::io::Result<Fake> {
             let server = crate::pipe::Server::bind(socket.as_os_str())?;
             let stop = Arc::new(AtomicBool::new(false));
+            let asked: Asked = Arc::default();
             let thread = {
                 let stop = Arc::clone(&stop);
+                let asked = Arc::clone(&asked);
                 std::thread::spawn(move || {
                     while let Ok(Some(stream)) = server.accept(None) {
                         if stop.load(Ordering::Relaxed) {
                             break;
                         }
-                        let script = script.clone();
-                        std::thread::spawn(move || serve(stream, &script));
+                        let (script, asked) = (script.clone(), Arc::clone(&asked));
+                        std::thread::spawn(move || serve(stream, &script, &asked));
                     }
                 })
             };
             Ok(Fake {
                 socket,
+                asked,
                 stop,
                 thread: Some(thread),
             })
@@ -201,6 +233,17 @@ mod imp {
     }
 
     use std::path::PathBuf;
+
+    impl Fake {
+        /// Each `changes` asked so far, in order: its root and the token it
+        /// was asked from, for a test to check what its client sent.
+        pub fn changes_asked(&self) -> Vec<(PathBuf, String)> {
+            self.asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
 
     impl Drop for Fake {
         fn drop(&mut self) {
@@ -271,6 +314,7 @@ mod tests {
             ],
             silent: false,
             watching: None,
+            changes: None,
         };
         let fake = Fake::start(dir.join("socket"), script).unwrap();
         let mut c = Client::connect(&Find {
@@ -302,6 +346,7 @@ mod tests {
                     size: None,
                     mtime: None,
                     limit: None,
+                    links: skwird_protocol::Links::Own,
                 },
                 |batch| {
                     found.extend_from_slice(batch);
@@ -315,6 +360,72 @@ mod tests {
             c.changes(std::path::Path::new("/home/user"), "x.0")
                 .unwrap()
                 .is_none()
+        );
+        assert_eq!(
+            fake.changes_asked(),
+            vec![(PathBuf::from("/home/user"), "x.0".to_owned())],
+            "kept even when too old"
+        );
+        drop(fake);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The journal the script gives is every `changes`' answer, as it
+    /// stands, through the real client; each root and token asked is kept,
+    /// in order, for the test to check what its client sent.
+    #[test]
+    fn the_fake_answers_the_scripts_journal_and_keeps_what_was_asked() {
+        // Under the user's cache, never `/tmp` (AGENTS.md, "Testing").
+        let dir = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+            .unwrap()
+            .join("skwird-tests")
+            .join(format!("fake-changes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let journal = skwird_protocol::Changes {
+            events: vec![skwird_protocol::Event::Added(Entry {
+                path: WirePath(b"/home/user/new.txt".to_vec()),
+                kind: Kind::File,
+                id: Id::default(),
+                folder: Id::default(),
+                attrs: None,
+            })],
+            token: "0000000000000001.9".into(),
+            complete: skwird_protocol::Complete {
+                names: true,
+                attrs: true,
+            },
+            holes: Vec::new(),
+        };
+        let fake = Fake::start(
+            dir.join("socket"),
+            Script {
+                roots: vec![PathBuf::from("/home/user")],
+                changes: Some(journal.clone()),
+                ..Script::default()
+            },
+        )
+        .unwrap();
+        let mut c = Client::connect(&Find {
+            socket: Some(fake.socket.clone()),
+            start: None,
+            ..Find::new("a test")
+        })
+        .unwrap();
+        let home = std::path::Path::new("/home/user");
+        assert_eq!(c.changes(home, "").unwrap(), Some(journal.clone()));
+        assert_eq!(
+            c.changes(home, "0000000000000001.4").unwrap(),
+            Some(journal)
+        );
+        assert_eq!(
+            fake.changes_asked(),
+            vec![
+                (PathBuf::from("/home/user"), String::new()),
+                (PathBuf::from("/home/user"), "0000000000000001.4".to_owned()),
+            ]
         );
         drop(fake);
         let _ = std::fs::remove_dir_all(&dir);

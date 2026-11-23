@@ -34,8 +34,8 @@ use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
 };
 use windows_sys::Win32::Security::{
-    GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
-    TokenUser,
+    GetTokenInformation, PSECURITY_DESCRIPTOR, RevertToSelf, SECURITY_ATTRIBUTES, TOKEN_DUPLICATE,
+    TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
@@ -43,13 +43,13 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE,
-    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-    WaitNamedPipeW,
+    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, ImpersonateNamedPipeClient,
+    PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
+    PIPE_WAIT, WaitNamedPipeW,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateEventW, GetCurrentProcess, INFINITE, OpenProcess, OpenProcessToken,
-    PROCESS_QUERY_LIMITED_INFORMATION, SetEvent, WaitForSingleObject,
+    CreateEventW, GetCurrentProcess, GetCurrentThread, INFINITE, OpenProcess, OpenProcessToken,
+    OpenThreadToken, PROCESS_QUERY_LIMITED_INFORMATION, SetEvent, WaitForSingleObject,
 };
 
 /// The size of each side's buffer, in bytes.
@@ -118,6 +118,41 @@ impl Stream {
             }),
             timeout: None,
         }
+    }
+
+    /// The token of the client at the other end of this, a server's end:
+    /// taken by impersonating it for the one call that opens it, then the
+    /// server's own again. At the level its client allows, identification
+    /// (`SECURITY_IDENTIFICATION`, as [`Stream::connect`] asks): enough to
+    /// judge what it may do, never to act as it.
+    pub fn client_token(&self) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+        use std::os::windows::io::FromRawHandle;
+        // SAFETY: this end's pipe, connected.
+        if unsafe { ImpersonateNamedPipeClient(self.end.handle.0) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut token: HANDLE = std::ptr::null_mut();
+        // SAFETY: this thread's pseudo-handle; the token given is ours to
+        // close. Opened as the server, not as the client it impersonates.
+        let opened = unsafe {
+            OpenThreadToken(
+                GetCurrentThread(),
+                TOKEN_QUERY | TOKEN_DUPLICATE,
+                1,
+                &raw mut token,
+            )
+        };
+        let error = std::io::Error::last_os_error();
+        // SAFETY: no argument; whatever came of the open.
+        if unsafe { RevertToSelf() } == 0 {
+            // The thread would go on as the client: it never may.
+            std::process::abort();
+        }
+        if opened == 0 {
+            return Err(error);
+        }
+        // SAFETY: a token the call opened, ours alone.
+        Ok(unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(token) })
     }
 
     /// The engine at the pipe named `name`, once one of its instances is
@@ -291,6 +326,18 @@ fn token_user(process: HANDLE) -> std::io::Result<String> {
         return Err(std::io::Error::last_os_error());
     }
     let token = Handle(token);
+    sid_of(token.0)
+}
+
+/// The SID of the user of `token`, as text: a client's, as its server's
+/// end took it ([`Stream::client_token`]).
+pub fn token_sid(token: &std::os::windows::io::OwnedHandle) -> std::io::Result<String> {
+    use std::os::windows::io::AsRawHandle;
+    sid_of(token.as_raw_handle())
+}
+
+/// The SID of the user of the token `token`, as text.
+fn sid_of(token: HANDLE) -> std::io::Result<String> {
     let mut buffer = vec![0u64; 64];
     let mut needed = 0u32;
     loop {
@@ -298,7 +345,7 @@ fn token_user(process: HANDLE) -> std::io::Result<String> {
         // SAFETY: the buffer, aligned for the structure, and its size.
         let ok = unsafe {
             GetTokenInformation(
-                token.0,
+                token,
                 TokenUser,
                 buffer.as_mut_ptr().cast::<c_void>(),
                 size,

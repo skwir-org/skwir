@@ -212,4 +212,12 @@ time, folder totals: agreed with it, built on its side next).
     left out, the user's choice): before it, `/proc`, `/sys` and the Nix
     store, which no index holds, were walked at each pause. A folder on a
     server still waits; any other folder showed as typed already.
+14. **Sizes and times are asked of an index where it holds them live**
+    (D2, as 5 says): `size:` and `modified:` of a search's AND, each one
+    range, both ends included (`names::Query::as_covered` drops them
+    elsewhere, the index then asked by name and kind). A link's are its
+    target's in a search: skwird answers a link matching the names
+    whatever its own (`links: "unfiltered"`, added for it), and the
+    search stats it. A dated search with no name walks unless an index
+    holds times live.
 

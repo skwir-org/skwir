@@ -23315,3 +23315,33 @@ search asks first answers it at once and nothing is left to walk.
   machine does not run; nor plocate here, not installed.
 - **skwird's session, asked:** a query's `links: "unfiltered"` (for D2)
   and a `totals` message (for D3), shapes agreed; built on its side next.
+
+## 2026-11-23: sizes and times asked of an index (ADR-150, D2)
+
+A search's `size:` and `modified:` terms are asked of a names index
+where it holds them live, so a dated search with no name ("what changed
+this week") is answered from skwird's index rather than a walk.
+
+- `names::Query` gains `size` and `modified` (both ends included, a
+  date's end the last instant before it), extracted from the AND by
+  `lang::Query::named`, each kind of term one range.
+- **Only where live** (ADR-150, 5): `Query::as_covered` drops them for
+  an index whose `attrs` is not live, the search testing them on what it
+  names by name and kind; with nothing else to ask, the search walks.
+  plocate never takes them.
+- **Links:** a link's size and times are its target's in a search, its
+  own in skwird's index. skwird added `links: "unfiltered"` for it
+  (e8c14a6, asked by this session), sent whenever sizes or times are:
+  a link matching the names is answered whatever its own, and the search
+  stats it.
+- **skwird's client copied again** at 4eee002 (versions 0.1.0; the
+  journal's `complete` and `holes`, fd4334d; the fake's scripted
+  journal), the notices made again.
+- **Checked:** the extraction (ranges, a month's last instant, a
+  creation date left to the search); `as_covered` (live, checked, by
+  name); skwird's translation (sizes, instants before 1970, links);
+  a dated search through the fake engine: live, answered from the index;
+  checked with no name, walked; checked with a name, asked by it, the
+  date tested on what it names; the query and skwird plugins' tests,
+  core's names tests, `skwird_search`, `plugins_toggle`; clippy;
+  `notices-check`.

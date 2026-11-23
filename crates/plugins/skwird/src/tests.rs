@@ -90,6 +90,8 @@ fn a_search_is_answered_as_skwird_covers_it() {
             case_sensitive: false,
         }],
         kinds: Some(vec![EntryKind::File, EntryKind::Symlink]),
+        size: None,
+        modified: None,
         whole: true,
     };
     let mut named = Vec::new();
@@ -127,6 +129,8 @@ fn what_skwird_is_asked_is_one_name_the_longest_and_the_kinds() {
             EntryKind::Directory,
             EntryKind::Symlink,
         ]),
+        size: None,
+        modified: None,
         whole: false,
     });
     let name = asked.name.expect("a name");
@@ -143,9 +147,50 @@ fn what_skwird_is_asked_is_one_name_the_longest_and_the_kinds() {
         root: PathBuf::from("/r"),
         names: Vec::new(),
         kinds: Some(vec![EntryKind::Directory]),
+        size: None,
+        modified: None,
         whole: true,
     });
     assert!(kinds_alone.name.is_none());
+}
+
+/// Sizes and modification times are passed on, both ends included, an open
+/// end skwird's widest; a link then answered whatever its own, its being
+/// its target's in a search (ADR-150, D2).
+#[test]
+fn sizes_and_times_are_asked_and_links_answered_whatever_their_own() {
+    let at = |sec: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(sec);
+    let q = Query {
+        root: PathBuf::from("/r"),
+        names: Vec::new(),
+        kinds: None,
+        size: Some((10, u64::MAX)),
+        modified: Some(skwir_core::names::Times {
+            from: Some(at(1_800_000_000)),
+            to: None,
+        }),
+        whole: true,
+    };
+    let asked = query_of(&q);
+    assert_eq!(asked.size, Some([10, u64::MAX]));
+    let [from, to] = asked.mtime.expect("dated");
+    assert_eq!((from.sec, from.nsec, to.sec), (1_800_000_000, 0, i64::MAX));
+    assert_eq!(asked.links, protocol::Links::Unfiltered);
+    let undated = Query {
+        size: None,
+        modified: None,
+        ..q
+    };
+    assert_eq!(
+        query_of(&undated).links,
+        protocol::Links::Own,
+        "nothing a link's own would change"
+    );
+    // Before 1970, as `time_of` reads it back.
+    let before = SystemTime::UNIX_EPOCH - Duration::from_millis(1500);
+    let said = instant_of(before);
+    assert_eq!((said.sec, said.nsec), (-2, 500_000_000));
+    assert_eq!(time_of(said), before);
 }
 
 #[test]

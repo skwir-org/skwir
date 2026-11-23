@@ -156,7 +156,12 @@ impl Session for Located {
 /// does not compile as a glob here and is searched for as written (`a[b`):
 /// plocate would match it whole, as a glob.
 fn substrings(q: &skwir_core::names::Query) -> Option<Vec<String>> {
-    if !q.whole || q.kinds.is_some() || q.names.is_empty() {
+    if !q.whole
+        || q.kinds.is_some()
+        || q.size.is_some()
+        || q.modified.is_some()
+        || q.names.is_empty()
+    {
         return None;
     }
     q.names

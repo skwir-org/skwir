@@ -328,9 +328,9 @@ fn said(call: &'static str, error: &Error) {
 }
 
 /// What the search asks, as skwird takes it: one name, the longest (likely
-/// naming the fewest files; the search checks the others), and the kinds.
-/// Sizes and times are not asked yet: a link's are its target's in a
-/// search, which skwird does not hold (`docs/PLAN.md`, step D).
+/// naming the fewest files; the search checks the others), the kinds, the
+/// sizes and the modification times (asked only where skwird holds them
+/// live: `names::Query::as_covered`), a link answered whatever its own.
 fn query_of(q: &Query) -> protocol::Query {
     protocol::Query {
         root: protocol::WirePath::of(&q.root),
@@ -355,9 +355,57 @@ fn query_of(q: &Query) -> protocol::Query {
             .filter(|k| asked.contains(k))
             .collect()
         }),
-        size: None,
-        mtime: None,
+        size: q.size.map(|(lo, hi)| [lo, hi]),
+        mtime: q.modified.map(|times| {
+            [
+                times.from.map_or(
+                    protocol::Instant {
+                        sec: i64::MIN,
+                        nsec: 0,
+                    },
+                    instant_of,
+                ),
+                times.to.map_or(
+                    protocol::Instant {
+                        sec: i64::MAX,
+                        nsec: 999_999_999,
+                    },
+                    instant_of,
+                ),
+            ]
+        }),
         limit: None,
+        // A link's sizes and times are its target's in a search, its own in
+        // skwird's index: answered whatever they are, the search stats each.
+        links: if q.size.is_some() || q.modified.is_some() {
+            protocol::Links::Unfiltered
+        } else {
+            protocol::Links::Own
+        },
+    }
+}
+
+/// A time as skwird says it: seconds and nanoseconds since 1970, before
+/// it negative.
+fn instant_of(t: SystemTime) -> protocol::Instant {
+    match t.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(after) => protocol::Instant {
+            sec: i64::try_from(after.as_secs()).unwrap_or(i64::MAX),
+            nsec: after.subsec_nanos(),
+        },
+        Err(before) => {
+            let before = before.duration();
+            let sec = i64::try_from(before.as_secs()).unwrap_or(i64::MAX);
+            // 1.5 s before is -2 s and 0.5 s after it.
+            if before.subsec_nanos() == 0 {
+                protocol::Instant { sec: -sec, nsec: 0 }
+            } else {
+                protocol::Instant {
+                    sec: -sec - 1,
+                    nsec: 1_000_000_000 - before.subsec_nanos(),
+                }
+            }
+        }
     }
 }
 

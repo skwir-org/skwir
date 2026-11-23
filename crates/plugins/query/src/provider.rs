@@ -1240,6 +1240,9 @@ pub(crate) fn answered_at_once(app: &App, q: &Query, cancel: &CancelToken) -> bo
     let Some((index, coverage)) = app.names.covers(&asked, cancel).into_iter().next() else {
         return false;
     };
+    if asked.as_covered(&coverage).is_none() {
+        return false;
+    }
     let at_once = if index.syncs() {
         matches!(coverage.names, Proof::Live { .. })
     } else {
@@ -1511,6 +1514,10 @@ impl Shared {
             if cancel.is_cancelled() {
                 return None;
             }
+            // Sizes and times only of one that holds them live (ADR-150, 5).
+            let Some(asked) = asked.as_covered(&coverage) else {
+                continue;
+            };
             let mut ask = |session: &mut Box<dyn skwir_core::names::Session>,
                            considered: &mut HashSet<PathBuf>| {
                 session.query(&asked, &mut |paths| {
