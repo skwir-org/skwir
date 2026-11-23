@@ -208,7 +208,8 @@ class Player:
     `media` protocol)."""
 
     def __init__(self, app, film, work, env):
-        (work / "video.bgra").touch()
+        self.slot = work / "video.bgra"
+        self.slot.touch()
         self.diagnostics = tempfile.TemporaryFile()
         self.process = subprocess.Popen([str(app / "usr/lib/skwir/skwir-media-worker"), str(film), str(work)],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -220,6 +221,9 @@ class Player:
         self.state = {}
         self.frames = 0
         self.frame_generation = None
+        # The last frame's size and pixels (BGRA).
+        self.size = None
+        self.pixels = b""
 
     def control(self, command):
         self.generation += 1
@@ -247,6 +251,9 @@ class Player:
                 if isinstance(reply, dict) and "Frame" in reply:
                     self.frames += 1
                     self.frame_generation = reply["Frame"]["generation"]
+                    self.size = (reply["Frame"]["width"], reply["Frame"]["height"])
+                    with self.slot.open("rb") as slot:
+                        self.pixels = slot.read(self.size[0] * self.size[1] * 4)
                     self.send("Consumed")
 
     def close(self):
@@ -262,6 +269,75 @@ class Player:
         if output:
             print(output, file=sys.stderr)
         assert "CRITICAL" not in output, "media runtime or plugin scanner reported a critical error"
+
+
+def turned_film(path, width=64, height=32, frames=10):
+    """A film kept on its side, as a phone keeps one shot upright: stored
+    `width` by `height`, red, its top-left corner blue and its top-right
+    lime (a quarter of each side), its track's matrix turning it a quarter
+    clockwise (as a phone's display matrix does; GStreamer's `rotate-90`).
+    Uncompressed RGB in a QuickTime file, which qtdemux plays with no
+    decoder and this script writes with none: the roots the check runs in
+    have no encoder."""
+    def box(kind, *parts):
+        payload = b"".join(parts)
+        return struct.pack(">I4s", 8 + len(payload), kind) + payload
+
+    row = width * 3
+    assert row % 4 == 0, "rows that need no padding"
+    picture = bytearray(b"\xff\x00\x00" * (width * height))
+    for y in range(height // 4):
+        for x in range(width // 4):
+            picture[y * row + x * 3:y * row + x * 3 + 3] = b"\x00\x00\xff"
+            right = width - 1 - x
+            picture[y * row + right * 3:y * row + right * 3 + 3] = b"\x00\xff\x00"
+    identity = struct.pack(">9i", 1 << 16, 0, 0, 0, 1 << 16, 0, 0, 0, 1 << 30)
+    quarter = struct.pack(">9i", 0, 1 << 16, 0, -(1 << 16), 0, 0, 0, 0, 1 << 30)
+    ftyp = box(b"ftyp", b"qt  ", struct.pack(">I", 0x200), b"qt  ")
+    first = len(ftyp) + 8
+    mdat = box(b"mdat", bytes(picture) * frames)
+    # Ten a second: the movie's timescale counts thousandths, the track's tenths.
+    mvhd = box(b"mvhd", struct.pack(">IIIII", 0, 0, 0, 1000, frames * 100),
+               struct.pack(">IH", 1 << 16, 1 << 8), bytes(10), identity, bytes(24), struct.pack(">I", 2))
+    tkhd = box(b"tkhd", struct.pack(">IIIIII", 3, 0, 0, 1, 0, frames * 100), bytes(8),
+               struct.pack(">hhhh", 0, 0, 0, 0), quarter, struct.pack(">II", width << 16, height << 16))
+    mdhd = box(b"mdhd", struct.pack(">IIIIIHH", 0, 0, 0, 10, frames, 0x55C4, 0))
+    hdlr = box(b"hdlr", bytes(4), b"mhlr", b"vide", bytes(12), b"\x00")
+    vmhd = box(b"vmhd", struct.pack(">I", 1), bytes(8))
+    dinf = box(b"dinf", box(b"dref", struct.pack(">II", 0, 1), box(b"url ", struct.pack(">I", 1))))
+    entry = box(b"raw ", bytes(6), struct.pack(">HHHIII", 1, 0, 0, 0, 0, 0),
+                struct.pack(">HHIIIH", width, height, 72 << 16, 72 << 16, 0, 1), bytes(32),
+                struct.pack(">Hh", 24, -1))
+    stbl = box(b"stbl",
+               box(b"stsd", struct.pack(">II", 0, 1), entry),
+               box(b"stts", struct.pack(">IIII", 0, 1, frames, 1)),
+               box(b"stsc", struct.pack(">IIIII", 0, 1, 1, frames, 1)),
+               box(b"stsz", struct.pack(">III", 0, len(picture), frames)),
+               box(b"stco", struct.pack(">III", 0, 1, first)))
+    trak = box(b"trak", tkhd, box(b"mdia", mdhd, hdlr, box(b"minf", vmhd, dinf, stbl)))
+    path.write_bytes(ftyp + mdat + box(b"moov", mvhd, trak))
+
+
+def check_upright(app, work):
+    """The bundle carries videoflip (good's videofilter), and its media
+    helper hands a film kept on its side over upright: the turned clip
+    comes 32 by 64, its stored top-left corner (blue) at the top right."""
+    plugin = app / "usr/lib/skwir/gstreamer-1.0/libgstvideofilter.so"
+    assert plugin.is_file(), f"the bundle has no {plugin.name}: films kept on their side play sideways"
+    slot = work / "turned"
+    slot.mkdir()
+    film = slot / "A phone's film.mov"
+    turned_film(film)
+    player = Player(app, film, slot, dict(os.environ, G_DEBUG="fatal-criticals", SKWIR_MEDIA_TEST_AUDIO="1"))
+    try:
+        player.until(lambda: player.frames, "showed the turned clip's first frame")
+        assert player.size == (32, 64), ("the turned clip came on its side", player.size)
+        width = player.size[0]
+        b, g, r = player.pixels[(2 * width + width - 3) * 4:][:3]
+        assert b > 150 and g < 100 and r < 100, ("the turned clip came turned the wrong way", (r, g, b))
+    finally:
+        player.close()
+    print("ok: the bundle's media helper hands a film kept on its side over upright", flush=True)
 
 
 def check_film(app, work, film):
@@ -554,6 +630,7 @@ def main():
                  "--worker", app / "usr/lib/skwir" / worker])
         check_heif(app, work)
         check_media(app, work)
+        check_upright(app, work)
         if args.film:
             check_film(app, work, args.film.resolve())
         else:

@@ -157,9 +157,11 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   picture as stored, before either: a turned film's turn with it.
   Without good's `videofilter` plugin the film plays as stored; the
   packages that carry GStreamer carry it (`tools/package/gstreamer.py`,
-  the AppImage's), and `tools/media/check.py` (Windows' package check
-  with it) plays a turned clip; `crates/media-worker/tests/upright.rs`
-  plays the eight ways through the helper.
+  the AppImage's), and their checks look for it and play a turned clip
+  (`tools/media/check.py`, Windows' under Wine; the AppImage's and the
+  tarball's `turned_film`, written without an encoder; macOS's only
+  looks); `crates/media-worker/tests/upright.rs` plays the eight ways
+  through the helper.
 - Atlas eviction drops pending uploads before recycling texture slots, and
   a texture is destroyed only after in-flight GPU work finishes: GPUI can
   draw several scenes before Wayland presents one, so keeping only the
