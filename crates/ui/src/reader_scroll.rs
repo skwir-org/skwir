@@ -1536,8 +1536,13 @@ impl Shell {
         };
         // The page the preview opened on is drawn from its content until
         // it is shown larger than it was rendered.
+        // Read a page at a time, the page shown is the preview's to draw
+        // again, where it is (`keep_shown_page`): drawn here, it went only
+        // into the cache, the panel showing it as it was.
         let initial = initial.filter(|page| {
-            self.preview.reader.shown_side >= self.preview.reader.scroll.whole_side(*page, side)
+            !self.preview.reader.scroll.continuous
+                || self.preview.reader.shown_side
+                    >= self.preview.reader.scroll.whole_side(*page, side)
         });
         let scroll = &mut self.preview.reader.scroll;
         if scroll.pending.is_some() {
@@ -1734,6 +1739,27 @@ impl Shell {
         self.choose_part_when_due(window, cx);
     }
 
+    /// Read a page at a time, whether the page shown was drawn whole at a
+    /// smaller side than it may be now, its shape known (`whole_side`).
+    fn shown_page_held_short(&self) -> bool {
+        let reader = &self.preview.reader;
+        match (&self.preview.content, self.preview.page_side) {
+            (
+                Some(PreviewContent::Image {
+                    document: Some(page),
+                    ..
+                }),
+                Some(side),
+            ) => {
+                !reader.scroll.continuous
+                    && reader.session.is_some()
+                    && page.page == self.preview.page
+                    && reader.shown_side < reader.scroll.whole_side(page.page, side)
+            }
+            _ => false,
+        }
+    }
+
     /// Read a page at a time, the page the panel shows of its document
     /// (`preview.content`) is kept with the others the reader read, at the
     /// side it was rendered at, and the pages after and before it are read
@@ -1757,6 +1783,21 @@ impl Shell {
         if reader.scroll.continuous || reader.session.is_none() {
             return;
         }
+        // Its shape known now asks more of it whole than it was drawn at (a
+        // tall page shown at a side counted as ISO's): drawn again, where
+        // it is, as a zoom asks (`document_shown`), once what came is
+        // taken (the arrival says its own phase after this).
+        if self.shown_page_held_short() {
+            cx.defer_in(window, |shell, _, cx| {
+                if shell.shown_page_held_short() {
+                    shell.cancel_pending_preview();
+                    shell.preview.refresh = true;
+                    shell.preview.phase = crate::preview::PreviewPhase::Queued;
+                    cx.notify();
+                }
+            });
+        }
+        let reader = &self.preview.reader;
         let Some(PreviewContent::Image {
             image,
             document: Some(page),

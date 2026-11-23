@@ -4622,8 +4622,16 @@ impl Shell {
                     Ok(Some(session)) => {
                         closed_links.replace(session.closed_links().cloned());
                         // Before any page was shown, the side the content's
-                        // area says, laid out for this preview meanwhile.
-                        let side = page_side.unwrap_or_else(|| area.side(generation, &cancel));
+                        // area says, laid out for this preview meanwhile,
+                        // as much as a page whole may hold there, its shape
+                        // not known yet (`whole_side`, ADR-147).
+                        let side = page_side.unwrap_or_else(|| {
+                            skwir_core::document::held_side(
+                                1.,
+                                std::f32::consts::SQRT_2,
+                                area.side(generation, &cancel),
+                            )
+                        });
                         // A document opening, before its page: the page
                         // drawn small, kept aside as the thumbnail is, to
                         // stand in for it once the wait has lasted. One

@@ -257,11 +257,16 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   `MAX_SIDE` on its longer side (`document::held_side`): a tall page (a
   webtoon's) whole at its own width. The reader asks each page at that
   (`DocumentScroll::whole_side`), the page shown by the preview's job
-  too, never the side shown however large (a plugin from outside Skwir
-  was asked 8192 pixels and its picture refused): its shape as its
-  engine said it, else as the nearest page known (the page shown's from
-  the start, `keep_shown_page`), never ISO's once one is known (a
-  webtoon's every page was drawn twice, first 273 pixels across). Every
+  too, the first before any was shown included (as an upright page of
+  ISO's shape, nothing known yet), never the side shown however large (a
+  plugin from outside Skwir was asked 8192 pixels and its picture
+  refused): its shape as its engine said it, else as the nearest page
+  known (the page shown's from the start, `keep_shown_page`), never
+  ISO's once one is known (a webtoon's every page was drawn twice, first
+  273 pixels across). Read a page at a time, the page shown is the
+  preview's to draw: a shape learned that asks more of it whole has it
+  drawn again where it is (`keep_shown_page`, as a zoom does), never
+  into the cache alone, which the panel never showed. Every
   helper bounds a whole page by the same function; the manager takes at
   most a square page's pixels at `MAX_SIDE`.
 - **Past it, what shows is drawn apart** (ADR-147). Each page element
