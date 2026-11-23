@@ -22830,3 +22830,12 @@ none will be published.
   (a subvolume is not a mount, and no built-in exclusion names one), as
   skwird's note of 2026-11-22 suspected. Recorded in the plan, not
   decided.
+- **Copied again at skwird accc113** the same day, its session having
+  given four of the five (a call given up on by silence or a `Stopper`,
+  the engine reaped and started in `/`, XDG variables read as the
+  spec has them, `Find.runtime` and `Find.state`); Windows' console
+  waits for its phase 4. The protocol unchanged. The diff read; the
+  copies' tests (five) green and the checks for Windows and macOS clean,
+  as before; clippy on them silent. skwird's `tools/vendor-client`
+  removes the folders whole, `README.skwir.md` included: restored from
+  git after the copy.

@@ -3685,14 +3685,24 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     advises what the panes show, then the harvest's scope, since a home
     does not fit the watches); whether tests get the real engine from
     the development shell or only where it is installed.
-  - **And for skwird's client** (asked of skwird's session 2026-11-23):
-    a call that can be given up on (a stop from another thread, or a
-    deadline: a hung or slow engine now holds a search's worker, and a
-    cancelled search cannot stop it); the engine it starts reaped, and
-    started in `/` rather than the client's folder; the XDG variables
-    read as `skwir_core::xdg` reads them (an empty `XDG_STATE_HOME`
-    writes its log below the current folder); for skwird's phase 4,
-    Windows' programs started without a console (ADR-074).
+  - **skwird's client, asked of its session 2026-11-23,** gave four of
+    five the same day (skwird accc113, copied again): a call given up
+    on, after a silence of the engine's (`Find.silence`) or from another
+    thread (`Client::stopper`); the engine it starts reaped, and started
+    in `/`; empty or relative XDG variables naming nothing, and
+    `Find.runtime` and `Find.state` in their place. Left for skwird's
+    phase 4: Windows' programs started without a console (ADR-074).
+    For the provider:
+    - a search stops its call through the `Stopper`, from its cancel
+      token; `silence` is only a backstop, longer than an engine's first
+      build (6 to 20 s on the user's home, saying nothing meanwhile);
+    - a stop closes the whole connection, so two searches never share
+      one;
+    - `Find.runtime` and `Find.state` come from `skwir_core::xdg`
+      (`runtime_dir`, `state_home`);
+    - tests always name the fake's socket (`Find.socket`): `connect`
+      asks the system service's `/run/skwird/socket` first, which the
+      test folders do not move.
   - **What it takes in,** from skwird's notes (2026-11-21 to 11-23):
     - it connects at the first search, never at start (ADR-128,
       ADR-141): an index read back answers "as of" in about 0.6 s, and

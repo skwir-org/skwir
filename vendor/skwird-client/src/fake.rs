@@ -6,7 +6,9 @@
 //! the longest root holding the path asked (`outside` for none); `query`
 //! with the entries given below the root asked, a name matched as a
 //! substring after lowercasing (globs are not its); `changes` as too old;
-//! `exclude` and `watch` with what was asked.
+//! `exclude` and `watch` with what was asked. Made `silent`, it says hello
+//! and then nothing, as an engine that hangs: for a client's test of
+//! giving up on a call.
 
 use std::path::PathBuf;
 
@@ -19,6 +21,8 @@ pub struct Script {
     /// Each root's coverage, for the paths below it.
     pub coverage: Vec<(PathBuf, Coverage)>,
     pub entries: Vec<Entry>,
+    /// Say hello, then answer nothing more.
+    pub silent: bool,
 }
 
 /// A fake engine serving until dropped.
@@ -115,6 +119,9 @@ mod imp {
         };
         let mut reader = BufReader::new(stream);
         while let Ok(Some(Request { id, ask })) = wire::read::<_, Request>(&mut reader) {
+            if script.silent && !matches!(ask, Ask::Hello(_)) {
+                continue;
+            }
             if answer(script, ask, &mut out, id).is_err() {
                 return;
             }
@@ -211,6 +218,7 @@ mod tests {
                 entry("/home/user/Report.pdf"),
                 entry("/home/user/notes.txt"),
             ],
+            silent: false,
         };
         let fake = Fake::start(dir.join("socket"), script).unwrap();
         let mut c = Client::connect(&Find {
