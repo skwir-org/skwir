@@ -458,12 +458,13 @@ configuration names is run, and nothing is written to it.
   Disconnect leave the panes as they are, the same way. Skwir keeps
   nothing open on a drive you can unplug, nor on a server, between the
   times it reads them, so another program's unmount is not refused
-  because of a folder Skwir shows. When GNOME or KDE asks to unmount one,
-  Skwir first closes what it previews or plays there, and the terminal
-  panel's shell leaves it; a copy of its own still under way there is
-  named in a notice with Cancel. If an unmount from a terminal is
-  refused once all the same, Skwir says it no longer uses the drive:
-  unmount it again.
+  because of a folder Skwir shows (on Windows, a folder shown holds its
+  drive until its pane goes elsewhere). When GNOME or KDE asks to
+  unmount one, Skwir first closes what it previews or plays there, and
+  the terminal panel's shell leaves it; a copy of its own still under
+  way there is named in a notice with Cancel. If an unmount from a
+  terminal is refused once all the same, Skwir says it no longer uses
+  the drive: unmount it again.
 
 ## Servers, phones and cameras
 
