@@ -281,10 +281,17 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   atlas entry and all, as the cache does pages, and one drawn at more
   than twice the side wanted is drawn again.
 - **What is drawn apart is state, chosen again whenever it may change**
-  (`DocumentScroll::choose_part`, `Shell::want_part`): as what shows
-  changes, as a part comes back or fails, as a search it waited for ends.
-  Chosen only as the view moved, the second page in view never had its
-  part, nor the view a part asked for one it had left. A part being
+  (`DocumentScroll::choose_part`). Whatever may change it says so where
+  it changes (`part_changed`: what shows, a part back or failed, a page
+  whole come, a session come or gone, parts refused or forgotten,
+  everything given up), and it is chosen at the next turn that may
+  (`Shell::choose_part_when_due`: as what shows is said and at every
+  sync), with no search running and a session there to ask; never by a
+  call at each place that changes it. Chosen only as the view moved, the
+  second page in view never had its part, nor the view a part asked for
+  one it had left; chosen only where it was called for, a document read
+  again (its session arriving, nothing in view moving) and a refresh
+  asked none. A part let go of asks a frame. A part being
   drawn that is no longer what would be asked gives way; only the
   answer of the one last asked is taken (`PendingPart::serial`). A part
   has its own cancel, apart from the whole pages' (`DocumentScroll::

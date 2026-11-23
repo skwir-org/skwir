@@ -418,8 +418,12 @@ pub struct DocumentScroll {
     /// Pages whose part could not be drawn: not asked again until the
     /// page is visited or the pages refreshed, as a page's failure.
     refused: std::collections::BTreeSet<u32>,
-    /// A part waits for a search to end (`choose_part`).
-    part_waits: bool,
+    /// What is drawn apart is to be chosen again (`part_changed`): set by
+    /// whatever may change it, where it changes, and acted on in two
+    /// places only, as what shows is said and at every sync
+    /// (`Shell::choose_part_when_due`); kept while a search runs or no
+    /// session is there to ask, until neither holds it back.
+    part_due: bool,
     wanted: Vec<u32>,
     pending: Option<(u32, CancelToken)>,
     generation: u64,
@@ -455,7 +459,7 @@ impl DocumentScroll {
             part_pending: None,
             part_serial: 0,
             refused: std::collections::BTreeSet::new(),
-            part_waits: false,
+            part_due: false,
             wanted: Vec::new(),
             pending: None,
             generation: 0,
@@ -560,23 +564,40 @@ impl DocumentScroll {
     fn cancel_all(&mut self) {
         self.cancel();
         self.cancel_part();
-        self.part_waits = false;
+        self.part_changed();
+    }
+    /// What is drawn apart may have changed: what shows, a part come back
+    /// or failed, a page whole come, the session come or gone, parts
+    /// refused or forgotten. Chosen again at the next turn that may
+    /// (`part_due_now`): every such change says so here, never by asking
+    /// itself, so none is missed for want of a call (a reopened document's
+    /// session arriving, with nothing in view moving, asked no part).
+    fn part_changed(&mut self) {
+        self.part_due = true;
+    }
+    /// Whether what is drawn apart is chosen now: due, with no search
+    /// running (a part waits for it, never cancelling the user's find) and
+    /// a session there to ask; due still otherwise.
+    fn part_due_now(&mut self, searching: bool, session: bool) -> bool {
+        if !self.part_due || searching || !session {
+            return false;
+        }
+        self.part_due = false;
+        true
     }
     /// Choose again what of the pages is drawn apart (ADR-147), from what
     /// showed last (`seen`): the parts of pages no longer shown, or that
     /// need none at the zoom they show at, are let go (returned, for the
     /// atlas); a part being drawn that is no longer what would be asked is
-    /// given up; then, unless one is still being drawn, a search runs
-    /// (`searching`: it waits for it, `part_waits`) or the session draws
-    /// no part sharper than its whole (`draws`, `draws_parts`; nor does a
-    /// page in `refused`), the page that most
-    /// needs one (`part_wanted`), the one showing most first, and what to
-    /// draw of it. One at a time, chosen again whenever what shows
-    /// changes, a part comes back or fails, or a search ends: a view that
-    /// moved meanwhile, or a second page in view, is never left without.
+    /// given up; then, unless one is still being drawn or the session
+    /// draws no part sharper than its whole (`draws`, `draws_parts`; nor
+    /// does a page in `refused`), the page that most needs one
+    /// (`part_wanted`), the one showing most first, and what to draw of
+    /// it. One at a time, chosen again whenever anything it reads changes
+    /// (`part_changed`): a view that moved meanwhile, or a second page in
+    /// view, is never left without.
     fn choose_part(
         &mut self,
-        searching: bool,
         draws: bool,
     ) -> (
         Vec<CachedPage>,
@@ -611,8 +632,7 @@ impl DocumentScroll {
             }
             self.cancel_part();
         }
-        self.part_waits = searching;
-        if searching || !draws {
+        if !draws {
             return (let_go, None);
         }
         let chosen = seen
@@ -676,6 +696,8 @@ impl DocumentScroll {
     /// A render failure stays visible until the user visits that page
     /// explicitly or refreshes; then the page is requested again.
     fn forget_errors(&mut self, only: Option<u32>) -> bool {
+        // A part refused there may be asked again.
+        self.part_changed();
         if let Some(number) = only {
             self.refused.remove(&number);
             return Rc::make_mut(&mut self.errors).remove(&number).is_some();
@@ -1019,6 +1041,9 @@ impl Shell {
             self.preview.reader.outline = crate::reader::Outline::of(&session.info().outlines);
         }
         self.preview.reader.session = Some(session);
+        // A part may be asked of it now (a document read again after its
+        // file changed shows what it showed: nothing in view moves).
+        self.preview.reader.scroll.part_changed();
         self.preview
             .reader
             .focus
@@ -1333,32 +1358,39 @@ impl Shell {
     }
 
     /// What of the pages showed (`report_seen`): what is drawn apart of
-    /// them is chosen again (`want_part`, ADR-147).
+    /// them is chosen again (`choose_part_when_due`, ADR-147).
     pub(crate) fn document_parts(
         &mut self,
         seen: Vec<crate::elements::document::Seen>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.preview.reader.scroll.seen = Rc::new(seen);
-        self.want_part(window, cx);
+        let scroll = &mut self.preview.reader.scroll;
+        scroll.seen = Rc::new(seen);
+        scroll.part_changed();
+        self.choose_part_when_due(window, cx);
     }
 
-    /// Choose again what of the pages is drawn apart, and have it drawn
-    /// (`DocumentScroll::choose_part`): the parts let go leave the atlas.
-    /// Called whenever what shows changes, a part comes back or fails, and
-    /// a search a part waited for ends.
-    fn want_part(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Where what is drawn apart is due to be chosen again
+    /// (`DocumentScroll::part_changed`), with no search running and a
+    /// session there to ask: choose it (`choose_part`) and have it drawn.
+    /// The parts let go leave the atlas, and a frame is asked, for the
+    /// one drawn last still showed them. Called as what shows is said and
+    /// at every sync, the two turns that follow whatever changes it.
+    fn choose_part_when_due(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let searching = self.preview.reader.search.is_pending();
-        let draws = self
-            .preview
-            .reader
-            .session
-            .as_ref()
-            .is_some_and(|session| session.draws_parts());
-        let (let_go, chosen) = self.preview.reader.scroll.choose_part(searching, draws);
-        for part in let_go {
-            cx.drop_image(part.image, Some(window));
+        let session = self.preview.reader.session.clone();
+        let scroll = &mut self.preview.reader.scroll;
+        if !scroll.part_due_now(searching, session.is_some()) {
+            return;
+        }
+        let draws = session.is_some_and(|session| session.draws_parts());
+        let (let_go, chosen) = scroll.choose_part(draws);
+        if !let_go.is_empty() {
+            for part in let_go {
+                cx.drop_image(part.image, Some(window));
+            }
+            cx.notify();
         }
         if let Some((number, part, side)) = chosen {
             self.request_document_part(number, part, side);
@@ -1534,6 +1566,7 @@ impl Shell {
                     continue;
                 }
                 scroll.part_pending = None;
+                scroll.part_changed();
                 let seen = scroll
                     .seen
                     .iter()
@@ -1561,13 +1594,14 @@ impl Shell {
                         scroll.refused.insert(reply.number);
                     }
                 }
-                self.want_part(window, cx);
                 continue;
             }
             if reply.generation != scroll.generation {
                 continue;
             }
             scroll.pending = None;
+            // What a page holds whole decides whether it needs a part.
+            scroll.part_changed();
             // Read a page at a time, the page turned to while it was read
             // ahead is shown as it comes (`turn_from_kept`).
             let (shown, showing) = match &self.preview.content {
@@ -1634,10 +1668,9 @@ impl Shell {
             self.request_document_page();
             cx.notify();
         }
-        // A part that waited for a search is asked once it ended.
-        if self.preview.reader.scroll.part_waits && !self.preview.reader.search.is_pending() {
-            self.want_part(window, cx);
-        }
+        // Whatever changed what is drawn apart since: a part back, a page
+        // whole come, a session arrived, a search ended.
+        self.choose_part_when_due(window, cx);
     }
 
     /// Read a page at a time, the page the panel shows of its document
@@ -1742,7 +1775,9 @@ impl Shell {
             self.preview.phase = crate::preview::PreviewPhase::Loading;
             return true;
         }
-        self.preview.reader.scroll.cancel();
+        // The pages read ahead, and the part of the page left, give way to
+        // the page turned to.
+        self.preview.reader.scroll.cancel_all();
         false
     }
 
@@ -2254,25 +2289,25 @@ mod tests {
         // The bottom of page 3, the top of page 4: page 3 shows most.
         state.seen = Rc::new(vec![seen(3, 0.6, 1.), seen(4, 0., 0.3)]);
         // A session that draws no part sharper than its whole is asked none.
-        assert_eq!(state.choose_part(false, false).1, None);
-        let (gone, chosen) = state.choose_part(false, true);
+        assert_eq!(state.choose_part(false).1, None);
+        let (gone, chosen) = state.choose_part(true);
         assert!(gone.is_empty());
         let (page, part, side) = chosen.expect("a part");
         assert_eq!(page, 3);
         let cancel = ask(&mut state, page, part, side);
         // Nothing moved: what is being drawn is waited for.
-        assert_eq!(state.choose_part(false, true).1, None);
+        assert_eq!(state.choose_part(true).1, None);
         assert!(!cancel.is_cancelled());
         // It came back: page 4 has its own at once, with nothing moving.
         state.part_pending = None;
         Rc::make_mut(&mut state.parts).insert(3, drawn(3, part, side));
-        let (page, part, side) = state.choose_part(false, true).1.expect("the second page's");
+        let (page, part, side) = state.choose_part(true).1.expect("the second page's");
         assert_eq!(page, 4);
         let cancel = ask(&mut state, page, part, side);
         // The view moves down past what is being drawn: it gives way to
         // the view's, and page 3, gone, lets its part go.
         state.seen = Rc::new(vec![seen(4, 0.5, 0.8)]);
-        let (gone, chosen) = state.choose_part(false, true);
+        let (gone, chosen) = state.choose_part(true);
         assert!(cancel.is_cancelled() && state.part_pending.is_none());
         assert_eq!(gone.len(), 1);
         assert!(state.parts.is_empty());
@@ -2281,7 +2316,7 @@ mod tests {
         assert!(part.holds(&seen(4, 0.5, 0.8).shown));
         // A failure: not asked again until the page is visited.
         state.refused.insert(4);
-        assert_eq!(state.choose_part(false, true).1, None);
+        assert_eq!(state.choose_part(true).1, None);
         state.forget_errors(Some(4));
         assert!(state.refused.is_empty());
         // Zoomed out to where the whole suffices: the part goes.
@@ -2290,17 +2325,26 @@ mod tests {
             covered: 4000.,
             ..seen(4, 0.5, 0.8)
         }]);
-        let (gone, chosen) = state.choose_part(false, true);
+        let (gone, chosen) = state.choose_part(true);
         assert_eq!((gone.len(), chosen), (1, None));
-        // A search running holds parts back, until it ends.
+        // Chosen again when due, once: a search running, or no session
+        // there to ask (a document read again, its session still to come),
+        // holds it back until they no longer do; whatever changes what is
+        // drawn apart makes it due (a session arriving, errors forgotten).
         state.seen = Rc::new(vec![seen(4, 0.5, 0.8)]);
-        assert_eq!(state.choose_part(true, true).1, None);
-        assert!(state.part_waits);
-        assert!(state.choose_part(false, true).1.is_some());
-        assert!(!state.part_waits);
+        state.part_changed();
+        assert!(!state.part_due_now(true, true), "a search runs");
+        assert!(!state.part_due_now(false, false), "no session yet");
+        assert!(state.part_due_now(false, true));
+        assert!(!state.part_due_now(false, true), "once");
+        state.forget_errors(None);
+        assert!(state.part_due_now(false, true), "refreshed");
+        state.cancel_all();
+        assert!(state.part_due_now(false, true), "everything given up");
+        assert!(state.choose_part(true).1.is_some());
         // A layout tried twice in a frame said a page twice: the last holds.
         state.seen = Rc::new(vec![seen(4, 0., 0.1), seen(4, 0.5, 0.8)]);
-        let (_, part, _) = state.choose_part(false, true).1.unwrap();
+        let (_, part, _) = state.choose_part(true).1.unwrap();
         assert!(part.holds(&seen(4, 0.5, 0.8).shown) && part.top > 0.2);
         // The whole pages given up leave the part being drawn alone.
         let cancel = ask(&mut state, 4, part, side);
