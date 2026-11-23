@@ -654,10 +654,11 @@ archives, and the bytes of any file.
   camera stored in it) are shown as any picture is, thumbnails included.
   HEIC and AVIF need the `skwir-heif` package where Skwir comes from
   Debian's, Ubuntu's or Fedora's packages (HEIC on Fedora with RPM
-  Fusion's `libheif-freeworld` too), and `libheif` on Arch;
-  [Previews](previews.md#pictures) says which raw files are read. A
-  document's or a comic's page zoomed in is drawn sharp at that zoom too,
-  however tall the page.
+  Fusion's `libheif-freeworld` too), and `libheif` on Arch; on Windows
+  and macOS they are shown as the system's thumbnail draws them, at most
+  1024 pixels. [Previews](previews.md#pictures) says which raw files are
+  read. A document's or a comic's page zoomed in is drawn sharp at that
+  zoom too, however tall the page.
 - A folder shows its README in the preview, or the cover of an album or
   of a photo folder (`cover.jpg`, `folder.jpg`), when it holds one: the
   folder selected, or the one you are in while nothing is selected. Its
