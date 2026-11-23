@@ -1101,11 +1101,10 @@ fn specimen(path: &Path) -> Part {
 /// when within `Picture::MOST_PIXELS`; another, or one larger, decoded
 /// and turned (within the platform's limits) and written as a PNG. A
 /// camera's raw file is the JPEG it carries, as the window shows it
-/// (`picture::Typed`, ADR-148), never the small picture its TIFF shape
-/// begins with.
+/// (`as_printed`, ADR-148).
 fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part> {
     let alt = display_name(path);
-    let typed = skwir_platform::picture::Typed::new(path, mime)?;
+    let typed = as_printed(path, mime);
     let reader = typed.reader()?;
     let embedded = matches!(
         mime,
@@ -1209,6 +1208,16 @@ pub(crate) fn sheet(
     ))
 }
 
+/// The picture `path` of type `mime` as it is printed: a camera's raw file
+/// as the JPEG it carries, found and read once (`picture::Typed`); one
+/// that carries none (a phone's DNG) as image reads its TIFF shape, the
+/// small picture it begins with, as before Skwir read raw files: printed
+/// small rather than not at all.
+fn as_printed<'a>(path: &'a Path, mime: Option<&str>) -> skwir_platform::picture::Typed<'a, Path> {
+    skwir_platform::picture::Typed::new(path, mime)
+        .unwrap_or(skwir_platform::picture::Typed::File(path))
+}
+
 /// A picture of a contact sheet, of type `mime`: decoded, turned, shrunk,
 /// written as a JPEG at `stem` (a PNG where it is see-through); a raw
 /// file's, the JPEG it carries.
@@ -1218,7 +1227,7 @@ fn sheet_picture(
     stem: &Path,
     name: &str,
 ) -> anyhow::Result<paper::Picture> {
-    let reader = skwir_platform::picture::open_typed(path, mime)?;
+    let reader = as_printed(path, mime).reader()?;
     let image = skwir_platform::picture::decode_fitted(
         reader,
         SHEET_SIDE,
@@ -1578,5 +1587,36 @@ mod tests {
             panic!("a picture");
         };
         assert_eq!((pictures[0].width, pictures[0].height), (64, 48));
+        // One that carries no JPEG, only the small picture its directory
+        // holds (a phone's DNG), prints as that picture: here 4 × 2 grey.
+        let mut tiff = b"II*\0\x08\0\0\0".to_vec();
+        let tags: [(u16, u32); 9] = [
+            (256, 4),
+            (257, 2),
+            (258, 8),
+            (259, 1),
+            (262, 1),
+            (273, 8 + 2 + 9 * 12 + 4),
+            (277, 1),
+            (278, 2),
+            (279, 8),
+        ];
+        tiff.extend_from_slice(&(tags.len() as u16).to_le_bytes());
+        for (tag, value) in tags {
+            tiff.extend_from_slice(&tag.to_le_bytes());
+            tiff.extend_from_slice(&4u16.to_le_bytes());
+            tiff.extend_from_slice(&1u32.to_le_bytes());
+            tiff.extend_from_slice(&value.to_le_bytes());
+        }
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&[0, 80, 160, 240, 240, 160, 80, 0]);
+        let phone = tmp.path().join("a phone’s photo.dng");
+        std::fs::write(&phone, tiff).unwrap();
+        let Part::Pictures { pictures, .. } =
+            picture(&phone, Some("image/x-adobe-dng"), tmp.path()).unwrap()
+        else {
+            panic!("a picture");
+        };
+        assert_eq!((pictures[0].width, pictures[0].height), (4, 2));
     }
 }
