@@ -61,7 +61,11 @@ on Xvfb.
    out.
    `DocumentSession::render_part` draws one; by default the whole is
    drawn and the part cut from it (`DocumentPage::cut`): a book laid out,
-   a plugin from outside Skwir.
+   a plugin from outside Skwir. Such a part holds no more than the whole
+   shown, so a session says whether it draws parts alone
+   (`draws_parts`), and the reader asks parts only of one that does; a
+   part that comes back no sharper (a picture at its own size) is not
+   asked again (amended 2026-11-23).
 4. **Where a page shows is the element's**: each page says in prepaint
    what of it shows within its view, what it covers and what its drawing
    holds (`elements::document::Seen`), read once the column is laid out

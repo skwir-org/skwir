@@ -297,6 +297,11 @@ impl DocumentSession for Comic {
         &self.info
     }
 
+    /// A picture's region decodes alone (`render_part`).
+    fn draws_parts(&self) -> bool {
+        true
+    }
+
     /// A page decoded with at most `side` pixels on its longer side; its own
     /// size is what 100% is.
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
@@ -320,7 +325,10 @@ impl DocumentSession for Comic {
 
     /// A part of a page past what is held of it whole (ADR-147): only that
     /// region of its picture, decoded at the side asked
-    /// (`picture::decode_region`), never the whole shrunk and cut.
+    /// (`picture::decode_region`), never the whole shrunk and cut. A
+    /// drawing's page has no part decoded alone, and its whole cut would
+    /// be no sharper than the whole shown: it is refused, as a picture
+    /// that cannot be read is, and the reader asks it no more.
     fn render_part(
         &self,
         page: u32,
@@ -330,10 +338,7 @@ impl DocumentSession for Comic {
     ) -> anyhow::Result<DocumentPage> {
         let number = page.clamp(1, self.info.pages);
         let bytes = self.bytes(number, cancel)?;
-        // A drawing's page has no part decoded alone: its whole, cut.
-        let Ok((decoded, drawn)) = inspection::picture_part(&bytes, part, side) else {
-            return Ok(self.render(number, side, cancel)?.cut(part));
-        };
+        let (decoded, drawn) = inspection::picture_part(&bytes, part, side)?;
         Ok(DocumentPage {
             width: decoded.width,
             height: decoded.height,

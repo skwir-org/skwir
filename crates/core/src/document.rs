@@ -312,8 +312,9 @@ pub trait DocumentSession: Send + Sync {
     /// `part` of page `page`, drawn as the page would be with `side` on its
     /// longer side, though the whole would be past what a page may hold
     /// (ADR-147): what shows of a page zoomed in. An engine that draws at
-    /// the scale asked draws the part alone; by default the whole is drawn
-    /// at `side` (as large as it may be) and the part cut from it.
+    /// the scale asked draws the part alone (and says so, `draws_parts`);
+    /// by default the whole is drawn at `side` (as large as it may be) and
+    /// the part cut from it, which the reader never asks.
     fn render_part(
         &self,
         page: u32,
@@ -351,6 +352,14 @@ pub trait DocumentSession: Send + Sync {
     /// as much either way (a picture decoded whole, a book laid out) is not
     /// drawn twice.
     fn draws_small_quickly(&self) -> bool {
+        false
+    }
+    /// Whether this session draws a part of a page alone, sharper than the
+    /// page whole holds it (`render_part`, ADR-147): the reader asks parts
+    /// only of one that does. By default, no: the whole drawn and cut
+    /// holds no more than the whole shown (a book laid out, a plugin from
+    /// outside Skwir).
+    fn draws_parts(&self) -> bool {
         false
     }
 }

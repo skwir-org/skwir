@@ -473,6 +473,9 @@ impl skwir_core::document::DocumentSession for Holding {
     fn draws_small_quickly(&self) -> bool {
         self.session.draws_small_quickly()
     }
+    fn draws_parts(&self) -> bool {
+        self.session.draws_parts()
+    }
 }
 
 #[cfg(test)]

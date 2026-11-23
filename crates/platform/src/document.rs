@@ -562,6 +562,9 @@ impl DocumentSession for WorkerSession {
     fn draws_small_quickly(&self) -> bool {
         true
     }
+    fn draws_parts(&self) -> bool {
+        true
+    }
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
         match self.request(
             WorkerRequest::Render {
@@ -571,7 +574,10 @@ impl DocumentSession for WorkerSession {
             },
             cancel,
         )? {
-            Response::Page(page) => Ok(page),
+            Response::Page(page) => {
+                anyhow::ensure!(page.part.is_none(), "the helper drew a part of the page");
+                Ok(page)
+            }
             Response::Matches(_)
             | Response::Located(_)
             | Response::Composed(..)
@@ -596,7 +602,13 @@ impl DocumentSession for WorkerSession {
             },
             cancel,
         )? {
-            Response::Page(page) => Ok(page),
+            // A helper that knows no part (one older than the reader) draws
+            // the page whole: shown as the part, it would be the whole page
+            // squeezed into the part's place.
+            Response::Page(page) => {
+                anyhow::ensure!(page.part.is_some(), "the helper drew no part of the page");
+                Ok(page)
+            }
             Response::Matches(_)
             | Response::Located(_)
             | Response::Composed(..)

@@ -292,8 +292,15 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   part it drew exactly; a part carries no text (the whole did). Natively in
   PDFium (`set_origin`), Poppler (cairo's translation), MuPDF (its matrix),
   DjVuLibre (its render rectangle), djvu-rs (`RenderRequest::region`, in
-  the page as shown) and a comic (`inspection::picture_part`); elsewhere the whole is
-  drawn and the part cut (`DocumentSession::render_part`'s default).
+  the page as shown) and a comic (`inspection::picture_part`), each saying
+  so (`DocumentSession::draws_parts`); a session that does not (a book
+  laid out, a plugin from outside Skwir) is asked no part, its whole cut
+  (`render_part`'s default) holding no more than the whole shown. A part
+  that comes back no sharper than the whole over the same share (a
+  picture at its own size) is not kept, and its page is not asked again
+  (`reader_scroll::sharper`). A part asked and none said is an error,
+  never the page whole squeezed into the part's place (a helper older
+  than the reader, packaged apart).
   `tools/pdf/check.py` and `tools/djvu/check.py` compare each engine's
   part with the whole's at the same side.
 - **A part is counted alike by the reader and every engine**: the reader

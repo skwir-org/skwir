@@ -205,6 +205,9 @@ impl DocumentSession for Holding {
     fn draws_small_quickly(&self) -> bool {
         self.session.draws_small_quickly()
     }
+    fn draws_parts(&self) -> bool {
+        self.session.draws_parts()
+    }
 }
 
 /// A document's first page, for the grid. A fallback: a thumbnailer the
