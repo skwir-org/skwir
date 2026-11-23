@@ -23040,3 +23040,15 @@ warnings`, as `check-cross` runs it; the plugin's eight tests and
 `skwird_search`; `just deny`; `notices.py --check`. Not run: the
 plugin's tests under Wine (they are Unix's; the fake engine serves on a
 pipe there now, `\\.\pipe\skwir-test-<label>-<pid>`).
+
+## 2026-11-23: skwird's client copied at 31cf1bc
+
+On Windows, the client starts an engine by `CreateProcessW`, inheriting
+no handle of its own: std's `Command` had given the engine every
+inheritable handle of the client's (its standard output among them, so
+what read it to its end waited a minute). Its log is named to it
+(`SKWIRD_LOG`). Nothing changed on Linux or macOS, nor in the protocol,
+the manifest or the lockfile. Checked as at 5384fc9: the copies' tests
+and their Windows and macOS builds; clippy of the plugin for Windows; the
+plugin's tests and `skwird_search`; `just deny`. What it means for
+Skwir's own programs on Windows is in the plan, not checked yet.

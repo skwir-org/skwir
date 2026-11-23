@@ -586,7 +586,7 @@ fn program_path(program: &Path) -> Result<PathBuf, Error> {
 }
 
 /// The engine's log, in `state`'s `skwird` folder, appended to.
-#[cfg(any(unix, windows))]
+#[cfg(unix)]
 fn log_in(state: Option<PathBuf>) -> Option<std::fs::File> {
     let dir = state?.join("skwird");
     std::fs::create_dir_all(&dir).ok()?;
@@ -644,38 +644,30 @@ fn start(program: &Path, find: &Find) -> Result<(), Error> {
 
 /// Start the engine, apart from this process: no console window (as
 /// skwir's ADR-074 starts every program), in a process group of its own,
-/// so that a console's interrupt does not reach it; its output to its
-/// log, never the client's; in the system's folder, so that it holds no
-/// folder of the client's busy; serving the pipe `find` names, if it
-/// names one. Windows keeps no zombie: the engine's handle is let go of.
+/// so that a console's interrupt does not reach it; none of the client's
+/// handles ([`pipe::start_detached`]); its output to its log
+/// (`SKWIRD_LOG`), never the client's; in the system's folder, so that it
+/// holds no folder of the client's busy; serving the pipe `find` names,
+/// if it names one. Windows keeps no zombie: the engine's handle is let
+/// go of.
 #[cfg(windows)]
 fn start(program: &Path, find: &Find) -> Result<(), Error> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    let log = log_in(
-        find.state
-            .clone()
-            .or_else(|| absolute(std::env::var_os("LOCALAPPDATA"))),
-    );
+    let log = find
+        .state
+        .clone()
+        .or_else(|| absolute(std::env::var_os("LOCALAPPDATA")))
+        .map(|d| d.join("skwird"))
+        .filter(|d| std::fs::create_dir_all(d).is_ok())
+        .map(|d| d.join("engine.log"));
     let folder = absolute(std::env::var_os("SystemRoot")).unwrap_or_else(|| PathBuf::from(r"C:\"));
-    let mut command = std::process::Command::new(program_path(program)?);
-    command
-        .arg("serve")
-        .current_dir(folder)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    let mut set: Vec<(&str, &std::ffi::OsStr)> = Vec::new();
     if let Some(socket) = &find.socket {
-        command.env("SKWIRD_PIPE", socket);
+        set.push(("SKWIRD_PIPE", socket.as_os_str()));
     }
-    match log {
-        Some(file) => command.stderr(file),
-        None => command.stderr(std::process::Stdio::null()),
-    };
-    command
-        .spawn()
-        .map(drop)
+    if let Some(log) = &log {
+        set.push(("SKWIRD_LOG", log.as_os_str()));
+    }
+    pipe::start_detached(&program_path(program)?, &["serve"], &folder, &set)
         .map_err(|e| Error::NoEngine(format!("cannot start it: {e}")))
 }
 

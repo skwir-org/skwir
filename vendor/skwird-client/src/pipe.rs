@@ -493,3 +493,82 @@ impl Server {
         Ok(Some(Stream::of(handle)))
     }
 }
+
+/// Start `program` with `args`, from `folder`, its environment this
+/// process's with `set` over it: with no console window, in a process
+/// group of its own, and none of this process's handles. Windows gives a
+/// child every inheritable handle its parent holds where asked to inherit
+/// any, as std's `Command` asks: the engine, which outlives its client,
+/// would keep open what the client was given (the pipe a launcher reads
+/// the client's output from, to its end). So nothing is inherited, and
+/// the engine opens its log itself (`SKWIRD_LOG`).
+pub(crate) fn start_detached(
+    program: &std::path::Path,
+    args: &[&str],
+    folder: &std::path::Path,
+    set: &[(&str, &OsStr)],
+) -> std::io::Result<()> {
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+        PROCESS_INFORMATION, STARTUPINFOW,
+    };
+    // Each part quoted: a program's path may hold spaces. Neither it nor
+    // an argument here holds a quote, nor ends in a backslash.
+    let quoted = |s: &OsStr| -> Vec<u16> {
+        std::iter::once(u16::from(b'"'))
+            .chain(s.encode_wide())
+            .chain([u16::from(b'"')])
+            .collect()
+    };
+    let mut line = quoted(program.as_os_str());
+    for arg in args {
+        line.push(u16::from(b' '));
+        line.extend(quoted(OsStr::new(arg)));
+    }
+    line.push(0);
+    // This process's environment, `set` over it, sorted by name as
+    // Windows keeps a block.
+    let mut vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
+        .filter(|(k, _)| !set.iter().any(|(s, _)| k.eq_ignore_ascii_case(s)))
+        .chain(set.iter().map(|(k, v)| ((*k).into(), (*v).to_owned())))
+        .collect();
+    vars.sort_by_key(|(k, _)| k.to_string_lossy().to_uppercase());
+    let mut block: Vec<u16> = Vec::new();
+    for (k, v) in &vars {
+        block.extend(k.encode_wide());
+        block.push(u16::from(b'='));
+        block.extend(v.encode_wide());
+        block.push(0);
+    }
+    block.push(0);
+    let folder = wide(folder.as_os_str());
+    // SAFETY: all-zero structures are valid ones, the first sized.
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(u32::MAX);
+    // SAFETY: as above.
+    let mut started: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: a NUL-terminated command line the call may write in, an
+    // environment block ended by two NULs, a NUL-terminated folder, the
+    // structures alive for the call; nothing inherited. The handles given
+    // are ours to close.
+    let ok = unsafe {
+        CreateProcessW(
+            std::ptr::null(),
+            line.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT,
+            block.as_ptr().cast::<c_void>(),
+            folder.as_ptr(),
+            &raw const startup,
+            &raw mut started,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    drop(Handle(started.hProcess));
+    drop(Handle(started.hThread));
+    Ok(())
+}

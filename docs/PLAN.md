@@ -3700,7 +3700,7 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   skwird on demand where it is installed.
   - **The copies, made 2026-11-23:** `vendor/skwird-protocol` and
     `vendor/skwird-client`, by skwird's `tools/vendor-client` (from
-    40f7f87, again from accc113, 94a6d65, then 5384fc9), outside the
+    40f7f87, again from accc113, 94a6d65, 5384fc9, then 31cf1bc), outside the
     workspace, `skwird-client` in `[workspace.dependencies]`. Built alone
     with Skwir's toolchain and lockfile, their tests green, compiled for
     Windows and macOS; the skwird plugin takes them. skwird's session
@@ -3709,8 +3709,10 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     variables read as the spec has them (`Find.runtime`, `Find.state`);
     at 5384fc9, the client on Windows: the user's named pipe, its server
     checked to run as the same user, an engine started without a console
-    (ADR-074), through windows-sys (already in the lockfile). No engine
-    serves on Windows yet (skwird's phase 4).
+    (ADR-074), through windows-sys (already in the lockfile); at
+    31cf1bc, that engine started by `CreateProcessW` inheriting no handle
+    of the client's, its log named for it (`SKWIRD_LOG`). skwird's own
+    engine serves on Windows since its 2561e2e, tried under Wine.
   - **Its connection:** made at the first search, never at start
     (ADR-128, ADR-141): an index read back answers "as of" in about
     0.6 s, and a sync proves "checked" after (0.43 s warm on the user's
@@ -3804,6 +3806,15 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   btrbk's), and a snapshot is a subvolume, not a mount, so a walk of `/`
   enters any its user can read. Not decided: a built-in entry, or a rule
   by what it is (a read-only subvolume, as skwird tells it).
+- **Found on the way** (skwird's session, 2026-11-23, writing its engine's
+  tests under Wine): on Windows, std's `Command` gives a child every
+  inheritable handle its parent holds, so an engine its client started
+  held the client's standard output, and whatever read that output to its
+  end waited for the engine to go. Skwir starts every program through
+  `skwir_platform::process::command` (`CREATE_NO_WINDOW` alone): a
+  helper that serves for long (a document's, the player's) may so hold
+  what `skwir mcp` or a script piping `skwir cmd` reads until its end.
+  Not checked in Skwir yet; not decided.
 
 ---
 
