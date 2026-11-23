@@ -105,14 +105,45 @@ pub(crate) fn alone_in_process(_what: &str) {}
 
 /// Whether a test has its process to itself: nextest runs each in one of
 /// its own (`NEXTEST_EXECUTION_MODE=process-per-test`), and a test binary
-/// asked for a test by its exact name (`--exact`, as an editor's Run button
-/// asks) runs that one alone.
+/// asked for one test by its exact name (`--exact` and a single name, as
+/// an editor's Run button asks) runs that one alone. `--exact` with no
+/// name runs every test, and with several names each of them, in one
+/// process: neither is alone.
 #[cfg(test)]
-fn alone(
-    mode: Option<&std::ffi::OsStr>,
-    mut args: impl Iterator<Item = std::ffi::OsString>,
-) -> bool {
-    mode.is_some_and(|mode| mode == "process-per-test") || args.any(|arg| arg == "--exact")
+fn alone(mode: Option<&std::ffi::OsStr>, args: impl Iterator<Item = std::ffi::OsString>) -> bool {
+    // The options of libtest's that take a value written apart from them
+    // (`--skip name`, `--test-threads 1`): that value is no test's name.
+    const VALUED: [&str; 7] = [
+        "--logfile",
+        "--test-threads",
+        "--skip",
+        "--color",
+        "--format",
+        "-Z",
+        "--shuffle-seed",
+    ];
+    if mode.is_some_and(|mode| mode == "process-per-test") {
+        return true;
+    }
+    let (mut exact, mut names, mut value, mut options) = (false, 0usize, false, true);
+    // The first is the program's own path.
+    for arg in args.skip(1) {
+        if std::mem::take(&mut value) {
+            continue;
+        }
+        if options && arg == "--" {
+            options = false;
+            continue;
+        }
+        match arg.to_str() {
+            Some(option) if options && option.len() > 1 && option.starts_with('-') => {
+                exact |= option == "--exact";
+                value = VALUED.contains(&option);
+            }
+            _ => names += 1,
+        }
+    }
+    exact && names == 1
 }
 
 /// How a time's hours are written, where the desktop says so apart from
@@ -739,6 +770,30 @@ mod tests {
         assert!(!super::alone(
             Some(OsStr::new("")),
             args(&["skwir_core-1", "--test-threads=1"])
+        ));
+        // `--exact` with no name runs every test, with two names both: in
+        // one process either way.
+        assert!(!super::alone(None, args(&["skwir_core-1", "--exact"])));
+        assert!(!super::alone(
+            None,
+            args(&["skwir_core-1", "--exact", "a", "b"])
+        ));
+        // A value given apart from its option names no test.
+        assert!(super::alone(
+            None,
+            args(&["skwir_core-1", "--test-threads", "1", "--exact", "a"])
+        ));
+        assert!(super::alone(
+            None,
+            args(&["skwir_core-1", "--skip", "b", "--exact", "a"])
+        ));
+        assert!(!super::alone(
+            None,
+            args(&["skwir_core-1", "--skip", "b", "--exact"])
+        ));
+        assert!(super::alone(
+            None,
+            args(&["skwir_core-1", "--exact", "--", "-a"])
         ));
     }
 
