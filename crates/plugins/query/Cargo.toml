@@ -26,6 +26,8 @@ globset.workspace = true
 [dev-dependencies]
 skwir-core = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
+# The home's test folder, on the filesystem a test needs (btrfs).
+dirs.workspace = true
 proptest.workspace = true
 rustix.workspace = true
 

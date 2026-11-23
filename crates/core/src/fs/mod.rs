@@ -8,6 +8,7 @@ mod hydrate;
 pub mod kept_open;
 mod path_provider;
 pub mod reach;
+pub mod snapshot;
 pub mod stat;
 pub mod volume;
 pub(crate) mod watch;

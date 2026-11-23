@@ -10198,6 +10198,7 @@ version = "0.6.1"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "dirs 7.0.0",
  "globset",
  "grep-regex",
  "grep-searcher",

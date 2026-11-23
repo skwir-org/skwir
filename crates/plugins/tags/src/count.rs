@@ -357,6 +357,12 @@ impl Walk<'_> {
                 } else if below.beside_among(&path, beside) {
                     self.left_out.fetch_add(1, Ordering::Relaxed);
                     self.caches.lock().0.push(path.clone());
+                } else if below.passes_over(
+                    &path,
+                    skwir_core::fs::stat::identity(&path, &meta).map(|id| id.ino),
+                ) {
+                    // A snapshot (ADR-125, 14): a copy, not counted again.
+                    self.left_out.fetch_add(1, Ordering::Relaxed);
                 } else {
                     inside.push(path);
                 }

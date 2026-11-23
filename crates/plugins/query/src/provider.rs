@@ -1593,6 +1593,8 @@ impl Shared {
                     mounts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return false;
                 }
+                // A snapshot too (ADR-125, 14), its inode read where btrfs
+                // may hold one: btrfs lists a subvolume by its id.
                 if left.leaves_out(path) {
                     skipped.lock().push(path.to_path_buf());
                     return false;

@@ -3806,9 +3806,9 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   Skwir's own exclusions (`exclusions/builtin.toml`) hold no rule for
   btrfs snapshot stores (snapper's `/.snapshots`, timeshift's,
   btrbk's), and a snapshot is a subvolume, not a mount, so a walk of `/`
-  enters any its user can read. Decided 2026-11-23 (ADR-125, 14): by
-  what it is, a read-only btrfs subvolume, passed over below the folder
-  searched.
+  enters any its user can read. Decided and built 2026-11-23 (ADR-125,
+  14): by what it is, a read-only btrfs subvolume, passed over below the
+  folder searched (`fs::snapshot`, `walks::Below::passes_over`).
 - **Found on the way** (skwird's session, 2026-11-23, writing its engine's
   tests under Wine): on Windows, std's `Command` gives a child every
   inheritable handle its parent holds, so an engine its client started

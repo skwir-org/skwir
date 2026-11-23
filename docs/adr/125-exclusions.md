@@ -169,7 +169,9 @@ walked into btrfs snapshot stores, which no entry names):
 
 14. **A snapshot is left out by what it is**, not by a name: a read-only
    btrfs subvolume below the folder a walk starts at (its folder's inode
-   256, as the listing says it, then btrfs asked whether it is read-only)
+   256 as a stat says it, then btrfs asked whether it is read-only; a
+   listing will not do, as btrfs lists a subvolume by its id; a folder is
+   stat-ed only where the mount table puts btrfs at or below the root)
    is passed over as the Searches role passes over a tool store, counted
    among what the walk left out, walked when searched in and with
    `excluded:yes` (ADR-150, 5, says the same of skwird's snapshot holes).

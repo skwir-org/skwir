@@ -9,6 +9,8 @@
 //!   `CACHEDIR.TAG`).
 //! - **Always:** a network mount (ADR-077, [`mounts_below`]) and a trash,
 //!   whatever the rules say: the Trash is a place of its own.
+//! - **A snapshot** (ADR-125, 14), a read-only btrfs subvolume, told by
+//!   what it is ([`Below::passes_over`]), but with `excluded:yes`.
 //!
 //! Only what is below a walk's root is left out ([`Below`]): a search or a
 //! count asked of a folder the rules name walks it.
@@ -25,9 +27,15 @@ use crate::fs::reach;
 
 pub use crate::exclusions::{CACHEDIR_TAG, is_cache, tags_a_cache};
 
-/// Changed when what is always left out changes (the trash's rule): what
-/// was counted under another is counted again.
-const ALWAYS: u64 = 1;
+/// Changed when what is always left out changes (the trash's rule; a
+/// snapshot, 2026-11-23): what was counted under another is counted
+/// again.
+const ALWAYS: u64 = 2;
+
+/// Set in the fingerprint of the rules that pass no snapshot over
+/// (`excluded:yes`): what was made of a walk under one is not taken for
+/// the other's.
+const SNAPSHOTS_WALKED: u64 = 1 << 17;
 
 /// What a walk leaves out, as the settings said it when read.
 #[derive(Clone, Debug, Default)]
@@ -36,6 +44,8 @@ pub struct LeftOut {
     /// Skwir's own trash and, where the login shell moves the data folder,
     /// the one what starts from a terminal uses.
     trash: Vec<PathBuf>,
+    /// Whether a snapshot is passed over (all but `excluded:yes`).
+    snapshots: bool,
     fingerprint: u64,
 }
 
@@ -55,9 +65,14 @@ impl LeftOut {
     }
 
     /// Nothing of the rules (`excluded:yes`): only what is always left
-    /// out, a trash and a network mount.
+    /// out, a trash and a network mount; a snapshot is walked.
     pub fn none() -> LeftOut {
-        LeftOut::ruled(Rule::default())
+        let all = LeftOut::ruled(Rule::default());
+        LeftOut {
+            snapshots: false,
+            fingerprint: all.fingerprint ^ SNAPSHOTS_WALKED,
+            ..all
+        }
     }
 
     /// What `rule` leaves out, and what is always left out.
@@ -66,6 +81,7 @@ impl LeftOut {
         LeftOut {
             rule,
             trash: trash_folders(),
+            snapshots: true,
             fingerprint,
         }
     }
@@ -105,6 +121,9 @@ impl LeftOut {
             mounts: mounts_below(root).into_iter().collect(),
             probe,
             looked: Mutex::default(),
+            // Read once a walk: no stat of a folder where no btrfs is.
+            btrfs: probe && self.snapshots && crate::fs::snapshot::may_hold(root),
+            subvolumes: Mutex::default(),
         }
     }
 }
@@ -142,6 +161,11 @@ pub struct Below {
     mounts: HashSet<PathBuf>,
     probe: bool,
     looked: Mutex<HashMap<PathBuf, bool>>,
+    /// Whether the walk may meet a snapshot: it reads folders, passes a
+    /// snapshot over, and btrfs holds its root or is mounted below it.
+    btrfs: bool,
+    /// Whether a folder asked is a snapshot, each asked once.
+    subvolumes: Mutex<HashMap<PathBuf, bool>>,
 }
 
 impl Below {
@@ -155,12 +179,37 @@ impl Below {
 
     /// Whether `dir`, a folder found below the root, is left out: a network
     /// mount, named by the rules, holding a marker or beside a sibling
-    /// that says so. The root itself never is.
+    /// that says so, a snapshot (its inode read, where btrfs may hold
+    /// one). The root itself never is.
     pub fn leaves_out(&self, dir: &Path) -> bool {
         if dir == self.root || !dir.starts_with(&self.root) {
             return false;
         }
-        self.named(dir) || (self.probe && self.looked_up(dir))
+        self.named(dir) || (self.probe && self.looked_up(dir)) || self.passes_over(dir, None)
+    }
+
+    /// Whether `dir`, a folder found below the root, is a snapshot the
+    /// walk passes over (ADR-125, 14): a read-only btrfs subvolume, told by
+    /// its inode (`ino`, as a stat says it, never a listing, which names a
+    /// subvolume by its id; `None`: read here) and btrfs asked only of a
+    /// subvolume's top folder, each once. Only where btrfs holds the root
+    /// or is mounted below it, where the walk reads what a folder holds
+    /// (never on a remote), never with `excluded:yes`: elsewhere nothing
+    /// is read.
+    pub fn passes_over(&self, dir: &Path, ino: Option<u64>) -> bool {
+        if !self.btrfs
+            || dir == self.root
+            || !dir.starts_with(&self.root)
+            || ino.is_some_and(|ino| ino != crate::fs::snapshot::SUBVOLUME_ROOT)
+        {
+            return false;
+        }
+        if let Some(known) = self.subvolumes.lock().get(dir) {
+            return *known;
+        }
+        let out = crate::fs::snapshot::is_snapshot(dir, ino);
+        self.subvolumes.lock().insert(dir.to_owned(), out);
+        out
     }
 
     /// Whether the file `path` found below the root is left out.
@@ -397,6 +446,39 @@ mod tests {
             !rule(&["node_modules"])
                 .below(tmp.path(), false)
                 .names_files()
+        );
+    }
+
+    /// A snapshot is asked of a subvolume's top alone, below the root, by a
+    /// walk that reads folders, and never with `excluded:yes`: none of
+    /// these opens anything (`fs::snapshot` holds what btrfs says).
+    #[test]
+    fn a_snapshot_is_asked_only_where_it_may_be_passed_over() {
+        let root = Path::new("/fixture/root");
+        let below = rule(&[]).below(root, true);
+        let top = crate::fs::snapshot::SUBVOLUME_ROOT;
+        assert!(
+            !below.passes_over(&root.join("a"), Some(5)),
+            "not a subvolume's top"
+        );
+        assert!(!below.passes_over(root, Some(top)), "the root itself");
+        assert!(
+            !below.passes_over(Path::new("/elsewhere/a"), Some(top)),
+            "not below"
+        );
+        let remote = rule(&[]).below(root, false);
+        assert!(
+            !remote.passes_over(&root.join("a"), Some(top)),
+            "not read there"
+        );
+        let all = Arc::new(LeftOut::none()).below(root, true);
+        assert!(!all.passes_over(&root.join("a"), Some(top)), "excluded:yes");
+        // A folder not there is none, asked once.
+        assert!(!below.passes_over(&root.join("gone"), None));
+        assert_ne!(
+            LeftOut::none().fingerprint(),
+            LeftOut::ruled(Rule::default()).fingerprint(),
+            "what passes a snapshot over is not what walks it"
         );
     }
 

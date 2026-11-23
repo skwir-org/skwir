@@ -23089,3 +23089,37 @@ starts every program through `process::command`, so a helper outliving
   theirs, which points at how Wine starts processes; not seen on
   Windows. Clippy `-D warnings` on skwir-platform and skwir for Linux,
   and on skwir-platform for `x86_64-pc-windows-gnu`; rustfmt.
+
+## 2026-11-23: a snapshot is passed over by what it is (ADR-125, 14)
+
+skwird's session found that Skwir's own walks entered btrfs snapshot
+stores (no exclusion names snapper's `/.snapshots`, timeshift's or
+btrbk's). The user chose a rule by what a snapshot is, not a list.
+
+- **Built.** `fs::snapshot`: `is_snapshot` (a folder whose inode a stat
+  says is 256, every subvolume's top, then btrfs's
+  `BTRFS_IOC_SUBVOL_GETFLAGS` asked whether it is read-only) and
+  `may_hold` (btrfs holds the root or is mounted below it, from
+  `/proc/self/mountinfo`, read once a walk); Linux's, none elsewhere.
+  `walks::Below::passes_over`, asked by `leaves_out` (so by every search,
+  hint and index answer the walk leaves out alike) and by the tags count
+  and the timeline with the inode their stat has; a folder of a walk is
+  stat-ed for it only where `may_hold`, cached a folder. Off with
+  `excluded:yes` (`LeftOut::none`, its fingerprint apart), and what is
+  always left out is version 2, so a count made before is made again.
+- **Met on the way.** The first version took a folder's inode from its
+  listing, which btrfs gives a subvolume as its id, not 256: the test on
+  a real snapshot failed, and the rule stats instead.
+- **Checked:** with real subvolumes made by the system's `btrfs` under
+  `~/.cache/skwir-tests` (a user may make, empty and remove their own; a
+  test skips, saying so, where there is no btrfs):
+  `a_read_only_subvolume_is_a_snapshot_and_its_source_is_not`, and
+  through a search (`crates/plugins/query/tests/snapshots.rs`): the
+  snapshot's report not found, the snapshot found by its name and
+  counted as left out, found with `excluded:yes`, walked when searched
+  in; nothing left behind. `walks`' test of where nothing is asked.
+  rustfmt; clippy `-D warnings` on skwir-core, the query, tags and
+  timeline plugins, and for Windows on core and the query plugin; their
+  1,257 tests. `bench-check --only tag_search_us,tags_check_us` within
+  budget (3.23 s of 7.5, 0.42 s of 4) under a load average of 62, so no
+  finer comparison was made.

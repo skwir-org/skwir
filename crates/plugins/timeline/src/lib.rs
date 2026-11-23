@@ -768,7 +768,11 @@ fn walk_days(
                 }
                 if m.is_dir() {
                     let path = e.path();
-                    if !below.named(&path) && !below.beside_among(&path, beside) {
+                    let ino = skwir_core::fs::stat::identity(&path, &m).map(|id| id.ino);
+                    if !below.named(&path)
+                        && !below.beside_among(&path, beside)
+                        && !below.passes_over(&path, ino)
+                    {
                         subdirs.push(path);
                     }
                 }
