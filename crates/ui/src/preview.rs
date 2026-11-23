@@ -7906,7 +7906,9 @@ pub(crate) fn content(
                             .as_ref()
                             .filter(|detail| p.key.as_ref() == Some(&detail.key))
                             .map(|detail| (Arc::clone(&detail.image), detail.region)),
-                        patient: !p.exact && p.picture_side == 0,
+                        // Only a raster is decoded short while stepping: a
+                        // drawing is drawn at its room's side.
+                        patient: !p.exact && p.picture_side == 0 && matches!(pixels, Pixels::Own),
                         see_through: ink.is_some(),
                         most: {
                             let held = skwir_platform::picture::side_within(
