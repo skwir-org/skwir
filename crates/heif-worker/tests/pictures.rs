@@ -89,6 +89,34 @@ fn said(name: &str, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
+/// A picture of more pixels than asked is refused in every mode, by its
+/// area as shown (96 × 64 is 6144), before anything of it is decoded.
+#[test]
+fn a_picture_larger_than_asked_is_refused_by_its_area() {
+    for (most, refused) in [("6143", true), ("6144", false)] {
+        for mode in [
+            vec!["size", most],
+            vec!["decode", most],
+            vec!["thumbnail", most],
+            vec!["region", most, "0", "0", "10", "10"],
+        ] {
+            // Tests run from a console: no console window to keep away.
+            #[allow(clippy::disallowed_methods)]
+            let ran = std::process::Command::new(env!("CARGO_BIN_EXE_skwir-heif-worker"))
+                .arg(fixture("synthetic-gradient.heic"))
+                .arg("/dev/null")
+                .args(&mode)
+                .output()
+                .unwrap();
+            assert_eq!(!ran.status.success(), refused, "{mode:?}");
+            if refused {
+                let said = String::from_utf8_lossy(&ran.stderr);
+                assert!(said.contains("larger than asked"), "{mode:?}: {said}");
+            }
+        }
+    }
+}
+
 /// How far two pictures of one size differ: the pixels whose channels
 /// differ by more than 3, of every pixel.
 fn differing(a: &image::RgbImage, b: &image::RgbImage) -> (usize, usize) {

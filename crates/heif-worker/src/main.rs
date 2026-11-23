@@ -2,9 +2,13 @@
 //! as Skwir's other decoders of untrusted files are: run isolated where the
 //! system allows, one picture a run, nothing kept.
 //!
-//! `skwir-heif-worker <input> <output> size` prints the primary picture's
-//! width, height and whether it has an alpha channel, as it is shown
-//! (turned, mirrored and cropped as the file says), without decoding it.
+//! `skwir-heif-worker <input> <output> size <most>` prints the primary
+//! picture's width, height and whether it has an alpha channel, as it is
+//! shown (turned, mirrored and cropped as the file says), without decoding
+//! it. Every mode refuses a picture of more than `most` pixels as shown,
+//! before decoding anything of it; libheif's own bound on its sides is
+//! never lowered (before 1.19 it bounds each side, and a panorama wider
+//! than the square of `most` is within it).
 //! `skwir-heif-worker <input> <output> decode <most>` decodes it, at most
 //! `most` pixels, to `output`: its rows of 8-bit RGB or RGBA packed, and
 //! prints the same line. `… region <most> <x> <y> <width> <height>`
@@ -314,6 +318,19 @@ fn checked(error: &Error) -> anyhow::Result<()> {
 /// whether it has alpha.
 type Pixels = (Vec<u8>, u32, u32, bool);
 
+/// The side libheif bounds a picture by unless told otherwise (32 768,
+/// `MAX_IMAGE_WIDTH` before 1.19, the square root of its pixels since).
+const LIBHEIF_SIDE: c_int = 32_768;
+
+/// Refused where `width` × `height` is more than `most` pixels.
+fn within(width: u32, height: u32, most: u64) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        u64::from(width) * u64::from(height) <= most,
+        "the picture is larger than asked"
+    );
+    Ok(())
+}
+
 /// A file read by libheif, released with it.
 struct Picture {
     context: *mut Context,
@@ -321,7 +338,8 @@ struct Picture {
 }
 
 impl Picture {
-    /// The primary picture of `path`, refused past `most` pixels.
+    /// The primary picture of `path`, refused past `most` pixels as it is
+    /// shown, before anything of it is decoded.
     fn open(path: &Path, most: u64) -> anyhow::Result<Picture> {
         let path = CString::new(path.as_os_str().as_encoded_bytes())?;
         // SAFETY: a fresh context, owned by the `Picture` from here.
@@ -331,8 +349,13 @@ impl Picture {
             context,
             handle: std::ptr::null_mut(),
         };
-        // Its square's side: libheif bounds the area by it.
-        let side = c_int::try_from(most.isqrt()).unwrap_or(c_int::MAX);
+        // What libheif refuses besides, never less than its own default: a
+        // libheif before 1.19 bounds each side by it, not the area, and a
+        // panorama 16 000 pixels wide is within `most`. The area is
+        // `most`'s, asked below.
+        let side = c_int::try_from(most.isqrt())
+            .unwrap_or(c_int::MAX)
+            .max(LIBHEIF_SIDE);
         // SAFETY: the context is valid; the path a C string for the call.
         unsafe {
             heif_context_set_maximum_image_size_limit(picture.context, side);
@@ -346,6 +369,8 @@ impl Picture {
                 &raw mut picture.handle,
             ))?;
         }
+        let (width, height, _) = picture.size();
+        within(width, height, most)?;
         Ok(picture)
     }
 
@@ -380,7 +405,8 @@ impl Picture {
             "the region is not within the picture"
         );
         let channels = channels(alpha);
-        if let Some((calls, tiling, turns)) = self.tiled((own_width, own_height))? {
+        // Where libheif cannot say how it is tiled, the whole is decoded.
+        if let Some((calls, tiling, turns)) = self.tiled((own_width, own_height)).ok().flatten() {
             // The part as stored: back through each turn, the last first.
             let mut sizes = vec![(tiling.image_width, tiling.image_height)];
             for turn in &turns {
@@ -575,6 +601,7 @@ impl Picture {
         if width == 0
             || height == 0
             || across.abs_diff(down) > u64::from(own_width) + u64::from(own_height)
+            || u64::from(width) * u64::from(height) > u64::from(own_width) * u64::from(own_height)
         {
             return Ok(None);
         }
@@ -866,19 +893,12 @@ fn run() -> anyhow::Result<()> {
     let picture = Picture::open(Path::new(input), most)?;
     let mut out = std::io::stdout().lock();
     let written = |(pixels, width, height, alpha): Pixels| -> anyhow::Result<(u32, u32, bool)> {
-        anyhow::ensure!(
-            u64::from(width) * u64::from(height) <= most,
-            "the picture is larger than asked"
-        );
+        within(width, height, most)?;
         std::fs::write(output, pixels)?;
         Ok((width, height, alpha))
     };
     if mode == "size" {
         let (width, height, alpha) = picture.size();
-        anyhow::ensure!(
-            u64::from(width) * u64::from(height) <= most,
-            "the picture is larger than asked"
-        );
         writeln!(out, "{width} {height} {}", u8::from(alpha))?;
     } else if mode == "decode" {
         let (width, height, alpha) = written(picture.decode()?)?;
