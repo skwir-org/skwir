@@ -1,11 +1,13 @@
 # ADR-050: Names are indexed by skwird
 
 Status: accepted, 2026-10-10. Built in part: a search that plocate
-answers says as of when (2026-10-20, amendment below); skwird, coverage
-and its provider are not built. Amends ADR-026 (an index that proves its
+answers says as of when (2026-10-20, amendment below); skwird's client
+is copied into `vendor/` (2026-11-23, amendment below); coverage and the
+provider are not built. Amends ADR-026 (an index that proves its
 coverage answers) and the last point of ADR-003 (Skwir may start skwird
 for the session). Amended by ADR-089 (2026-10-26): content stays out of
-skwird; its journal feeds Skwir's derived indexes.
+skwird; its journal feeds Skwir's derived indexes. Point 7 amended
+2026-11-23: the client is a copy, published nowhere.
 
 ## Context
 
@@ -120,3 +122,30 @@ The Consequences' "will say its answer is as of the last update", built
   dated the day before at 03:00): the footer and its tooltip, kept by F5,
   gone in a search of a folder. Not checked: Orca reading the status
   line; a real system database (the reference machine has no plocate).
+
+### 2026-11-23: skwird's client is a copy, published nowhere
+
+Point 7 waited for skwird's client crate "once published" on crates.io.
+None will be: skwird publishes no crate (the user's choice, 2026-11-11),
+and Skwir still takes no git dependency. So:
+
+- **Skwir keeps copies** of skwird's two crates, `vendor/skwird-protocol`
+  (the messages) and `vendor/skwird-client` (finding or starting an
+  engine, asking it, and a fake engine for tests), each with a
+  `README.skwir.md` and a `VENDORED` naming the skwird commit copied.
+  skwird's `tools/vendor-client` writes them, their manifests standing
+  alone; Skwir copies again to update and never patches them here.
+- **Outside the workspace,** as `vendor/zed` is: taken by path
+  (`skwird-client` in `[workspace.dependencies]`), never linted or
+  tested as Skwir's own. Their only dependencies, serde and serde_json,
+  come from crates.io through Skwir's lockfile and are held to the
+  advisories as Skwir's. `tools/deny/vendored.py` holds only copies that
+  stand for a release, and these stand for none.
+- **Not yet decided:** which crate takes the client. Point 7 says the
+  query plugin; where the provider lives is decided with it (`docs/PLAN.md`,
+  "Names indexed by skwird", step B).
+- **Checked:** the copies of skwird 40f7f87 built alone and offline with
+  Skwir's toolchain (Rust 1.99.1) and the serde and serde_json versions
+  its lockfile holds; their tests passed (the protocol's transcripts, the
+  fake engine); they compiled for Windows (`x86_64-pc-windows-gnu`) and
+  macOS (`aarch64-apple-darwin`).

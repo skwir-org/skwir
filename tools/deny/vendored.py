@@ -20,6 +20,10 @@ for a release applies to a fork of it unless the fork fixed it, and is
 then ignored in deny.toml, its reason said. The crates gpui itself takes
 from git, at commits whose version crates.io may not hold (wgpu's, Zed's
 forks of font-kit, xim and scap), are not held here: deny.toml says so.
+Nor are copies that stand for no release, taken by path in
+`[workspace.dependencies]` rather than patched: skwird's client and
+protocol (vendor/skwird-*, published nowhere, ADR-050), whose own
+dependencies come from crates.io and are checked as Skwir's.
 """
 
 import pathlib

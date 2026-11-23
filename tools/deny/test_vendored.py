@@ -55,6 +55,9 @@ class Vendored(unittest.TestCase):
         self.assertIn("jpeg-decoder", crates)
         self.assertIn("oo7", crates)
         self.assertNotIn("+", "".join(crates.values()))
+        # Copies of crates published nowhere stand for no release.
+        self.assertNotIn("skwird-client", crates)
+        self.assertNotIn("skwird-protocol", crates)
 
     def test_the_manifest_names_each_release_exactly(self):
         text = vendored.manifest([("jpeg-decoder", "0.3.2"), ("two-face", "0.5.2")])

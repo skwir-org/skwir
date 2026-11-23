@@ -60,8 +60,10 @@ default-members = [
     "crates/words-macros",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
-# trees never touch the main build.
-exclude = ["spikes", "vendor/zed"]
+# trees never touch the main build. gpui and skwird's client are copies of
+# other projects' crates, built as dependencies, never linted or tested as
+# Skwir's own (their README.skwir.md).
+exclude = ["spikes", "vendor/zed", "vendor/skwird-protocol", "vendor/skwird-client"]
 
 [workspace.package]
 version = "0.6.1"
@@ -133,6 +135,9 @@ skwir-plugin-updates = { path = "crates/plugins/updates" }
 # picks each system's backend; without its features, Linux has no window.
 gpui = { path = "vendor/zed/crates/gpui" }
 gpui_platform = { path = "vendor/zed/crates/gpui_platform", features = ["wayland", "x11", "font-kit"] }
+# skwird's client (ADR-050): a copy its tools/vendor-client writes, published
+# nowhere (vendor/skwird-client/README.skwir.md).
+skwird-client = { path = "vendor/skwird-client" }
 flume = "0.12"
 nucleo-matcher = "0.3"
 ignore = "0.4"

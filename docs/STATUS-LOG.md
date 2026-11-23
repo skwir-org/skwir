@@ -22798,3 +22798,35 @@ built and drafted as the user asked; its publication theirs.
 - **Left to the user**: push skwir-site's main (and deploy it), the
   winget pull request, a try of the AppImage on their desktop, `just
   idle-pss`.
+
+## 2026-11-23: skwird's client copied (ADR-050 amended)
+
+skwird's phases 1 to 3 are done (its repository, 40f7f87), and its
+session handed Skwir step B ("Names indexed by skwird") with eight notes
+sent from 2026-11-21. ADR-050 point 7 waited for a crate on crates.io;
+none will be published.
+
+- **Copied:** `vendor/skwird-protocol` and `vendor/skwird-client`, written
+  by skwird's `tools/vendor-client` from 40f7f87, each with a
+  `README.skwir.md` and a `VENDORED`. Outside the workspace (`exclude`),
+  `skwird-client` in `[workspace.dependencies]`, nothing taking it yet.
+  `tools/deny/vendored.py` says why it holds neither (they stand for no
+  release), and its test asserts it.
+- **Checked:** in a crate of its own outside the repository, with
+  Skwir's lockfile and Rust 1.99.1, offline: the copies' tests (the
+  protocol's three, among them its transcripts read and written back
+  alike; the client's fake engine answering a client) green; `cargo
+  check` for `x86_64-pc-windows-gnu` and `aarch64-apple-darwin` clean;
+  serde 1.0.229 and serde_json 1.0.154 resolved as Skwir's lockfile has
+  them. `tools/deny` tests green. Not run: `just deny`, `just notices`
+  (no crate takes the copies yet, so neither sees them).
+- **Read in the client** and asked of skwird's session: no call can be
+  given up on (no timeout, a cancel only between a query's batches); the
+  engine it starts is never reaped, and keeps the client's working
+  folder; an empty `XDG_STATE_HOME` puts its log below the current
+  folder. `docs/PLAN.md`, step B, lists them with the user's three
+  choices the provider waits for.
+- **Found:** a btrfs snapshot store is walked by Skwir's own searches
+  (a subvolume is not a mount, and no built-in exclusion names one), as
+  skwird's note of 2026-11-22 suspected. Recorded in the plan, not
+  decided.
