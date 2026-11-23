@@ -104,8 +104,11 @@ what is built.
 ## Freshness
 
 - Where skwird covers a root live, the harvest consumes its journal
-  (`changes {root, since}`) from the token it kept; "too old" or a
-  coverage drop falls back to the check.
+  (`changes {root, since}`, through the names seam: `Session::changes`,
+  a `names::Mark` kept, as the tags index does since ADR-150, 15) from
+  the token it kept, where the journal says it is every change
+  (`Journal::complete`); "too old" or a coverage drop falls back to the
+  check.
 - The check: folders whose change time moved are listed again (the time
   read before the entries, a second change within a tick read again
   next time, device and inode compared); then every file in scope is

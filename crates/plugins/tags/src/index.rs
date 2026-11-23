@@ -67,6 +67,11 @@ pub struct Covered {
     pub root: PathBuf,
     /// Seconds and nanoseconds since the epoch.
     pub since: (u64, u32),
+    /// Where a names index's journal of `root` stood as the count began
+    /// (ADR-150, D4): the next check asks it what changed since, where it
+    /// is every change, instead of walking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<skwir_core::names::Mark>,
 }
 
 impl Covered {
@@ -1218,8 +1223,16 @@ impl TagIndex {
     }
 
     /// `root` is covered as of `since`, a count having seen `dirs` (the
-    /// folders' [`stable_hash`]es), which the next check compares with.
-    pub fn cover(self: &Arc<Self>, root: &Path, since: SystemTime, dirs: &[u64]) {
+    /// folders' [`stable_hash`]es), which the next check compares with;
+    /// `mark`, where a names index's journal of it stood as the count
+    /// began.
+    pub fn cover(
+        self: &Arc<Self>,
+        root: &Path,
+        since: SystemTime,
+        dirs: &[u64],
+        mark: Option<skwir_core::names::Mark>,
+    ) {
         let Ok(since) = since.duration_since(UNIX_EPOCH) else {
             return;
         };
@@ -1239,6 +1252,7 @@ impl TagIndex {
             state.covered.push(Covered {
                 root: root.to_path_buf(),
                 since: (since.as_secs(), since.subsec_nanos()),
+                mark,
             });
             state.changed();
         }

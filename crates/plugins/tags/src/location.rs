@@ -41,7 +41,7 @@ use skwir_core::words;
 use skwir_core::words::{Name, Words};
 use skwir_platform::mime::Kind;
 
-use crate::index::{TagIndex, stable_hash};
+use crate::index::{Covered, TagIndex, stable_hash};
 
 pub const SCHEME: &str = "tags";
 
@@ -747,17 +747,35 @@ impl Places {
                 let Some(app) = this.app.upgrade() else {
                     return;
                 };
-                let covered = this.index.covering(&root).map(|c| c.since());
-                let result = crate::count::run(&app, &this.index, &root, covered, &this.lifetime);
+                let last = this.index.covering(&root);
+                let covered = last.as_ref().map(Covered::since);
+                // What a names index's journal says changed since the last
+                // count, where it is every change: read instead of a walk
+                // (ADR-150, D4). Its mark, taken now, is the next count's.
+                let followed =
+                    crate::count::follow(&app, &root, last.as_ref(), &this.lifetime);
+                let result = match (&last, followed.as_ref().and_then(|f| f.journal.as_ref())) {
+                    (Some(last), Some(journal)) => Ok(crate::count::run_followed(
+                        &app,
+                        &this.index,
+                        &root,
+                        last,
+                        journal,
+                        &this.lifetime,
+                    )),
+                    _ => crate::count::run(&app, &this.index, &root, covered, &this.lifetime),
+                };
                 match result {
                     Ok(Some((since, dirs, counted))) => {
                         tracing::debug!(
                             checked = covered.is_some(),
+                            journal = followed.as_ref().is_some_and(|f| f.journal.is_some()),
                             folders = counted.folders,
                             read = counted.read,
                             "tags: counted for a tag location"
                         );
-                        this.index.cover(&root, since, &dirs);
+                        this.index
+                            .cover(&root, since, &dirs, followed.map(|f| f.mark));
                     }
                     Ok(None) => return,
                     Err(error) => tracing::debug!("tags: a tag location's count: {error:#}"),

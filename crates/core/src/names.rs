@@ -8,13 +8,19 @@
 //! file it names as any other (ADR-050, 4), walks the holes, and walks
 //! everything where no index answers. An index changes what is fast, never
 //! what is found (`docs/invariants/indexes.md`).
+//!
+//! An index may keep a journal (ADR-150, D5): what changed below a root
+//! since a [`Mark`], and how far that is every change. Who keeps state of
+//! its own from a walk (the tags index, a harvest) follows it instead of
+//! walking again, where it is complete ([`Journal`]), on a session of what
+//! already runs ([`NameIndex::follow`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::cancel::CancelToken;
-use crate::coverage::Coverage;
+use crate::coverage::{Coverage, Hole};
 use crate::entry::EntryKind;
 use crate::registry::{Contributions, OwnerGate};
 use crate::words::Words;
@@ -104,6 +110,73 @@ pub struct Answer {
     pub truncated: bool,
 }
 
+/// Where in an index's journal its changes are asked from next: kept by
+/// who follows a root, with the index it is of.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Mark {
+    /// The index's id ([`NameIndex::id`]).
+    pub by: String,
+    /// The index's own, opaque here.
+    pub token: String,
+}
+
+/// An entry a journal names, as the index names it: its real path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Noted {
+    pub path: PathBuf,
+    /// Its own kind: a link is `Symlink`.
+    pub kind: EntryKind,
+    /// Its device and inode, as a stat says them, where the index has them.
+    pub id: Option<(u64, u64)>,
+}
+
+/// One change a journal tells.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Change {
+    Added(Noted),
+    /// What it was: a folder removed takes what was below it.
+    Removed(Noted),
+    /// Its size, times or anything else a stat says (a tag set as an
+    /// attribute moves its change time alone).
+    Changed(Noted),
+    /// A subtree not covered from now on: its changes are told no more.
+    NotCovered(Hole),
+}
+
+/// What changed below a root since a mark.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Journal {
+    pub changes: Vec<Change>,
+    /// Where to ask from next.
+    pub mark: Mark,
+    /// Whether `changes` hold every name made, removed or renamed since the
+    /// mark asked from, outside `holes`.
+    pub names: bool,
+    /// Whether they hold every change of what a stat says, a change time's
+    /// alone among them, outside `holes`: only where the root was live all
+    /// along.
+    pub attrs: bool,
+    /// The folders below the root not covered: their changes are in none.
+    pub holes: Vec<Hole>,
+}
+
+impl Journal {
+    /// Whether it holds every change, of names and of what a stat says:
+    /// what stands for a walk that compares both.
+    pub fn complete(&self) -> bool {
+        self.names && self.attrs
+    }
+}
+
+/// A journal asked from a mark.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Since {
+    Journal(Journal),
+    /// The mark is older than what the index keeps (or of an index rebuilt
+    /// since): walk again, from a mark taken now.
+    TooOld,
+}
+
 /// One index's answers to one search, on a connection of the search's own
 /// where it has one, given up on with the search's token: dropped, it is
 /// let go of.
@@ -117,6 +190,14 @@ pub trait Session: Send {
     /// query, or failed: the search then walks what it has not
     /// considered.
     fn query(&mut self, q: &Query, each: &mut dyn FnMut(Vec<PathBuf>) -> bool) -> Option<Answer>;
+
+    /// What changed below the root since `since`, its own mark, and how far
+    /// that is every change; `None` for `since`: from now, no change, the
+    /// mark to go on from (taken before a walk, nothing is lost between).
+    /// `None` (the default) where it keeps no journal, or failed.
+    fn changes(&mut self, _since: Option<&Mark>) -> Option<Since> {
+        None
+    }
 }
 
 /// An index a search was opened on, as it covers the root.
@@ -151,6 +232,14 @@ pub trait NameIndex: Send + Sync {
     /// (the default): it cannot tell without opening, or would not answer
     /// `q`.
     fn covers(&self, _q: &Query, _cancel: &CancelToken) -> Option<Coverage> {
+        None
+    }
+
+    /// A session on `root` from what already runs, nothing started: for
+    /// who follows a root's journal (a tag place counted, a harvest), which
+    /// is no search, where [`open`](Self::open) may start an engine.
+    /// `None` (the default) where it has none.
+    fn follow(&self, _root: &Path, _cancel: &CancelToken) -> Option<Opened> {
         None
     }
 }
@@ -228,6 +317,41 @@ impl NameIndexes {
         }
         covered.sort_by_key(|(_, c)| std::cmp::Reverse(c.names.strength()));
         covered
+    }
+
+    /// A session to follow `root`'s journal on ([`NameIndex::follow`]):
+    /// that of the index `by` names where it answers (a mark kept is its
+    /// own), else the strongest that does.
+    pub fn follow(
+        &self,
+        root: &Path,
+        by: Option<&str>,
+        cancel: &CancelToken,
+    ) -> Option<(Arc<dyn NameIndex>, Opened)> {
+        let all = self.list.all();
+        if let Some(by) = by
+            && let Some(index) = all.iter().find(|i| i.id() == by)
+            && let Some(opened) = index.follow(root, cancel)
+            && opened.coverage.names.answers()
+        {
+            return Some((Arc::clone(index), opened));
+        }
+        // The strongest, the first registered among equals.
+        let mut best: Option<(Arc<dyn NameIndex>, Opened)> = None;
+        for index in all {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            if let Some(opened) = index.follow(root, cancel)
+                && opened.coverage.names.answers()
+                && best.as_ref().is_none_or(|(_, b)| {
+                    opened.coverage.names.strength() > b.coverage.names.strength()
+                })
+            {
+                best = Some((index, opened));
+            }
+        }
+        best
     }
 }
 

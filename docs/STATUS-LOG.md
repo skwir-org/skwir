@@ -23345,3 +23345,44 @@ this week") is answered from skwird's index rather than a walk.
   date tested on what it names; the query and skwird plugins' tests,
   core's names tests, `skwird_search`, `plugins_toggle`; clippy;
   `notices-check`.
+
+## 2026-11-23: the journal through the seam; the tags index's checks from it (ADR-150, 15)
+
+D5's part in this arc and D4. The tags index re-walked a covered folder
+to check it (1.3 s a million files), reading what changed by its change
+time. skwird's journal now stands in where it is every change.
+
+- **Asked of skwird's session first:** whether a change time's alone (a
+  tag set as an attribute) is in its journal: yes, under live attributes
+  only (inotify `IN_ATTRIB`, fanotify), never from a check. It then added
+  `changes`' own `complete: {names, attrs}` and its holes (fd4334d), so
+  no client judges it from a coverage asked apart, and the fake's
+  scripted journal (7947e9b) for clients' tests.
+- **The seam:** `Session::changes` from a `names::Mark` (the index's id
+  and token, `None` for from now), `Journal` (changes in core's words,
+  the next mark, `names`/`attrs`/holes), `NameIndex::follow` (a session
+  on what runs, nothing started), `NameIndexes::follow` (the mark's own
+  index first). skwird's attributes are never said complete on Windows,
+  unproven there by its session.
+- **The tags index:** each count keeps the mark taken before it read
+  (`Covered::mark`, kept in the cache's state; older caches read as
+  none); a check whose journal is complete reads only the folders it
+  names (`count::run_followed`, `seeds_of`: a changed entry's folder
+  alone, a companions' folder its folder's, one made or moved in and the
+  holes whole, nothing the walk leaves out), the folders seen updated (a
+  folder removed taken off by its device and inode); elsewhere it walks.
+  The walk's queue now says, of each folder, whether what it holds is
+  read too.
+- **Checked:** a check from a journal (a file tagged, a folder moved in,
+  one removed) reads 4 folders of 6, learns the new tags, forgets the
+  removed folder's and takes it off the folders seen; the folders a
+  journal names (root level, `.ts/`, inside a folder read whole,
+  `node_modules` left out, holes); marks followed from count to count
+  (complete, not, too old, a folder above's) against a stand-in index;
+  skwird's journal through the client and the fake's script (events in
+  core's words, marks, completeness, tokens sent, another index's mark);
+  the tags and skwird plugins' tests (97, 13), core's names tests,
+  `plugins_toggle`, `skwird_search`, `search_tags`; clippy.
+- **Not checked:** against a real engine (`just skwird-check` has no
+  tags case), and the tags index's coverage said in the seam's words
+  (left in PLAN).

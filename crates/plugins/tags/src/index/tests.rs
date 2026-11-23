@@ -163,8 +163,8 @@ fn a_check_relies_on_the_deepest_count_covering_it() {
     let index = index(None, 64);
     let above = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
     let below = above + Duration::from_secs(60);
-    index.cover(Path::new("/r"), above, &[1, 2, 3]);
-    index.cover(Path::new("/r/l'été"), below, &[3]);
+    index.cover(Path::new("/r"), above, &[1, 2, 3], None);
+    index.cover(Path::new("/r/l'été"), below, &[3], None);
     let covered = index.covering(Path::new("/r/l'été/sous")).unwrap();
     assert_eq!(
         (covered.root.as_path(), covered.since()),
@@ -173,7 +173,12 @@ fn a_check_relies_on_the_deepest_count_covering_it() {
     let covered = index.covering(Path::new("/r/autre")).unwrap();
     assert_eq!(covered.root.as_path(), Path::new("/r"));
     // Covered again, the folder above drops the count below it.
-    index.cover(Path::new("/r"), below + Duration::from_secs(60), &[1, 2, 3]);
+    index.cover(
+        Path::new("/r"),
+        below + Duration::from_secs(60),
+        &[1, 2, 3],
+        None,
+    );
     let covered = index.covering(Path::new("/r/l'été")).unwrap();
     assert_eq!(covered.root.as_path(), Path::new("/r"));
 }
@@ -202,7 +207,7 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
         1
     );
     let since = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-    first.cover(Path::new("/r"), since, &[7, 9]);
+    first.cover(Path::new("/r"), since, &[7, 9], None);
     first.write();
     let room = first.state().total();
 
@@ -484,7 +489,12 @@ fn home_counts_kept_under_another_rule_are_counted_again() {
     );
 
     // The list changed: counted again, nothing covered any more.
-    again.cover(&home, UNIX_EPOCH + Duration::from_secs(1_700_000_000), &[1]);
+    again.cover(
+        &home,
+        UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+        &[1],
+        None,
+    );
     assert!(again.covering(&home).is_some());
     *rule.lock() = Arc::new(LeftOut::listed([".skwir-test hidden"]));
     assert_eq!(again.top(9, &home), owned(&[("work", 1)]));

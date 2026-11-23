@@ -15,7 +15,8 @@ page comes with 6), checked in a window through a real engine; then 6
 and the evening's 8 to 12 (the Index page, Kept live, the switch, the
 menu's entry, skwird-check), checked in the release window. Amended the
 same evening (the Index page, steps E and F, the footer's
-words), and again (13: step D's whole disk as typed). Amends
+words), and again (13 to 15: step D's whole disk as typed, sizes
+and times, the journal). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 
@@ -220,4 +221,17 @@ time, folder totals: agreed with it, built on its side next).
     whatever its own (`links: "unfiltered"`, added for it), and the
     search stats it. A dated search with no name walks unless an index
     holds times live.
+15. **An index's journal goes through the seam** (D5), for whoever keeps
+    state of its own from a walk: `Session::changes` from a
+    `names::Mark` (the index's id and its token), none for from now; the
+    changes in core's words (`Change`: added, removed, changed, not
+    covered; an entry's real path, own kind and device and inode), the
+    mark to go on from, and how far they are every change as the index
+    says it (`names`, `attrs`, with its holes: skwird's `complete`, added
+    for this; a change of attributes alone not proven on Windows yet,
+    never said complete there). `NameIndex::follow` is a session on what
+    already runs, nothing started: following is no search. **The tags
+    index's checks** (D4) read it instead of walking where it is every
+    change since the last count's mark (`docs/invariants/notes.md`); the
+    harvest (ADR-089, Phase 7) will consume it the same way.
 

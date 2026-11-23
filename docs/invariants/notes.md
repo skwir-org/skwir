@@ -146,6 +146,18 @@ registered in `App::notes` by its plugin); all share one model,
 - A check compares with the folders seen by the count that covers it: a
   folder above's, whose count never walked a folder it left out below it,
   so a folder in one is read whole.
+- **A check reads a names index's journal instead of walking** where
+  that journal is every change since the last count, of names and of
+  change times alike (`names::Journal::complete`: skwird's, where the
+  folder was live all along; ADR-150, 15): each count keeps the
+  journal's mark taken before it read anything (`Covered::mark`), and
+  the next reads only the folders the journal names, as a walk reads
+  each: a folder holding what changed alone (a companions' folder is its
+  folder's), one made or moved in and what the index does not cover
+  whole; a folder removed is taken off the folders seen. Following asks
+  only what already runs (`NameIndex::follow`): a tag place opened
+  starts no engine. Elsewhere, too old, or the mark another folder's
+  (a folder above's covered it), the check walks.
 - **Left out, not hidden** (ADR-125): what the counts and the tag places
   leave out is the exclusions kept from searches, decided below the
   place's folder; hidden entries are counted and listed, and the pane's

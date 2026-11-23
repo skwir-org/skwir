@@ -298,3 +298,101 @@ fn a_root_being_read_is_walked_and_never_synced() {
         "not covered: the search walks"
     );
 }
+
+/// A root's journal followed through the client, from a running engine,
+/// nothing started (ADR-150, D5): asked from a mark and from now, its
+/// changes in core's words, how far they are every change as skwird says
+/// it, its mark skwird's.
+#[test]
+fn a_journal_is_followed_as_skwird_tells_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = PathBuf::from("/fixture/root");
+    let live = protocol::Coverage {
+        names: protocol::Proof::Live(instant()),
+        attrs: protocol::Proof::Live(instant()),
+        holes: Vec::new(),
+    };
+    let fake = Fake::start(
+        tmp.path().join("socket"),
+        Script {
+            roots: vec![root.clone()],
+            coverage: vec![(root.clone(), live)],
+            changes: Some(protocol::Changes {
+                events: vec![
+                    protocol::Event::Changed(entry(&root.join("tagged.txt"), protocol::Kind::File)),
+                    protocol::Event::Removed(entry(&root.join("gone"), protocol::Kind::Folder)),
+                    protocol::Event::NotCovered {
+                        path: protocol::WirePath::of(&root.join("shut")),
+                        why: protocol::Why::Denied,
+                    },
+                ],
+                token: "e1.42".into(),
+                complete: protocol::Complete {
+                    names: true,
+                    attrs: true,
+                },
+                holes: vec![protocol::Hole {
+                    path: protocol::WirePath::of(&root.join("private")),
+                    why: protocol::Why::Private,
+                }],
+            }),
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    let cancel = CancelToken::new();
+    let index = index(Engines::At(fake.socket.clone()));
+    let mut session = index
+        .follow(&root, &cancel)
+        .expect("an engine runs")
+        .session;
+    let mark = Mark {
+        by: ID.into(),
+        token: "e1.7".into(),
+    };
+    let Some(Since::Journal(journal)) = session.changes(Some(&mark)) else {
+        panic!("a journal");
+    };
+    assert_eq!(
+        journal.changes,
+        [
+            Change::Changed(Noted {
+                path: root.join("tagged.txt"),
+                kind: EntryKind::File,
+                id: Some((1, 2)),
+            }),
+            Change::Removed(Noted {
+                path: root.join("gone"),
+                kind: EntryKind::Directory,
+                id: Some((1, 2)),
+            }),
+            Change::NotCovered(Hole {
+                path: root.join("shut"),
+                why: Why::Denied,
+            }),
+        ]
+    );
+    assert_eq!(journal.mark.token, "e1.42");
+    assert_eq!(journal.mark.by, ID);
+    assert!(journal.names);
+    assert_eq!(journal.attrs, !cfg!(windows), "not proven on Windows yet");
+    assert_eq!(journal.holes.len(), 1);
+    // From now, and another index's mark asks nothing.
+    assert!(matches!(session.changes(None), Some(Since::Journal(_))));
+    let other = Mark {
+        by: "plocate".into(),
+        token: "x".into(),
+    };
+    assert!(session.changes(Some(&other)).is_none());
+    assert_eq!(
+        fake.changes_asked(),
+        [(root.clone(), "e1.7".to_owned()), (root, String::new())]
+    );
+    // No engine: none followed.
+    let nobody = index_at_nothing(tmp.path());
+    assert!(nobody.follow(Path::new("/fixture/root"), &cancel).is_none());
+}
+
+fn index_at_nothing(dir: &Path) -> Index {
+    index(Engines::At(dir.join("no socket")))
+}

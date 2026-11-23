@@ -27,7 +27,9 @@ use skwir_core::cancel::{CancelToken, OnCancel};
 use skwir_core::coverage::{Coverage, Hole, Proof, Why};
 use skwir_core::entry::EntryKind;
 use skwir_core::exclusions::{BUILTIN, Catalog, Role, Rule};
-use skwir_core::names::{Answer, NameIndex, Opened, Query, Session};
+use skwir_core::names::{
+    Answer, Change, Journal, Mark, NameIndex, Noted, Opened, Query, Session, Since,
+};
 use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::plugin::{Category, Plugin, Requirement};
 use skwir_core::words::Words;
@@ -278,6 +280,32 @@ impl NameIndex for Index {
         let _stop = cancel.on_cancel(move || stopper.stop());
         client.coverage(&q.root).ok().map(coverage_of)
     }
+
+    /// A session on an engine already running, nothing started nor sent
+    /// but what is asked: what follows `root`'s journal (ADR-150, D5).
+    fn follow(&self, root: &Path, cancel: &CancelToken) -> Option<Opened> {
+        let find = find(&self.engines, false)?;
+        if cancel.is_cancelled() {
+            return None;
+        }
+        let mut client = Client::connect(&find)
+            .map_err(|e| said("connect", &e))
+            .ok()?;
+        let stopper = client.stopper().map_err(|e| said("stopper", &e)).ok()?;
+        let stop = cancel.on_cancel(move || stopper.stop());
+        let coverage = client
+            .coverage(root)
+            .map_err(|e| said("coverage", &e))
+            .ok()?;
+        Some(Opened {
+            coverage: coverage_of(coverage),
+            session: Box::new(Asking {
+                client,
+                root: root.to_path_buf(),
+                _stop: stop,
+            }),
+        })
+    }
 }
 
 /// One search's connection.
@@ -309,6 +337,75 @@ impl Session for Asking {
             coverage: coverage_of(done.coverage),
             truncated: done.truncated,
         })
+    }
+
+    fn changes(&mut self, since: Option<&Mark>) -> Option<Since> {
+        let token = match since {
+            Some(mark) if mark.by != ID => return None,
+            Some(mark) => mark.token.as_str(),
+            None => "",
+        };
+        match self.client.changes(&self.root, token) {
+            Ok(Some(changes)) => Some(Since::Journal(journal_of(changes))),
+            Ok(None) => Some(Since::TooOld),
+            Err(e) => {
+                said("changes", &e);
+                None
+            }
+        }
+    }
+}
+
+/// A journal in core's words, how far it is every change as skwird says
+/// it. A change of what a stat says alone is not proven on Windows yet
+/// (skwird's live reread takes times from a folder's listing there,
+/// updated when the file is closed): there `attrs` is never said
+/// complete.
+fn journal_of(changes: protocol::Changes) -> Journal {
+    let noted = |entry: protocol::Entry| Noted {
+        path: entry.path.to_path(),
+        kind: entry_kind(entry.kind),
+        id: Some((entry.id.dev, entry.id.ino)),
+    };
+    Journal {
+        changes: changes
+            .events
+            .into_iter()
+            .map(|event| match event {
+                protocol::Event::Added(entry) => Change::Added(noted(entry)),
+                protocol::Event::Removed(entry) => Change::Removed(noted(entry)),
+                protocol::Event::Changed(entry) => Change::Changed(noted(entry)),
+                protocol::Event::NotCovered { path, why } => Change::NotCovered(Hole {
+                    path: path.to_path(),
+                    why: why_of(why),
+                }),
+            })
+            .collect(),
+        mark: Mark {
+            by: ID.to_owned(),
+            token: changes.token,
+        },
+        names: changes.complete.names,
+        attrs: changes.complete.attrs && !cfg!(windows),
+        holes: changes
+            .holes
+            .into_iter()
+            .map(|hole| Hole {
+                path: hole.path.to_path(),
+                why: why_of(hole.why),
+            })
+            .collect(),
+    }
+}
+
+/// An entry's own kind, as skwird says it: what it calls other is none
+/// that is read.
+fn entry_kind(kind: protocol::Kind) -> EntryKind {
+    match kind {
+        protocol::Kind::File => EntryKind::File,
+        protocol::Kind::Folder => EntryKind::Directory,
+        protocol::Kind::Link => EntryKind::Symlink,
+        protocol::Kind::Other => EntryKind::Unknown,
     }
 }
 
