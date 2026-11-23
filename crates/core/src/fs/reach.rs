@@ -679,8 +679,8 @@ impl Mount {
 }
 
 /// Whether what holds `path` is mounted on demand: the deepest mount point
-/// at or above it is an automount point, or holds a mount made on one
-/// ([`Mount::on_demand`]). Its filesystem let go of after a while unused
+/// at or above it is an automount point, or holds a mount made on one, or
+/// the point above it is one ([`Mount::on_demand`], [`on_demand_in`]). Its filesystem let go of after a while unused
 /// is no volume going: looked up again, it is mounted again. From the
 /// table in memory, never reading `path` (a lookup would mount it).
 pub fn on_demand(path: &Path) -> bool {
@@ -692,20 +692,40 @@ pub fn on_demand(path: &Path) -> bool {
     {
         return true;
     }
-    let table = table();
-    // Deepest first: the first holding `path` is its point.
-    let Some(point) = table
-        .points
-        .iter()
-        .find(|mount| path.starts_with(&mount.point))
-        .map(|mount| &mount.point)
-    else {
+    on_demand_in(&table().points, path)
+}
+
+/// [`on_demand`] in `points`, deepest first: the point holding `path`
+/// holds an automount point, or the next point above it is one (an
+/// indirect map's: `/net/host` below `/net`, `/misc/cd` below `/misc`).
+/// So a table in memory that still lists the mount just let go of answers
+/// as one read again after it would, whose deepest point holding `path`
+/// is the map's: never a share expired taken for a folder deleted.
+fn on_demand_in(points: &[Mount], path: &Path) -> bool {
+    let mut holding = points.iter().filter(|mount| path.starts_with(&mount.point));
+    let Some(first) = holding.next() else {
         return false;
     };
-    table
-        .points
-        .iter()
-        .any(|mount| mount.point == *point && mount.on_demand)
+    if first.on_demand {
+        return true;
+    }
+    let own = &first.point;
+    let mut above = None;
+    for mount in holding {
+        if mount.point == *own {
+            if mount.on_demand {
+                return true;
+            }
+        } else if above.is_none_or(|point| point == &mount.point) {
+            above = Some(&mount.point);
+            if mount.on_demand {
+                return true;
+            }
+        } else {
+            break;
+        }
+    }
+    false
 }
 
 /// The automount points a test says hold the paths below them
@@ -1701,6 +1721,67 @@ mod tests {
     /// A path's volume is the deepest mount above it, told by its text
     /// alone from the table in memory: nothing is read of the path.
     #[cfg(target_os = "linux")]
+    /// What is mounted on demand is told by the table alone, as it stands
+    /// in memory: a share mounted on an automount point, one an indirect
+    /// map mounted below its point (listed still, a moment after the
+    /// automounter let it go, or not), never a drive mounted below a folder
+    /// that is no automount point.
+    #[test]
+    fn what_is_mounted_on_demand_is_told_by_the_table() {
+        let table = |mounts: &[(&str, &str)]| {
+            let mut mounts: Vec<Mount> = mounts
+                .iter()
+                .map(|(point, fstype)| Mount::of(PathBuf::from(point), fstype, (point, fstype)))
+                .collect();
+            mounts.sort_by_key(|mount| std::cmp::Reverse(mount.point.as_os_str().len()));
+            mounts
+        };
+        let mounted = table(&[
+            ("/", "ext4"),
+            ("/misc", "autofs"),
+            ("/misc/cd", "iso9660"),
+            ("/net", "autofs"),
+            ("/net/host", "nfs4"),
+            ("/mnt/nas", "autofs"),
+            ("/mnt/nas", "nfs4"),
+            ("/media", "tmpfs"),
+            ("/media/u/USB", "vfat"),
+            ("/net/host/deeper", "nfs4"),
+        ]);
+        for path in [
+            "/misc/cd/it's a track.flac",
+            "/misc/cd",
+            "/net/host/share, été",
+            "/mnt/nas/photos",
+            "/mnt/nas",
+        ] {
+            assert!(on_demand_in(&mounted, Path::new(path)), "{path}");
+        }
+        for path in [
+            "/home/u/it's mine",
+            "/media/u/USB/photos",
+            "/net/host/deeper/x",
+            "/miscellaneous",
+        ] {
+            assert!(!on_demand_in(&mounted, Path::new(path)), "{path}");
+        }
+        // Read again once the automounter let them go: the same answers.
+        let expired = table(&[
+            ("/", "ext4"),
+            ("/misc", "autofs"),
+            ("/net", "autofs"),
+            ("/mnt/nas", "autofs"),
+        ]);
+        for path in [
+            "/misc/cd/it's a track.flac",
+            "/net/host/share, été",
+            "/mnt/nas/photos",
+        ] {
+            assert!(on_demand_in(&expired, Path::new(path)), "{path}");
+        }
+        assert!(!on_demand_in(&[], Path::new("/net/host")));
+    }
+
     #[test]
     fn a_path_s_volume_is_the_deepest_mount_above_it() {
         use std::path::Path;
