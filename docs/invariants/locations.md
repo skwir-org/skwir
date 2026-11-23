@@ -142,7 +142,9 @@ and `notes.agree` are core `notes.*` commands.
 - What a pane holds open follows the mounts (`App::volumes_changed`,
   told by `reach::follow` and by a plugin publishing a folder the table
   does not list): at or below a mount made, by whoever, it is opened
-  again from its path (`OpenLocation::reopen`); below one let go of, it
+  again from its path where it leads elsewhere now
+  (`OpenLocation::reopen`: one opened since is left as it is, and what
+  is asked to be read meanwhile is answered); below one let go of, it
   lets go of what it holds there and fails as `Failure::Left`
   (`OpenLocation::volume_gone`). A mount let go of never opens a folder
   again. Before Skwir lets go of a volume, or another program announces

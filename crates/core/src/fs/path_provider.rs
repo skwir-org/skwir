@@ -86,6 +86,10 @@ struct Shared {
     /// ([`Shared::lose`]), so a refresh opens the folder again from its
     /// path rather than list a directory that is gone.
     slot: std::sync::Weak<Mutex<Option<Arc<Shared>>>>,
+    /// How its listing opens it: what was asked of it once handed on
+    /// ([`Shared::hand_over`]) is asked of the folder its listing opens
+    /// after it.
+    opening: std::sync::Weak<Mutex<Opening>>,
     /// Whether it was lost, and how: [`LISTED`] not, [`HANDED_ON`],
     /// [`LOST_MISSING`] or [`LOST_LEFT`] (its volume let go of, which a
     /// deletion told after does not say over). Changed only under the
@@ -163,6 +167,10 @@ struct Names {
     /// The others were never asked for, and a refresh does not read the
     /// whole folder for them.
     stated: hashing::Set<EntryId>,
+    /// Asked for before this listing named them (rows of the one it was
+    /// opened again in place of, `reopen`), with how soon: read once it is
+    /// listed, every id a hydration is given being answered.
+    early: Vec<(Vec<EntryId>, Priority)>,
 }
 
 impl Names {
@@ -340,15 +348,19 @@ pub struct PathLocation {
 }
 
 /// What a folder's listing does about opening it: whether an open is
-/// under way, and whether it opens again once done, with what was listed
-/// before to take out (`OpenLocation::reopen` asked meanwhile); and what
-/// was decided of its volume, which an open under way is held to as it
-/// ends, as the folder it opened is (ADR-149).
+/// under way, and whether it looks again once done whether its path leads
+/// to the folder it holds (`OpenLocation::reopen` asked meanwhile); what
+/// was asked to be read while it held none; and what was decided of its
+/// volume, which an open under way is held to as it ends, as the folder it
+/// opened is (ADR-149).
 #[derive(Default)]
 struct Opening {
     under_way: bool,
     again: bool,
-    previous: Vec<EntryId>,
+    /// What was asked to be read (`OpenLocation::hydrate`) while no folder
+    /// was held, an open under way: asked of the folder it opens once it
+    /// holds it, never dropped while its rows show.
+    wanted: Vec<(Vec<EntryId>, Priority)>,
     /// Its volume is about to be let go of (`OpenLocation::hold_nothing`):
     /// every folder it opens from then on is read by its path, one an open
     /// under way finds too, until a volume is mounted there again
@@ -372,7 +384,7 @@ fn open_folder(
     ctx: &OpenContext,
     tx: &EventSink,
     slot: &Arc<Mutex<Option<Arc<Shared>>>>,
-    opening: &Mutex<Opening>,
+    opening: &Arc<Mutex<Opening>>,
     held: &std::sync::OnceLock<PathBuf>,
     lane: Lane,
 ) -> anyhow::Result<Option<Arc<Shared>>> {
@@ -416,6 +428,7 @@ fn open_folder(
         changes: Mutex::new((None, false)),
         writing: Mutex::new(std::collections::HashSet::new()),
         slot: Arc::downgrade(slot),
+        opening: Arc::downgrade(opening),
         lost: std::sync::atomic::AtomicU8::new(LISTED),
     });
     // Watched before it is listed, so nothing changed
@@ -437,18 +450,52 @@ fn open_folder(
         }
         *slot = Some(Arc::clone(&shared));
     }
-    // Decided while it opened: held to it now.
-    let (hold_nothing, gone) = {
-        let opening = opening.lock();
-        (opening.hold_nothing, opening.gone.clone())
+    // Decided while it opened, and asked of it: held to it now.
+    let (hold_nothing, gone, wanted) = {
+        let mut opening = opening.lock();
+        (
+            opening.hold_nothing,
+            opening.gone.clone(),
+            std::mem::take(&mut opening.wanted),
+        )
     };
     if hold_nothing {
         shared.hold_nothing();
     }
     if let Some(gone) = gone {
+        // What was asked goes with its rows.
         shared.lose(gone);
+        return Ok(Some(shared));
+    }
+    for (ids, priority) in wanted {
+        shared.ask(&ids, priority);
     }
     Ok(Some(shared))
+}
+
+/// Ask what the listing holds now (`slot`) to read `ids`, or, while it
+/// opens one, the one it opens once it holds it (`Opening::wanted`): every
+/// id a hydration is given is answered (AGENTS.md, "Entries arrive before
+/// metadata") by the listing whose rows they are. Nothing while it holds
+/// none and opens none: lost, its rows went with it.
+fn hydrate_held(
+    slot: &Mutex<Option<Arc<Shared>>>,
+    opening: &Mutex<Opening>,
+    ids: Vec<EntryId>,
+    priority: Priority,
+) {
+    let held = {
+        let mut opening = opening.lock();
+        let held = slot.lock().clone().filter(|held| !held.is_lost());
+        if held.is_none() && opening.under_way {
+            opening.wanted.push((ids, priority));
+            return;
+        }
+        held
+    };
+    if let Some(held) = held {
+        held.ask(&ids, priority);
+    }
 }
 
 impl PathLocation {
@@ -478,15 +525,17 @@ impl PathLocation {
             // Asked anew: what is at its path now is what it shows.
             opening.gone = None;
         }
-        self.spawn_open(None);
+        self.spawn_open(false);
     }
 
     /// Open the folder from its path and list it on a worker, in its
-    /// lane; `previous`, the entries a listing of it held before
-    /// (`reopen`), are taken out once it is listed, those it lists no
-    /// more. Asked to open again meanwhile (`Opening::again`), it does
-    /// once done: its path may lead elsewhere since it was opened.
-    fn spawn_open(&self, previous: Option<Vec<EntryId>>) {
+    /// lane. `again` (`reopen`): only where its path leads to another
+    /// folder than the one it holds now (`Shared::is_at`), the entries
+    /// that one listed handed on to be taken out once the new one is
+    /// listed, those it lists no more; a folder opened since the mount that
+    /// asks it was made is left as it is, never listed twice. Asked again
+    /// meanwhile (`Opening::again`), it looks again once done.
+    fn spawn_open(&self, again: bool) {
         let dir = self.dir.clone();
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
@@ -502,9 +551,35 @@ impl PathLocation {
             "fs.open",
             ctx.cancel.clone(),
             move || {
-                let mut previous = previous;
+                let mut again = again;
                 loop {
-                    match open_folder(&dir, &ctx, &tx, &slot, &opening, &held, lane) {
+                    // Opened again (a volume mounted at or above it): only
+                    // where its path leads elsewhere than the folder held.
+                    let mut previous = None;
+                    let opens = !again || {
+                        let held_now = slot.lock().clone();
+                        match held_now {
+                            Some(held_now) if held_now.is_at(&held_now.dir()) => false,
+                            Some(held_now) => {
+                                let taken = {
+                                    let mut slot = slot.lock();
+                                    slot.take_if(|it| Arc::ptr_eq(it, &held_now))
+                                };
+                                if let Some(taken) = taken {
+                                    previous = taken.hand_on();
+                                    let_go(&ctx, taken);
+                                }
+                                true
+                            }
+                            None => true,
+                        }
+                    };
+                    let result = if opens {
+                        open_folder(&dir, &ctx, &tx, &slot, &opening, &held, lane)
+                    } else {
+                        Ok(None)
+                    };
+                    match result {
                         Ok(Some(shared)) if !shared.is_lost() => {
                             shared.list(&ctx.cancel, previous.take());
                         }
@@ -534,21 +609,16 @@ impl PathLocation {
                     }
                     let mut state = opening.lock();
                     if state.again && !ctx.cancel.is_cancelled() {
+                        // Asked again meanwhile: its path may lead
+                        // elsewhere since it was opened.
                         state.again = false;
-                        let mut ids = std::mem::take(&mut state.previous);
-                        drop(state);
-                        // What it opened was another's folder by then.
-                        let opened = slot.lock().take();
-                        if let Some(opened) = opened {
-                            ids.extend(opened.hand_on().into_iter().flatten());
-                            let_go(&ctx, opened);
-                        }
-                        previous = (!ids.is_empty()).then_some(ids);
+                        again = true;
                         continue;
                     }
-                    // What was decided of its volume stays.
+                    // What was decided of its volume stays; what was asked
+                    // of a folder that did not open went with its rows.
                     state.under_way = false;
-                    state.previous = Vec::new();
+                    state.wanted = Vec::new();
                     return;
                 }
             },
@@ -742,8 +812,12 @@ impl Shared {
             drop(names);
             self.send(ListingEvent::Removed(gone));
         }
-        self.listed
-            .store(true, std::sync::atomic::Ordering::Release);
+        // Every name known now: what was asked before it was is read.
+        let early = {
+            let mut names = self.names.lock();
+            self.listed.store(true, Ordering::Release);
+            std::mem::take(&mut names.early)
+        };
         // The pane's order reads what a stat finds (a date, a size, an
         // owner, tags): every entry is read before the listing completes,
         // so the folder appears whole in that order, in its groups, rather
@@ -754,26 +828,17 @@ impl Shared {
                 if cancel.is_cancelled() {
                     return;
                 }
-                self.hydrate(chunk);
+                // Handed on meanwhile: the next listing reads what its
+                // order wants.
+                let _ = self.hydrate(chunk, Priority::Visible);
             }
         }
         self.send(ListingEvent::Complete);
+        for (ids, priority) in early {
+            self.ask(&ids, priority);
+        }
         if !stayed.is_empty() {
-            let s = Arc::clone(self);
-            self.ctx.scheduler.spawn_in(
-                self.lane,
-                Priority::Background,
-                "fs.restat",
-                cancel.clone(),
-                move || {
-                    for chunk in stayed.chunks(s.ctx.batch_size.max(1)) {
-                        if s.ctx.cancel.is_cancelled() {
-                            return;
-                        }
-                        s.hydrate(chunk);
-                    }
-                },
-            );
+            self.ask(&stayed, Priority::Background);
         }
     }
 
@@ -788,9 +853,44 @@ impl Shared {
         }
     }
 
-    fn hydrate(&self, ids: &[EntryId]) {
-        if self.is_lost() {
-            return;
+    /// Read `ids` in batches, a job each in its lane: what a job finds
+    /// handed on is asked of the folder its listing holds after it
+    /// ([`Shared::hand_over`]).
+    fn ask(self: &Arc<Self>, ids: &[EntryId], priority: Priority) {
+        for chunk in ids.chunks(self.ctx.batch_size.max(1)) {
+            let (s, ids) = (Arc::clone(self), chunk.to_vec());
+            self.ctx.scheduler.spawn_in(
+                self.lane,
+                priority,
+                "fs.stat",
+                self.ctx.cancel.child(),
+                move || {
+                    if let Some(ids) = s.hydrate(&ids, priority) {
+                        s.hand_over(ids, priority);
+                    }
+                },
+            );
+        }
+    }
+
+    /// What was asked of it once it was handed on, asked of the folder its
+    /// listing holds or opens now.
+    fn hand_over(&self, ids: Vec<EntryId>, priority: Priority) {
+        if let (Some(slot), Some(opening)) = (self.slot.upgrade(), self.opening.upgrade()) {
+            hydrate_held(&slot, &opening, ids, priority);
+        }
+    }
+
+    /// Answer `ids` (`Updated`, `Removed`, `Unreadable`), those it does not
+    /// name yet read once it is listed. What it could not answer as it was
+    /// handed on to the folder its listing opened again (`reopen`), for that
+    /// one to answer: never dropped while their rows show. Nothing once lost:
+    /// its rows went with it.
+    fn hydrate(&self, ids: &[EntryId], priority: Priority) -> Option<Vec<EntryId>> {
+        match self.lost.load(Ordering::Acquire) {
+            LISTED => {}
+            HANDED_ON => return Some(ids.to_vec()),
+            _ => return None,
         }
         // Not there to read now (its volume going): answered, its rows as
         // listed.
@@ -805,15 +905,26 @@ impl Shared {
             if !unread.is_empty() {
                 self.send(ListingEvent::Unreadable(unread));
             }
-            return;
+            return self.handed_on(ids);
         };
         let mut stated = Vec::with_capacity(ids.len());
         let (mut gone, mut unread) = (Vec::new(), Vec::new());
+        let mut early = Vec::new();
         for &id in ids {
             if self.ctx.cancel.is_cancelled() {
-                return;
+                return None;
             }
-            let Some(name) = self.names.lock().by_id.get(&id).cloned() else {
+            let name = {
+                let names = self.names.lock();
+                let name = names.by_id.get(&id).cloned();
+                // Not listed yet (a row of the folder it opened again in
+                // place of): read once it is.
+                if name.is_none() && !self.listed.load(Ordering::Acquire) {
+                    early.push(id);
+                }
+                name
+            };
+            let Some(name) = name else {
                 continue;
             };
             let mut e = Entry::new(id, name, EntryKind::Unknown);
@@ -875,6 +986,25 @@ impl Shared {
                 stale.into_iter().zip(rekeyed).collect(),
             ));
         }
+        if !early.is_empty() {
+            let mut names = self.names.lock();
+            if self.listed.load(Ordering::Acquire) {
+                // Listed meanwhile: read now (handed on, all of `ids` are
+                // asked again below).
+                drop(names);
+                let _ = self.hydrate(&early, priority);
+            } else {
+                names.early.push((early, priority));
+            }
+        }
+        self.handed_on(ids)
+    }
+
+    /// `ids` where it was handed on (`hand_on`) as it answered them: what
+    /// it sent of them since may have been refused, so all are asked again
+    /// of the next folder.
+    fn handed_on(&self, ids: &[EntryId]) -> Option<Vec<EntryId>> {
+        (self.lost.load(Ordering::Acquire) == HANDED_ON).then(|| ids.to_vec())
     }
 
     /// The directory itself moved: find where through its descriptor, which
@@ -1033,12 +1163,31 @@ impl Shared {
     /// the next listing to take out those it lists no more; `None` when it
     /// was lost before, its entries gone with it.
     fn hand_on(&self) -> Option<Vec<EntryId>> {
-        let names = self.names.lock();
-        if self.is_lost() {
-            return None;
+        let early = {
+            let mut names = self.names.lock();
+            if self.is_lost() {
+                return None;
+            }
+            self.lost.store(HANDED_ON, Ordering::Release);
+            (names.ids(), std::mem::take(&mut names.early))
+        };
+        // What was asked of it and not read yet, asked of the next one.
+        let (ids, early) = early;
+        for (asked, priority) in early {
+            self.hand_over(asked, priority);
         }
-        self.lost.store(HANDED_ON, Ordering::Release);
-        Some(names.ids())
+        Some(ids)
+    }
+
+    /// Whether `dir` leads to this folder still, and its watch goes on:
+    /// what a volume mounted at or above it (`reopen`) leaves as it is.
+    /// Opens `dir`: on a worker, in its lane.
+    fn is_at(&self, dir: &Path) -> bool {
+        !self.is_lost()
+            && self.watcher.lock().is_some()
+            && Dir::open(dir)
+                .and_then(|folder| folder.identity())
+                .is_ok_and(|id| id == self.id)
     }
 
     /// Changes the watcher told, on its thread: handed to a worker.
@@ -1319,25 +1468,13 @@ impl OpenLocation for PathLocation {
     /// for every entry) is stat-ed by several workers at once, and its
     /// answers arrive a batch at a time, each an event the UI applies
     /// within a frame, not one holding them all.
+    /// Asked while it opens its folder again (`reopen`), of the one it
+    /// opens: every id is answered (`hydrate_held`).
     fn hydrate(&self, ids: &[EntryId], priority: Priority) {
         if ids.is_empty() {
             return;
         }
-        let Some(s) = self.shared.lock().clone() else {
-            return;
-        };
-        for chunk in ids.chunks(self.ctx.batch_size.max(1)) {
-            let (s, ids) = (Arc::clone(&s), chunk.to_vec());
-            self.ctx.scheduler.spawn_in(
-                s.lane,
-                priority,
-                "fs.stat",
-                self.ctx.cancel.child(),
-                move || {
-                    s.hydrate(&ids);
-                },
-            );
-        }
+        hydrate_held(&self.shared, &self.opening, ids.to_vec(), priority);
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
@@ -1378,18 +1515,15 @@ impl OpenLocation for PathLocation {
         true
     }
 
-    /// Its path leads to another folder now (a mount made there): what it
-    /// held is let go of and the folder opened again from its path, the
-    /// entries it listed taken out as the new ones are listed (no empty
-    /// frame between).
+    /// A volume was mounted at or above it (ADR-149): where its path
+    /// leads to another folder now than the one it holds (the mount's
+    /// own, an empty mount point's no more), or its watch ended with a
+    /// filesystem, what it held is handed on and the folder opened again
+    /// from its path, the entries it listed taken out as the new ones are
+    /// listed (no empty frame between); one opened since the mount was made
+    /// (by the sidebar's Mount, which shows it) is left as it is. Looked
+    /// at on a worker, in its lane.
     fn reopen(&self) {
-        let held = self.shared.lock().take();
-        let previous = held.and_then(|held| {
-            // Nothing more of it is sent: what it lists is another's now.
-            let ids = held.hand_on();
-            let_go(&self.ctx, held);
-            ids
-        });
         {
             let mut opening = self.opening.lock();
             if self.ctx.cancel.is_cancelled() {
@@ -1399,15 +1533,14 @@ impl OpenLocation for PathLocation {
             opening.gone = None;
             opening.hold_nothing = false;
             // The open under way may have found the folder before: it
-            // opens again once done.
+            // looks again once done.
             if opening.under_way {
                 opening.again = true;
-                opening.previous.extend(previous.into_iter().flatten());
                 return;
             }
             opening.under_way = true;
         }
-        self.spawn_open(previous);
+        self.spawn_open(true);
     }
 
     fn close(&self) {
@@ -1636,6 +1769,88 @@ mod tests {
         events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
         let shared = open.shared.lock().clone().expect("listed");
         assert!(matches!(*shared.folder.read(), Folder::ByPath), "held");
+        open.close();
+    }
+
+    /// A folder opened again as a volume is mounted at or above it
+    /// (ADR-149) is listed again only where its path leads elsewhere now:
+    /// one opened since the mount was made, which a pane shows once its
+    /// Mount is done, is left as it is, never listed twice.
+    #[test]
+    fn a_folder_opened_again_where_its_path_leads_to_it_is_left_as_it_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("it's mounted, été");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = opened_here(&app, &dir, false);
+        events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        let before = open.shared.lock().clone().expect("listed");
+        open.reopen();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while open.opening.lock().under_way {
+            assert!(std::time::Instant::now() < deadline, "never looked");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(open.rx.try_iter().next().is_none(), "listed again");
+        let after = open.shared.lock().clone().expect("held still");
+        assert!(Arc::ptr_eq(&before, &after));
+        open.close();
+    }
+
+    /// What is asked to be read of a folder as it is opened again in place
+    /// (its watch ended, `reopen`) is answered by the folder opened, never
+    /// dropped with the one handed on: its rows show still, and what asked
+    /// asks no more (AGENTS.md, "a hydration answers every id it is
+    /// given").
+    #[test]
+    fn a_hydration_asked_as_a_folder_is_opened_again_is_answered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("it's read, été");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let scheduler = crate::scheduler::Scheduler::new(1);
+        let open = opened_on(&app, scheduler.clone(), &dir, false);
+        let listed = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        let ids: Vec<EntryId> = listed
+            .iter()
+            .filter_map(|e| match e {
+                ListingEvent::Added(entries) => Some(entries.iter().map(|e| e.id)),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(ids.len(), 1);
+        // Its watch ended (its filesystem let go of on demand, VC-4): a
+        // volume mounted there opens it again, the same folder.
+        drop(open.shared.lock().as_ref().unwrap().watcher.lock().take());
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let (taken, started) = std::sync::mpsc::channel::<()>();
+        scheduler.spawn_in(
+            Lane::SHARED,
+            Priority::Visible,
+            "test.hold",
+            CancelToken::new(),
+            move || {
+                let _ = taken.send(());
+                let _ = wait.recv_timeout(Duration::from_secs(20));
+            },
+        );
+        started.recv_timeout(Duration::from_secs(20)).unwrap();
+        // Opened again first, then read: the folder asked is handed on by
+        // then.
+        open.reopen();
+        open.hydrate(&ids, Priority::Background);
+        drop(release);
+        let told = events_until(
+            &open.rx,
+            |e| matches!(e, ListingEvent::Updated(entries) if entries.iter().any(|e| e.id == ids[0])),
+        );
+        assert!(
+            !told.iter().any(|e| matches!(e, ListingEvent::Removed(_))),
+            "{told:?}"
+        );
         open.close();
     }
 

@@ -69,7 +69,13 @@ after review).
    the folder shown, those kept beside it (the columns view's, the
    folders opened in place); a tab not shown yet opens what is there
    once it is. A mount let go of never opens a folder again: the folder
-   under a mount point would show as the drive empty.
+   under a mount point would show as the drive empty. Opened again only
+   where its path leads to another folder now than the one it holds, or
+   its watch ended (corrected after review): one opened since the mount
+   was made (the sidebar's Mount shows it as it is done) is left as it
+   is, never listed twice; looked at in its lane. What is asked to be
+   read of it meanwhile is answered by the folder opened, never dropped
+   with the one let go of, as every hydration answers.
 3. **Below a mount let go of, a folder lets go of what it held there and
    says so** (`OpenLocation::volume_gone`, `Failure::Left`): its entries
    go, its directory and its watch are closed in the shared lane (so the

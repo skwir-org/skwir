@@ -517,7 +517,7 @@ pub trait OpenLocation: Send + Sync {
     fn volume_gone(&self, _error: ListingError) {}
 
     /// The volume or server holding what it lists is about to be let go
-    /// of (`App::let_go_under`, ADR-149 amended): it holds nothing open
+    /// of (`App::release`, ADR-149 amended): it holds nothing open
     /// there from now on (a folder is read by its path), so the unmount is
     /// not refused as busy, and goes on showing what it lists until the
     /// volume goes (`volume_gone`). Whether it holds nothing now: a
@@ -527,9 +527,11 @@ pub trait OpenLocation: Send + Sync {
     }
 
     /// A volume or server was mounted at or above where it lists
-    /// (`App::volumes_changed`, ADR-149): its path leads elsewhere now
-    /// (the mount's own folder), so it is opened again from it, what it
-    /// held open let go of. `refresh` by default.
+    /// (`App::volumes_changed`, ADR-149): where its path leads elsewhere
+    /// now (the mount's own folder), it is opened again from it, what it
+    /// held open let go of; one opened since the mount was made is left as
+    /// it is. What is asked of it meanwhile is answered all the same.
+    /// `refresh` by default.
     fn reopen(&self) {
         self.refresh();
     }
