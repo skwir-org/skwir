@@ -56,7 +56,14 @@ after review).
    mount is told apart by what it is (`reach::Mount::id`: Linux's number
    in the table with its device, type, source and root), never by how
    many a point holds (corrected after review): a drive let go of and
-   another mounted in its place within one change is both. A plugin's
+   another mounted in its place within one change is both. A mount on an
+   automount point, or below an indirect map's (autofs: systemd's
+   automount units and their idle timeout, `/net`, macOS's `/net`), let
+   go of by its automounter is no volume going (corrected after review):
+   looked up again, it is mounted again, so its folders stay shown, read
+   by their path, their watch ended with the filesystem (inotify's
+   `IN_UNMOUNT`, which reads no path, a lookup mounting it), and opened
+   anew once it is mounted again (`reach::on_demand`). A plugin's
    folder is told let go of only while that plugin is on (amended,
    decision 12): one turned off lets go of what it knows, not of the
    mounts.

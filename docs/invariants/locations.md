@@ -147,7 +147,9 @@ and `notes.agree` are core `notes.*` commands.
   is asked to be read meanwhile is answered); below one let go of, it
   lets go of what it holds there and fails as `Failure::Left`
   (`OpenLocation::volume_gone`). A mount let go of never opens a folder
-  again. Before Skwir lets go of a volume, or another program announces
+  again. A mount by what it is (`reach::Mount::id`), never by how many a
+  point holds; one an automounter lets go of, unused (autofs,
+  `reach::on_demand`), is no volume going. Before Skwir lets go of a volume, or another program announces
   it does (`App::release`), what can be read by its path from then on
   holds nothing there (`OpenLocation::hold_nothing`) and stays shown;
   what cannot goes home, or closes beside the folder shown. A location

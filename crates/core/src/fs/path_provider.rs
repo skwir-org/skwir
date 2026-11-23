@@ -1228,6 +1228,15 @@ impl Shared {
         if self.is_lost() {
             return;
         }
+        // Its filesystem let go of by its automounter, unused a while
+        // (ADR-149): no folder going, as it is mounted again as it is
+        // looked up. Nothing of its path is read now (that would mount it);
+        // it stays shown, read by its path, its watch ended with the
+        // filesystem, and a mount made there again opens it anew (`is_at`).
+        if c.unmounted && super::reach::on_demand(&self.dir()) {
+            drop(self.watcher.lock().take());
+            return;
+        }
         if c.deleted || (c.moved && !self.follow_self()) || self.is_unlinked() {
             self.lose_self();
             return;
@@ -1877,6 +1886,108 @@ mod tests {
                 .any(|e| matches!(e, ListingEvent::Removed(ids) if ids.len() == 1)),
             "{told:?}"
         );
+        open.close();
+    }
+
+    /// Run in a user and mount namespace of the test's own, where it
+    /// mounts as root (`a_folder_mounted_on_demand_stays_as_its_mount_expires`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_folder_follows_its_mount_expiring() {
+        if !crate::testing::in_namespace() {
+            crate::testing::as_root_in_a_namespace(
+                "fs::path_provider::tests::a_folder_mounted_on_demand_stays_as_its_mount_expires",
+            );
+        }
+    }
+
+    /// A folder whose filesystem an automounter lets go of, unused a while
+    /// (autofs, systemd's idle timeout: ADR-149), stays shown, saying
+    /// nothing went, its watch ended with it; one on any other mount let go
+    /// of is gone. Does nothing outside its namespace.
+    #[cfg(target_os = "linux")]
+    #[test]
+    // Tests' own, on Linux: no console window to keep away.
+    #[allow(clippy::disallowed_methods)]
+    fn a_folder_mounted_on_demand_stays_as_its_mount_expires() {
+        use std::process::Command;
+        if !crate::testing::in_namespace() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let shown_on = |name: &str, on_demand: bool| {
+            let point = tmp.path().join(name);
+            std::fs::create_dir(&point).unwrap();
+            assert!(
+                Command::new("mount")
+                    .args(["-t", "tmpfs", "skwir-test"])
+                    .arg(&point)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let shown = point.join("it's shown, été");
+            std::fs::create_dir(&shown).unwrap();
+            std::fs::write(shown.join("a.txt"), "a").unwrap();
+            // Read by its path, as a remote's folder is: nothing of it held.
+            crate::fs::reach::pretend_remote(&point);
+            if on_demand {
+                crate::fs::reach::pretend_on_demand(&point);
+            }
+            let open = opened_here(&app, &shown, false);
+            events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+            assert!(
+                open.shared
+                    .lock()
+                    .as_ref()
+                    .unwrap()
+                    .watcher
+                    .lock()
+                    .is_some()
+            );
+            (point, open)
+        };
+        let umount = |point: &Path| {
+            assert!(
+                Command::new("umount")
+                    .arg(point)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+
+        let (point, open) = shown_on("an automounted share", true);
+        umount(&point);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while open
+            .shared
+            .lock()
+            .as_ref()
+            .unwrap()
+            .watcher
+            .lock()
+            .is_some()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "its watch never ended"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let told: Vec<ListingEvent> = open.rx.try_iter().collect();
+        assert!(
+            !told
+                .iter()
+                .any(|e| matches!(e, ListingEvent::Error(_) | ListingEvent::Removed(_))),
+            "{told:?}"
+        );
+        open.close();
+
+        let (point, open) = shown_on("a drive", false);
+        umount(&point);
+        events_until(&open.rx, |e| matches!(e, ListingEvent::Error(_)));
         open.close();
     }
 

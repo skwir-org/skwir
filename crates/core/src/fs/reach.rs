@@ -656,11 +656,16 @@ pub struct Mount {
     /// theirs.
     pub id: u64,
     pub remote: bool,
+    /// An automount point (autofs: systemd's automount units, Linux's
+    /// `-hosts` maps, macOS's `/net`): what is mounted on it or below it is
+    /// mounted as it is looked up, and let go of once nothing uses it a
+    /// while, which is no volume going (ADR-149).
+    pub on_demand: bool,
 }
 
 impl Mount {
-    /// A mount at `point` told apart by `what`.
-    fn of(point: PathBuf, what: impl std::hash::Hash) -> Self {
+    /// A mount at `point` of type `fstype`, told apart by `what`.
+    fn of(point: PathBuf, fstype: &str, what: impl std::hash::Hash) -> Self {
         use std::hash::Hasher;
         let mut id = std::hash::DefaultHasher::new();
         what.hash(&mut id);
@@ -668,8 +673,51 @@ impl Mount {
             point,
             id: id.finish(),
             remote: false,
+            on_demand: fstype == "autofs",
         }
     }
+}
+
+/// Whether what holds `path` is mounted on demand: the deepest mount point
+/// at or above it is an automount point, or holds a mount made on one
+/// ([`Mount::on_demand`]). Its filesystem let go of after a while unused
+/// is no volume going: looked up again, it is mounted again. From the
+/// table in memory, never reading `path` (a lookup would mount it).
+pub fn on_demand(path: &Path) -> bool {
+    #[cfg(all(test, target_os = "linux"))]
+    if PRETENDED_ON_DEMAND
+        .lock()
+        .iter()
+        .any(|point| path.starts_with(point))
+    {
+        return true;
+    }
+    let table = table();
+    // Deepest first: the first holding `path` is its point.
+    let Some(point) = table
+        .points
+        .iter()
+        .find(|mount| path.starts_with(&mount.point))
+        .map(|mount| &mount.point)
+    else {
+        return false;
+    };
+    table
+        .points
+        .iter()
+        .any(|mount| mount.point == *point && mount.on_demand)
+}
+
+/// The automount points a test says hold the paths below them
+/// ([`pretend_on_demand`]).
+#[cfg(all(test, target_os = "linux"))]
+static PRETENDED_ON_DEMAND: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Say, for this test's process, that what is below `point` is mounted on
+/// demand ([`on_demand`]).
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn pretend_on_demand(point: &Path) {
+    PRETENDED_ON_DEMAND.lock().push(point.to_path_buf());
 }
 
 /// Every mount the table lists now: what tells the mounts made and let
@@ -688,7 +736,7 @@ pub fn points() -> Vec<Mount> {
         .filter(|r| !listed.contains(r.point.as_path()))
         .map(|r| Mount {
             remote: true,
-            ..Mount::of(r.point.clone(), (&r.fstype, &r.source))
+            ..Mount::of(r.point.clone(), &r.fstype, (&r.fstype, &r.source))
         });
     table.points.iter().cloned().chain(remotes).collect()
 }
@@ -1079,6 +1127,7 @@ mod imp {
             .map(|m| {
                 super::Mount::of(
                     m.point.clone(),
+                    &m.fstype,
                     (m.id, m.device, &m.fstype, &m.source, &m.root),
                 )
             })
@@ -1336,9 +1385,11 @@ mod imp {
         let points = table
             .iter()
             .map(|fs| {
+                let fstype = String::from_utf8_lossy(&name(&fs.f_fstypename)).into_owned();
                 super::Mount::of(
                     std::ffi::OsStr::from_bytes(&name(&fs.f_mntonname)).into(),
-                    (name(&fs.f_mntfromname), name(&fs.f_fstypename)),
+                    &fstype,
+                    (name(&fs.f_mntfromname), &fstype),
                 )
             })
             .collect();

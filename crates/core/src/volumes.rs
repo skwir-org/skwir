@@ -43,9 +43,23 @@ struct Point {
     /// made again within a change, of the same drive even, is another.
     mounts: hashing::Set<u64>,
     remote: bool,
+    /// One is an automount point (`reach::Mount::on_demand`).
+    on_demand: bool,
 }
 
 impl Mounts {
+    /// Whether what is at `point` is mounted on demand: it holds an
+    /// automount point, or the deepest point above it is one (an indirect
+    /// map's, `/net`). A mount there let go of is the automounter's, after
+    /// a while unused, which is no volume going: looked up again, it is
+    /// mounted again (`systemd`'s `x-systemd.idle-timeout`, autofs's).
+    fn on_demand(&self, point: &Path) -> bool {
+        point
+            .ancestors()
+            .find_map(|at| self.table.get(at))
+            .is_some_and(|seen| seen.on_demand)
+    }
+
     /// What is mounted now, read from memory.
     fn now(app: &App) -> Self {
         let mut table: hashing::Map<PathBuf, Point> = hashing::Map::default();
@@ -53,6 +67,7 @@ impl Mounts {
             let seen = table.entry(mount.point).or_default();
             seen.mounts.insert(mount.id);
             seen.remote |= mount.remote;
+            seen.on_demand |= mount.on_demand;
         }
         let known = app
             .registry
@@ -97,6 +112,7 @@ impl Change {
                 .table
                 .get(point)
                 .is_none_or(|n| !seen.mounts.is_subset(&n.mounts))
+                && !now.on_demand(point)
             {
                 change.gone.insert(point.clone(), seen.remote);
             }
@@ -291,7 +307,15 @@ mod tests {
                 .iter()
                 .map(|&(point, mounts, remote)| {
                     let mounts = mounts.iter().copied().collect();
-                    (PathBuf::from(point), Point { mounts, remote })
+                    let on_demand = false;
+                    (
+                        PathBuf::from(point),
+                        Point {
+                            mounts,
+                            remote,
+                            on_demand,
+                        },
+                    )
                 })
                 .collect(),
             known: known
@@ -363,6 +387,59 @@ mod tests {
             Some(false)
         );
         assert_eq!(change.gone_from(Path::new("/media/u/usbs")), None);
+        // A share mounted on an automount point and let go of by the
+        // automounter, unused a while, is no volume going; nor one mounted
+        // below an indirect map's point (`/net/host`). The point itself
+        // let go of is.
+        let mut automounted = mounts(
+            &[
+                ("/", &[1], false),
+                ("/mnt/nas", &[2, 3], true),
+                ("/net", &[4], false),
+            ],
+            &[],
+        );
+        automounted
+            .table
+            .get_mut(Path::new("/mnt/nas"))
+            .unwrap()
+            .on_demand = true;
+        automounted
+            .table
+            .get_mut(Path::new("/net"))
+            .unwrap()
+            .on_demand = true;
+        automounted.table.insert(
+            "/net/host".into(),
+            Point {
+                mounts: [5].into_iter().collect(),
+                remote: true,
+                on_demand: false,
+            },
+        );
+        let mut expired = mounts(
+            &[
+                ("/", &[1], false),
+                ("/mnt/nas", &[2], false),
+                ("/net", &[4], false),
+            ],
+            &[],
+        );
+        expired
+            .table
+            .get_mut(Path::new("/mnt/nas"))
+            .unwrap()
+            .on_demand = true;
+        expired.table.get_mut(Path::new("/net")).unwrap().on_demand = true;
+        assert!(
+            Change::between(&automounted, &expired, |_| true)
+                .gone
+                .is_empty()
+        );
+        let stopped = mounts(&[("/", &[1], false)], &[]);
+        let change = Change::between(&expired, &stopped, |_| true);
+        assert!(change.gone.contains_key(Path::new("/mnt/nas")));
+        assert!(change.gone.contains_key(Path::new("/net")));
         // Let go of the other way: a server's going says so.
         let back = Change::between(&now, &before, |_| true);
         assert_eq!(back.gone_from(Path::new("/mnt/nas/a")), Some(true));

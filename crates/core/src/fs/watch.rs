@@ -31,6 +31,12 @@ pub struct Changes {
     /// The watched directory itself is gone (deleted, or its filesystem
     /// unmounted).
     pub deleted: bool,
+    /// Its filesystem was unmounted (inotify's `IN_UNMOUNT`, Linux), not
+    /// the directory deleted: `deleted` too, as the watch ends with it.
+    /// What decides whether the folder went reads no path then: one
+    /// mounted on demand (`reach::on_demand`) is mounted again by a
+    /// lookup.
+    pub unmounted: bool,
     /// Of `names`, those still being written as they are told (ADR-135):
     /// written to and not closed since on Linux, written to in the last
     /// `QUIET` elsewhere, where no close is told. What another program
@@ -51,6 +57,7 @@ impl Changes {
         self.itself |= later.itself;
         self.moved |= later.moved;
         self.deleted |= later.deleted;
+        self.unmounted |= later.unmounted;
         self.writing.extend(later.writing);
     }
 }
@@ -453,7 +460,10 @@ mod imp {
                     s.open.remove(name);
                 }
                 let changes = s.gathered(now);
-                if mask.contains(EventMask::MOVE_SELF) {
+                if mask.contains(EventMask::UNMOUNT) {
+                    changes.unmounted = true;
+                    changes.deleted = true;
+                } else if mask.contains(EventMask::MOVE_SELF) {
                     changes.moved = true;
                 } else if mask.intersects(EventMask::DELETE_SELF | EventMask::IGNORED) {
                     changes.deleted = true;
