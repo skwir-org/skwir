@@ -22751,3 +22751,50 @@ made up to its GitHub draft, theirs to publish.
   feature set) took the disk from 46 to 11 GB in about an hour; the
   units every file of which was older than the dependency update were
   deleted (72 GB), later those older than 03:00 (28 GB).
+
+## 2026-11-23: 0.6.1 built, signed and drafted
+
+The release the night's reviews prepared (the entry before this one),
+built and drafted as the user asked; its publication theirs.
+
+- **Source**: `chore: release 0.6.1` (67309043), then 67f6dbcc, the
+  Arch check's fix below; the tag v0.6.1 on 67f6dbcc (moved there before
+  it was pushed). `just release-metadata v0.6.1` agrees; `just
+  package-l10n` with desktop-file-validate and appstreamcli; `just
+  package-nix-check` from the committed tree: minimal 316.3 MiB, default
+  1.1 GiB, full evaluated.
+- **First release-build stopped at its key check** (07:20): gpg's
+  pinentry takes the passphrase from KeePassXC, which had locked since
+  06:20 (every Secret Service collection `Locked`, the ssh agent empty,
+  `gh` waiting on the keyring). Meanwhile, unsigned: `just release-check`
+  green (4,244 tests, smoke, a11y, the engines, every bench budget), the
+  AppImage, Debian, Ubuntu, Fedora, Windows and macOS packages green;
+  Arch's second check found the HEIF helper not working, its libheif not
+  among the libraries the check installs (since f0a38b2e): 67f6dbcc.
+- **release-build** once KeePassXC was unlocked (10:50–12:44): green
+  throughout; Fedora's `.rpm` files signed by the repositories' key and
+  read back by Fedora's rpm with `skwir.asc` alone; the AppImage's check
+  plays a film kept on its side upright. `just release-verify v0.6.1`:
+  44 files, 1.1 GB; AppImage 214 MB, tarball 231 MB (0.6.0: 204, 220).
+- **Pushed** main (f280442b..67f6dbcc) and v0.6.1; `just release-upload
+  v0.6.1` made the draft: 44 assets, its notes 2.0 KB. The user asked
+  that the draft thank PR #14's author: its Italian line edited on the
+  draft (`gh release edit v0.6.1 --notes-file`, still a draft, its 44
+  assets kept), and the same thanks in CHANGELOG.md with this record
+  (the tag's copy keeps the line without it).
+- **Not run**: `just idle-pss` (the user's display); a manual try of the
+  AppImage on the user's desktop.
+- **After the user published it** (11:48 UTC, 44 assets, Latest):
+  skwir-site's own session made the site's commits (its manifest the
+  bundle's, `pnpm sync-docs`, `pnpm sync-l10n` with Italian live,
+  `importantSince` 0.6.1 for the phone's swap that lost a file); `just
+  repositories v0.6.1` wrote the apt and dnf indexes there (skwir-site
+  d1f9db1: every package 0.6.1-1, `skwir-heif` among them, signed by the
+  repositories' key, checked by that session against `skwir.asc` and the
+  bundle's checksums); `just winget v0.6.1` made the three manifests;
+  `just aur-prepare` and `just aur-publish v0.6.1` (the user's AUR key):
+  skwir 99ad7e9, skwir-bin 1c51667, skwir-git 5304da3, `libheif` among
+  the build and optional dependencies.
+- **Left to the user**: push skwir-site's main (and deploy it), the
+  winget pull request, a try of the AppImage on their desktop, `just
+  idle-pss`.

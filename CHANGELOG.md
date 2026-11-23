@@ -20,8 +20,8 @@ with it, phone films play upright, and the window speaks Italian, as a draft.
   back, whoever mounted it. Skwir holds nothing open on a drive you can
   unplug, so an unmount is not refused because of a folder it shows.
 - **Phone films play upright**, as their thumbnails show them.
-- **Italian** (#14), as a draft, in the window, the desktop entry and the
-  software centre's page.
+- **Italian**, as a draft, in the window, the desktop entry and the software
+  centre's page: thanks to @M0Rf30 for it (#14).
 - **A file dialog keeps the size you drag it to** on tiling compositors.
 - **Plasma's Qt colors and fonts outside Plasma** (`QT_QPA_PLATFORMTHEME=kde`).
 
@@ -77,7 +77,7 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.6.0.
 - **Phone films play upright**: a film stored on its side with a rotation
   (a phone's display matrix) is turned as it says, as its thumbnail and
   poster already were, in all eight orientations.
-- **Italian** (#14, a contributor's draft): every message, the desktop
+- **Italian** (#14, drafted by @M0Rf30, thank you): every message, the desktop
   entry and the AppStream page, offered as a draft; `docs/glossary-it.md`
   holds its terms. A translation now keeps a number joined to its unit
   where the English does (`just words --check` refuses one that parts them).
