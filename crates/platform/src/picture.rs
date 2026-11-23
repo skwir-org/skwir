@@ -1323,7 +1323,8 @@ mod tests {
     }
 
     /// A region of a JPEG past its bound is cut from the rows it needs: as
-    /// the whole decoded and cut, and so wherever it lies, turned or not.
+    /// the whole decoded and cut, wherever it lies (a turned one's, from
+    /// its rows as stored: `a_region_is_the_whole_at_its_scale_cut`).
     #[test]
     fn a_jpeg_region_is_cut_from_its_rows_alone() {
         let bytes = std::fs::read(

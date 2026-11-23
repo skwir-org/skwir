@@ -5164,7 +5164,8 @@ impl Shell {
                 self.preview.picture_side = 0;
                 self.preview.cancel = Some(ahead.cancel);
                 self.preview.phase = PreviewPhase::Loading;
-                // Its eighth, decoded already, stands for it at once.
+                // Its eighth, decoded already, stands for it: shown as any
+                // stand-in is, once the wait has lasted (`placeholder`).
                 if let Some(content) = stand {
                     let result = PreviewResult {
                         generation,

@@ -118,8 +118,8 @@ same changes.
   thumbnails, a comic's pages and print's contact sheets, many at once
   and one decode a scheduler worker already, decode on their own thread,
   which leaves room for listings and previews; the preview's own decodes
-  (shown and read ahead, which take turns), waited for alone, keep a
-  thread a component. A scale says nothing of who waits: a web picture
+  (the picture shown, the one read ahead and a zoom's, each in a turn of
+  its own, at most three at once) keep a thread a component. A scale says nothing of who waits: a web picture
   of 800 pixels is decoded at a half for its thumbnail, a photo of
   8192 at a quarter for the preview.
   - **Measured** on a standard JPEG of 5464×8192, release, against the

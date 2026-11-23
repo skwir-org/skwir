@@ -98,16 +98,18 @@ Measured in release on synthetic photos of about three bits a pixel
    region covers as stored (`picture::jpeg_band`, `vendor/jpeg-decoder`'s
    0006): those above are entropy-decoded and never transformed, those
    below never read, so a region at the top of a 45-megapixel photo holds
-   its rows, never the 134 MB of the whole. Any other picture is decoded
-   whole for it.
+   its rows, never the 134 MB of the whole. A JPEG XL's groups and a
+   HEIF's tiles are read for it alone (ADR-148 amended); any other
+   picture is decoded whole for it.
 6. **Something sooner**: a progressive JPEG shows its eighth first (its
    DC scans, 9 to 17 ms for 24 to 45 megapixels), as the stand-in a
    thumbnail is; while stepping, a picture whose cheaper scale is at most
    a tenth short of its room's side is decoded at that scale
    (`Cover::Quick`), and at its side once the walk has rested on it
    600 ms (`settle_picture`). A picture read ahead keeps its eighth too
-   (`AheadSlot::Decoding`): a step that takes it while it decodes shows
-   the eighth at once, or as it comes.
+   (`AheadSlot::Decoding`): a step that takes it while it decodes has
+   the eighth for its stand-in, at once or as it comes, shown as any
+   stand-in once the wait has lasted (`BUSY_AFTER`).
 7. **Read ahead and kept**: the next picture is read ahead from the first
    picture shown, the way the last step went (forward before any), not
    after two steps alike; the last two pictures shown fitted in their

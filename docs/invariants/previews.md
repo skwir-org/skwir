@@ -305,7 +305,9 @@ A name that says nothing is not a binary file.
   picture decoded at the least reduced scale covering it, a JPEG's rows
   the region covers as stored alone (`picture::jpeg_band`,
   `jpeg_decoder::Decoder::set_rows`, which returns exactly the rows a
-  whole decode draws), any other whole; the region alone cut, turned and
+  whole decode draws), a JPEG XL's groups and a HEIF's tiles it covers
+  alone (`picture::Regional`, ADR-148 amended), any other picture whole;
+  the region alone cut, turned and
   shrunk) and drawn over the whole in its place (`preview::Detail`,
   `picture`). Over a picture that lets what is behind it through (its
   `ink`), the whole is drawn round the region, never under it
@@ -374,8 +376,10 @@ A name that says nothing is not a binary file.
   the frame the step is, and one still decoding is adopted as the step's
   request (`AheadSlot::Adopted`), never decoded twice. A progressive
   JPEG's eighth decoded meanwhile is kept in its slot
-  (`AheadSlot::Decoding`) and shown as the stand-in at once when the step
-  takes it, or sent the adopter's way as it comes. Its decode has a turn
+  (`AheadSlot::Decoding`) and is the stand-in when the step takes it,
+  or is sent the adopter's way as it comes: shown, as any stand-in, once
+  the wait has lasted `BUSY_AFTER` (at once while the panel already
+  waited, as when an arrow is held). Its decode has a turn
   of its own (`Turn::Ahead`): a guess the step proves wrong never keeps
   the step waiting, and at most three pictures decode at once (the
   preview's, the one read ahead, a zoom's).
