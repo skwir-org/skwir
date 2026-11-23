@@ -3687,10 +3687,14 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   an index names, which the tag hints take too; plocate's `Index`, its
   rule kept (`/`, the whole search name substrings), as of a time read
   once it answered; the footer's "up to date" and "checked …"; `entries`'
-  `index`, `as_of` as it was. Left: sizes and times are not yet asked of
-  an index (a link's are its target's, which an index does not hold); the
-  tags index's coverage (`HintProvider::covers`) said in the same words;
-  a screen reader reading the new footer words; a search in a window.
+  `index`, `as_of` as it was. What it left goes where it can be done
+  (the user's choice, 2026-11-23): a search in a window and a screen
+  reader reading the new footer words at the end of B, when skwird can
+  say them; sizes and times asked of an index with D's "recently
+  changed" (a link's are its target's, which skwird is to be asked
+  about); the tags index's coverage (`HintProvider::covers`) in the same
+  words with D's "tags index's checks"; `release-check` before the next
+  release.
 - **B. The skwird plugin** (ADR-150, 3), speaking protocol 0 through the
   copied client. It finds a system service, then a user's, then starts
   skwird on demand where it is installed.
@@ -3729,6 +3733,9 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     (`Find.socket`: `connect` asks the system service's
     `/run/skwird/socket` first, which the test folders do not move), a
     silent fake for a search stopped while the engine says nothing.
+  - **At its end** (from A): a search in a window through a real skwird
+    engine, its footer saying "up to date" or "checked …", plocate's
+    "as of" for `/` checked again, and a screen reader reading them.
 - **C. plocate as of its time.** A search of `/` that plocate answers
   says when its database was last updated. **Built 2026-10-20**
   (ADR-050's amendment): a listing keeps what its answer rests on
@@ -3737,9 +3744,11 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   footer; a real system database (none on the reference machine).
 - **D. Then, each decided on its own:** the address field searching as
   one types, Usage of a tree from skwird's folder totals, "recently
-  changed", the tags index's checks; the harvest's enumeration and its
-  journal (ADR-089, "Indexing and AI" below), through the seam. Usage
-  from folder totals needs a message protocol 0 does not have.
+  changed" (with it, sizes and times asked of an index, A's leftover),
+  the tags index's checks (with them, its coverage said in A's words);
+  the harvest's enumeration and its journal (ADR-089, "Indexing and AI"
+  below), through the seam. Usage from folder totals needs a message
+  protocol 0 does not have.
 - **E. Kept live** (ADR-150, 6): the list on the plugin's settings page
   (Your folders and Bookmarks followed, each switched; Added by you;
   rows ticked, a followed row unticked kept by its path), each row's
