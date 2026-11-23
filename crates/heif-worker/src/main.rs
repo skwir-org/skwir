@@ -6,10 +6,12 @@
 //! picture's width, height and whether it has an alpha channel, as it is
 //! shown (turned, mirrored and cropped as the file says), without decoding
 //! it, then the size of the thumbnail it carries (`0 0` for none, or one
-//! `thumbnail` would not give). Every mode refuses a picture of more than `most` pixels as shown,
-//! before decoding anything of it; libheif's own bound on its sides is
-//! never lowered (before 1.19 it bounds each side, and a panorama wider
-//! than the square of `most` is within it).
+//! `thumbnail` would not give). Every mode refuses a picture of more than
+//! `most` pixels as shown or as stored (before it is cropped), before
+//! decoding anything of it; libheif bounds the rest of what it reads, the
+//! tiles included, by `most` too, a tile's sides no more than its
+//! picture's where a libheif before 1.19 bounds sides rather than areas
+//! (`Picture::open`).
 //! `skwir-heif-worker <input> <output> decode <most>` decodes it, at most
 //! `most` pixels, to `output`: its rows of 8-bit RGB or RGBA packed, and
 //! prints the same line. `… region <most> <x> <y> <width> <height>`
@@ -113,7 +115,10 @@ unsafe extern "C" {
         handle: *mut *mut Handle,
     ) -> Error;
     fn heif_image_handle_release(handle: *const Handle);
+    fn heif_get_version_number() -> u32;
     fn heif_image_handle_get_width(handle: *const Handle) -> c_int;
+    fn heif_image_handle_get_ispe_width(handle: *const Handle) -> c_int;
+    fn heif_image_handle_get_ispe_height(handle: *const Handle) -> c_int;
     fn heif_image_handle_get_height(handle: *const Handle) -> c_int;
     fn heif_image_handle_has_alpha_channel(handle: *const Handle) -> c_int;
     fn heif_image_handle_get_number_of_thumbnails(handle: *const Handle) -> c_int;
@@ -322,6 +327,9 @@ type Pixels = (Vec<u8>, u32, u32, bool);
 /// The side libheif bounds a picture by unless told otherwise (32 768,
 /// `MAX_IMAGE_WIDTH` before 1.19, the square root of its pixels since).
 const LIBHEIF_SIDE: c_int = 32_768;
+/// The first libheif whose bound is an area (1.19), as
+/// `heif_get_version_number` says it: before, it bounds each side.
+const AREA_SINCE: u32 = 0x0113_0000;
 
 /// Refused where `width` × `height` is more than `most` pixels.
 fn within(width: u32, height: u32, most: u64) -> anyhow::Result<()> {
@@ -340,9 +348,43 @@ struct Picture {
 
 impl Picture {
     /// The primary picture of `path`, refused past `most` pixels as it is
-    /// shown, before anything of it is decoded.
+    /// shown and as it is stored (before it is turned and cropped: a file
+    /// may store 30 000 × 30 000 pixels, in a few kilobytes of tiles, and
+    /// show 100 × 100 of them), before anything of it is decoded.
+    ///
+    /// libheif is told what it refuses besides, before it reads anything
+    /// (`side`): since 1.19 the area of every picture the file holds, its
+    /// tiles included, so `most`'s square; before, each side of each, so
+    /// the larger of `most`'s square's and the picture's own sides, read
+    /// once at libheif's own bound (32 768) and the file read again: a
+    /// panorama 16 000 pixels wide, within `most`, is read, and a tile is
+    /// never wider or taller than its picture or that square.
     fn open(path: &Path, most: u64) -> anyhow::Result<Picture> {
         let path = CString::new(path.as_os_str().as_encoded_bytes())?;
+        // The side of the least square of at least `most` pixels: libheif
+        // since 1.19 bounds the area by its square, which is then never
+        // less than `most` (its own bound, `within`, is exact).
+        let side = most.isqrt() + u64::from(most.isqrt() * most.isqrt() < most);
+        let square = c_int::try_from(side).unwrap_or(c_int::MAX);
+        // SAFETY: a plain number, asked of the library linked.
+        if unsafe { heif_get_version_number() } >= AREA_SINCE {
+            return Picture::read(&path, square, most);
+        }
+        let first = Picture::read(&path, LIBHEIF_SIDE, most)?;
+        let (width, height) = first.stored();
+        let side = c_int::try_from(width.max(height))
+            .unwrap_or(c_int::MAX)
+            .max(square);
+        if side >= LIBHEIF_SIDE {
+            return Ok(first);
+        }
+        drop(first);
+        Picture::read(&path, side, most)
+    }
+
+    /// The primary picture of `path`, libheif bounding what it reads by
+    /// `side`, refused past `most` pixels as shown and as stored.
+    fn read(path: &CString, side: c_int, most: u64) -> anyhow::Result<Picture> {
         // SAFETY: a fresh context, owned by the `Picture` from here.
         let context = unsafe { heif_context_alloc() };
         anyhow::ensure!(!context.is_null(), "libheif made no context");
@@ -350,13 +392,6 @@ impl Picture {
             context,
             handle: std::ptr::null_mut(),
         };
-        // What libheif refuses besides, never less than its own default: a
-        // libheif before 1.19 bounds each side by it, not the area, and a
-        // panorama 16 000 pixels wide is within `most`. The area is
-        // `most`'s, asked below.
-        let side = c_int::try_from(most.isqrt())
-            .unwrap_or(c_int::MAX)
-            .max(LIBHEIF_SIDE);
         // SAFETY: the context is valid; the path a C string for the call.
         unsafe {
             heif_context_set_maximum_image_size_limit(picture.context, side);
@@ -372,7 +407,20 @@ impl Picture {
         }
         let (width, height, _) = picture.size();
         within(width, height, most)?;
+        let (width, height) = picture.stored();
+        within(width, height, most)?;
         Ok(picture)
+    }
+
+    /// Its size as stored, before it is turned or cropped (its `ispe`).
+    fn stored(&self) -> (u32, u32) {
+        // SAFETY: the handle is valid while `self` is.
+        unsafe {
+            (
+                u32::try_from(heif_image_handle_get_ispe_width(self.handle)).unwrap_or(0),
+                u32::try_from(heif_image_handle_get_ispe_height(self.handle)).unwrap_or(0),
+            )
+        }
     }
 
     /// Its size as shown, and whether it has an alpha channel.

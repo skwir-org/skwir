@@ -154,6 +154,35 @@ fn a_picture_larger_than_asked_is_refused_by_its_area() {
     }
 }
 
+/// A picture is refused by what it stores, not only by what it shows: a
+/// HEIC of 96 × 64 cropped to its centre's 48 × 32 (`clap`) is refused at
+/// 6143 pixels in every mode, though what it shows is 1536.
+#[test]
+fn a_picture_is_refused_by_what_it_stores_not_what_it_shows() {
+    assert_eq!(
+        said("synthetic-cropped.heic", &["size", "6144"]),
+        "48 32 0 0 0"
+    );
+    for mode in [
+        vec!["size", "6143"],
+        vec!["decode", "6143"],
+        vec!["thumbnail", "6143"],
+        vec!["region", "6143", "0", "0", "10", "10"],
+    ] {
+        // Tests run from a console: no console window to keep away.
+        #[allow(clippy::disallowed_methods)]
+        let ran = std::process::Command::new(env!("CARGO_BIN_EXE_skwir-heif-worker"))
+            .arg(fixture("synthetic-cropped.heic"))
+            .arg("/dev/null")
+            .args(&mode)
+            .output()
+            .unwrap();
+        assert!(!ran.status.success(), "{mode:?}");
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert!(said.contains("larger than asked"), "{mode:?}: {said}");
+    }
+}
+
 /// How far two pictures of one size differ: the pixels whose channels
 /// differ by more than 3, of every pixel.
 fn differing(a: &image::RgbImage, b: &image::RgbImage) -> (usize, usize) {
