@@ -1296,8 +1296,8 @@ fn not_unmounted(name: Name, error: anyhow::Error) -> Words {
     )
 }
 
-/// How long a forced unmount waits for the actions it cancelled to end
-/// (`cut_or_refuse`): a copy stops within the file it copies.
+/// How long an unmount waits for Skwir's own actions there to stop, once
+/// cancelled (`wait_cut`): a copy stops within the file it copies.
 const CUT: Duration = Duration::from_secs(10);
 
 /// Skwir's own actions under way on the volume at `point`, before Skwir
@@ -1305,22 +1305,23 @@ const CUT: Duration = Duration::from_secs(10);
 /// open there, so the system would refuse the unmount as busy, and say
 /// another program holds it. Named and refused; with `force` (an agent's,
 /// a script's), cancelled as Cancel stops them, those running after the
-/// file they are at. How many were cancelled, for the unmount to wait
-/// for them (`wait_cut`).
-fn cut_or_refuse(app: &App, point: &Path, force: bool) -> anyhow::Result<usize> {
+/// file they are at; the unmount waits for them to stop (`wait_cut`).
+fn cut_or_refuse(app: &App, point: &Path, force: bool) -> anyhow::Result<()> {
     if force {
-        return Ok(app.executor.cancel_under(point));
+        app.executor.cancel_under(point);
+        return Ok(());
     }
     app.executor
         .refuse_under_way(point)
-        .map_err(|error| anyhow::Error::from(not_unmounted(Name::of(point), error)))?;
-    Ok(0)
+        .map_err(|error| anyhow::Error::from(not_unmounted(Name::of(point), error)))
 }
 
 /// Wait, on a worker, until no action of Skwir's runs at or below `point`
 /// any more, cancelled or not (`Executor::runs_in`: one cancelled holds its
 /// files until it stops), or [`CUT`] passed, or `lifetime` ended: what
-/// `cut_or_refuse` cancelled lets go of its files.
+/// `cut_or_refuse` cancelled lets go of its files, and so does what the
+/// user cancelled a moment before (a copy's Cancel), which refuses
+/// nothing. At once where nothing runs.
 fn wait_cut(app: &App, point: &Path, lifetime: Option<&CancelToken>) {
     let deadline = std::time::Instant::now() + CUT;
     while app.executor.runs_in(point)
@@ -2106,7 +2107,7 @@ impl Plugin for PlacesPlugin {
                 // Skwir's own work there is named, not cut, unless asked
                 // (an agent's, a script's `force`): the system would refuse
                 // the unmount as busy all the same.
-                let cut = cut_or_refuse(app, &mount.path, args.force)?;
+                cut_or_refuse(app, &mount.path, args.force)?;
                 let this = places.clone();
                 let location = Location::from_path(&mount.path);
                 places.start_busy_as(
@@ -2121,19 +2122,20 @@ impl Plugin for PlacesPlugin {
                 // Nothing of skwir's may hold the volume: what shows it
                 // stays, reading it by its path, and says so once it is
                 // unmounted (ADR-149, amended).
-                let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
-                app.release(&mount.path, &Location::from_path(home))?;
+                let home = Location::from_path(
+                    skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/")),
+                );
+                app.release(&mount.path, &home)?;
                 let lifetime = places.lifetime();
                 places.spawn(app, "places-unmount", move |app| {
                     use skwir_core::app::NotifyLevel;
                     // A volume the user mounted is called by its folder's
                     // name, its label as written.
                     let named = || Name::of(&mount.path);
-                    // What `force` cancelled ends first: it holds files
-                    // there until then.
-                    if cut > 0 {
-                        wait_cut(app, &mount.path, lifetime.as_ref());
-                    }
+                    // What was cancelled there ends first, by `force` or
+                    // by the user a moment before: it holds files there
+                    // until then.
+                    wait_cut(app, &mount.path, lifetime.as_ref());
                     // Written first, while still mounted: the row stays busy
                     // until the drive has it all, and a write that fails is
                     // reported instead of lost.
@@ -2150,6 +2152,13 @@ impl Plugin for PlacesPlugin {
                             ),
                         );
                         return;
+                    }
+                    // The windows let go of what shows a file there for
+                    // `LETTING_GO` from `release` on, which the wait and
+                    // the flush may outlast: let go of again as udisks is
+                    // asked, so its tries meet nothing of Skwir's there.
+                    if let Err(error) = app.release(&mount.path, &home) {
+                        tracing::debug!("not let go of again before its unmount: {error:#}");
                     }
                     let deadline = std::time::Instant::now() + RELEASE;
                     let unmounted = loop {
@@ -3243,7 +3252,7 @@ mod tests {
         assert!(!app.executor.under_way_in(&drive).is_empty());
         // Forced: cancelled, no longer named at once, and over once waited
         // for, holding nothing there: the plan has ended.
-        assert!(cut_or_refuse(&app, &drive, true).unwrap() > 0);
+        cut_or_refuse(&app, &drive, true).unwrap();
         assert!(app.executor.under_way_in(&drive).is_empty(), "named still");
         let lifetime = CancelToken::new();
         wait_cut(&app, &drive, Some(&lifetime));
@@ -3255,8 +3264,14 @@ mod tests {
         }
         let copied = std::fs::read_dir(&drive).unwrap().count();
         assert!(copied < names.len(), "stopped before the end: {copied}");
-        // Nothing under way: nothing to refuse or cut.
-        assert_eq!(cut_or_refuse(&app, &drive, false).unwrap(), 0);
+        // Nothing under way: nothing to refuse or cut, nothing to wait for.
+        cut_or_refuse(&app, &drive, false).unwrap();
+        let waited = std::time::Instant::now();
+        wait_cut(&app, &drive, Some(&lifetime));
+        assert!(
+            waited.elapsed() < Duration::from_secs(1),
+            "waited for nothing"
+        );
     }
 
     /// Asked from anywhere but the window (a script, an agent), Forget
