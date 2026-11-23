@@ -1718,9 +1718,6 @@ mod tests {
         }
     }
 
-    /// A path's volume is the deepest mount above it, told by its text
-    /// alone from the table in memory: nothing is read of the path.
-    #[cfg(target_os = "linux")]
     /// What is mounted on demand is told by the table alone, as it stands
     /// in memory: a share mounted on an automount point, one an indirect
     /// map mounted below its point (listed still, a moment after the
@@ -1782,6 +1779,9 @@ mod tests {
         assert!(!on_demand_in(&[], Path::new("/net/host")));
     }
 
+    /// A path's volume is the deepest mount above it, told by its text
+    /// alone from the table in memory: nothing is read of the path.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_path_s_volume_is_the_deepest_mount_above_it() {
         use std::path::Path;
