@@ -1,5 +1,103 @@
 # Changes
 
+## 0.6.1 (2026-11-23)
+
+Skwir 0.6.1 shows pictures sharp at every zoom and reads JPEG XL, HEIC, AVIF
+and camera raw files itself. A folder whose drive or server goes comes back
+with it, phone films play upright, and the window speaks Italian, as a draft.
+
+[Installation instructions](README.md#installing)
+
+- **Pictures sharp at every zoom, and quick to step through**: each is decoded
+  for the pixels it covers, the next one read ahead and the last two kept; a
+  tall or very large picture stays sharp zoomed in.
+- **JPEG XL, HEIC, AVIF and raw files**: JPEG XL read by Skwir itself; HEIC
+  and AVIF with the new `skwir-heif` package (`libheif` on Arch; the AppImage
+  carries its own); a camera's raw file by the full-size photo it carries.
+- **Comic and PDF pages zoomed in are drawn sharp**, however tall the page.
+- **A folder comes back with its drive or server**: its pane says the drive
+  went, with Mount, Unlock or Connect, and shows the folder again once it is
+  back, whoever mounted it. Skwir holds nothing open on a drive you can
+  unplug, so an unmount is not refused because of a folder it shows.
+- **Phone films play upright**, as their thumbnails show them.
+- **Italian** (#14), as a draft, in the window, the desktop entry and the
+  software centre's page.
+- **A file dialog keeps the size you drag it to** on tiling compositors.
+- **Plasma's Qt colors and fonts outside Plasma** (`QT_QPA_PLATFORMTHEME=kde`).
+
+**Changed from 0.6.0**: Skwir's Eject and Disconnect leave the panes where
+they are, with Mount or Connect, where 0.6.0 sent them home; on an Italian
+system the window speaks its draft; JPEG XL needs no ImageMagick.
+
+**Windows and macOS builds to try** come with this release too. They are made
+on Linux and have never run on either system: please [try them and tell us what
+happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.6.0.
+
+### All changes
+
+- **A picture is held at the pixels it covers** (ADR-146): the preview decodes
+  a picture for the device pixels it covers, at the cheapest scale its decoder
+  offers, and shrinks it once; a picture larger than the bound (16.7 million
+  pixels) is decoded whole at the bound, and the part shown is decoded again
+  sharp when zoomed in, a JPEG's rows alone; one larger than the graphics
+  card's largest texture is drawn in pieces. A progressive JPEG shows a first
+  view, its eighth, while it decodes. Stepping through pictures shows one up
+  to a tenth short at once and sharpens it when the steps stop; the next
+  picture is read ahead from the first step, and the last two are kept for a
+  minute.
+- **Pictures Skwir reads itself** (ADR-148): JPEG XL through jxl-oxide, in
+  bands and regions, its eighth read alone for a first view; HEIC and AVIF
+  through a new optional helper, `skwir-heif` (libheif, libde265, dav1d;
+  LGPL), from their tiles where zoomed in and their own thumbnail first, in
+  the Debian, Ubuntu and Fedora packages (HEIC on Fedora needs RPM Fusion's
+  `libheif-freeworld`), Arch's `skwir` with `libheif`, the Nix package and
+  the AppImage; a camera's raw file (Nikon, Canon CR2 and CR3, Sony, DNG,
+  Pentax, Samsung, Panasonic, Fujifilm) by the full-size JPEG it carries,
+  turned as the camera says. A raw file that carries none, and HEIC where the
+  helper cannot run, go to the thumbnailers and ImageMagick as before.
+  Windows and macOS show these by their thumbnails still.
+- **A page shows what it covers** (ADR-147): a comic's, a PDF's or a DjVu's
+  page zoomed past its whole is drawn by its engine only where it shows,
+  plus a margin, so text stays sharp at 400 % on a dense screen and a very
+  tall page (a webtoon) opens.
+- **A folder comes back with its volume** (ADR-149): a pane whose drive is
+  unmounted or removed, or whose server is disconnected, says so in place of
+  its files, with Mount (Unlock for a locked drive, Connect for a server) and
+  Go Home, and shows the folder again once the volume is back, mounted by
+  Skwir or by any other program (on Windows, as the window comes to the
+  front). Skwir's own Eject and Disconnect leave the panes there too. A
+  folder on a drive you can unplug, or on a server, is read by its path and
+  never held open between reads, so another program's unmount is not refused
+  because of it; when GNOME or KDE asks to unmount one, Skwir first lets go of
+  what it previews, plays or keeps the terminal in there, and names a copy of
+  its own still under way, with Cancel. An sshfs server whose connection is
+  lost says so as a folder of it fails, with Connect above the files still
+  shown. A folder behind an automount that expires while unused stays shown.
+  On Windows a folder shown still holds its drive (its watch).
+- **Phone films play upright**: a film stored on its side with a rotation
+  (a phone's display matrix) is turned as it says, as its thumbnail and
+  poster already were, in all eight orientations.
+- **Italian** (#14, a contributor's draft): every message, the desktop
+  entry and the AppStream page, offered as a draft; `docs/glossary-it.md`
+  holds its terms. A translation now keeps a number joined to its unit
+  where the English does (`just words --check` refuses one that parts them).
+- **A dialog keeps the size it is dragged to** on tiling compositors that
+  tell a window it is being resized (tried on Sway; ADR-144, gpui 0091).
+- **Plasma's Qt theme outside Plasma** (ADR-071): with
+  `QT_QPA_PLATFORMTHEME=kde` (Mandara, Noctalia, Dux Shell), Skwir takes the
+  colors and fonts Plasma's Qt theme gives every Qt application.
+- **Group headings**: a group folded or opened at the top keeps its heading
+  in view, and a pinned heading under the pointer stays opaque.
+- **Dates**: now is taken in the user's zone wherever a moment is said
+  (Today, Yesterday, a trashed file's date).
+- **A phone's files are never lost to a swap**: on a phone reached through
+  KDE's kmtpd, exchanging two names (Skwir's Swap in a plan, `mv
+  --exchange`) deleted one of the files and said it was done, since 0.3.0;
+  it is refused now, both files as they were.
+- **Dependencies** at their newest releases (jiff 1.0, rusqlite 0.43, gix
+  0.91, lopdf 0.47, djvu-rs 0.46, pdfium-render 0.9.6, among 219), url 2.5.9
+  for RUSTSEC-2026-0592.
+
 ## 0.6.0 (2026-11-21)
 
 Skwir 0.6.0 speaks French and Simplified Chinese, as drafts to review, and
