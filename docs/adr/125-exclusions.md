@@ -5,7 +5,8 @@ Status: accepted 2026-11-08 with the user, from issue #6 (a tagged
 Windows compiled only. Replaces the private folders' list of ADR-044
 (`privacy.folders`, `privacy.marker`, read on as a 0.3.1 file's) and
 ADR-092's `extract.exclude` (the Index role); amends ADR-026 (what a
-search's walk does not reach). Amended 2026-11-12 (see Amendments: the
+search's walk does not reach). Amended 2026-11-23 (14: a snapshot by
+what it is). Amended 2026-11-12 (see Amendments: the
 page lists by name).
 
 ## Context
@@ -162,6 +163,18 @@ says nothing to whoever reads it):
    finding, which the filters do too. Privacy's link, and `ui.settings`
    with `role: "agents"` (which the command's arguments now take), bring
    Secrets to the top wherever its name puts it.
+
+2026-11-23, the user's choice (found by skwird's session: a search of `/`
+walked into btrfs snapshot stores, which no entry names):
+
+14. **A snapshot is left out by what it is**, not by a name: a read-only
+   btrfs subvolume below the folder a walk starts at (its folder's inode
+   256, as the listing says it, then btrfs asked whether it is read-only)
+   is passed over as the Searches role passes over a tool store, counted
+   among what the walk left out, walked when searched in and with
+   `excluded:yes` (ADR-150, 5, says the same of skwird's snapshot holes).
+   Every tool's store alike (snapper's `/.snapshots`, timeshift's,
+   btrbk's), and no list to keep. Linux's (btrfs); elsewhere nothing is.
 
 ## Consequences
 

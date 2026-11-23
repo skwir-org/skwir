@@ -3792,10 +3792,12 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   differences sent, what skwird lists that the settings no longer name
   taken back at each connection; dimmed with the system service; the
   command and the context menu's `Keep live for searches` (1xx, beside
-  the bookmarks).
-- **F. `just skwird-check`** (ADR-150, 7): the plugin's tests against a
-  real `skwird` (on the `PATH`, or `SKWIRD`), failing where there is
-  none; into `release-check` once skwird is packaged. B's window check
+  the bookmarks), shown only once a search found a user's engine
+  (ADR-150, 10). On a new Index page (ADR-150, 8), with the switch
+  `skwird.start` (9), naming the Exclusions page and named by it.
+- **F. `just skwird-check`** (ADR-150, 7 and 11): the plugin's tests against a
+  real `skwird` (on the `PATH`, or `SKWIRD`), and the window's check,
+  failing where there is none; into `release-check` once skwird is packaged. B's window check
   is its model: `tools/test/a11y.py`'s window, an engine started with
   `skwird serve --root <fixture>` in the window's own folders (all five:
   runtime, cache, state, config, `HOME`), `SKWIRD_NO_START`, the footer
@@ -3804,8 +3806,9 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   Skwir's own exclusions (`exclusions/builtin.toml`) hold no rule for
   btrfs snapshot stores (snapper's `/.snapshots`, timeshift's,
   btrbk's), and a snapshot is a subvolume, not a mount, so a walk of `/`
-  enters any its user can read. Not decided: a built-in entry, or a rule
-  by what it is (a read-only subvolume, as skwird tells it).
+  enters any its user can read. Decided 2026-11-23 (ADR-125, 14): by
+  what it is, a read-only btrfs subvolume, passed over below the folder
+  searched.
 - **Found on the way** (skwird's session, 2026-11-23, writing its engine's
   tests under Wine): on Windows, std's `Command` gives a child every
   inheritable handle its parent holds, so an engine its client started
@@ -3814,7 +3817,8 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
   `skwir_platform::process::command` (`CREATE_NO_WINDOW` alone): a
   helper that serves for long (a document's, the player's) may so hold
   what `skwir mcp` or a script piping `skwir cmd` reads until its end.
-  Not checked in Skwir yet; not decided.
+  Decided 2026-11-23 (ADR-074 amended): skwir marks its standard
+  handles not inheritable at start.
 
 ---
 

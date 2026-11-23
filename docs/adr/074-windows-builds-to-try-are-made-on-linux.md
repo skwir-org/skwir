@@ -158,3 +158,13 @@ written on Linux and never run.
   console again (`CREATE_NEW_CONSOLE`). Wine shows no console windows:
   the flashing was seen on Windows, by the PR's author; the rest is
   compiled only.
+- 2026-11-23, the user's choice (found by skwird's session, whose
+  engine, started by its client, held the client's standard output on
+  Windows): what skwir starts inherits none of skwir's own standard
+  handles. Windows gives a child every inheritable handle its parent
+  holds, and std's `Command` lets it: started with pipes for its input
+  and output (`skwir mcp`, a script reading `skwir cmd`), skwir would
+  have passed them to every helper, and whoever read skwir's output to
+  its end waited for the last helper to go. At start, skwir marks its
+  standard handles not inheritable (`process::keep_own_handles`); a
+  program asked to share them is given copies by std, as before.

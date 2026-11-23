@@ -11,7 +11,9 @@ asked, a context-menu entry beside the command). Built in part the same
 day: 1, 2, 4 and 5 (`docs/PLAN.md`, step A), sizes and times not yet
 asked of an index (a link's are its target's); then 3, the plugin (step
 B), with no setting yet (the plugin's switch turns it off; Kept live's
-page comes with 6), checked in a window through a real engine. Amends
+page comes with 6), checked in a window through a real engine.
+Amended the same evening (the Index page, steps E and F, the footer's
+words). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 
@@ -147,3 +149,42 @@ ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 - The footer and the status line say live and checked as they say as
   of (ADR-139's messages).
 - Steps: `docs/PLAN.md`, "Names indexed by skwird".
+
+## Amendments
+
+### 2026-11-23, evening: the Index page, and what steps E and F are
+
+The user's answers once steps A and B were built:
+
+8. **An Index page** (`settings::page::INDEX`, the one Phase 7's design
+   names: what is indexed, where, how fresh) holds Kept live (6) and the
+   switch below; Phase 7's settings join it. Pages stay by subject
+   (ADR-072): the Exclusions page stays its own, as its roles cross what
+   indexing is (a walk with no index; agents' privacy), its list says
+   what is kept *out* where Kept live says what is kept current, and its
+   size would bury Kept live. The two are neighbours in the page list
+   and name each other: the Index page says how exclusions reach the
+   index (the Secrets folders kept out of skwird's, tool stores indexed
+   and left out of searches as before) with a link to Exclusions; the
+   Exclusions page says, where Secrets is shown, that its folders are
+   kept out of skwird's index too. Phase 7's Index role stays on the
+   Exclusions page's role picker (ADR-092), linked to from the Index page.
+9. **Starting an engine is a switch** on the Index page, `skwird.start`,
+   on by default, saying what a first start costs (a whole home read,
+   seconds, memory while it builds): off, only an engine already running
+   is asked.
+10. **The menu's `Keep live for searches`** shows only where it does
+    something: once a search this run found a user's engine (never the
+    system service, which keeps every folder live, nor where no engine
+    answers). The Index page's list stays, and says why it does nothing
+    where it does nothing.
+11. **`just skwird-check`** runs both: the plugin's tests against a real
+    engine, and the window's check (a search heard over AT-SPI and seen:
+    checked, live, `/` plocate's), with a real `skwird` from `SKWIRD` or
+    the `PATH`, failing where there is none.
+12. **The footer names the index** (the user asked it be plain that the
+    index is meant, the pane's footer saying more than this): "index up
+    to date", "index checked 15:51", "index as of 15 Jan 2027"; an index
+    whose time cannot be told is named already ("as of plocate's
+    database").
+
