@@ -3014,9 +3014,15 @@ impl Shell {
         // meanwhile, and what was read lets go (a document's helper, what
         // plays), as its file would keep the volume busy (ADR-149). Shown
         // again once that ends where the volume stays.
-        let letting = current
-            .as_ref()
-            .is_some_and(|(_, key, ..)| self.app.letting_go(&key.path));
+        // What is read counts, not only its name: a link here to a file
+        // there is read there.
+        let letting = current.as_ref().is_some_and(|(_, key, ..)| {
+            self.app.letting_go(&key.path)
+                || key
+                    .content
+                    .as_ref()
+                    .is_some_and(|content| self.app.letting_go(&content.path))
+        });
         let current = if letting {
             self.let_ahead_go(window, cx);
             None
