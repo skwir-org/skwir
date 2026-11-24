@@ -17,6 +17,11 @@ m = json.load(sys.stdin)
 members = set(m["workspace_default_members"])
 print(" ".join(sorted(p["name"] for p in m["packages"] if p["id"] in members)))
 ')"
+# A test that fails, then passes when run again, is told FLAKY in the log
+# and fails nothing: Wine now and then crashes as a test program exits,
+# after its tests passed, and its change notices come late when many
+# tests share it. One that fails twice fails the run.
+export NEXTEST_RETRIES="${NEXTEST_RETRIES:-1}"
 failed=""
 for crate in $crates; do
     echo "== $crate"
