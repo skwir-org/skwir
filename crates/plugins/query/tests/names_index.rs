@@ -123,11 +123,22 @@ impl NameIndex for Fake {
     }
     fn open(&self, root: &Path, _: &CancelToken) -> Option<Opened> {
         self.calls.lock().push("open".into());
+        Some(self.session(root))
+    }
+    /// What runs alone, nothing started.
+    fn follow(&self, root: &Path, _: &CancelToken) -> Option<Opened> {
+        self.calls.lock().push("follow".into());
+        self.running.then(|| self.session(root))
+    }
+}
+
+impl Fake {
+    fn session(&self, root: &Path) -> Opened {
         let coverage = match &self.elsewhere {
             Some((below, why)) if root.starts_with(below) => Coverage::not_covered(*why),
             _ => self.coverage.clone(),
         };
-        Some(Opened {
+        Opened {
             coverage,
             session: Box::new(FakeSession {
                 root: self.root.clone(),
@@ -136,7 +147,7 @@ impl NameIndex for Fake {
                 asked: 0,
                 calls: Arc::clone(&self.calls),
             }),
-        })
+        }
     }
 }
 
@@ -586,7 +597,7 @@ fn a_search_shown_as_typed_asks_only_what_answers_at_once() {
         })]
     );
     assert_eq!(*engine_calls.lock(), ["covers"], "never opened");
-    assert_eq!(*located_calls.lock(), ["covers", "open", "query report"]);
+    assert_eq!(*located_calls.lock(), ["covers", "follow", "query report"]);
 
     // Enter: searched as any search is, the engine opened and checked.
     searches.searched(&location);
@@ -616,7 +627,22 @@ fn a_search_shown_as_typed_asks_only_what_answers_at_once() {
     searches.searched(&location);
     assert!(scheduler.wait_idle(Duration::from_secs(10)));
     assert!(open.events().try_iter().next().is_none(), "nothing again");
-    assert_eq!(*calls.lock(), ["covers", "open", "sync", "query report"]);
+    assert_eq!(*calls.lock(), ["covers", "follow", "sync", "query report"]);
+}
+
+/// A search shown as typed that no index answered was walked whole, as
+/// Enter's search walks it: Enter leaves it as it is, taking nothing back
+/// and walking nothing again (ADR-098).
+#[test]
+fn enter_leaves_a_typed_search_walked_whole_as_it_is() {
+    let (_tmp, root) = tree();
+    let (open, scheduler, (searches, location)) = opened(&root, "report", Vec::new(), true);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    let typed = said(&root, "report", &*open);
+    assert!(!typed.found.is_empty(), "the walk found it");
+    searches.searched(&location);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    assert!(open.events().try_iter().next().is_none(), "nothing again");
 }
 
 /// A lens asks of every folder it shows whether it leads to what it

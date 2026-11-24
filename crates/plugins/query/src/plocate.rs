@@ -109,6 +109,11 @@ impl NameIndex for Index {
         })
     }
 
+    /// What runs is its databases: opening starts nothing.
+    fn follow(&self, root: &Path, cancel: &CancelToken) -> Option<Opened> {
+        self.open(root, cancel)
+    }
+
     /// As of its databases' update where it would answer `q`: a search of
     /// `/` whose terms are all name substrings, a database there to read
     /// (a stat; its help, which names it, asked once).

@@ -135,9 +135,9 @@ enum Typing {
     /// prove what an index that cannot answered as of (an engine started,
     /// a check).
     Typed,
-    /// That, answered by an index live, its sync a barrier: what Enter's
-    /// search would answer too.
-    TypedLive,
+    /// That, answered as Enter's search would answer it: by an index live,
+    /// its sync a barrier, or walked whole, no index asked.
+    TypedAnswered,
 }
 
 impl QueryProvider {
@@ -1032,7 +1032,8 @@ impl Shared {
 
     /// Searched as any search is (Enter on it, shown as typed): typed no
     /// longer, so whatever walks it again asks as any search does; walked
-    /// again now unless an index answered it live.
+    /// again now only where an index answered it as Enter's would not
+    /// (`Typing::Typed`: as of, or checked unsynced).
     fn searched(this: &Arc<Self>, location: &Location) {
         let was = std::mem::replace(&mut *this.typing.lock(), Typing::No);
         if was == Typing::Typed {
@@ -1571,6 +1572,14 @@ impl Shared {
             self.left_out(cancel, left_out + walked);
             self.rests_on(cancel, Some(rests_on));
         } else {
+            // Walked whole, as Enter's search answers it too: shown as
+            // typed, Enter leaves it as it is (ADR-098).
+            {
+                let mut typing = self.typing.lock();
+                if *typing == Typing::Typed {
+                    *typing = Typing::TypedAnswered;
+                }
+            }
             let left_out = Self::walk_below(q, &q.root, &below, &considered, &batcher, &deferred);
             self.left_out(cancel, left_out);
             self.rests_on(cancel, None);
@@ -1604,11 +1613,12 @@ impl Shared {
         let typed = *self.typing.lock() != Typing::No;
         let opened = if typed {
             // Shown as its words are typed: the index the address field
-            // found answering at once, which runs (opened, it starts
-            // nothing), asked only that way. Elsewhere, the walk.
+            // found answering at once, asked from what runs alone
+            // (`NameIndex::follow`: an engine gone since is not started
+            // again, nothing sent to it). Elsewhere, the walk.
             typed_index(&self.ctx.names, &asked, cancel)
                 .and_then(|(index, _)| {
-                    let opened = index.open(&real_root, cancel)?;
+                    let opened = index.follow(&real_root, cancel)?;
                     answers_at_once(&*index, &opened.coverage).then(|| skwir_core::names::Asked {
                         index,
                         coverage: opened.coverage,
@@ -1691,7 +1701,7 @@ impl Shared {
             if typed && index.syncs() {
                 let mut typing = self.typing.lock();
                 if *typing == Typing::Typed {
-                    *typing = Typing::TypedLive;
+                    *typing = Typing::TypedAnswered;
                 }
             }
             return Some(Proven {

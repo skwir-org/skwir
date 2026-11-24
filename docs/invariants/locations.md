@@ -333,7 +333,8 @@ and `notes.agree` are core `notes.*` commands.
   lens does not keep by itself shows once a search of it found something
   (`Pane::folders_to_ask`, `registry::LeadsBelow`, ended at its first
   hit; of a names index it asks, as a search shown as typed does, only
-  one answering at once, never opening or syncing one for a folder),
+  one answering at once, from what runs, never opening or syncing one
+  for a folder),
   dimmed as only the way (`Pane::only_leads`, read of the lens's
   test alone, so it does not flicker). What cannot be looked into stands:
   a link, a remote folder (ADR-077), one that cannot be read, a listing
@@ -396,9 +397,12 @@ and `notes.agree` are core `notes.*` commands.
   which shows a search of `/` as typed only where it walks nothing:
   ADR-150, 13). A search shown as typed (`provider::as_typed`) asks only
   the index the field found answering at once (`provider::typed_index`,
-  the rule `answered_at_once` shares), opened as it runs, never synced
-  where that is a check; Enter or F5 searches it as any search unless an
-  index answered it live. Sizes and times stand only where the answer
+  the rule `answered_at_once` shares), from what runs alone
+  (`NameIndex::follow`: an engine gone since is not started again),
+  never synced where that is a check; Enter or F5 searches it again as
+  any search only where an index answered it as that search would not
+  (as of, or checked unsynced): one walked whole or answered live stays
+  as it is (ADR-098). Sizes and times stand only where the answer
   held them live, and `size:` matches no folder (a folder has no size,
   as its sort says). The kernel's mounts below a folder searched are
   named by the rule itself (`Rule::names`, from the mount table in
