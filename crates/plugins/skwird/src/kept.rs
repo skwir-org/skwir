@@ -1274,8 +1274,13 @@ mod tests {
     /// the user chose is saved so.
     #[test]
     fn every_folder_is_named_and_kept_whole() {
-        let plain = PathBuf::from("/h/Documents");
-        assert_eq!(id_of(&plain), "/h/Documents");
+        // Absolute on every system: on Windows, from a drive.
+        let plain = PathBuf::from(if cfg!(windows) {
+            r"C:\h\Documents"
+        } else {
+            "/h/Documents"
+        });
+        assert_eq!(Some(id_of(&plain).as_str()), plain.to_str());
         assert_eq!(path_of_id(&id_of(&plain)).unwrap(), plain);
         assert!(path_of_id("relative/folder").is_err(), "absolute only");
         assert!(
@@ -1361,11 +1366,18 @@ mod tests {
     fn edits_from_the_window_are_kept_in_the_order_made_and_wake_it() {
         let f = fixture(Engines::None);
         skwir_core::scheduler::mark_window_thread(&f.app.scheduler);
+        // Absolute on every system, as the command asks: on Windows, from
+        // a drive.
+        let documents = if cfg!(windows) {
+            r"C:\h\Documents"
+        } else {
+            "/h/Documents"
+        };
         {
             // Asked while another keeps edits: they wait, then are kept.
             let _keeping = f.kept.keeping.lock();
             for n in 0..21 {
-                let args = serde_json::json!({ "id": "/h/Documents", "on": n % 2 == 1 });
+                let args = serde_json::json!({ "id": documents, "on": n % 2 == 1 });
                 f.app
                     .dispatch(&Invocation::with_args("skwird.kept_tick", &args))
                     .unwrap();
@@ -1376,7 +1388,7 @@ mod tests {
         drop(f.kept.keeping.lock());
         assert_eq!(
             Chosen::of(&f.app).off,
-            [PathBuf::from("/h/Documents")],
+            [PathBuf::from(documents)],
             "the last pressed holds"
         );
         assert!(
