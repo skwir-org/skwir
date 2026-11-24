@@ -111,6 +111,12 @@ impl<R: BufRead + Seek> ImageDecoder for Decoder<R> {
             .reader
             .output_line_size(self.size.0)
             .ok_or_else(too_large)?;
+        // A row is held whatever the region is, within what the decode
+        // may hold besides it: `png` measured it against `image`'s own
+        // limits as the picture was opened, never the caller's.
+        if line as u64 > self.held {
+            return Err(too_large());
+        }
         let rows = buf.chunks_exact_mut(across);
         if self.reader.info().interlaced {
             // Decoded whole, then cut: Adam7 spreads every row over seven
@@ -181,4 +187,42 @@ fn broken(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> ImageEr
 /// More than the decode may hold.
 fn too_large() -> ImageError {
     ImageError::Limits(LimitError::from_kind(LimitErrorKind::InsufficientMemory))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::picture::Regional;
+
+    /// What a decode holds besides the region is within the caller's
+    /// limits, the row each row is read into too: a picture a million
+    /// pixels wide holds a row of 4 MB to read a pixel of it.
+    #[test]
+    fn a_row_is_held_within_the_limits() {
+        let width = 1_000_000;
+        let mut png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png, width, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer
+                .write_image_data(&vec![0; width as usize * 4])
+                .unwrap();
+        }
+        let read = |max_alloc: u64| {
+            let mut decoder = Decoder::new(std::io::Cursor::new(&png)).unwrap();
+            decoder.cut([0, 0, 1, 1]);
+            let mut limits = image::Limits::default();
+            limits.max_alloc = Some(max_alloc);
+            decoder.set_limits(limits).unwrap();
+            let mut pixel = [0; 4];
+            decoder.read_image(&mut pixel)
+        };
+        assert!(read(64 << 20).is_ok(), "a row of 4 MB within 64 MB");
+        assert!(
+            matches!(read(1 << 20), Err(ImageError::Limits(_))),
+            "a row of 4 MB beyond 1 MB"
+        );
+    }
 }
