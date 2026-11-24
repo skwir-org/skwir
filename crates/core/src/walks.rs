@@ -371,16 +371,18 @@ mod tests {
     #[test]
     fn names_are_left_out_anywhere_and_paths_where_they_are() {
         let home = crate::os_path::home().unwrap();
-        let left = rule(&[
-            "node_modules",
-            "~/.cargo/registry",
-            "/srv/cache",
-            "cmake-build-*",
-        ]);
+        // A whole path as this system writes one: on Windows, one from `/`
+        // names no drive.
+        let (whole, at) = if cfg!(windows) {
+            ("C:/srv/cache", r"C:\srv\cache")
+        } else {
+            ("/srv/cache", "/srv/cache")
+        };
+        let left = rule(&["node_modules", "~/.cargo/registry", whole, "cmake-build-*"]);
         assert!(left.names(&home.join("work/app's ü/node_modules")));
         assert!(left.names(&home.join(".cargo").join("registry")));
         assert!(!left.names(&home.join(".cargo")), "a path is one folder");
-        assert!(left.names(Path::new("/srv/cache")));
+        assert!(left.names(Path::new(at)));
         assert!(left.names(&home.join("x/cmake-build-debug")));
         assert!(!left.names(&home.join("node_modules.txt/x")));
         assert!(!left.names(&home.join(".config")), "hidden is not left out");

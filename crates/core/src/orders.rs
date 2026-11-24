@@ -634,8 +634,14 @@ mod tests {
         }
     }
 
+    /// `text`, a path written `/a/b`, as this system writes one: what a
+    /// folder moved is joined with is its separator.
+    fn native(text: &str) -> PathBuf {
+        PathBuf::from(text.replace('/', std::path::MAIN_SEPARATOR_STR))
+    }
+
     fn at(path: &str) -> Location {
-        Location::from_path(path)
+        Location::from_path(native(path))
     }
 
     #[test]
@@ -702,7 +708,7 @@ mod tests {
         assert_eq!(read.view_of(&at("/files/a")).as_deref(), Some("grid"));
         assert_eq!(read.of(&at("/files/a")), Some(by_name));
         let mut read = read;
-        read.moved(Path::new("/files/a"), Path::new("/files/b"));
+        read.moved(&native("/files/a"), &native("/files/b"));
         assert_eq!(read.view_of(&at("/files/b")).as_deref(), Some("grid"));
         assert!(read.set(&at("/files/b"), None));
         assert_eq!(read.view_of(&at("/files/b")), None);
@@ -720,31 +726,27 @@ mod tests {
         }
         assert!(orders.follow(&[
             Change::Trash {
-                path: "/files/a".into()
+                path: native("/files/a")
             },
             Change::Trash {
-                path: "/files/d".into()
+                path: native("/files/d")
             },
         ]));
         assert_eq!(
             orders.trashed(),
-            [
-                PathBuf::from("/files/a"),
-                PathBuf::from("/files/a/b"),
-                PathBuf::from("/files/d")
-            ]
+            [native("/files/a"), native("/files/a/b"), native("/files/d")]
         );
         let read = Orders::read(orders.to_value());
         assert_eq!(read.trashed(), orders.trashed(), "written trashed");
         assert!(orders.follow(&[Change::Restore {
-            path: "/files/d".into()
+            path: native("/files/d")
         }]));
         assert_eq!(orders.trashed().len(), 2, "restored: shown again");
         // The trash emptied: the trashed folder is nowhere; one that was
         // never trashed is not forgotten for being gone.
         let found = Emptied {
             back: Vec::new(),
-            gone: vec!["/files/a".into(), "/files/a/b".into(), "/files/c".into()],
+            gone: vec![native("/files/a"), native("/files/a/b"), native("/files/c")],
         };
         assert!(orders.forget_emptied(&found));
         assert_eq!(orders.of(&at("/files/a")), None);
@@ -789,8 +791,8 @@ mod tests {
             orders.set(&at(path), Some(by_date()));
         }
         assert!(orders.follow(&[Change::Rename {
-            from: "/files/a".into(),
-            to: "/files/c".into(),
+            from: native("/files/a"),
+            to: native("/files/c"),
         }]));
         for path in [
             "/files/c",
@@ -804,13 +806,13 @@ mod tests {
         assert_eq!(orders.of(&at("/files/a")), None);
         assert_eq!(orders.of(&at("/files/a/b")), None);
         assert!(!orders.follow(&[Change::Move {
-            from: "/files/nothing".into(),
-            to: "/files/c/nothing".into(),
+            from: native("/files/nothing"),
+            to: native("/files/c/nothing"),
         }]));
         // Undone, it goes back.
         assert!(orders.follow(&[Change::Move {
-            from: "/files/c".into(),
-            to: "/files/a".into(),
+            from: native("/files/c"),
+            to: native("/files/a"),
         }]));
         assert_eq!(orders.of(&at("/files/a/b")), Some(by_date()));
         assert_eq!(orders.len(), 5);
@@ -828,14 +830,14 @@ mod tests {
         orders.set(&at("/files/a"), Some(by_date()));
         orders.set(&at("/files/b/c"), Some(by_name));
         assert!(orders.follow(&[Change::Swap {
-            a: "/files/a".into(),
-            b: "/files/b".into(),
+            a: native("/files/a"),
+            b: native("/files/b"),
         }]));
         assert_eq!(orders.of(&at("/files/b")), Some(by_date()));
         assert_eq!(orders.of(&at("/files/a/c")), Some(by_name));
         assert!(
             orders.follow(&[Change::Trash {
-                path: "/files/b".into()
+                path: native("/files/b")
             }]),
             "said trashed"
         );
@@ -845,7 +847,7 @@ mod tests {
             "kept for the restore"
         );
         assert!(orders.follow(&[Change::Delete {
-            path: "/files/a".into()
+            path: native("/files/a")
         }]));
         assert_eq!(orders.of(&at("/files/a/c")), None);
         assert!(orders.set(&at("/files/b"), None));
