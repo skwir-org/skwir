@@ -963,6 +963,7 @@ impl Plugin for QueryPlugin {
             )),
         );
         // What skwir changed, an open search sees at once.
+        let open_searches = searches.clone();
         app.executor
             .observe(ID, Arc::new(move |changes| searches.changed(changes)));
         // The locale's first weekday is a process away: asked once, on a
@@ -993,7 +994,7 @@ impl Plugin for QueryPlugin {
                 query_search_description = "Search, shown in the pane, the pane's lens added unless `as_is` (ADR-107: the terms of a filter or a search the listing can decide, kept as the pane goes elsewhere until taken off; then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `excluded:yes` in the folders searches leave out (Settings › Exclusions: `node_modules`, caches; never a trash nor a network folder), `depth:2` bounds it. `root` (or `in:`) is where it looks",
                 note = "Read by agents and in F1's list of actions. What is between backticks is written as a search writes it: keep it as it is."
             ),
-            |a, app| {
+            move |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 lang::parse(&a.expr).map_err(query_error)?;
                 let root = match a.root {
@@ -1006,12 +1007,26 @@ impl Plugin for QueryPlugin {
                     None => app.pane_dir(pane).ok(),
                 };
                 let location = location_for(&a.expr, root.as_deref());
-                if a.as_is {
-                    app.navigate_as_is(pane, &location, a.in_place)?;
-                } else if a.in_place {
-                    app.navigate_in_place(pane, &location)?;
-                } else if !app.shows(pane, &location) {
-                    app.navigate(pane, &location)?;
+                if a.in_place {
+                    // Shown as its words are typed: answered as the field
+                    // decided it would be, at once (ADR-150, 13).
+                    provider::as_typed(|| {
+                        if a.as_is {
+                            app.navigate_as_is(pane, &location, true)
+                        } else {
+                            app.navigate_in_place(pane, &location)
+                        }
+                    })?;
+                } else {
+                    if a.as_is {
+                        app.navigate_as_is(pane, &location, false)?;
+                    } else if !app.shows(pane, &location) {
+                        app.navigate(pane, &location)?;
+                    }
+                    // Enter on what its typing showed: searched as any is.
+                    if let Some(shown) = app.pane_location(pane) {
+                        open_searches.searched(&shown);
+                    }
                 }
                 if a.remember && skwir_core::permissions::agent_call().is_none() {
                     field::remember(app, &a.expr, root.as_deref());

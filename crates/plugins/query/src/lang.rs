@@ -2026,6 +2026,14 @@ impl Term {
                 }
             }
             Term::Size { min, max, .. } => {
+                // A folder has no size (`SortKey::Size::applies_to`): what
+                // it opens weighs what it holds, which no stat says and a
+                // names index sums apart (`names::Totals`). Its own bytes
+                // (a block of names) are never matched, by a walk or by
+                // what an index names alike.
+                if matches!(c.opens, Some((EntryKind::Directory, _))) {
+                    return Verdict::No;
+                }
                 let Some(m) = c.metadata else {
                     return Verdict::Unknown;
                 };

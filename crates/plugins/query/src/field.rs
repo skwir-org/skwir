@@ -828,12 +828,12 @@ mod tests {
             disk.scope = Some(Location::from_path(std::path::MAIN_SEPARATOR_STR));
             disk
         };
-        let shown = |names: Proof, syncs: bool, holes: Vec<Hole>, text: &str| {
+        let shown_with = |names: Proof, attrs: Proof, syncs: bool, holes: Vec<Hole>, text: &str| {
             let tmp = tempfile::tempdir().unwrap();
             let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
             let coverage = Coverage {
                 names,
-                attrs: Proof::AsOf { at: None },
+                attrs,
                 holes,
             };
             app.names
@@ -846,6 +846,9 @@ mod tests {
                 .rows[0]
                 .live
                 .is_some()
+        };
+        let shown = |names: Proof, syncs: bool, holes: Vec<Hole>, text: &str| {
+            shown_with(names, Proof::AsOf { at: None }, syncs, holes, text)
         };
         let root = PathBuf::from(std::path::MAIN_SEPARATOR_STR);
         let hole = |at: &str, why| Hole {
@@ -910,6 +913,20 @@ mod tests {
         assert!(
             !shown(live(), true, Vec::new(), "size>1M"),
             "no name to ask"
+        );
+        assert!(
+            shown_with(
+                live(),
+                live(),
+                true,
+                Vec::new(),
+                "size>1M modified>2026-01-01"
+            ),
+            "sizes and times asked of one holding them live"
+        );
+        assert!(
+            !shown_with(live(), Proof::Checked { at }, true, Vec::new(), "size>1M"),
+            "sizes it holds checked only"
         );
         assert!(
             !shown(live(), true, Vec::new(), "content:dunes"),

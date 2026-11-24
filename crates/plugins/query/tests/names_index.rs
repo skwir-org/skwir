@@ -45,6 +45,9 @@ struct Fake {
     synced: Option<Coverage>,
     /// What each query answers, in turn (the last one again after).
     queries: Vec<Said>,
+    /// Whether it runs: what it says it covers without opening
+    /// (`NameIndex::covers`) is its coverage; else nothing.
+    running: bool,
     /// What was asked of it, in order.
     calls: Arc<Mutex<Vec<String>>>,
 }
@@ -59,6 +62,7 @@ impl Fake {
             syncs: true,
             synced: None,
             queries,
+            running: false,
             calls: Arc::default(),
         }
     }
@@ -113,6 +117,10 @@ impl NameIndex for Fake {
     fn syncs(&self) -> bool {
         self.syncs
     }
+    fn covers(&self, _: &Query, _: &CancelToken) -> Option<Coverage> {
+        self.calls.lock().push("covers".into());
+        self.running.then(|| self.coverage.clone())
+    }
     fn open(&self, root: &Path, _: &CancelToken) -> Option<Opened> {
         self.calls.lock().push("open".into());
         let coverage = match &self.elsewhere {
@@ -143,11 +151,29 @@ struct Searched {
 }
 
 fn search(root: &Path, expr: &str, indexes: Vec<Fake>) -> Searched {
+    let (open, scheduler, _) = opened(root, expr, indexes, false);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    said(root, expr, &*open)
+}
+
+/// A search of `expr` opened under `indexes`, shown as its words are typed
+/// if `typed`; and the searches open, as the plugin keeps them.
+fn opened(
+    root: &Path,
+    expr: &str,
+    indexes: Vec<Fake>,
+    typed: bool,
+) -> (
+    Arc<dyn skwir_core::location::OpenLocation>,
+    Scheduler,
+    (Searches, skwir_core::location::Location),
+) {
     let names = NameIndexes::default();
     for index in indexes {
         names.register("test", Arc::new(index));
     }
-    let provider = QueryProvider::new(CancelToken::new(), Searches::default(), Weak::new());
+    let searches = Searches::default();
+    let provider = QueryProvider::new(CancelToken::new(), searches.clone(), Weak::new());
     let scheduler = Scheduler::new(2);
     let ctx = OpenContext {
         scheduler: scheduler.clone(),
@@ -163,8 +189,17 @@ fn search(root: &Path, expr: &str, indexes: Vec<Fake>) -> Searched {
         reads: skwir_core::location::Needs::Nothing,
     };
     let location = skwir_plugin_query::location_for(expr, Some(root));
-    let open = provider.open(&location, ctx).unwrap();
-    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    let open = if typed {
+        skwir_plugin_query::provider::as_typed(|| provider.open(&location, ctx))
+    } else {
+        provider.open(&location, ctx)
+    }
+    .unwrap();
+    (open, scheduler, (searches, location))
+}
+
+/// What `open` said since last asked.
+fn said(root: &Path, expr: &str, open: &dyn skwir_core::location::OpenLocation) -> Searched {
     let mut searched = Searched {
         found: BTreeSet::new(),
         rests_on: Vec::new(),
@@ -506,4 +541,137 @@ fn the_strongest_proof_answers() {
     assert_eq!(indexed.found, set(&["docs/deep/report old.txt"]));
     assert_eq!(indexed.rests_on, rests_on(Proof::Live { since: at() }));
     assert_eq!(*calls.lock(), ["open"], "opened, never asked");
+}
+
+/// Shown as its words are typed (ADR-150, 13), a search asks the index the
+/// address field found answering at once among those that run, and that
+/// one alone: one not running is never opened (opened, it could start an
+/// engine, and its sync be a check of the whole disk at each pause). Enter
+/// then searches as any search does, since what answered could not prove
+/// it; an answer proven live is left as it is.
+#[test]
+fn a_search_shown_as_typed_asks_only_what_answers_at_once() {
+    let (_tmp, root) = tree();
+    let as_of = Coverage::as_of(Some(at()));
+    let mut located = Fake::new(
+        &root,
+        as_of.clone(),
+        vec![Some((vec!["docs/report.pdf"], as_of, false))],
+    );
+    located.by = "a database";
+    located.syncs = false;
+    located.running = true;
+    let checked = proven(Proof::Checked { at: at() }, Vec::new());
+    let mut engine = Fake::new(
+        &root,
+        checked.clone(),
+        vec![Some((
+            vec!["docs/deep/report old.txt"],
+            checked.clone(),
+            false,
+        ))],
+    );
+    engine.synced = Some(checked);
+    let (located_calls, engine_calls) = (Arc::clone(&located.calls), Arc::clone(&engine.calls));
+    let (open, scheduler, (searches, location)) =
+        opened(&root, "report", vec![located, engine], true);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    let typed = said(&root, "report", &*open);
+    assert_eq!(typed.found, set(&["docs/report.pdf"]));
+    assert_eq!(
+        typed.rests_on,
+        [Some(RestsOn {
+            by: Words::as_written("a database"),
+            proof: Proof::AsOf { at: Some(at()) },
+        })]
+    );
+    assert_eq!(*engine_calls.lock(), ["covers"], "never opened");
+    assert_eq!(*located_calls.lock(), ["covers", "open", "query report"]);
+
+    // Enter: searched as any search is, the engine opened and checked.
+    searches.searched(&location);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    let entered = said(&root, "report", &*open);
+    assert_eq!(entered.found, set(&["docs/deep/report old.txt"]));
+    assert_eq!(entered.rests_on, rests_on(Proof::Checked { at: at() }));
+    assert_eq!(
+        *engine_calls.lock(),
+        ["covers", "open", "query report", "sync", "query report"]
+    );
+
+    // Proven live as typed: Enter leaves it as it is.
+    let live = proven(Proof::Live { since: at() }, Vec::new());
+    let mut engine = Fake::new(
+        &root,
+        live.clone(),
+        vec![Some((vec!["docs/report.pdf"], live.clone(), false))],
+    );
+    engine.synced = Some(live);
+    engine.running = true;
+    let calls = Arc::clone(&engine.calls);
+    let (open, scheduler, (searches, location)) = opened(&root, "report", vec![engine], true);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    let typed = said(&root, "report", &*open);
+    assert_eq!(typed.rests_on, rests_on(Proof::Live { since: at() }));
+    searches.searched(&location);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    assert!(open.events().try_iter().next().is_none(), "nothing again");
+    assert_eq!(*calls.lock(), ["covers", "open", "sync", "query report"]);
+}
+
+/// Sizes asked of an index holding them live when the search opened stand
+/// only where it still held them so as it answered: else the walk answers.
+#[test]
+fn sizes_stand_where_the_answer_held_them_live() {
+    let (_tmp, root) = tree();
+    let walked = search(&root, "report size<1M", Vec::new());
+    let both = Coverage {
+        names: Proof::Live { since: at() },
+        attrs: Proof::Live { since: at() },
+        holes: Vec::new(),
+    };
+    let dropped = Coverage {
+        attrs: Proof::AsOf { at: Some(at()) },
+        ..both.clone()
+    };
+    let mut index = Fake::new(
+        &root,
+        both.clone(),
+        vec![Some((vec!["docs/report.pdf"], dropped, false))],
+    );
+    index.synced = Some(both);
+    let indexed = search(&root, "report size<1M", vec![index]);
+    assert_eq!(indexed.found, walked.found, "what the walk finds");
+    assert_eq!(indexed.rests_on, [None], "walked");
+}
+
+/// A folder has no size: `size:` finds none, by a walk or by what an index
+/// names alike.
+#[test]
+fn a_size_finds_no_folder() {
+    let (_tmp, root) = tree();
+    let walked = search(&root, "size<1M", Vec::new());
+    assert!(walked.found.contains("docs/report.pdf"));
+    assert!(
+        !walked.found.iter().any(|f| root.join(f).is_dir()),
+        "{:?}",
+        walked.found
+    );
+    let both = Coverage {
+        names: Proof::Live { since: at() },
+        attrs: Proof::Live { since: at() },
+        holes: Vec::new(),
+    };
+    let mut index = Fake::new(
+        &root,
+        both.clone(),
+        vec![Some((
+            vec!["docs", "docs/deep", "docs/report.pdf"],
+            both.clone(),
+            false,
+        ))],
+    );
+    index.synced = Some(both);
+    let indexed = search(&root, "size<1M", vec![index]);
+    assert_eq!(indexed.found, set(&["docs/report.pdf"]));
 }

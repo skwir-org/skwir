@@ -14,7 +14,7 @@ use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::coverage::{Hole, Proof};
+use skwir_core::coverage::{Coverage, Hole, Proof};
 use skwir_core::entry::{Entry, EntryId, EntryKind};
 use skwir_core::fs::{Dir, Statter, reach};
 use skwir_core::location::{
@@ -83,6 +83,61 @@ impl Searches {
             );
         }
     }
+}
+
+impl Searches {
+    /// `shown` was searched as any search is (Enter, once its words were
+    /// typed): a search of it opened as they were typed is one no longer,
+    /// and asked again unless an index answered it live.
+    pub fn searched(&self, shown: &Location) {
+        let open: Vec<Arc<Shared>> = self
+            .0
+            .lock()
+            .iter()
+            .filter(|(l, _)| l == shown)
+            .filter_map(|(_, s)| s.upgrade())
+            .collect();
+        for shared in open {
+            Shared::searched(&shared, shown);
+        }
+    }
+}
+
+thread_local! {
+    /// Whether what opens a search on this thread now opens one shown as
+    /// its words are typed (`as_typed`).
+    static TYPED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f`, which shows a search as its words are typed (`query.search`'s
+/// `in_place`): the search it opens, on this thread as a pane opens one,
+/// is answered as the address field decided it would be
+/// ([`answered_at_once`]), never otherwise (ADR-150, 13).
+pub fn as_typed<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TYPED.set(self.0);
+        }
+    }
+    let _restore = Restore(TYPED.replace(true));
+    f()
+}
+
+/// How a search was asked (ADR-150, 13).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Typing {
+    /// As any search is: Enter, F5, a script, an agent.
+    No,
+    /// Shown as its words are typed: asked of the index that answers at
+    /// once alone, as it runs now, never synced where that is a check.
+    /// Until proven live, Enter asks again as any search does, which may
+    /// prove what an index that cannot answered as of (an engine started,
+    /// a check).
+    Typed,
+    /// That, answered by an index live, its sync a barrier: what Enter's
+    /// search would answer too.
+    TypedLive,
 }
 
 impl QueryProvider {
@@ -273,7 +328,12 @@ impl LocationProvider for QueryProvider {
             app.upgrade()
                 .map_or_else(|| Arc::new(LeftOut::none()), |app| app.left_out())
         });
-        let open = QueryLocation::open(location.clone(), query, &ctx, &self.lifetime, rule);
+        let typing = if TYPED.get() {
+            Typing::Typed
+        } else {
+            Typing::No
+        };
+        let open = QueryLocation::open(location.clone(), query, &ctx, &self.lifetime, rule, typing);
         let mut searches = self.open.0.lock();
         // The searches closed since are let go of here too, not only when
         // a plan runs: each search typed is one.
@@ -329,6 +389,7 @@ fn leads(words: &str, dir: &Path, ctx: &OpenContext, rule: Rule) -> Option<bool>
         lifetime: ctx.cancel.clone(),
         first: Some(stop.clone()),
         unlooked: AtomicBool::new(false),
+        typing: Mutex::new(Typing::No),
         ctx,
         #[cfg(test)]
         counted: Counted::default(),
@@ -374,6 +435,8 @@ pub struct Shared {
     /// Something below the root was not looked at: a folder that could
     /// not be read, a network mount never entered.
     unlooked: AtomicBool,
+    /// Whether it was shown as its words were typed (ADR-150, 13).
+    typing: Mutex<Typing>,
     /// Rechecks run, results they looked at, and folders whose names were
     /// read for the stores: what the tests count.
     #[cfg(test)]
@@ -840,6 +903,7 @@ impl QueryLocation {
         ctx: &OpenContext,
         plugin: &CancelToken,
         rule: Rule,
+        typing: Typing,
     ) -> Arc<Self> {
         let (tx, rx) = ctx.channel();
         let lifetime = ctx.cancel.linked(plugin);
@@ -855,6 +919,7 @@ impl QueryLocation {
             lifetime,
             first: None,
             unlooked: AtomicBool::new(false),
+            typing: Mutex::new(typing),
             #[cfg(test)]
             counted: Counted::default(),
         });
@@ -960,6 +1025,16 @@ impl Shared {
                 cancel.clone(),
                 move || shared.run(&query, &cancel),
             );
+        }
+    }
+
+    /// Searched as any search is (Enter on it, shown as typed): typed no
+    /// longer, so whatever walks it again asks as any search does; walked
+    /// again now unless an index answered it live.
+    fn searched(this: &Arc<Self>, location: &Location) {
+        let was = std::mem::replace(&mut *this.typing.lock(), Typing::No);
+        if was == Typing::Typed {
+            Shared::rewalk(this, location);
         }
     }
 
@@ -1237,18 +1312,10 @@ pub(crate) fn answered_at_once(app: &App, q: &Query, cancel: &CancelToken) -> bo
     let Some(asked) = q.named(real_root.clone()) else {
         return false;
     };
-    let Some((index, coverage)) = app.names.covers(&asked, cancel).into_iter().next() else {
+    let Some((_, coverage)) = typed_index(&app.names, &asked, cancel) else {
         return false;
     };
-    if asked.as_covered(&coverage).is_none() {
-        return false;
-    }
-    let at_once = if index.syncs() {
-        matches!(coverage.names, Proof::Live { .. })
-    } else {
-        coverage.names.answers()
-    };
-    if !at_once || cancel.is_cancelled() {
+    if cancel.is_cancelled() {
         return false;
     }
     let rule = if q.excluded {
@@ -1258,6 +1325,33 @@ pub(crate) fn answered_at_once(app: &App, q: &Query, cancel: &CancelToken) -> bo
     };
     let below = rule.below(&q.root, true);
     holes_walked(q, &below, &coverage.holes, &real_root).is_empty()
+}
+
+/// Whether `index`, covering a root as `coverage` says, answers a search
+/// at once, with no check before it (ADR-150, 13): live, its sync a
+/// barrier; or one that cannot sync, as of when it is.
+fn answers_at_once(index: &dyn skwir_core::names::NameIndex, coverage: &Coverage) -> bool {
+    if index.syncs() {
+        matches!(coverage.names, Proof::Live { .. })
+    } else {
+        coverage.names.answers()
+    }
+}
+
+/// The index a search of `asked` shown as its words are typed asks, and
+/// how it covers the root: the one a search asks first among those that
+/// run now (`NameIndexes::covers`: nothing started), where it can be
+/// asked `asked` and answers at once; none elsewhere, and the search then
+/// waits for Enter. The one rule the address field decides by
+/// ([`answered_at_once`]) and the search shown runs on (`Shared::named`).
+fn typed_index(
+    names: &skwir_core::names::NameIndexes,
+    asked: &skwir_core::names::Query,
+    cancel: &CancelToken,
+) -> Option<(Arc<dyn skwir_core::names::NameIndex>, Coverage)> {
+    let (index, coverage) = names.covers(asked, cancel).into_iter().next()?;
+    asked.as_covered(&coverage)?;
+    answers_at_once(&*index, &coverage).then_some((index, coverage))
 }
 
 /// What a names index proved of a search (`Shared::named`): what its
@@ -1505,11 +1599,30 @@ impl Shared {
         let real_root = skwir_core::os_path::canonical(&q.root).ok()?;
         let asked = q.named(real_root.clone())?;
         let mut reach = Reach::new(q, &real_root, below);
+        let typed = *self.typing.lock() != Typing::No;
+        let opened = if typed {
+            // Shown as its words are typed: the index the address field
+            // found answering at once, which runs (opened, it starts
+            // nothing), asked only that way. Elsewhere, the walk.
+            typed_index(&self.ctx.names, &asked, cancel)
+                .and_then(|(index, _)| {
+                    let opened = index.open(&real_root, cancel)?;
+                    answers_at_once(&*index, &opened.coverage).then(|| skwir_core::names::Asked {
+                        index,
+                        coverage: opened.coverage,
+                        session: opened.session,
+                    })
+                })
+                .into_iter()
+                .collect()
+        } else {
+            self.ctx.names.open(&real_root, cancel)
+        };
         for skwir_core::names::Asked {
             index,
             coverage,
             mut session,
-        } in self.ctx.names.open(&real_root, cancel)
+        } in opened
         {
             if cancel.is_cancelled() {
                 return None;
@@ -1560,13 +1673,24 @@ impl Shared {
             };
             let answer = answer?;
             // One that can be synced stands proven; one that cannot, as of.
+            // Asked by size or time, it stands only where it still held them
+            // live as it answered: what it left out by them it may not have
+            // seen change (a file rewritten in place after a dropped watch),
+            // and the walk answers instead, as where it never held them.
             let stands = if index.syncs() {
                 answer.coverage.names.proves()
             } else {
                 answer.coverage.names.answers()
-            };
+            } && (asked.size.is_none() && asked.modified.is_none()
+                || matches!(answer.coverage.attrs, Proof::Live { .. }));
             if answer.truncated || !stands || cancel.is_cancelled() {
                 return None;
+            }
+            if typed && index.syncs() {
+                let mut typing = self.typing.lock();
+                if *typing == Typing::Typed {
+                    *typing = Typing::TypedLive;
+                }
             }
             return Some(Proven {
                 rests_on: RestsOn {
@@ -2059,6 +2183,8 @@ impl OpenLocation for QueryLocation {
     }
 
     fn refresh(&self) {
+        // F5 searches as Enter does, whatever its words' typing showed.
+        *self.shared.typing.lock() = Typing::No;
         Shared::rewalk(&self.shared, &self.location);
     }
 
@@ -2102,7 +2228,14 @@ mod tests {
         };
         let query = lang::parse(&location.rest).unwrap();
         let rule: Rule = Arc::new(|| Arc::new(LeftOut::none()));
-        let open = QueryLocation::open(location.clone(), query, &ctx, &CancelToken::new(), rule);
+        let open = QueryLocation::open(
+            location.clone(),
+            query,
+            &ctx,
+            &CancelToken::new(),
+            rule,
+            Typing::No,
+        );
         (open, location)
     }
 
