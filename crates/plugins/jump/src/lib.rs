@@ -735,9 +735,10 @@ struct Known {
 struct Row {
     path: PathBuf,
     /// Whether its row was told what the metadata providers say of it,
-    /// which it keeps under a stat alone (`Listing::upsert`): what a filled
-    /// read left out behind a stat alone begun later is read again where
-    /// it was not, or the row would stay unfilled for good.
+    /// which it keeps under a stat alone (`Listing::upsert`): a hydration
+    /// left out behind a read that told it less (a stat alone, F5's) is
+    /// read again where it was not, or the row would stay unfilled for
+    /// good, its asker waiting on that answer.
     filled: bool,
 }
 
@@ -767,6 +768,12 @@ impl Recent {
             "recent.list",
             cancel.clone(),
             move || {
+                // Dropped last, after what it takes out is told.
+                let _reading = Reading::begin(&recent.known, |k| &mut k.newest, &recent.tickets);
+                // The list as read now: a file a read begun later told (a
+                // later F5's, the list grown since) stays, whatever this
+                // one says of it.
+                let listed_at = recent.tickets.take();
                 let items = xbel::default_path()
                     .map(|p| xbel::load(&p))
                     .unwrap_or_default();
@@ -794,19 +801,31 @@ impl Recent {
                     );
                 }
                 listing.stat(&here);
-                // What was listed before and no longer is recent.
+                #[cfg(test)]
+                {
+                    let hook = BEFORE_PREV.lock().take();
+                    if let Some(hook) = hook {
+                        hook();
+                    }
+                }
+                // What was listed before and no longer is recent, unless
+                // a read begun after the list was read told it.
                 let mut known = recent.known.lock();
                 if cancel.is_cancelled() {
                     return;
                 }
-                let prev: Vec<EntryId> = known
-                    .rows
+                let Known { rows, newest } = &mut *known;
+                let prev: Vec<EntryId> = rows
                     .iter()
                     .filter(|(_, row)| !wanted.contains(&row.path))
                     .map(|(id, _)| *id)
                     .collect();
+                let prev: Vec<EntryId> = prev
+                    .into_iter()
+                    .filter(|id| newest.applies(id, listed_at))
+                    .collect();
                 for id in &prev {
-                    known.rows.remove(id);
+                    rows.remove(id);
                 }
                 if !prev.is_empty() {
                     recent.tx.send(ListingEvent::Removed(prev));
@@ -845,8 +864,8 @@ impl Recent {
     }
 
     /// Stat `items` and fill them, one folder at a time, each answer told
-    /// under the lock where no read of it begun later was; what a read
-    /// begun later told less of (a stat alone, F5's) than this found is
+    /// under the lock where no read of it begun later was; what is left
+    /// out behind a read that told its row less (a stat alone, F5's) is
     /// asked again. Worker-only: this is I/O, in the lane of the paths.
     fn hydrate_now(
         self: &Arc<Self>,
@@ -882,8 +901,10 @@ impl Recent {
     /// Tell what `reads` found, `asked` where each was looked for: only
     /// where it is listed still at that path and no read of it begun later
     /// was told (a refresh's stat of a file grown, of one named back), gone
-    /// included. Returns what is to be read again: filled here, and left
-    /// out behind a stat alone where its row was never filled.
+    /// included. Returns what is to be read again, as asked: left out, for
+    /// a row still listed there, behind a read that told it less than this
+    /// one would (a stat alone, its row never filled), found, gone or
+    /// unread. Each read again takes later tickets: this ends.
     fn answer(
         &self,
         reads: Vec<Read>,
@@ -902,22 +923,31 @@ impl Recent {
                 let Some(row) = listed(rows, asked, e.id) else {
                     continue;
                 };
-                let filled = e.metadata.is_filled();
                 if newest.applies(&e.id, ticket) {
-                    row.filled |= filled;
+                    row.filled |= e.metadata.is_filled();
                     updated.push(e);
-                } else if filled && !row.filled {
+                } else if !row.filled {
                     again.push(e.id);
                 }
             }
             for (id, ticket) in read.gone {
-                if listed(rows, asked, id).is_some() && newest.applies(&id, ticket) {
+                let Some(row) = listed(rows, asked, id) else {
+                    continue;
+                };
+                if newest.applies(&id, ticket) {
                     gone.push(id);
+                } else if !row.filled {
+                    again.push(id);
                 }
             }
             for (id, ticket) in read.unread {
-                if listed(rows, asked, id).is_some() && newest.applies(&id, ticket) {
+                let Some(row) = listed(rows, asked, id) else {
+                    continue;
+                };
+                if newest.applies(&id, ticket) {
                     unread.push(id);
+                } else if !row.filled {
+                    again.push(id);
                 }
             }
         }
@@ -936,6 +966,11 @@ impl Recent {
         again
     }
 }
+
+/// What a test runs where a listing of the recent files has stat-ed them
+/// and is about to take out what is no longer recent: it may hold it there.
+#[cfg(test)]
+static BEFORE_PREV: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
 /// One listing of the recent files, shared by its lanes' jobs.
 #[derive(Clone)]
@@ -1381,13 +1416,92 @@ mod tests {
         for event in open.events().try_iter() {
             listing.apply(event);
         }
-        // The newer size, and the file named back still listed.
+        // The newer size, and the file named back still listed, each
+        // filled: what the hydration found was left out behind F5's stats
+        // alone, and read again.
+        let filled = |id| listing.get(id).is_some_and(|e| e.metadata.is_filled());
         assert_eq!(
-            (size_of(&listing, g), listing.get(n).is_some()),
-            (Some(20), true)
+            (
+                size_of(&listing, g),
+                listing.get(n).is_some(),
+                filled(g),
+                filled(n)
+            ),
+            (Some(20), true, true, true)
         );
-        assert!(listing.get(g).unwrap().metadata.is_filled());
         assert_eq!(open.path_of(n), Some(named_at));
+    }
+
+    /// Two F5s overlap, and a file is used in between: the older listing,
+    /// ending last, read the list before the newer told that file, which
+    /// stays listed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_older_refresh_ending_last_keeps_what_a_newer_one_listed() {
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let data = tmp.path().join("data");
+        let dir = tmp.path().join("l'été, à l'ombre");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir(&dir).unwrap();
+        let (first, since) = (
+            dir.join("it's ☂ first.txt"),
+            dir.join("used since, s'il vous plaît.txt"),
+        );
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&since, b"since").unwrap();
+        let xbel = |paths: &[&Path]| {
+            let marks: Vec<String> = paths
+                .iter()
+                .map(|p| skwir_platform::uri::file_uri(p))
+                .map(|href| format!(r#"<bookmark href="{href}" visited="2026-01-01T00:00:00Z"/>"#))
+                .collect();
+            let marks = marks.concat();
+            std::fs::write(
+                data.join("recently-used.xbel"),
+                format!(r#"<?xml version="1.0"?><xbel version="1.0">{marks}</xbel>"#),
+            )
+            .unwrap();
+        };
+        xbel(&[&first]);
+        // SAFETY: nextest runs each test in a process of its own, and no
+        // thread has started yet that reads the environment.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", &data);
+        }
+        let app = app(tmp.path());
+        app.plugins.add(Arc::new(JumpPlugin::default()), &app);
+        let open = app.open_location(&Location::parse("recent:")).unwrap();
+        let mut listing = skwir_core::Listing::default();
+        until(&*open, &mut listing, "listed", |l| {
+            l.is_complete() && l.len() == 1
+        });
+        // F5, held once it read the list and its files.
+        let (held, is_held) = crossbeam_channel::bounded(1);
+        let (go, gone) = crossbeam_channel::bounded::<()>(1);
+        *BEFORE_PREV.lock() = Some(Box::new(move || {
+            let _ = held.send(());
+            let _ = gone.recv_timeout(Duration::from_secs(30));
+        }));
+        open.refresh();
+        is_held.recv_timeout(Duration::from_secs(10)).expect("held");
+        // A file used meanwhile, and F5 again.
+        xbel(&[&first, &since]);
+        open.refresh();
+        let named = std::ffi::OsStr::new("used since, s'il vous plaît.txt");
+        until(&*open, &mut listing, "listed again", |l| l.is_named(named));
+        // The older let go: it takes out what it did not read in the list.
+        go.send(()).unwrap();
+        assert!(app.scheduler.wait_idle_here(Duration::from_secs(10)));
+        for event in open.events().try_iter() {
+            listing.apply(event);
+        }
+        let id = listing.find_by_name(named).map(|e| e.id);
+        assert!(id.is_some(), "used since, still listed");
+        assert_eq!(id.and_then(|id| open.path_of(id)), Some(since));
+        assert_eq!(listing.len(), 2);
     }
 
     // The free desktops' recent files (step E, ADR-035).
