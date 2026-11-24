@@ -1603,21 +1603,34 @@ U+0306 against й); exclusions by name, path completion, `jump`'s
 matcher and the save dialog's name still match one form, an excluded
 name with an accent typed composed missing a folder written decomposed.
 
-**Tests under Wine** (2026-11-24, evening). The query plugin's 13
-failures are fixed (eb6266c6: a date's end on Windows' 100 ns clock;
-45954fd5: tests that assumed Unix, a verbatim root, the Nix store, a
-full first batch). The whole suite, run crate by crate (`test-windows`
-is in no routine check since 2026-10-25, when 1,673 passed), fails 49
-tests in nine crates: `skwir` 16 (print's PDFs, "the job names no font",
-and trashing, which Wine's shell does not do; names Windows refuses,
-os error 123), `skwir-ui` 14 (the chooser's folders, the desktop's GTK
-and Qt styles, file URIs, the sidebar, the save form), print 5 and
-remote 3 (Unix paths joined with `\`), extend 5 (no home under Wine),
-core 3 (orders kept by Unix paths, an exclusion by path), control,
-open-with and places 1 each. Most read as tests assuming Unix or what
-Wine lacks; open-with's label made from the type's id ("Open image/png
-files with", where the registry names the type not) reads as a bug.
-None of them was changed that day; not looked into one by one.
+**Tests under Wine** (2026-11-24, evening; fixed that night). The query
+plugin's 13 failures and the 49 of nine other crates are fixed, and
+`release-check` runs every crate's tests under Wine (ADR-053 amended).
+Eight of them were Skwir's own: a date's end on Windows' 100 ns clock
+(eb6266c6); paths said to a person with `/` on Windows, a sidebar
+place's tooltip, a group's heading and skwird's kept folders
+(a575df37, 24251d91); an agent's refusal said "(private)" for a path
+reaching another machine (ea7e9b2d); a type said by its id in Open
+With (91fd1079), left blank in a printed listing (c6cf9052); a
+listing's PDF named "Listing.pdf" for a place whose name Windows
+refuses (0171d693). The rest assumed Unix, or what Wine lacks (its
+shell trashes nothing, its registry names few types, its prefix had no
+fonts). The crate-by-crate run retries a failed test once
+(`NEXTEST_RETRIES=1`), told FLAKY: Wine crashes (SIGSEGV) as a test
+program exits now and then, after its tests passed (core's and
+skwir-ui's, once a run, never the same), and remote's
+`servers_another_program_changes_are_read_again` missed a file renamed
+into place within 10 s once among 131 tests, passing five times alone.
+The binary's `remote_folders`
+test `a_server_that_stops_answering_holds_no_more_than_its_lane` once
+found its folder not empty as it removed it, after its checks, under a
+load average of 19: something still writes there once the app is
+dropped; it passes alone, and was not looked into. Left: a type in a
+sentence on
+Windows is the registry's own name ("Open PNG File files with"), not
+seen there; printing on a system with no font at all (a bare
+container) fails ("the job names no font") though the packages carry
+Inter and JetBrains Mono, which `print_job::faces` could fall back to.
 
 **Removable volumes in skwird** (designed with skwird's session,
 2026-11-24: `volumes {keep, forget, release}`, the engine listing the
@@ -1643,10 +1656,10 @@ running, an engine used to be started); Windows' Eject: a folder opened
 there or refreshed meanwhile is still read (`list` does not ask
 `watch::letting_go`), and a hydration under way as the let-go begins
 keeps its handle until it ends. Core's
-`a_folder_sorted_by_date_waits_for_no_provider` fails about one run in
-four with every core busy (24 busy loops beside the 36 listing tests),
-the providers not asked within 10 s by a rating's order, before the
-listing's tickets as after; not looked into.
+`a_folder_sorted_by_date_waits_for_no_provider` failed about one run in
+four with every core busy; fixed 2026-11-24: the test counted the
+providers' calls after opening the folder, which a worker could already
+have made.
 
 **Scratch folders of killed processes** (built 2026-11-24): each
 process holds a lock file of its own for its life, and names its

@@ -24026,3 +24026,53 @@ the release that ships it).
 - **Not checked:** a Mac (the cask, the Caskroom read), Homebrew's own
   `brew style` and `brew audit` (a scratch Homebrew was refused here:
   the tap's workflow runs them once pushed), real Windows.
+
+## 2026-11-24, night: every crate's tests under Wine
+
+Asked whether the query plugin's failures under Wine should be fixed
+before the release, the user said yes; a run of every crate then found
+49 more in nine crates, and the user chose to fix them all, and to have
+`release-check` run them from now on.
+- **The query plugin** (eb6266c6, 45954fd5): a date's end on Windows'
+  100 ns clock, where a nanosecond taken off left February's first
+  instant as January's last; the rest assumed Unix (a verbatim root
+  where `/` is no separator, the Nix store, a full first batch).
+- **Three fixers**, one per group of crates, in one tree:
+  - `skwir`, and the harness (a4a2cb8e, 798b818e). Wine's prefix had
+    no fonts, so every PDF failed, and each run's start took the type
+    database from a run already testing. Wine's TrueType faces are now
+    in the prefix's Fonts folder, and the database is renamed into place
+    only when it changed. A fixture's `"` and the shell's trash, which
+    Wine's does not do, were the rest;
+  - `skwir-ui` (a575df37, 0f072f7c): a sidebar place's tooltip wrote
+    `/` on Windows. The integrator found the same in a group's heading
+    and skwird's kept folders (24251d91). The chooser, GTK's and Qt's
+    styles, the save form and file URIs assumed Unix;
+  - core, extend and five plugins (1e5436a7..bba75a00): an agent's
+    refusal said "(private)" for a path reaching another machine
+    (control); a type was said by its id in Open With, and left blank
+    in a printed listing; a listing's PDF was named "Listing.pdf" where
+    Windows refuses a place's characters. The rest assumed Unix
+    (paths, `HOME`, names Windows refuses).
+- **The gate** (fe4991f7): `just test-windows` given no arguments runs
+  every default member's tests in turn. That is in `release-check`
+  (ADR-053 amended), and a failed test is retried once there, told
+  FLAKY.
+- **Core's flaky listing test** (24fe9ab0): it had failed about one run
+  in four under load. A probe of its slow provider showed the provider
+  asked before the test read its baseline: the count is now taken
+  before the folder opens. 16 runs of the 36 listing tests under load
+  passed, where it had failed once in 8.
+- **Checked:**
+  - `lint-all` (check-cross included) and `release-tools-check` pass;
+  - every crate's tests under Wine, crate by crate: all pass but two.
+    The grouping test, whose expected path kept `/`, now passes under
+    Wine. Remote's renamed-file test passed five times alone;
+  - the workspace's tests, rerun without stopping at the first failure:
+    4,399 of 4,400. remote_folders' `a_server_that_stops_answering_
+    holds_no_more_than_its_lane` failed in its own teardown, under a
+    load average of 19: its folder was not empty as it removed it. It
+    passed three times alone (5.5 s each).
+- **Not checked:** real Windows; Open With's sentence with the
+  registry's own type names ("PNG File"), which Wine's registry lacks.
+

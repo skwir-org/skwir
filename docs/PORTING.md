@@ -42,8 +42,14 @@ means it never ran.
   exact on Unix and on Windows (WTF-8).
 - `core/src/system.rs`: the system's name and `not_yet`.
 - `just test-windows` (`tools/cross/test-windows.sh`): the Windows build's
-  tests under Wine. A test needing what Wine lacks says so and passes
-  (`under_wine`, core's tests).
+  tests under Wine, every crate's in turn given no arguments
+  (`test-windows-each.sh`), and in `release-check` since 2026-11-24
+  (ADR-053). A test needing what Wine lacks says so and passes
+  (`under_wine`, core's tests). Wine keeps its fonts outside the prefix:
+  the harness puts its TrueType faces in the prefix's Fonts folder, where
+  Windows keeps them and printing reads them. What a run puts in the
+  prefix and the target folder goes in place by a rename, only when it
+  changed, as several runs share them.
 
 ## 1. Identity and metadata
 
@@ -323,6 +329,12 @@ Left:
 
 - macOS types never ran: the `UTType` calls and the table reading
   conformances as kinds (`uttype::KINDS`) are unverified **(5b)**.
+- A type in a sentence on Windows is the registry's own name for it
+  ("PNG File"), so Open With would say "Open PNG File files with"; a
+  type no system names is said by its extension ("PNG"), never its id.
+  Not seen on Windows: Wine's registry names few types **(5b)**.
+- A printed listing's PDF is named after its place with `: * ? " < > |`
+  as dashes on Windows, which refuses them in a name.
 - System icons never ran on the systems **(5b)**: whether AppKit's icons
   and images answer off the main thread, as documented; the small icons of
   Windows' jumbo list; a folder with its own icon (not asked: every folder
@@ -499,7 +511,10 @@ Left:
   and Windows (DirectWrite's `IsMonospacedFont`) say nothing yet, so a
   family that writes no Latin is offered and drawn as Automatic, and code
   is offered every family. Automatic there is the system's interface
-  font (ADR-117, 2026-11-05; `platform/desktop_style.rs`): a Mac's
+  font (ADR-117, 2026-11-05; `platform/desktop_style.rs`; GTK's and Qt's
+  colors and fonts are read apart on Linux alone, `TOOLKITS`, and a
+  settings file brought from Linux choosing `gtk` or `qt` reads as
+  Automatic elsewhere): a Mac's
   (`.AppleSystemUIFont`, San Francisco, at its 13 px; nothing to follow)
   **(c)**, Windows' message font (`SystemParametersInfoW`, Segoe UI) at
   WinUI's 14 px times its Text size (`TextScaleFactor`, where Windows
