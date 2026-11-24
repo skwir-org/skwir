@@ -23840,6 +23840,9 @@ review of 2026-11-24".
   above), `just check-cross`; core's Windows tests under Wine (805 of
   810: two crashes that passed on rerun, and the three Unix-path tests
   that fail there before).
-- **Not checked:** the gate again after these last commits (each fix's
-  crates and the workspace's tests were); real Windows (Windows' flush
-  in `CopyFileExW`'s routine never ran: Wine calls no routine); macOS.
+- **The gate again** on b7655793: `lint-all` (check-cross included),
+  `test-all` (4,362 passed), `skwird-check` (the six real-engine tests,
+  the window check), `release-tools-check`; `deny` and `notices-check`
+  as on af3f9d9f, no dependency changed since.
+- **Not checked:** real Windows (Windows' flush in `CopyFileExW`'s
+  routine never ran: Wine calls no routine); macOS.
