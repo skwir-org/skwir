@@ -507,9 +507,13 @@ working in an area, also read that area's rules (see
   each takes a ticket just before it reads (`Shared::ticket`; a listing,
   a refresh's or a rescan's, one for all its names), and what an older
   one found is left out once a newer was told (`Names::newest`, under the
-  names' lock), whatever each found, gone included (`Names::applies`:
+  names' lock), whatever each found, gone included (`fs::Newest`:
   one entry a name, noted only while a read begun before it is under
-  way); a full hydration left out behind a stat alone is read again. A rescan, which says nothing of it (the kernel's queue
+  way); a full hydration left out behind a stat alone is read again.
+  Every location that reads on workers keeps it alike
+  (`docs/invariants/locations.md`): one of many folders hydrates through
+  `fs::read_paths_newest`, its answers applied and sent under its own
+  lock. A rescan, which says nothing of it (the kernel's queue
   overflowed), tells those names again unmarked.
 - **Remote paths (ADR-077).** A path may be on a server that stops
   answering, where `stat` waits for good. Work that reads one runs in its

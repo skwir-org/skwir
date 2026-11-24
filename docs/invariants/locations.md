@@ -40,6 +40,28 @@ chevrons list `App::places_in`, and Shift+F5/F6 give the selection to the
 other pane as a drop there would (`Shell::give_to_pane`). Rating, comment
 and `notes.agree` are core `notes.*` commands.
 
+## Of two reads of an entry, the later begun stands
+
+Every location that reads its entries on workers keeps the rule AGENTS.md
+gives the folder provider ("Watchers act on changes"), with core's
+`fs::Newest`, `fs::Tickets` and `fs::Reading`. A search, a tag's place,
+the shelf and Recent read by path through `fs::read_paths_newest`, which
+hands each answer back with its ticket, never `fs::hydrate_paths`, which
+sends by itself:
+
+- Each read takes a ticket just before it reads: a hydration's stat, a
+  walk's match, a relist's entry, a follow's stat. A change a plan
+  reports, trusted without a stat, takes one as it is applied.
+- What a read found is applied under the location's own lock, the one
+  its map of entries changes under and its events are sent under, only
+  where `Newest::applies` allows: no read of the entry begun later was
+  applied. Late answers never take out a file renamed and named back,
+  or stand over a newer stat.
+- A filled answer left out behind a newer stat-only one is asked again,
+  or its row would stay unfilled for good.
+- A read is counted (`Reading`) from before its first ticket until its
+  last answer is applied.
+
 ## Places, trails and verbs (ADR-032)
 
 - **Places** are entries that are locations, not files
