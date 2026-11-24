@@ -60,6 +60,26 @@ struct Shared {
     completed: AtomicBool,
     /// The matches shown, and the checks under way.
     shown: Mutex<Shown>,
+    /// Where a test holds it, taken as it opens (`HOOKS`).
+    #[cfg(test)]
+    hooks: Hooks,
+}
+
+/// Where a test holds a search within a place: once a check tested its
+/// entries, before it decides; once `forget` sent what it decided.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct Hooks {
+    pub tested: Option<Box<dyn Fn() + Send + Sync>>,
+    pub forgot: Option<Box<dyn Fn() + Send + Sync>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The hooks the next search within a place opened on this thread
+    /// takes (`open`).
+    pub(crate) static HOOKS: std::cell::RefCell<Option<Hooks>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Open the search of `query` within `place`, through `app`'s provider of
@@ -99,6 +119,8 @@ pub fn open(
         listed: AtomicBool::new(false),
         completed: AtomicBool::new(false),
         shown: Mutex::new(Shown::default()),
+        #[cfg(test)]
+        hooks: HOOKS.take().unwrap_or_default(),
     });
     // The place's events wake a drain of them on a worker, never the window.
     let waker = {
@@ -180,12 +202,11 @@ impl Shared {
                 // A match asked for again (`hydrate`) that the place cannot
                 // read: answered here too, so its row waits for nothing.
                 ListingEvent::Unreadable(ids) => {
-                    let held: Vec<EntryId> = {
-                        let shown = this.shown.lock();
-                        ids.into_iter()
-                            .filter(|id| shown.paths.contains_key(id))
-                            .collect()
-                    };
+                    let shown = this.shown.lock();
+                    let held: Vec<EntryId> = ids
+                        .into_iter()
+                        .filter(|id| shown.paths.contains_key(id))
+                        .collect();
                     if !held.is_empty() {
                         this.tx.send(ListingEvent::Unreadable(held));
                     }
@@ -246,7 +267,9 @@ impl Shared {
     /// Read what the place listed without its metadata, then decide each
     /// entry, and show what holds, take back what no longer does: each by
     /// its latest check alone (`Shown::checking`). An entry gone is no
-    /// match; one that cannot be read is tested with what was listed.
+    /// match; one that cannot be read is tested with what was listed. What
+    /// is decided is sent under the lock it is decided under: what `forget`
+    /// or a later check decides after leaves after.
     fn check(&self, mut batch: Vec<(Entry, PathBuf, u64)>, cancel: &CancelToken) {
         let unread: Vec<(EntryId, PathBuf)> = batch
             .iter()
@@ -280,15 +303,24 @@ impl Shared {
             fields: &self.ctx.fields,
             cancel,
         };
-        let mut added = Vec::new();
-        let mut updated = Vec::new();
-        let mut removed = Vec::new();
+        // Tested outside the lock: what an entry contains may be read.
+        let mut tested = Vec::with_capacity(batch.len());
         for (entry, path, check) in batch {
             if cancel.is_cancelled() {
                 return;
             }
             let holds = !gone.contains(&entry.id) && full_match(&self.query, &entry, &path, late);
-            let mut shown = self.shown.lock();
+            tested.push((entry, path, check, holds));
+        }
+        #[cfg(test)]
+        if let Some(hook) = &self.hooks.tested {
+            hook();
+        }
+        let mut shown = self.shown.lock();
+        let mut added = Vec::new();
+        let mut updated = Vec::new();
+        let mut removed = Vec::new();
+        for (entry, path, check, holds) in tested {
             if shown.checking.get(&entry.id) != Some(&check) {
                 continue;
             }
@@ -318,19 +350,25 @@ impl Shared {
     }
 
     /// The place's entries `ids` are gone: so are their matches, and what
-    /// their checks under way would say.
+    /// their checks under way would say. Sent under the lock it decides
+    /// under.
     fn forget(&self, ids: Vec<EntryId>) {
-        let gone: Vec<EntryId> = {
+        {
             let mut shown = self.shown.lock();
-            ids.into_iter()
+            let gone: Vec<EntryId> = ids
+                .into_iter()
                 .filter(|id| {
                     shown.checking.remove(id);
                     shown.paths.remove(id).is_some()
                 })
-                .collect()
-        };
-        if !gone.is_empty() {
-            self.tx.send(ListingEvent::Removed(gone));
+                .collect();
+            if !gone.is_empty() {
+                self.tx.send(ListingEvent::Removed(gone));
+            }
+        }
+        #[cfg(test)]
+        if let Some(hook) = &self.hooks.forgot {
+            hook();
         }
     }
 
@@ -645,5 +683,112 @@ mod tests {
         // One letter before a colon is a drive.
         let q = lang::parse(r"in:C:\data").unwrap();
         assert!(q.within.is_none());
+    }
+
+    /// A place that lists what it is given, and sends what the test asks
+    /// of it after, through the sink it keeps.
+    struct Fed {
+        paths: Vec<PathBuf>,
+        sink: Arc<parking_lot::Mutex<Option<EventSink>>>,
+    }
+
+    impl LocationProvider for Fed {
+        fn scheme(&self) -> &'static str {
+            "fed"
+        }
+
+        fn open(
+            &self,
+            location: &Location,
+            ctx: OpenContext,
+        ) -> anyhow::Result<Arc<dyn OpenLocation>> {
+            let (tx, rx) = ctx.channel();
+            let mut paths = HashMap::new();
+            let entries: Vec<Entry> = self
+                .paths
+                .iter()
+                .enumerate()
+                .map(|(i, path)| {
+                    let id = EntryId::at_path(FileId::new(9, i as u64 + 1), path);
+                    paths.insert(id, path.clone());
+                    Entry::new(id, path.file_name().unwrap(), EntryKind::File)
+                })
+                .collect();
+            tx.send(ListingEvent::Added(entries));
+            tx.send(ListingEvent::Complete);
+            *self.sink.lock() = Some(tx);
+            Ok(Arc::new(ListedOpen {
+                location: location.clone(),
+                rx,
+                paths,
+                late: None,
+            }))
+        }
+    }
+
+    /// An entry its place takes back while its check decides is not shown:
+    /// what the check decided is sent under the lock `forget` decides under,
+    /// so it never leaves after the place's word.
+    #[test]
+    fn a_match_its_place_takes_back_as_it_is_decided_is_not_shown() {
+        use super::{HOOKS, Hooks};
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let dir = tmp.path().join("files d'été");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("l'été à.txt");
+        std::fs::write(&file, "x").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let sink = Arc::default();
+        app.register_provider(
+            "test",
+            Arc::new(Fed {
+                paths: vec![file],
+                sink: Arc::clone(&sink),
+            }),
+        );
+        let (tested, held_there) = crossbeam_channel::bounded(1);
+        let (release, waits) = crossbeam_channel::bounded::<()>(1);
+        let (forgot, forgotten) = crossbeam_channel::bounded(1);
+        HOOKS.set(Some(Hooks {
+            tested: Some(Box::new(move || {
+                tested.send(()).unwrap();
+                let _ = waits.recv();
+            })),
+            forgot: Some(Box::new(move || {
+                let _ = forgot.send(());
+            })),
+        }));
+        let open = app
+            .open_location(&Location::new(crate::SCHEME, "ext:txt in:fed:"))
+            .unwrap();
+        held_there.recv_timeout(Duration::from_secs(10)).unwrap();
+        let id = EntryId::at_path(FileId::new(9, 1), &dir.join("l'été à.txt"));
+        // Taken back by its place as its check decides.
+        assert!(
+            sink.lock()
+                .as_ref()
+                .unwrap()
+                .send(ListingEvent::Removed(vec![id]))
+        );
+        forgotten.recv_timeout(Duration::from_secs(10)).unwrap();
+        release.send(()).unwrap();
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        let mut shown = std::collections::HashSet::new();
+        for event in open.events().try_iter() {
+            match event {
+                ListingEvent::Added(entries) => shown.extend(entries.iter().map(|e| e.id)),
+                ListingEvent::Removed(ids) => {
+                    for id in ids {
+                        shown.remove(&id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(!shown.contains(&id), "not shown");
+        assert_eq!(open.path_of(id), None);
     }
 }
