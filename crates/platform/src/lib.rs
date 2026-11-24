@@ -44,6 +44,11 @@ pub mod desktop;
 #[cfg(target_os = "linux")]
 mod desktop_settings;
 pub mod desktop_style;
+// What Windows says of removing a drive a folder watch is on (ADR-149,
+// 16): what it decides is compiled and tested everywhere, its window is
+// Windows' alone.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod devices;
 pub mod diagram;
 pub mod document;
 pub mod exif;

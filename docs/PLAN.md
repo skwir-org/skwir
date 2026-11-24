@@ -1419,16 +1419,17 @@ volume a preview's helper, the player or a terminal's shell holds may be
 refused once (udisks has begun as Skwir is told; a toast says to try
 again); Windows (a drive's folder opened again as a window comes to the
 front, removable drives read by path) and macOS (`/Volumes` read by
-path) compiled only, and neither follows another program's unmount
-(DiskArbitration's approval, `DBT_DEVICEQUERYREMOVE`); what a sort reads
+path) compiled only; macOS does not follow another program's unmount
+(DiskArbitration's approval); what a sort reads
 on demand (a picture's date, ADR-131) and the Git states, each a brief
 read, are not held back while a volume is let go of (thumbnails and
-Usage are). After the reviews of 2026-11-23: on Windows a folder shown
-on a removable drive is held by its watch (`ReadDirectoryChangesW`), so
-Windows' Eject finds the drive in use while a pane shows it; closing the
-watch on `DBT_DEVICEQUERYREMOVE`, through a window registered for that
-handle, would let it go (decision 16; needs a Windows machine, Wine
-cannot tell). A folder read by its path is still opened once a hydration
+Usage are). Windows follows another program's removal of a drive
+(decision 16 amended 2026-11-24: `DBT_DEVICEQUERYREMOVE` closes the
+watches there), tried under Wine with the notices handed to the window,
+never with a drive removed; a preview's helper, the player or a
+terminal's shell on the drive may make the first try refused; a disc's
+or a card's medium gone is told to its watches, not the table. A folder
+read by its path is still opened once a hydration
 batch the window asks for (an open for stats alone, `O_PATH`, which FUSE
 answers without OPENDIR, is not built). An automount's expiry is tried
 only with a pretended automount point, no real autofs or systemd

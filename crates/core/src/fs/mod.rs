@@ -11,7 +11,9 @@ pub mod reach;
 pub mod snapshot;
 pub mod stat;
 pub mod volume;
-pub(crate) mod watch;
+// Public for what hears that a drive is to be removed (the platform's
+// Windows window, ADR-149, 16): the watches on it are let go of first.
+pub mod watch;
 #[cfg(windows)]
 pub(crate) mod win;
 pub mod xattr;

@@ -207,11 +207,26 @@ after review).
     the folder watched for as long as it watches, where Linux's inotify
     and macOS's FSEvents hold nothing, so Windows' Eject finds the drive
     in use while a pane shows a folder there, and goes on once the pane
-    goes elsewhere. Holding nothing there would close the watch as
-    Windows asks (`DBT_DEVICEQUERYREMOVE` for that handle, to a window
-    registered for it), which is not built. Neither system's notice of
-    an unmount to come is followed (DiskArbitration's approval, that
-    message): compiled only, tried nowhere.
+    goes elsewhere. Amended 2026-11-24: Windows' Eject goes through
+    while a pane shows a folder there. A hidden top-level window of the
+    platform's (`devices`, on its own thread, started by the places
+    plugin's `follow_unmounts` as GIO's notices are on Linux) is
+    registered for the notices of a handle on the root of each drive a
+    folder watch is on (`DBT_DEVTYP_HANDLE`; removable, fixed or a disc,
+    never the system's drive nor a network's). Asked to remove it, or
+    to lock or dismount its volume, it tells `Announced` (`App::release`),
+    lets go of the watches there, waiting until Windows closed them
+    (`watch::let_go_on`, the watches kept by volume in `watch/kept.rs`),
+    and of the folders held there, 2 s at most, then answers. Refused or
+    cancelled, the watches are watched again, each folder read again,
+    and the drive registered anew; removed, its watches are told their
+    folders went. Windows' drives are its table's points, told apart by
+    their volume name and told by the volumes' broadcast
+    (`reach::drives_changed`): a folder on a drive removed says so
+    (`Failure::Left`) and comes back with it. Tried under Wine with the
+    notices handed to the window, never with a drive removed. macOS's
+    notice of an unmount to come (DiskArbitration's approval) is still
+    not followed: compiled only.
 
 ## Considered
 

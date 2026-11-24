@@ -815,8 +815,8 @@ pub(crate) fn pretend_on_demand(point: &Path) {
 /// go of since a read before (`App::volumes_changed`, ADR-149), by what
 /// each is, not by how many a point holds, so one let go of and made
 /// again within a change is both. Where the system lists no table
-/// (Windows), the remotes of the folders programs mount in. From memory,
-/// read again when stale.
+/// (Windows), its drives and the remotes of the folders programs mount
+/// in. From memory, read again when stale.
 pub fn points() -> Vec<Mount> {
     let table = table();
     let listed: crate::hashing::Set<&Path> =
@@ -842,6 +842,17 @@ pub fn changed() {
 /// container starting) makes one call.
 const SETTLE: Duration = Duration::from_millis(250);
 
+/// Windows said a drive came or went (its volumes' broadcast,
+/// `DBT_DEVICEARRIVAL`, `DBT_DEVICEREMOVECOMPLETE`, which the platform's
+/// hidden window hears): the table, which lists the drives there, is read
+/// again and its followers told, as Linux's kernel tells a mount made or
+/// let go of (ADR-149, 16). On the calling thread, which the table's read
+/// holds a moment (the folders programs mount in are listed).
+#[cfg(windows)]
+pub fn drives_changed() {
+    told();
+}
+
 /// What follows the table ([`follow`]): each one's lifetime and call.
 type Follower = (crate::cancel::CancelToken, Arc<dyn Fn() + Send + Sync>);
 
@@ -857,8 +868,10 @@ static FOLLOWED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 /// every follower: `told` starts work and never waits for it. Whether
 /// this system tells: Linux (the kernel marks `/proc/self/mountinfo`
 /// changed), macOS (kqueue's file system events), Windows (the folders
-/// programs mount in, [`mounts_in`]); elsewhere nothing is told, and what
-/// shows mounts asks again when a window comes to the front.
+/// programs mount in, [`mounts_in`], and its drives as the platform's
+/// hidden window hears them come and go, [`drives_changed`]); elsewhere
+/// nothing is told, and what shows mounts asks again when a window comes
+/// to the front.
 pub fn follow(
     lifetime: &crate::cancel::CancelToken,
     told: impl Fn() + Send + Sync + 'static,
@@ -987,14 +1000,11 @@ impl MadeUp {
 /// The network mounts, deepest point first, the devices whose inode
 /// numbers are made up, each with its mount's number ([`mount_of`]), and
 /// every mount's point, deepest first ([`volume_of`]), where the system
-/// lists them (not Windows).
+/// lists them: on Windows, its drives alone ([`points`]).
 #[derive(Default)]
 struct Table {
     remotes: Vec<Arc<Remote>>,
     made_up: MadeUp,
-    // Windows lists no table: its volumes are told by a path's drive or
-    // share (`volume_of`), and its list stays empty, never read.
-    #[cfg_attr(windows, allow(dead_code))]
     points: Vec<Mount>,
 }
 
@@ -1535,8 +1545,9 @@ mod imp {
     }
 
     /// Windows lists no table: a path is told by its own form
-    /// ([`share_of`]), and a program's mounts in a folder it said by their
-    /// being mount points there ([`super::mounts_in`]).
+    /// ([`share_of`]), a program's mounts in a folder it said by their
+    /// being mount points there ([`super::mounts_in`]), and the points are
+    /// the machine's drives ([`drives`]).
     pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<super::Mount>) {
         use std::os::windows::fs::MetadataExt;
         /// `FILE_ATTRIBUTE_REPARSE_POINT`: what a folder a file system is
@@ -1562,7 +1573,60 @@ mod imp {
                 }
             }
         }
-        (remotes, super::MadeUp::default(), Vec::new())
+        (remotes, super::MadeUp::default(), drives())
+    }
+
+    /// The machine's drives that can hold a folder shown and go (a stick,
+    /// a disk; not a network's, which [`share_of`] tells), each told apart
+    /// by the volume the mount manager names at its letter
+    /// (`\\?\Volume{…}\`), so another stick given the same letter is
+    /// another mount: what the panes follow (`App::volumes_changed`,
+    /// ADR-149, 16), told as one comes or goes ([`super::drives_changed`]).
+    /// From the system's memory: no drive is read. A disc drive is left
+    /// out, as Places leaves it (asked, a disc can hang the caller), and
+    /// would tell nothing: its volume stays as its disc goes, as a card
+    /// reader's does (its watches are told, `watch::gone_on`).
+    fn drives() -> Vec<super::Mount> {
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetDriveTypeW, GetLogicalDrives, GetVolumeNameForVolumeMountPointW,
+        };
+        use windows_sys::Win32::System::WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE};
+        /// A volume's name (`\\?\Volume{…}\`), 49 characters, and its NUL.
+        const NAME: usize = 50;
+        // SAFETY: no arguments; a bit mask of the drive letters in use.
+        #[allow(unsafe_code)]
+        let letters = unsafe { GetLogicalDrives() };
+        (0..26u8)
+            .filter(|n| letters & (1 << n) != 0)
+            .filter_map(|n| {
+                let root = format!("{}:\\", char::from(b'A' + n));
+                let wide: Vec<u16> = root.encode_utf16().chain([0]).collect();
+                // SAFETY: a NUL-terminated root that outlives the call.
+                #[allow(unsafe_code)]
+                let kind = unsafe { GetDriveTypeW(wide.as_ptr()) };
+                if ![DRIVE_REMOVABLE, DRIVE_FIXED].contains(&kind) {
+                    return None;
+                }
+                let mut name = [0u16; NAME];
+                // SAFETY: a NUL-terminated root, and a buffer of the length
+                // given.
+                #[allow(unsafe_code)]
+                let named = unsafe {
+                    GetVolumeNameForVolumeMountPointW(wide.as_ptr(), name.as_mut_ptr(), NAME as u32)
+                } != 0;
+                let end = name.iter().position(|&c| c == 0).unwrap_or(NAME);
+                let volume = if named {
+                    String::from_utf16_lossy(&name[..end])
+                } else {
+                    String::new()
+                };
+                Some(super::Mount::of(
+                    std::path::PathBuf::from(&root),
+                    "drive",
+                    ("drive", &root, volume),
+                ))
+            })
+            .collect()
     }
 
     /// The share holding `path`: a UNC path's (`\\server\share`), or a
@@ -1624,6 +1688,32 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    /// Windows' drives are the table's points (ADR-149, 16): the one a
+    /// folder is on is listed, a network's never, each told apart the same
+    /// way at each read.
+    #[cfg(windows)]
+    #[test]
+    fn the_drives_are_the_tables_points() {
+        let folder = tempfile::tempdir().unwrap();
+        let drive = super::volume_of(folder.path()).unwrap();
+        let listed = || {
+            super::changed();
+            super::points()
+                .into_iter()
+                .filter(|mount| !mount.remote)
+                .map(|mount| (mount.point, mount.id))
+                .collect::<Vec<_>>()
+        };
+        let first = listed();
+        assert!(
+            first.iter().any(|(point, _)| *point == drive),
+            "{} among {first:?}",
+            drive.display()
+        );
+        assert!(first.iter().all(|(point, _)| point.as_os_str().len() == 3));
+        assert_eq!(listed(), first, "told apart the same way");
+    }
+
     /// The kernel's own filesystems are told by the table, wherever they
     /// are mounted: `/proc` on every Linux, never `/` itself.
     #[cfg(target_os = "linux")]

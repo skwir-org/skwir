@@ -4,7 +4,10 @@
 //! read by one thread, each folder watched a descriptor of it (`imp`).
 //! Adding a non-recursive watch is one syscall with no thread round trip.
 //! Registration still belongs on a worker: resolving a watched path can
-//! wait for a sleeping drive. Elsewhere the `notify` crate is used.
+//! wait for a sleeping drive. Elsewhere the `notify` crate is used, each
+//! watch kept by its volume (`kept`): Windows' holds the folder it watches
+//! open, so what hears that a drive is about to be removed lets go of the
+//! watches on it ([`let_go_on`], ADR-149, 16).
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -103,6 +106,90 @@ pub fn watch(
     deliver: impl Fn(Changes) + Send + Sync + 'static,
 ) -> std::io::Result<WatchHandle> {
     imp::watch(dir, window, cancel, Arc::new(deliver))
+}
+
+// The watches that hold their folder open, kept by volume (ADR-149, 16):
+// the system's own elsewhere than Linux; compiled on Linux for its tests.
+#[cfg(any(not(target_os = "linux"), test))]
+mod kept;
+
+/// Let go of every folder watch on `volume` (a drive's root, as
+/// `reach::volume_of` names it), waiting at most `at_most` until the
+/// system let go of their folders: Windows' watch holds the folder it
+/// watches open, so a drive about to be removed is let go of first
+/// (ADR-149, 16). A watch made there from now on waits, holding nothing,
+/// until [`watch_again_on`] or [`gone_on`]. Whether every one was.
+/// Linux's watches hold nothing: true at once.
+pub fn let_go_on(volume: &Path, at_most: Duration) -> bool {
+    #[cfg(not(target_os = "linux"))]
+    {
+        imp::kept().let_go_on(volume, at_most)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (volume, at_most);
+        true
+    }
+}
+
+/// Watch again what [`let_go_on`] let go of on `volume`, which stays (its
+/// removal refused or cancelled): each told to read its folder again, as
+/// what changed meanwhile was not told, or that the folder went where it
+/// cannot be watched any more. Starts each watch on the calling thread.
+pub fn watch_again_on(volume: &Path) {
+    #[cfg(not(target_os = "linux"))]
+    imp::kept().watch_again_on(volume);
+    #[cfg(target_os = "linux")]
+    let _ = volume;
+}
+
+/// `volume` went (a drive removed, the system said): each watch on it
+/// ends and is told its folder went with its filesystem
+/// (`Changes::unmounted`), as inotify tells Linux's. Nothing on Linux,
+/// where inotify tells it.
+pub fn gone_on(volume: &Path) {
+    #[cfg(not(target_os = "linux"))]
+    imp::kept().gone_on(volume);
+    #[cfg(target_os = "linux")]
+    let _ = volume;
+}
+
+/// Whether a folder watch is on `volume`, watching or let go of: what a
+/// system's notices of the drive's removal are registered for while it is.
+/// Never on Linux, whose watches hold nothing.
+pub fn watches_on(volume: &Path) -> bool {
+    #[cfg(not(target_os = "linux"))]
+    {
+        imp::kept().watches_on(volume)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = volume;
+        false
+    }
+}
+
+/// Tell `told` the volume of each folder watch made or ended from now on,
+/// on the thread that makes or ends it, where it must not block (what
+/// registers for a drive's notices hands it on): the volumes watches are
+/// on now. One at a time, until [`unfollow_volumes`]. Never told on Linux,
+/// whose watches hold nothing.
+pub fn follow_volumes(told: impl Fn(&Path) + Send + Sync + 'static) -> Vec<std::path::PathBuf> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        imp::kept().follow_volumes(Some(Arc::new(told)))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        drop(told);
+        Vec::new()
+    }
+}
+
+/// Tell no one the volumes watched any more ([`follow_volumes`]).
+pub fn unfollow_volumes() {
+    #[cfg(not(target_os = "linux"))]
+    imp::kept().follow_volumes(None);
 }
 
 #[cfg(target_os = "linux")]
@@ -615,8 +702,15 @@ mod imp {
     use notify::event::ModifyKind;
     use notify::{EventKind, RecursiveMode, Watcher};
 
+    use super::kept::{Kept, Live};
     use super::{Changes, Deliver, WRITTEN_WINDOW, WatchHandle};
     use crate::cancel::CancelToken;
+
+    /// The watches kept by volume (`kept`): Windows' hold their folder.
+    pub(super) fn kept() -> &'static Arc<Kept> {
+        static KEPT: std::sync::OnceLock<Arc<Kept>> = std::sync::OnceLock::new();
+        KEPT.get_or_init(|| Kept::new(start, crate::fs::reach::volume_of))
+    }
 
     pub fn watch(
         dir: &Path,
@@ -624,7 +718,22 @@ mod imp {
         cancel: &CancelToken,
         deliver: Deliver,
     ) -> std::io::Result<WatchHandle> {
+        kept().watch(dir, window, cancel, deliver)
+    }
+
+    /// Watch `dir` as notify does. Its thread that coalesces what is told
+    /// ends once notify let go of what it tells to, which its Windows
+    /// watcher does once it closed the folder's handle (its own thread
+    /// cancels each read, waits for it, closes the handle, then drops its
+    /// handler): `Live::ended` says so.
+    fn start(
+        dir: &Path,
+        window: Duration,
+        cancel: &CancelToken,
+        deliver: &Deliver,
+    ) -> std::io::Result<Live> {
         let cancel = cancel.clone();
+        let deliver = Arc::clone(deliver);
         let (raw_tx, raw_rx) = unbounded::<notify::Result<notify::Event>>();
         let mut watcher = notify::recommended_watcher(move |res| {
             let _ = raw_tx.send(res);
@@ -644,11 +753,16 @@ mod imp {
             dirs.push(resolved);
         }
         let dirs: Arc<[PathBuf]> = dirs.into();
+        let (ends, ended) = crossbeam_channel::bounded::<()>(0);
         std::thread::Builder::new()
             .name("skwir-watch".into())
-            .spawn(move || coalesce(&raw_rx, &deliver, &dirs, window, &cancel))?;
-        Ok(WatchHandle {
-            _inner: Box::new(watcher),
+            .spawn(move || {
+                coalesce(&raw_rx, &deliver, &dirs, window, &cancel);
+                drop(ends);
+            })?;
+        Ok(Live {
+            watch: Box::new(watcher),
+            ended,
         })
     }
 

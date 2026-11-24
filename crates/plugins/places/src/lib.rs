@@ -622,7 +622,6 @@ impl Places {
     /// what another program says of it then is its own unmount's. From
     /// memory, under the publisher's lock, which nothing holds across I/O:
     /// asked on the bus's thread as a notice comes (`follow_unmounts`).
-    #[cfg_attr(windows, allow(dead_code))]
     fn unmounting(&self, point: &Path) -> bool {
         let location = Location::from_path(point);
         self.0.lock().busy.iter().any(|b| b.location == location)
@@ -1205,11 +1204,12 @@ impl PlacesPlugin {
     /// table that leaves the volumes as they were (a container's mounts, a
     /// remote's) none.
     fn watch(&self, app: &App) {
-        // Not where the table holds no volume (Windows: the folders
-        // programs mount in, rclone's): its Devices are its drives.
-        #[cfg(not(windows))]
         if let Some(lifetime) = self.places.0.lock().lifetime.clone() {
+            // Not where the table holds no volume (Windows: the folders
+            // programs mount in, rclone's): its Devices are its drives.
+            #[cfg(not(windows))]
             self.follow_mounts(app, &lifetime);
+            // Windows' too: what it says of removing a drive (ADR-149, 16).
             follow_unmounts(&self.places, app, &lifetime);
         }
         // The bookmarks' folder holds other settings: only the file counts
@@ -1333,15 +1333,14 @@ fn wait_cut(app: &App, point: &Path, lifetime: Option<&CancelToken>) {
 }
 
 /// Follow what other programs say of unmounting a volume
-/// (`places::follow_unmounts`: GIO's and Solid's notices, udisks's jobs)
-/// and let go of it first, on a worker (`App::release`, ADR-149 amended):
-/// what shows it stays, reading it by its path. Skwir's own actions there
-/// hold it still and are named, with Cancel. An unmount udisks refused,
-/// that no desktop announced (`udisksctl`, udiskie: Skwir let go of it
-/// only as it was refused), is said to be worth asking again, where a
-/// pane shows a folder there. Skwir's own unmount says what became of it
-/// itself.
-#[cfg(not(windows))]
+/// (`places::follow_unmounts`: GIO's and Solid's notices, udisks's jobs;
+/// Windows' asking to remove a drive) and let go of it first, on a worker
+/// (`App::release`, ADR-149 amended): what shows it stays, reading it by
+/// its path. Skwir's own actions there hold it still and are named, with
+/// Cancel. An unmount udisks refused, that no desktop announced
+/// (`udisksctl`, udiskie: Skwir let go of it only as it was refused), is
+/// said to be worth asking again, where a pane shows a folder there.
+/// Skwir's own unmount says what became of it itself.
 fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
     use skwir_platform::places::UnmountNotice;
     /// How long an announced unmount is the desktop's to retry and say.
@@ -1456,7 +1455,6 @@ fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
 }
 
 /// Whether a pane shows a folder at or below `point`.
-#[cfg(not(windows))]
 fn shows_below(app: &App, point: &Path) -> bool {
     app.workspace.read().panes().iter().any(|pane| {
         pane.location()

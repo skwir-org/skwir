@@ -23619,3 +23619,37 @@ were decoded whole for it.
   region 24 MiB and 0.4 to 1.1 s. On HEAD with this work alone: clippy on
   the platform and the binary, the platform's 606 tests; Windows clippy
   of the platform.
+
+## 2026-11-24: Windows' Eject with a folder shown (ADR-149, 16 amended)
+
+A leftover of ADR-149, built by an agent tonight: Windows' watch
+(`ReadDirectoryChangesW`) holds the folder it watches open, so Eject
+found a removable drive in use while a pane showed a folder there.
+
+- `crates/core/src/fs/watch/kept.rs`: the watches other than Linux's kept
+  by volume, with `watch::let_go_on`, `watch_again_on`, `gone_on`,
+  `watches_on`, `follow_volumes` (nothing on Linux, where inotify holds
+  nothing); `fs::watch` public, for the platform.
+- `crates/platform/src/devices.rs`: a hidden top-level window on its own
+  thread (the volume broadcasts reach no message-only window), started
+  by `places::follow_unmounts`, registered for each drive a watch is on
+  (`CreateFileW` on its root and `RegisterDeviceNotificationW`,
+  `DBT_DEVTYP_HANDLE`; never the system's drive, a network's).
+  Query-remove, lock or dismount: `Announced` (`App::release`), the
+  watches let go of until Windows closed them, the folders held let go
+  of, 2 s at most, then granted. Refused: watched again, each folder read
+  again, registered anew. Removed: its watches told their folders went.
+- `reach`: Windows' drives are its table's points, by volume name, told
+  by the volumes' broadcast (`drives_changed`): a folder on a drive
+  removed says so and comes back with it. The places plugin's
+  `follow_unmounts`, `shows_below` and `unmounting` are Windows' too.
+- **Checked:** Linux unit tests (the keeper 4, the decisions 4, the places
+  plugin 18); on HEAD with this work alone: clippy on core, platform,
+  places and the binary, 1,659 tests of core, platform and places; under
+  Wine on an X display of its own, a real registration on `C:\` and the
+  query-remove, refused and removed notices through the window's
+  procedure (0.94 s); core under Wine 794 of 797 (the three Unix-fixture
+  failures PLAN lists).
+- **Not checked:** anything on a real Windows machine (Explorer's Eject
+  and Safely Remove, a stick and a USB disk Windows calls fixed, the
+  lock and dismount events, a busy drive's waits).

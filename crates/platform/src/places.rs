@@ -556,7 +556,11 @@ pub enum UnmountNotice {
 /// unmount jobs, whoever asked (`filesystem-unmount`, its block devices
 /// in `Objects`, then `Completed`). On threads of their own, connecting
 /// again when a bus is; `told` takes each at once and hands what may wait
-/// to a worker. Linux only; elsewhere nothing is told. Whether it follows.
+/// to a worker. On Windows, what Windows says of removing, locking or
+/// dismounting a drive a folder watch is on (`devices`, ADR-149 amended):
+/// asked, `Announced`, the window answering once Skwir's watches there
+/// are let go of; the removal refused or cancelled, `Refused`. macOS tells
+/// nothing (`DiskArbitration`'s approval is not asked). Whether it follows.
 pub fn follow_unmounts(
     stop: &CancelToken,
     told: impl Fn(UnmountNotice) + Send + Sync + 'static,
@@ -642,7 +646,11 @@ pub fn follow_unmounts(
         };
         session || system
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        crate::devices::follow(stop, std::sync::Arc::new(told))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (stop, told);
         false
