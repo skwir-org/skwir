@@ -227,6 +227,38 @@ fn a_copy_cut_short_whose_partial_went_with_its_volume_starts_again() {
     assert_eq!(std::fs::read_dir(&dest).expect("dest").count(), 1);
 }
 
+/// Let go of with its volume, which then goes (unmounted: here, its
+/// folder moved away), a copy cut short is let go of out of reach (the
+/// program quits; dismissed, undone): what it kept is noted all the same,
+/// kept while the drive is away, and swept as the drive comes back. The
+/// drive never keeps a hidden partial nothing removes.
+#[test]
+fn a_copy_cut_short_on_a_drive_gone_is_swept_once_it_is_back() {
+    let (_src_dir, src, _) = source();
+    let tmp = home_tempdir();
+    let (stick, away) = (tmp.path().join("a stick"), tmp.path().join("unplugged"));
+    let dest = stick.join("photos, l'été");
+    std::fs::create_dir_all(&dest).expect("dest");
+    let notes = skwir_core::op::staging::UnderWay::new(tmp.path().join("cache"));
+    let executor = Executor::new(Scheduler::new(2));
+    executor.set_under_way(notes.clone());
+    let (_, partial) = cut_short(&executor, &src, &dest);
+    let staging = partial.parent().expect("staging").to_path_buf();
+    let_go(&executor, &dest);
+    std::fs::rename(&stick, &away).expect("unplugged");
+    drop(executor);
+    assert!(notes.notes_under(&dest), "noted as it went");
+    notes.sweep_left();
+    assert!(notes.notes_under(&dest), "kept while the drive is away");
+
+    std::fs::rename(&away, &stick).expect("plugged in again");
+    assert!(staging.is_dir(), "what it kept is on the drive");
+    notes.sweep_left_under(std::slice::from_ref(&stick));
+    assert!(!staging.exists(), "swept as the drive is back");
+    assert!(!notes.notes_under(&dest), "and forgotten");
+    assert_eq!(std::fs::read_dir(&dest).expect("dest").count(), 0);
+}
+
 /// Retried, it goes on from what it had written: a byte changed at its
 /// start since is still there (no one reads it back but its last part).
 /// The staging folder stays locked meanwhile: no sweep takes it.

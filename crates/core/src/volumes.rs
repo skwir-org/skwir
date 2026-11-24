@@ -323,8 +323,21 @@ impl App {
     }
 
     /// What the panes hold open below a mount let go of lets go of it and
-    /// says so; what they hold at or below one made is opened again.
+    /// says so; what they hold at or below one made is opened again. What
+    /// copies cut short left on a drive that went with it is swept as it
+    /// comes back (`staging::UnderWay::sweep_left_under`), out of the way.
     fn act_on(&self, change: &Change) {
+        if !change.made.is_empty()
+            && let Some(under_way) = self.executor.under_way()
+        {
+            let made: Vec<PathBuf> = change.made.iter().cloned().collect();
+            self.scheduler.spawn(
+                Priority::Background,
+                "staging.sweep",
+                self.lifetime().child(),
+                move || under_way.sweep_left_under(&made),
+            );
+        }
         let open: Vec<Arc<dyn OpenLocation>> = {
             let ws = self.workspace.read();
             let mut held: hashing::Set<*const ()> = hashing::Set::default();
@@ -620,6 +633,51 @@ mod tests {
         wait(&app, pane, "back", |p| {
             p.listing.failure().is_none() && named(p, "after.txt") && named(p, "before.txt")
         });
+    }
+
+    /// A drive come back is swept of what a copy cut short left on it as
+    /// it went (a staging folder let go of out of reach, the folder it is
+    /// in noted, `staging::Staging::stays`), as its mount is made. On the
+    /// home's disk: a sweep looks only where this machine alone writes,
+    /// never on tmpfs.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_drive_come_back_is_swept_of_what_copies_cut_short_left() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let stick = tmp.path().join("a stick");
+        let dest = stick.join("photos, l'été");
+        std::fs::create_dir_all(&dest).unwrap();
+        let config = AppConfig::ephemeral(tmp.path());
+        let notes = crate::cache::Cache::open(config.cache_root.clone())
+            .namespace("staging")
+            .folder("under-way");
+        let app = App::new(config).unwrap();
+        // The start's own sweep done first.
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        let left = dest.join(".skwir-copy-AbC123");
+        std::fs::create_dir(&left).unwrap();
+        std::fs::write(left.join("lock"), b"").unwrap();
+        std::fs::write(left.join("0"), b"part").unwrap();
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::write(notes.join("copy-left"), dest.as_os_str().as_encoded_bytes()).unwrap();
+
+        let elsewhere = Change {
+            made: [tmp.path().join("another stick")].into_iter().collect(),
+            ..Change::default()
+        };
+        app.act_on(&elsewhere);
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        assert!(left.is_dir(), "another drive's coming leaves it");
+        let back = Change {
+            made: [stick.clone()].into_iter().collect(),
+            ..Change::default()
+        };
+        app.act_on(&back);
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        assert!(!left.exists(), "swept as its drive is back");
+        assert!(!notes.join("copy-left").exists(), "and forgotten");
     }
 
     /// Run in a user and mount namespace of the test's own, where it

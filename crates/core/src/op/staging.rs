@@ -27,6 +27,14 @@
 //! ([`UnderWay::sweep_noted`]: a copy into that folder, its mount found
 //! answering), in its lane.
 //!
+//! A staging folder this process lets go of and cannot remove stays
+//! noted, wherever it is: only a folder removed forgets its notes. Not
+//! found is no proof it went: its drive unmounted or pulled out, it is
+//! there still, out of reach. On this machine's volumes, the folder it is
+//! in is noted then (a destination's note, as a run's start reads them),
+//! and swept by the next run's start, or as its volume comes back
+//! ([`UnderWay::sweep_left_under`], `App::volumes_changed`).
+//!
 //! A large file a copy failed partway through (its server stopped
 //! answering, its drive was pulled out) is kept instead, for Retry to go
 //! on from ([`Partial`]): its folder stays, locked, and noted where it
@@ -37,7 +45,9 @@
 //! volume, and should it stay (the unmount refused), Retry takes the lock
 //! again ([`Staging::hold_again`]) and goes on from what was kept, its
 //! last part read back. Meanwhile this process sweeps it not ([`KEPT`]);
-//! another skwir may, as it would once this one ended.
+//! another skwir may, as it would once this one ended: a sweep removes a
+//! lock's name while it holds it, before anything else of the folder, so
+//! a lock taken again is known still the folder's by its name.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -63,6 +73,20 @@ static KEPT: parking_lot::Mutex<std::collections::BTreeSet<std::ffi::OsString>> 
 #[cfg(test)]
 pub(super) static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+#[cfg(test)]
+thread_local! {
+    /// What a test has happen as a lock let go of is about to be taken
+    /// again, opened and not locked yet ([`take_lock`]): a sweep, here or
+    /// in another skwir.
+    static AS_TAKEN: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// How long a lock taken again waits for this process's own, let go of
+/// with its volume, to be closed ([`Released`]): as long as a plan waits
+/// for what this process keeps open to be let go of (`executor`'s).
+const CLOSED_WITHIN: std::time::Duration = super::executor::LET_GO_WITHIN;
+
 /// A staging folder in a destination, removed when dropped, its lock held
 /// until then: what a step makes there is made in it and put in place
 /// whole ([`Staging::place`]). It holds its lock, named `lock`: make what
@@ -74,16 +98,43 @@ pub struct Staging {
     /// Its lock let go of with its volume, the folder kept ([`Self::let_go`]),
     /// until it is taken again ([`Self::hold_again`]).
     let_go: bool,
+    /// The lock let go of, being closed off the caller's thread: told
+    /// closed as it is ([`Released`]).
+    closing: Option<crossbeam_channel::Receiver<()>>,
     /// `None` once removed.
     dir: Option<PathBuf>,
     /// On a remote, the note naming it ([`UnderWay::mark`]): forgotten
     /// once it is removed, kept should it stay.
     note: Option<Mark>,
+    /// On this machine's volumes, where the folder it is in is noted
+    /// should it stay as it goes ([`Self::stays`]), for the sweeps.
+    noted_in: Option<UnderWay>,
+}
+
+/// A staging folder's lock let go of with its volume ([`Staging::let_go`]),
+/// closed as it is dropped, off the caller's thread; its folder's
+/// [`Staging::hold_again`] waits for it to be, or it would meet this
+/// process's own lock.
+pub(super) struct Released {
+    /// Closed first: a struct's fields are dropped in order.
+    _lock: File,
+    /// Dropped once the lock is closed, which tells its folder so.
+    _closed: crossbeam_channel::Sender<()>,
+}
+
+/// What came of taking a staging folder's lock ([`take_lock`]).
+enum Taken {
+    Locked(File),
+    /// Another holds it, or swept the folder (its lock's name gone): left
+    /// to it.
+    Theirs,
+    /// Not reached: the folder gone, its volume away, its lock unreadable.
+    Unreached,
 }
 
 impl Staging {
-    /// A new one in `dest_dir`, noted in `under_way` where that is a
-    /// remote's folder.
+    /// A new one in `dest_dir`, noted in `under_way`: itself where that is
+    /// a remote's folder, `dest_dir` should it stay elsewhere.
     pub(super) fn new(dest_dir: &Path, under_way: Option<&UnderWay>) -> io::Result<Self> {
         #[cfg(test)]
         MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -93,14 +144,17 @@ impl Staging {
             builder.permissions(private);
         }
         let dir = builder.tempdir_in(dest_dir)?.keep();
+        let remote = crate::fs::reach::of(dest_dir).is_some();
         let note = under_way
-            .filter(|_| crate::fs::reach::of(dest_dir).is_some())
+            .filter(|_| remote)
             .and_then(|under_way| under_way.mark(&dir));
         Ok(Self {
             lock: hold(&dir),
             let_go: false,
+            closing: None,
             dir: Some(dir),
             note,
+            noted_in: under_way.filter(|_| !remote).cloned(),
         })
     }
 
@@ -111,38 +165,60 @@ impl Staging {
     /// The lock is handed back, to be closed off the caller's thread (on
     /// FAT, mounted `flush`, a close waits a tenth of a second); `None`
     /// where none is held.
-    pub(super) fn let_go(&mut self) -> Option<File> {
+    pub(super) fn let_go(&mut self) -> Option<Released> {
         self.lock.as_ref()?;
         if let Some(name) = self.dir.as_deref().and_then(Path::file_name) {
             KEPT.lock().insert(name.to_os_string());
         }
         self.let_go = true;
-        self.lock.take()
+        let (closed, closing) = crossbeam_channel::bounded(0);
+        self.closing = Some(closing);
+        Some(Released {
+            _lock: self.lock.take()?,
+            _closed: closed,
+        })
+    }
+
+    /// This process's own lock let go of ([`Self::let_go`]) closed, or
+    /// [`CLOSED_WITHIN`] gone by: whether it is.
+    fn closed(&mut self) -> bool {
+        self.closing.take().is_none_or(|closing| {
+            closing.recv_timeout(CLOSED_WITHIN) != Err(crossbeam_channel::RecvTimeoutError::Timeout)
+        })
     }
 
     /// Take again the lock let go of with its volume ([`Self::let_go`]),
     /// before a Retry goes on in the folder: false when the folder or its
-    /// lock is gone (swept by another skwir, its volume not there now), or
-    /// another holds it, the folder then forgotten. True for one never let
-    /// go of. I/O: the Retry's worker.
+    /// lock is not reached (gone, its volume not there now), or another
+    /// holds it or swept it, the folder then forgotten. True for one never
+    /// let go of. This process's own lock is closed first (on its thread),
+    /// and the folder kept from this process's sweeps ([`KEPT`]) until it
+    /// is locked again: never in between, or a sweep here would take it.
+    /// I/O: the Retry's worker.
     pub(super) fn hold_again(&mut self) -> bool {
         if !self.let_go {
             return true;
         }
-        self.kept_no_more();
-        let Some(dir) = self.dir.clone() else {
-            return false;
-        };
-        let Ok(lock) = crate::fs::file::open_regular(&dir.join(LOCK)) else {
-            return false;
-        };
-        if lock.try_lock().is_err() {
-            // Not this process's any more: left to whoever holds it.
-            self.dir = None;
+        if !self.closed() {
+            // Its drive holds the close: not taken again (it starts that
+            // file again), removed or noted as it is let go of.
+            self.kept_no_more();
             return false;
         }
-        self.lock = Some(lock);
-        true
+        let taken = self.dir.as_deref().map_or(Taken::Unreached, take_lock);
+        self.kept_no_more();
+        match taken {
+            Taken::Locked(lock) => {
+                self.lock = Some(lock);
+                true
+            }
+            Taken::Theirs => {
+                // Not this process's any more: left to whoever holds it.
+                self.dir = None;
+                false
+            }
+            Taken::Unreached => false,
+        }
     }
 
     /// Where the folder is now as the system knows it from the lock it
@@ -169,12 +245,16 @@ impl Staging {
             .expect("a staging folder is there until removed")
     }
 
-    /// Remove it, what it holds included; its note kept where it stays.
+    /// Remove it, what it holds included; noted where it stays
+    /// ([`Self::stays`]). Not found, it is `Ok`, and noted all the same.
     fn remove_now(&mut self) -> io::Result<()> {
         drop(self.lock.take());
         let Some(dir) = self.dir.take() else {
             return Ok(());
         };
+        // Its lock let go of closed first: Windows removes no folder
+        // holding a file still open.
+        self.closed();
         // Kept from this process's sweeps no more.
         if std::mem::take(&mut self.let_go)
             && let Some(name) = dir.file_name()
@@ -182,17 +262,37 @@ impl Staging {
             KEPT.lock().remove(name);
         }
         match remove_tree(&dir) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => {
-                // Its server gone, say: swept once reached again.
-                if let Some(note) = self.note.take() {
-                    let _ = note.keep();
-                }
-                Err(e)
-            }
-            _ => {
+            Ok(()) => {
                 drop(self.note.take());
                 Ok(())
             }
+            Err(e) => {
+                self.stays(&dir);
+                if e.kind() == io::ErrorKind::NotFound {
+                    tracing::info!("a staging folder out of reach is noted, to be swept");
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// The folder `dir` stays, or may, as it is let go of: not removed
+    /// (its server stopped answering), or not found (its drive unmounted
+    /// or pulled out, it is there still, out of reach). Noted, for a sweep
+    /// to remove once it is reached again: on a remote its own note kept
+    /// ([`UnderWay::sweep_noted`]), elsewhere the folder it is in noted, as
+    /// a copy under way notes it ([`UnderWay::sweep_left`],
+    /// [`UnderWay::sweep_left_under`]).
+    fn stays(&mut self, dir: &Path) {
+        if let Some(note) = self.note.take() {
+            let _ = note.keep();
+        }
+        if let (Some(under_way), Some(in_dir)) = (self.noted_in.take(), dir.parent())
+            && let Some(note) = under_way.mark(in_dir)
+        {
+            let _ = note.keep();
         }
     }
 
@@ -393,6 +493,44 @@ fn hold(dir: &Path) -> Option<File> {
     file.persist(dir.join(LOCK)).ok()
 }
 
+/// The lock of the staging folder `dir`, taken again: locked by this
+/// process, still the one the folder names (a sweep removes the name of
+/// the lock it took before it lets go of it, [`sweep`]: one locked after
+/// is the lock of a folder being removed).
+fn take_lock(dir: &Path) -> Taken {
+    let path = dir.join(LOCK);
+    let Ok(lock) = crate::fs::file::open_regular(&path) else {
+        return Taken::Unreached;
+    };
+    #[cfg(test)]
+    if let Some(meanwhile) = AS_TAKEN.with_borrow_mut(Option::take) {
+        meanwhile();
+    }
+    if lock.try_lock().is_err() || !still_named(&lock, &path) {
+        return Taken::Theirs;
+    }
+    Taken::Locked(lock)
+}
+
+/// Whether `file`, opened from `path`, is what `path` names still.
+fn still_named(file: &File, path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (file.metadata(), std::fs::symlink_metadata(path)) {
+            (Ok(held), Ok(named)) => held.dev() == named.dev() && held.ino() == named.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // No sweep runs there (`fs::volume::only_here`): what was opened
+        // is what is named.
+        let _ = (file, path);
+        true
+    }
+}
+
 /// Remove a staging tree. Its folders may already have a copy's read-only
 /// permissions: they are opened to their owner first, which is safe only
 /// in a tree of our own making; one open already is left as it is, on a
@@ -464,13 +602,20 @@ pub fn sweep(dir: &Path) {
             continue;
         }
         let folder = entry.path();
-        let Ok(lock) = crate::fs::file::open_regular(&folder.join(LOCK)) else {
+        let lock_at = folder.join(LOCK);
+        let Ok(lock) = crate::fs::file::open_regular(&lock_at) else {
             continue;
         };
         if lock.try_lock().is_err() {
             continue;
         }
-        // Its copy is gone. Released first, as `Staging::remove` does.
+        // Its copy is gone. Its lock's name goes first, while it is held:
+        // whoever opened it meanwhile (a Retry taking again what it let go
+        // of, `Staging::hold_again`) and locks it once let go of finds it
+        // named no more. Then released, as `Staging::remove` does.
+        if std::fs::remove_file(&lock_at).is_err() {
+            continue;
+        }
         drop(lock);
         // The folder is a destination's, and its name a private path.
         match remove_tree(&folder) {
@@ -514,38 +659,37 @@ impl UnderWay {
     }
 
     /// Sweep the folders an earlier run was copying into when it ended,
-    /// and forget them; one on a drive not there now is kept for a later
-    /// run. A note still locked is a running skwir's. On a worker.
+    /// and those staging folders were in that stayed out of reach as they
+    /// were let go of (`Staging::stays`), and forget them; one on a drive
+    /// not there now is kept for later. A note still locked is a running
+    /// plan's. On a worker.
     pub fn sweep_left(&self) {
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(mut note) = crate::fs::file::open_regular(&path) else {
-                continue;
-            };
-            if note.try_lock().is_err() {
-                continue;
-            }
-            // A path, never more than this.
-            let mut bytes = Vec::new();
-            if (&mut note).take(1 << 16).read_to_end(&mut bytes).is_err() {
-                continue;
-            }
-            drop(note);
-            let folder = PathBuf::from(crate::os_path::from_bytes(bytes));
+        self.sweep_here(|_| true);
+    }
+
+    /// [`Self::sweep_left`] of the folders under the mount points `points`,
+    /// mounted just now (a drive come back, `App::volumes_changed`). Reads
+    /// them: on a worker.
+    pub fn sweep_left_under(&self, points: &[PathBuf]) {
+        self.sweep_here(|folder| points.iter().any(|point| folder.starts_with(point)));
+    }
+
+    /// Sweep the folders on this machine's volumes the notes name that
+    /// `wanted` takes, those there now, and forget them.
+    fn sweep_here(&self, wanted: impl Fn(&Path) -> bool) {
+        for (note, folder) in self.noted() {
             // One on a remote is not looked at here, where its server may
             // not answer (ADR-077): swept once reached
             // ([`Self::sweep_noted`]).
-            if crate::fs::reach::of(&folder).is_none() {
-                if folder.is_absolute() && folder.is_dir() {
-                    sweep(&folder);
-                    let _ = std::fs::remove_file(&path);
-                } else if !folder.is_absolute() {
-                    // Not a note this module wrote.
-                    let _ = std::fs::remove_file(&path);
-                }
+            if !wanted(&folder) || crate::fs::reach::of(&folder).is_some() {
+                continue;
+            }
+            if folder.is_absolute() && folder.is_dir() {
+                sweep(&folder);
+                let _ = std::fs::remove_file(&note);
+            } else if !folder.is_absolute() {
+                // Not a note this module wrote.
+                let _ = std::fs::remove_file(&note);
             }
         }
     }
@@ -767,6 +911,102 @@ mod tests {
         let staging = Staging::new(&dest, Some(&under_way)).unwrap();
         staging.remove().unwrap();
         assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0);
+    }
+
+    /// A staging folder let go of with its volume, out of reach as it goes
+    /// (its drive unmounted: here, its folder moved away), is noted: a
+    /// run's start keeps the note while the drive is away, and the folder
+    /// is swept once its drive is back. One removed leaves no note.
+    #[test]
+    fn a_staging_folder_its_drive_took_away_is_swept_once_it_is_back() {
+        let tmp = scratch();
+        let (stick, away) = (tmp.path().join("stick"), tmp.path().join("unplugged"));
+        let dest = stick.join("l'été");
+        std::fs::create_dir_all(&dest).unwrap();
+        let cache = tmp.path().join("cache");
+        let under_way = UnderWay::new(cache.clone());
+        let mut staging = Staging::new(&dest, Some(&under_way)).unwrap();
+        let kept = staging.path().to_path_buf();
+        std::fs::write(kept.join("0"), b"part").unwrap();
+        drop(staging.let_go());
+        std::fs::rename(&stick, &away).unwrap();
+        drop(staging);
+        assert!(under_way.notes_under(&dest), "noted as it went");
+        under_way.sweep_left();
+        assert!(under_way.notes_under(&dest), "kept while its drive is away");
+
+        std::fs::rename(&away, &stick).unwrap();
+        assert!(kept.is_dir());
+        under_way.sweep_left_under(&[tmp.path().join("elsewhere")]);
+        assert!(kept.is_dir(), "another drive's coming leaves it");
+        under_way.sweep_left_under(std::slice::from_ref(&stick));
+        assert!(!kept.exists(), "swept as its drive is back");
+        assert!(!under_way.notes_under(&dest), "and forgotten");
+
+        let staging = Staging::new(&dest, Some(&under_way)).unwrap();
+        drop(staging);
+        assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0);
+    }
+
+    /// A lock let go of with its volume is taken again before the folder
+    /// is kept from this process's sweeps no more: a sweep meanwhile (a
+    /// copy into the same folder) leaves it.
+    #[test]
+    fn a_lock_taken_again_is_kept_from_a_sweep_meanwhile() {
+        let tmp = scratch();
+        let mut staging = Staging::new(tmp.path(), None).unwrap();
+        drop(staging.let_go());
+        let dest = tmp.path().to_path_buf();
+        AS_TAKEN.set(Some(Box::new(move || sweep(&dest))));
+        assert!(staging.hold_again(), "held again");
+        assert!(staging.path().join(LOCK).is_file(), "not swept meanwhile");
+        sweep(tmp.path());
+        assert!(staging.path().is_dir(), "held");
+        let name = staging.path().file_name().unwrap().to_os_string();
+        assert!(!KEPT.lock().contains(&name), "kept no more");
+        staging.remove().unwrap();
+    }
+
+    /// A Retry taking the lock again before this process's own let go of
+    /// is closed (off the caller's thread) waits for it, rather than take
+    /// it for another's.
+    #[test]
+    fn a_lock_taken_again_waits_for_its_own_to_be_closed() {
+        let tmp = scratch();
+        let mut staging = Staging::new(tmp.path(), None).unwrap();
+        let released = staging.let_go().unwrap();
+        let closing = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(released);
+        });
+        assert!(staging.hold_again(), "its own, closed meanwhile");
+        closing.join().unwrap();
+        let path = staging.path().to_path_buf();
+        staging.remove().unwrap();
+        assert!(!path.exists());
+    }
+
+    /// A lock taken again just as another skwir sweeps the folder (it
+    /// took the lock, removed its name, let go of it) is not held: the
+    /// folder is left to that sweep.
+    #[test]
+    fn a_lock_another_sweep_took_is_not_held_again() {
+        let tmp = scratch();
+        let mut staging = Staging::new(tmp.path(), None).unwrap();
+        drop(staging.let_go());
+        let folder = staging.path().to_path_buf();
+        let theirs = folder.clone();
+        AS_TAKEN.set(Some(Box::new(move || {
+            let at = theirs.join(LOCK);
+            let lock = crate::fs::file::open_regular(&at).unwrap();
+            lock.try_lock().unwrap();
+            std::fs::remove_file(&at).unwrap();
+            drop(lock);
+        })));
+        assert!(!staging.hold_again(), "theirs");
+        drop(staging);
+        assert!(folder.is_dir(), "left to their sweep");
+        remove_tree(&folder).unwrap();
     }
 
     #[test]

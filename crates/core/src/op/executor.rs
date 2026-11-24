@@ -4513,7 +4513,7 @@ impl Executor {
     /// remote's stays held: its server may not answer, and what it went
     /// on from is worth more there.
     pub fn let_go_under(&self, tree: &Path) {
-        let locks: Vec<std::fs::File> = {
+        let locks: Vec<super::staging::Released> = {
             let mut stopped = self.stopped.lock();
             stopped
                 .iter_mut()
@@ -5216,7 +5216,9 @@ impl Executor {
 /// How long a plan waits for what this process keeps open to be closed
 /// before it takes it (`fs::kept_open`): a player's helper ends within
 /// milliseconds; one slower is left to it, its step failing as it would.
-const LET_GO_WITHIN: Duration = Duration::from_secs(2);
+/// A staging folder's lock let go of with its volume is waited for as
+/// long before it is taken again (`staging::Released`).
+pub(super) const LET_GO_WITHIN: Duration = Duration::from_secs(2);
 
 /// Let go of the files this process keeps open that `steps` take away
 /// (ADR-136), telling their holders `plan`: taken until the plan drops
