@@ -1919,6 +1919,12 @@ op_there_not_a_folder = { $name } is there, and is not a folder
 # What a batch of copies could not do: give a copy its original's modification time; why follows. path: the copy's path.
 op_time_not_given = { $path } could not be given its time
 
+# Why a copy failed, said after the file's name: the drive it went to is formatted as FAT (FAT32, as USB sticks and memory cards often are), which keeps no file of 4 GiB or more. size: 4 GiB, in the user's units (4.3 GB). Begins in lower case.
+op_too_large_fat = a drive formatted as FAT keeps no file of { $size } or more
+
+# Why a copy is refused before it begins: the drive it goes to is formatted as FAT (FAT32, as USB sticks and memory cards often are), which keeps no file of 4 GiB or more. name: the file; folder: where it would go; size: 4 GiB, in the user's units (4.3 GB).
+op_too_large_for_fat = { $name } is too large for { $folder }: a drive formatted as FAT keeps no file of { $size } or more
+
 # Said after why a move into the trash on another drive failed: its copy in the trash could not be removed. path: where it is; why: why it stayed.
 op_trash_copy_left = a copy of it is left in { $path } ({ $why })
 

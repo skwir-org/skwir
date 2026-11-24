@@ -2073,6 +2073,12 @@ op_there_not_a_folder = { $name } est là, et ce n’est pas un dossier
 op_time_not_given = { $path } n’a pas pu recevoir sa date de modification
 
 # draft
+op_too_large_fat = un disque formaté en FAT ne garde aucun fichier de { $size } ou plus
+
+# draft
+op_too_large_for_fat = { $name } est trop gros pour { $folder } : un disque formaté en FAT ne garde aucun fichier de { $size } ou plus
+
+# draft
 op_trash_copy_left = une copie en reste dans { $path } ({ $why })
 
 # draft

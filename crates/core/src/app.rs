@@ -3920,6 +3920,8 @@ impl App {
         self.announce_letting_go(path);
         // What was asked unasked there (thumbnails) stops reading it.
         self.thumbnails.cancel_under(path);
+        // A stopped plan's partial kept for Retry holds the volume busy.
+        self.executor.let_go_under(path);
         self.wake();
         Ok(())
     }

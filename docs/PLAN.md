@@ -1539,6 +1539,19 @@ on XWayland since their eGPU wrapper, and on Wayland); gpui 0092 ends a
 drag Hyprland never says is over. Left: the user's own checks (the
 night's summary), two monitors, Noctalia.
 
+**Copies onto USB drives** (2026-11-24, the user's report: a copy
+"done" missing 300 MB, and progress in jumps): no Skwir path found that
+drops bytes and says done (FAT32's limit fails visibly; now refused
+before the first byte); a failed copy's partial no longer holds the
+drive busy; a FAT or exFAT drive's own memory is written out; progress
+moves by eighths of a window. Left: the user's own case (the filesystem,
+the file's size, a toast, the version; a counterfeit-capacity stick
+would lose a large file's end with copy and unmount succeeding); steps
+staging onto a removable drive (extract, compress, Reduce Size, Make
+PDF) are neither written through nor written out at the plan's end; an
+archive's member over 4 GiB onto FAT fails in the helper; Windows'
+`largest_file` and `written_through` compiled only.
+
 **Two stats of an entry** (2026-11-24): the folder provider keeps the
 later begun (`Names::newest`); other locations that stat on a worker
 while watched (searches, the trash, tag places, the shelf) were not

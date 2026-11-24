@@ -865,6 +865,11 @@ impl super::Effect for Move {
                 if ctx.placed_by_batch(&src, &target) {
                     return pending(true);
                 }
+                // Larger than the volume there keeps, it is on another: a
+                // copy, which cannot be made.
+                if let Some(refused) = too_large(&src, &self.dest_dir, ctx) {
+                    return conflict(refused);
+                }
                 if ctx.exists(&target) {
                     return conflict(already_there(&target));
                 }
@@ -1287,6 +1292,9 @@ impl super::Effect for Copy {
         }
         if ctx.made(&target) {
             return conflict(there_by_earlier_step(&target));
+        }
+        if let Some(refused) = too_large(&src, &self.dest_dir, ctx) {
+            return conflict(refused);
         }
         if ctx.exists(&target) {
             // Only a finished copy of this very source is "already done": an
@@ -2068,7 +2076,7 @@ fn copy_entry(
         TransferTarget::InsideSource => anyhow::bail!(into_itself(false)),
         TransferTarget::Separate => {}
     }
-    let removable = crate::fs::volume::is_removable(dest_dir);
+    let removable = sys::written_through(dest_dir);
     let pace = if removable {
         ctx.pace_through(dest_dir)?
     } else {
@@ -2242,6 +2250,39 @@ fn not_placed(target: &Path, dest_dir: &Path) -> Couldnt {
     )
 }
 
+/// Why `file` is not copied into `dest`, whose volume keeps no file of
+/// more than `most` bytes (`sys::largest_file`: a FAT drive's): said alone,
+/// as a check or the plan's sizing refuses it before anything is copied.
+pub(super) fn too_large_for(file: &Path, dest: &Path, most: u64) -> Words {
+    words!(
+        op_too_large_for_fat = "{ $name } is too large for { $folder }: a drive formatted as FAT keeps no file of { $size } or more",
+        name = name_of(file),
+        folder = name_of(dest),
+        size = crate::words::Size(most.saturating_add(1)),
+        note = "Why a copy is refused before it begins: the drive it goes to is formatted as FAT (FAT32, as USB sticks and memory cards often are), which keeps no file of 4 GiB or more. name: the file; folder: where it would go; size: 4 GiB, in the user's units (4.3 GB)."
+    )
+}
+
+/// Why a file was not copied where its volume keeps no file of more than
+/// `most` bytes: said after its name, as a copy's error is.
+fn too_large_there(most: u64) -> Words {
+    words!(
+        op_too_large_fat = "a drive formatted as FAT keeps no file of { $size } or more",
+        size = crate::words::Size(most.saturating_add(1)),
+        note = "Why a copy failed, said after the file's name: the drive it went to is formatted as FAT (FAT32, as USB sticks and memory cards often are), which keeps no file of 4 GiB or more. size: 4 GiB, in the user's units (4.3 GB). Begins in lower case."
+    )
+}
+
+/// Why `src` cannot be copied into `dest_dir`: a file larger than the
+/// volume there keeps (a FAT drive's 4 GiB). The volume is asked once a
+/// plan (`StepContext::largest_in`), and the source looked at only where
+/// it keeps less than any file asks.
+fn too_large(src: &Path, dest_dir: &Path, ctx: &StepContext) -> Option<Words> {
+    let most = ctx.largest_in(dest_dir)?;
+    let meta = std::fs::symlink_metadata(src).ok()?;
+    (meta.is_file() && meta.len() > most).then(|| too_large_for(src, dest_dir, most))
+}
+
 /// What a copy that failed left at `path`, which could not be removed
 /// (`cleanup`).
 fn part_left(path: &Path, cleanup: &std::io::Error) -> Words {
@@ -2318,6 +2359,7 @@ fn tree_size(path: &Path, ctx: &StepContext) -> anyhow::Result<u64> {
     let m = std::fs::symlink_metadata(path)?;
     if !m.is_dir() {
         return Ok(if m.is_file() && ctx.sized_once(&m) {
+            ctx.sized_large(path, m.len());
             m.len()
         } else {
             0
@@ -2436,6 +2478,17 @@ fn copy_file(
             )
         })?;
     let m = sf.metadata()?;
+    // Larger than its drive keeps (a FAT drive's 4 GiB): refused before
+    // its first byte, never written up to where the drive refuses it.
+    if m.len() > sys::FAT_MOST
+        && let Some(most) = dst.parent().and_then(sys::largest_file)
+        && m.len() > most
+    {
+        return Err(not_copied(src).because(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            too_large_there(most),
+        )));
+    }
     // Cut short by the run this one retries: gone on from where its last
     // part reads as the source's, when the source is as it was then.
     let partial = ctx.partial_at(dst, &m);
@@ -2675,12 +2728,34 @@ fn copy_contents(
     }
     // Both offsets advanced together, so the buffered copy resumes in place.
     let mut buf = ctx.copy_buffer();
+    copied += copy_buffered(&mut sf, &mut df, &mut buf, ctx, &mut |n| {
+        writing.wrote(n, ctx)
+    })?;
+    writing.close(ctx)?;
+    Ok(from + copied)
+}
+
+/// Copy what `sf` reads to `df` through `buf`, a chunk at a time
+/// (`Chunk`), until `sf` ends, telling `wrote` each chunk once written
+/// whole and answering Cancel between two: the bytes copied. A write that
+/// takes part of a chunk is written on until it took all of it, one that
+/// takes none fails (`WriteZero`), and what the drive refuses (`EFBIG`
+/// past what it keeps, `ENOSPC` once full) fails the copy: never an end,
+/// which only the source's reading says.
+fn copy_buffered(
+    sf: &mut impl Read,
+    df: &mut impl Write,
+    buf: &mut [u8],
+    ctx: &StepContext,
+    wrote: &mut dyn FnMut(u64) -> anyhow::Result<()>,
+) -> anyhow::Result<u64> {
     let mut chunk = Chunk::new(buf.len());
+    let mut copied = 0u64;
     loop {
         ctx.check_cancelled()?;
         let began = std::time::Instant::now();
         let n = match sf.read(&mut buf[..chunk.size]) {
-            Ok(0) => return writing.close(ctx).map(|()| from + copied),
+            Ok(0) => return Ok(copied),
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e.into()),
@@ -2689,7 +2764,7 @@ fn copy_contents(
         // Read and written: a slow destination is as slow as a slow source.
         chunk.took(began.elapsed());
         copied += n as u64;
-        writing.wrote(n as u64, ctx)?;
+        wrote(n as u64)?;
     }
 }
 
@@ -6311,6 +6386,190 @@ mod tests {
             ("ranges", Pace::testing(proc(), false)),
             ("volume", Pace::testing(proc(), true)),
         ]
+    }
+
+    /// A drive as the copy loop meets it (`copy_buffered`): each write
+    /// takes at most `each` bytes, the one after each is interrupted
+    /// (`EINTR`) where `interrupts`, and once it holds `holds` bytes it
+    /// refuses with `refuses`, or takes nothing (`Ok(0)`) without one.
+    struct StandIn {
+        took: Vec<u8>,
+        each: usize,
+        holds: usize,
+        refuses: Option<std::io::ErrorKind>,
+        interrupts: bool,
+        interrupted: bool,
+    }
+
+    impl StandIn {
+        fn new(each: usize, holds: usize, refuses: Option<std::io::ErrorKind>) -> Self {
+            StandIn {
+                took: Vec::new(),
+                each,
+                holds,
+                refuses,
+                interrupts: false,
+                interrupted: false,
+            }
+        }
+    }
+
+    impl Write for StandIn {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.interrupts && !std::mem::replace(&mut self.interrupted, true) {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            self.interrupted = false;
+            let room = self.holds - self.took.len();
+            if room == 0 {
+                return self.refuses.map_or(Ok(0), |kind| Err(kind.into()));
+            }
+            let n = buf.len().min(self.each).min(room);
+            self.took.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Bytes that differ along their length.
+    fn varied(len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect()
+    }
+
+    /// A drive that takes a little of each write, and is interrupted
+    /// between two, is written on until it holds every byte: told once
+    /// each chunk is whole, the copy ends where its source does.
+    #[test]
+    fn the_copy_loop_writes_on_after_short_and_interrupted_writes() {
+        let bytes = varied((3 << 20) + 12_345);
+        let mut drive = StandIn::new(4097, usize::MAX, None);
+        drive.interrupts = true;
+        let mut told = 0u64;
+        let copied = copy_buffered(
+            &mut bytes.as_slice(),
+            &mut drive,
+            &mut vec![0; 1 << 20],
+            &StepContext::detached(),
+            &mut |n| {
+                told += n;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(copied, bytes.len() as u64);
+        assert_eq!(told, copied, "every byte told, once");
+        assert!(drive.took == bytes, "the drive holds the source");
+    }
+
+    /// What the drive refuses partway through a chunk (a FAT volume past
+    /// 4 GiB, a full one) fails the copy, in the drive's words, with what
+    /// it took never told as copied; one that takes nothing fails too.
+    /// Never an end: only the source's reading says one.
+    #[test]
+    fn the_copy_loop_fails_where_the_drive_refuses() {
+        use std::io::ErrorKind;
+        let bytes = varied(3 << 20);
+        let holds = (2 << 20) + 7;
+        for (refuses, said) in [
+            (
+                Some(ErrorKind::FileTooLarge),
+                "the file is too large for that drive",
+            ),
+            (Some(ErrorKind::StorageFull), "the drive is full"),
+            (None, "failed to write whole buffer"),
+        ] {
+            let mut drive = StandIn::new(1 << 16, holds, refuses);
+            let mut told = 0u64;
+            let error = copy_buffered(
+                &mut bytes.as_slice(),
+                &mut drive,
+                &mut vec![0; 1 << 20],
+                &StepContext::detached(),
+                &mut |n| {
+                    told += n;
+                    Ok(())
+                },
+            )
+            .expect_err("refused");
+            let io = error.downcast_ref::<std::io::Error>().expect("the drive's");
+            assert_eq!(io.kind(), refuses.unwrap_or(ErrorKind::WriteZero));
+            assert_eq!(super::super::io_words(io).english(), said);
+            assert_eq!(drive.took.len(), holds, "{said}");
+            assert!(
+                told < holds as u64,
+                "{said}: only whole chunks told, {told}"
+            );
+        }
+        // As the system says them.
+        #[cfg(unix)]
+        for (errno, kind) in [
+            (libc::EFBIG, ErrorKind::FileTooLarge),
+            (libc::ENOSPC, ErrorKind::StorageFull),
+        ] {
+            assert_eq!(std::io::Error::from_raw_os_error(errno).kind(), kind);
+        }
+    }
+
+    /// A file larger than the volume it goes to keeps (a FAT drive's
+    /// 4 GiB) is refused by the check of its copy and of its move, in
+    /// words: before anything is copied, where it could never be written.
+    /// One that fits, and a folder (the plan's sizing looks inside it), are
+    /// not.
+    #[test]
+    fn a_file_larger_than_its_drive_keeps_is_refused_by_its_check() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let (src, dest) = (dir.path().join("it's a film.mkv"), dir.path().join("stick"));
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(&src, [7u8; 100]).unwrap();
+        std::fs::create_dir(dir.path().join("films")).unwrap();
+        std::fs::write(dir.path().join("films/a.mkv"), [7u8; 100]).unwrap();
+        let entry = |path: &Path| EntryRef::from_path(path).unwrap();
+        let copy = |path: &Path| Copy {
+            entry: entry(path),
+            dest_dir: dest.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        };
+        let moving = Move {
+            entry: entry(&src),
+            dest_dir: dest.clone(),
+            new_name: None,
+        };
+        let refused = |status: StepStatus| match status {
+            StepStatus::Conflict { reason } => Some(reason.english()),
+            _ => None,
+        };
+        let ctx = StepContext::detached();
+        ctx.assume_largest(&dest, Some(99));
+        let said = "“it's a film.mkv” is too large for “stick”: a drive formatted as FAT keeps no file of 100\u{a0}B or more";
+        assert_eq!(refused(copy(&src).check(&ctx)).as_deref(), Some(said));
+        assert_eq!(refused(moving.check(&ctx)).as_deref(), Some(said));
+        assert_eq!(refused(copy(&dir.path().join("films")).check(&ctx)), None);
+        ctx.assume_largest(&dest, Some(100));
+        assert_eq!(refused(copy(&src).check(&ctx)), None, "just fits");
+        ctx.assume_largest(&dest, None);
+        assert_eq!(refused(copy(&src).check(&ctx)), None, "keeps any");
+    }
+
+    /// The home's volume keeps any file: only a FAT one is said to keep
+    /// less, and a remote is never asked.
+    #[test]
+    fn only_a_fat_volume_keeps_less_than_any_file() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        assert_eq!(sys::largest_file(dir.path()), None);
+        let ctx = StepContext::detached();
+        assert_eq!(
+            ctx.largest_in(&dir.path().join("not there yet/below")),
+            None
+        );
     }
 
     // Writing through is Linux's alone so far (ADR-035).

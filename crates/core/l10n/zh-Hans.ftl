@@ -2023,6 +2023,12 @@ op_there_not_a_folder = { $name }已在该处，且不是文件夹
 op_time_not_given = 无法为{ $path }设置时间
 
 # draft
+op_too_large_fat = 格式化为 FAT 的驱动器无法保存 { $size } 或更大的文件
+
+# draft
+op_too_large_for_fat = { $name }对{ $folder }而言过大：格式化为 FAT 的驱动器无法保存 { $size } 或更大的文件
+
+# draft
 op_trash_copy_left = 它的一个副本留在了{ $path }中（{ $why }）
 
 # draft

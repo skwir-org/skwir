@@ -329,3 +329,196 @@ fn a_name_too_long_is_refused_before_anything_changes() {
     assert!(error.contains("too long"), "says why: {error}");
     assert_eq!(names(root), ["a.txt"]);
 }
+
+/// A file of `len` bytes at `path` that differ along its length (no hole,
+/// no two MiB alike: each begins with its number), so a copy cut anywhere
+/// reads as cut. Written a MiB at a time, a block made once.
+// Only the FAT test reads it, Linux's.
+#[cfg(target_os = "linux")]
+fn varied_file(path: &Path, len: u64) {
+    use std::io::Write;
+    let mut x = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut block: Vec<u8> = (0..1 << 20)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect();
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+    let mut at = 0u64;
+    while at < len {
+        block[..8].copy_from_slice(&at.to_le_bytes());
+        let n = usize::try_from((len - at).min(block.len() as u64)).unwrap();
+        file.write_all(&block[..n]).unwrap();
+        at += n as u64;
+    }
+    file.flush().unwrap();
+}
+
+/// What this process holds open at or below `dir`: what makes the kernel
+/// refuse to unmount its volume.
+#[cfg(target_os = "linux")]
+fn held_under(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .flatten()
+        .filter_map(|fd| std::fs::read_link(fd.path()).ok())
+        .filter(|target| target.starts_with(dir))
+        .collect()
+}
+
+/// The end of the next plan `app` runs.
+// Only the FAT test reads it, Linux's.
+#[cfg(target_os = "linux")]
+fn finished(app: &skwir_core::app::App) -> skwir_core::op::ExecEvent {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    loop {
+        let event = app
+            .executor
+            .events()
+            .recv_deadline(deadline)
+            .expect("it ends");
+        if matches!(event, skwir_core::op::ExecEvent::Finished { .. }) {
+            return event;
+        }
+    }
+}
+
+/// On a FAT32 volume, which keeps no file of 4 GiB or more: a file that
+/// large is refused before a byte of it is copied, alone (its step's
+/// check) or in a folder (the plan's sizing), saying why, and nothing of
+/// it is left there. A copy that fills the drive keeps what it wrote for
+/// Retry, and lets go of it as the drive is let go of: nothing holds the
+/// drive then, which unmounts.
+///
+/// Run on demand, on a FAT32 volume of the test's own (udisks mounts an
+/// image without root), with 11 GB free in `~/.cache/skwir-tests`:
+///
+/// ```text
+/// truncate -s 6G ~/.cache/skwir-tests/fat.img
+/// mkfs.vfat -F 32 -n SKWIRCOPY ~/.cache/skwir-tests/fat.img
+/// udisksctl loop-setup --no-user-interaction -f ~/.cache/skwir-tests/fat.img
+/// udisksctl mount --no-user-interaction -b /dev/loopN
+/// SKWIR_FAT32_DIR=/run/media/$USER/SKWIRCOPY cargo nextest run -p skwir-core \
+///     --test failures --run-ignored only -E 'test(/fat32/)'
+/// ```
+///
+/// then `udisksctl unmount -b /dev/loopN`, `udisksctl loop-delete -b
+/// /dev/loopN`, and remove the image.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs a FAT32 volume of its own: SKWIR_FAT32_DIR"]
+fn on_fat32_a_file_too_large_is_refused_and_a_full_drive_let_go_of() {
+    use skwir_core::op::ExecEvent;
+    let fat = PathBuf::from(std::env::var_os("SKWIR_FAT32_DIR").expect("SKWIR_FAT32_DIR"));
+    let tmp = home_tempdir();
+    let films = tmp.path().join("films");
+    std::fs::create_dir(&films).unwrap();
+    let film = films.join("it's a film.mkv");
+    varied_file(&film, (4 << 30) + (300 << 20));
+    std::fs::write(films.join("notes.txt"), b"notes").unwrap();
+    let app = app(tmp.path());
+
+    // Alone: its check refuses it, at once.
+    let dest = tempfile::tempdir_in(&fat).unwrap();
+    let began = std::time::Instant::now();
+    let r = app.executor.execute_blocking(
+        &Plan::with_steps(Words::as_written("copy"), vec![copy(&film, dest.path())]),
+        app.lifetime(),
+    );
+    let error = r.error.expect("refused").english();
+    assert!(
+        error.contains("is too large for") && error.contains("formatted as FAT"),
+        "says why: {error}"
+    );
+    assert!(
+        began.elapsed().as_secs() < 10,
+        "refused before copying: {:?}",
+        began.elapsed()
+    );
+    assert!(
+        names(dest.path()).is_empty(),
+        "nothing left: {:?}",
+        names(dest.path())
+    );
+    assert!(
+        held_under(&fat).is_empty(),
+        "nothing held: {:?}",
+        held_under(&fat)
+    );
+
+    // In a folder, asked as one action: the plan's sizing refuses it.
+    app.apply_whole(Plan::with_steps(
+        Words::as_written("copy films"),
+        vec![copy(&films, dest.path())],
+    ));
+    let ExecEvent::Finished { applied, error, .. } = finished(&app) else {
+        unreachable!()
+    };
+    let error = error.expect("refused").english();
+    assert_eq!(applied, 0);
+    assert!(
+        error.contains("“it's a film.mkv” is too large for"),
+        "names it: {error}"
+    );
+    assert!(
+        names(dest.path()).is_empty(),
+        "nothing copied: {:?}",
+        names(dest.path())
+    );
+
+    // A drive filled: what was written is kept for Retry, its lock held,
+    // until the drive is let go of.
+    let part = tmp.path().join("part.bin");
+    varied_file(&part, 2 << 30);
+    let steps = (0..4)
+        .map(|i| {
+            Box::new(Copy {
+                entry: EntryRef::from_path(&part).unwrap(),
+                dest_dir: dest.path().to_path_buf(),
+                new_name: Some(format!("part {i}.bin").into()),
+                preserve_attributes: false,
+            }) as Box<dyn Operation>
+        })
+        .collect();
+    let plan = Plan::with_steps(Words::as_written("copy parts"), steps);
+    let r = app.executor.execute_blocking(&plan, app.lifetime());
+    let error = r.error.expect("the drive filled").english();
+    assert!(error.contains("the drive is full"), "says why: {error}");
+    assert!(app.executor.can_retry(plan.id));
+    assert!(
+        !held_under(&fat).is_empty(),
+        "the partial's lock holds the drive"
+    );
+    // The drive let go of, as before its unmount (`App::release`): removed
+    // on a thread of its own, an unmount meanwhile trying again.
+    app.release(&fat, &skwir_core::location::Location::from_path(tmp.path()))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let staged = || {
+        names(dest.path())
+            .iter()
+            .any(|name| name.starts_with(".skwir-copy"))
+    };
+    while (!held_under(&fat).is_empty() || staged()) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        held_under(&fat).is_empty(),
+        "let go of: {:?}",
+        held_under(&fat)
+    );
+    assert!(
+        names(dest.path())
+            .iter()
+            .all(|name| !name.starts_with(".skwir-copy")),
+        "the partial removed: {:?}",
+        names(dest.path())
+    );
+    assert!(
+        app.executor.can_retry(plan.id),
+        "still retried, from its start"
+    );
+}

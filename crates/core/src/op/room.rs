@@ -59,6 +59,30 @@ pub struct Sized {
     pub writes: Vec<Option<(PathBuf, u64)>>,
     /// Each step's bytes as it counts them; 0 for one not sized.
     pub work: Vec<u64>,
+    /// Each step's largest file larger than some volume keeps, and its
+    /// length (`StepContext::sized_large`): `None` for most.
+    pub large: Vec<Option<(PathBuf, u64)>>,
+}
+
+/// A file a plan would copy onto a volume that keeps no file so large (a
+/// FAT drive's 4 GiB): refused before anything is copied, as it cannot be
+/// written there whatever the user answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TooLarge {
+    /// The file, where it is read.
+    pub file: PathBuf,
+    /// The folder it would be copied into.
+    pub dest: PathBuf,
+    /// The largest file that volume keeps.
+    pub most: u64,
+}
+
+impl TooLarge {
+    /// What a refusal says: "“film.mkv” is too large for “STICK”: a drive
+    /// formatted as FAT keeps no file of 4.3 GB or more".
+    pub fn said(&self) -> crate::words::Words {
+        super::builtin::too_large_for(&self.file, &self.dest, self.most)
+    }
 }
 
 /// What `steps` write and count (`Sized`), each step `only` takes sized,
@@ -77,7 +101,11 @@ pub fn sized(
             return None;
         }
         let taken = only(step.as_ref());
+        ctx.take_large();
         let writes = taken.then(|| step.writes(ctx)).flatten();
+        sized
+            .large
+            .push(writes.as_ref().and_then(|_| ctx.take_large()));
         let work = if taken {
             step.work(ctx, writes.as_ref().map(|(_, bytes)| *bytes))
         } else {
@@ -90,6 +118,25 @@ pub fn sized(
 }
 
 impl Sized {
+    /// The first file these steps would copy onto a volume that keeps no
+    /// file so large, if one: `largest` saying what each folder's volume
+    /// keeps (`StepContext::largest_in`, asked once a folder), only for
+    /// the steps that copy one larger than some volume keeps.
+    pub fn too_large(&self, largest: &dyn Fn(&Path) -> Option<u64>) -> Option<TooLarge> {
+        self.large
+            .iter()
+            .zip(&self.writes)
+            .find_map(|(large, writes)| {
+                let ((file, len), (dest, _)) = (large.as_ref()?, writes.as_ref()?);
+                let most = largest(dest)?;
+                (*len > most).then(|| TooLarge {
+                    file: file.clone(),
+                    dest: dest.clone(),
+                    most,
+                })
+            })
+    }
+
     /// The first volume these steps would write more to than it has free,
     /// if one: volumes told apart by their device, `free` saying what one
     /// has free. A folder the plan makes itself (a merge's, a new
@@ -181,6 +228,7 @@ mod tests {
         writes.extend((0..10).map(|i| into(&format!("/example/stick/new/it's {i}"), 1)));
         let sized = Sized {
             work: vec![0; writes.len()],
+            large: vec![None; writes.len()],
             writes,
         };
         let asked = std::sync::Mutex::new(Vec::new());
@@ -301,6 +349,67 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
         assert_eq!(sized(&steps, &ctx, &cancel, &|_| true), None);
+    }
+
+    /// A step copying a file larger than the volume it goes to keeps (a
+    /// FAT drive's 4 GiB) is found from what the sizing kept of it, its
+    /// volume asked once; one that fits, or goes where any fits, is not.
+    #[test]
+    fn a_file_larger_than_its_volume_keeps_is_found_before_anything_is_copied() {
+        let fat = crate::op::sys::FAT_MOST;
+        let at = |dest: &str| Some((PathBuf::from(dest), 0));
+        let film = |len: u64| Some((PathBuf::from("/example/films/it's a film.mkv"), len));
+        let sized = Sized {
+            writes: vec![
+                at("/example/stick"),
+                at("/example/disk"),
+                at("/example/stick"),
+                None,
+            ],
+            work: vec![0; 4],
+            large: vec![film(fat), film(fat + 1), film(fat + 1), None],
+        };
+        let asked = std::sync::Mutex::new(Vec::new());
+        let found = sized.too_large(&|dest| {
+            asked.lock().unwrap().push(dest.to_path_buf());
+            (dest == Path::new("/example/stick")).then_some(fat)
+        });
+        assert_eq!(
+            found,
+            Some(TooLarge {
+                file: PathBuf::from("/example/films/it's a film.mkv"),
+                dest: PathBuf::from("/example/stick"),
+                most: fat,
+            })
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            [
+                Path::new("/example/stick"),
+                Path::new("/example/disk"),
+                Path::new("/example/stick")
+            ],
+            "only where a file larger than some volume keeps goes"
+        );
+        assert_eq!(sized.too_large(&|_| None), None, "volumes that keep any");
+    }
+
+    /// The sizing keeps the largest file of a step that some volume may
+    /// not keep, and nothing of smaller ones: one comparison a file.
+    #[test]
+    fn the_sizing_keeps_a_step_s_largest_file_that_some_volume_may_not_keep() {
+        let fat = crate::op::sys::FAT_MOST;
+        let ctx = StepContext::detached();
+        ctx.sized_large(Path::new("/example/a.bin"), fat);
+        assert_eq!(ctx.take_large(), None, "kept anywhere");
+        for (name, len) in [("b.bin", fat + 5), ("c.bin", fat + 9), ("d.bin", fat + 1)] {
+            ctx.sized_large(&Path::new("/example").join(name), len);
+        }
+        assert_eq!(
+            ctx.take_large(),
+            Some((PathBuf::from("/example/c.bin"), fat + 9))
+        );
+        assert_eq!(ctx.take_large(), None, "taken");
     }
 
     /// Two names of one file copied together need its bytes once

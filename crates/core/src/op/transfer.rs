@@ -470,7 +470,7 @@ pub(super) fn batch_ahead(
     ctx.batched_up_to(i + run.len());
     ctx.looking_ahead(i + run.len());
     // A drive written through keeps its own pace (`pace`).
-    if crate::fs::volume::is_removable(&dest) {
+    if super::sys::written_through(&dest) {
         return Ok(());
     }
     let dest_remote = crate::fs::reach::of(&dest).is_some();

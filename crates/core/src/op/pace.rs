@@ -1,14 +1,18 @@
 //! How a copy counts what it wrote: at once, or, onto a drive the user
 //! can unplug, written through (`builtin::copy_entry`).
 //!
-//! Through, the drive is handed each window's worth of bytes as soon as
-//! they are written, whatever files they belong to, and the copy waits for
-//! a window only while the drive holds the next: the drive never waits for
-//! the copy, and the copy never runs more than two windows (about half a
-//! second of the drive's writing; two seconds where a program writes the
-//! volume) ahead of it. What progress counts is what the drive was handed. A plan's copies onto one volume share one
-//! pace (`StepContext::pace_through`), so the drive's queue runs on from
-//! one item to the next.
+//! Through, the drive is handed each piece of bytes (an eighth of a
+//! window) as soon as it is written, whatever files they belong to, and
+//! the copy waits for the oldest piece only while the drive holds a
+//! window besides it: the drive never waits for the copy, and the copy
+//! never runs more than a window and a piece (about a quarter of a second
+//! of the drive's writing) ahead of it. What progress counts is what the
+//! drive was handed, a piece at a time: it moves as the drive writes,
+//! every few hundredths of a second, never by the window. Where a program
+//! writes the volume, its write-outs take a window of a second each, and
+//! the copy runs two ahead at most, counting each write as it goes. A plan's copies onto one
+//! volume share one pace (`StepContext::pace_through`), so the drive's
+//! queue runs on from one item to the next.
 //!
 //! Folders, names and the volume's own records are written out once, at
 //! the plan's end, and on the way where moves wait to remove what they
@@ -47,7 +51,12 @@ const STEP: Duration = Duration::from_millis(250);
 /// 81 MiB/s with a quarter of a second, 86 with a second, 110 written
 /// out once at the end; a run varied by a third.
 const VOLUME_STEP: Duration = Duration::from_secs(1);
-/// Files handed to the drive and not yet known written, at most: each
+/// The pieces of a window the drive is handed one by one: what progress
+/// moves by. Handed by the window, a USB hard drive's bar moved by 23 MiB
+/// every quarter second; by pieces, by 3 MiB every 31 to 41 ms, the copy
+/// as fast (85 MiB/s, 2026-11-24).
+const PIECES: u64 = 8;
+/// Ranges handed to the drive and not yet known written, at most: each
 /// holds a descriptor open.
 const FILES: usize = 64;
 
@@ -238,7 +247,7 @@ impl Writing<'_> {
         } = &mut *through;
         match handed {
             Handed::Ranges(ranges) => {
-                if self.written - self.given >= window.bytes {
+                if self.written - self.given >= window.piece() {
                     self.hand(ranges, ctx)?;
                     ranges.wait(window, false).with_context(not_written_out)?;
                 }
@@ -360,6 +369,12 @@ impl Volume {
 }
 
 impl Window {
+    /// What the drive is handed at a time, and progress moves by: a piece
+    /// of the window.
+    fn piece(&self) -> u64 {
+        self.bytes / PIECES
+    }
+
     /// `n` bytes are known on the drive: size the next window to what the
     /// drive wrote over the last `STEP` or so.
     fn written(&mut self, n: u64) {

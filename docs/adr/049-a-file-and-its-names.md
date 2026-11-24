@@ -103,7 +103,11 @@ Prior art:
    5's count) per volume against `fs::volume::free`. If short it asks
    (`op::room`: Cancel or Copy anyway, `app::Asker::Room`), else
    refuses with needed and free sizes. Filling up meanwhile still fails
-   as before.
+   as before. Amended 2026-11-24: a file larger than its volume keeps
+   (FAT: 4 GiB − 1, told by what the system says the volume is,
+   `sys::largest_file`) is refused, not asked, from the same sizing, by
+   its step's check and by the copy itself, before its first byte; no
+   partial is kept for it.
 7. **The trash keeps one item per record:** two records of one file are
    two items; one trash under two paths is not two.
 

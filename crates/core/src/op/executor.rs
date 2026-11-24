@@ -1886,8 +1886,9 @@ impl Executor {
     }
 
     /// Why `plan`, asked for as one action, does not go on for want of
-    /// room: `None` when it has room, or the user said to go on. Waits for
-    /// the answer, Cancel answering no.
+    /// room, or for a file larger than the volume it goes to keeps (no one
+    /// asked: it cannot be written there): `None` when it has room, or the
+    /// user said to go on. Waits for the answer, Cancel answering no.
     fn short_of_room(&self, plan: &Plan, cancel: &CancelToken, shown: &Shown<'_>) -> Option<Words> {
         let free = Arc::clone(&self.free.lock());
         let ctx = dry_context(&plan.steps, &Arc::default(), cancel, shown);
@@ -1895,6 +1896,11 @@ impl Executor {
         // What it will move, and what each copy copies, kept for its run:
         // its time left told from its start, no tree walked twice.
         shown.meter.set_ahead(sized.work.clone(), walked(&sized));
+        // A file larger than its volume keeps (a FAT drive's 4 GiB) cannot
+        // be copied there whatever the user answers: refused, not asked.
+        if let Some(too_large) = sized.too_large(&|dest| ctx.largest_in(dest)) {
+            return Some(too_large.said());
+        }
         let short = sized.short(&*free)?;
         let asker = self.room_asker.lock().clone();
         let Some(asker) = asker else {
@@ -4486,6 +4492,44 @@ impl Executor {
         drop(let_go);
         if let Some(server) = server {
             self.look_for(&server);
+        }
+    }
+
+    /// Let go of what the plans a step's error stopped keep under `tree`
+    /// of a large file cut short (`staging::Partial`, ADR-080), as its
+    /// volume is let go of (`App::release`): its staging folder holds its
+    /// lock open there, and the kernel refuses to unmount a volume
+    /// anything holds ("target is busy"). Each is removed with what it
+    /// holds, on a thread of its own: closing a file on FAT waits a tenth
+    /// of a second (udisks mounts it `flush`), and removing a large one
+    /// writes the volume's records, never on the caller's thread (a
+    /// window's command); an unmount meanwhile is refused as busy, which
+    /// it tries again. Its plan, still retried, copies that file from its
+    /// start. Only as the volume is let go of: while it stays, Retry goes
+    /// on from what was kept. A remote's stays: its server may not answer,
+    /// and what it went on from is worth more there.
+    pub fn let_go_under(&self, tree: &Path) {
+        let gone: Vec<super::staging::Partial> = {
+            let mut stopped = self.stopped.lock();
+            stopped
+                .iter_mut()
+                .filter(|s| {
+                    s.partial.as_ref().is_some_and(|p| {
+                        p.dest_dir.starts_with(tree) && crate::fs::reach::of(&p.dest_dir).is_none()
+                    })
+                })
+                .filter_map(|s| s.partial.take())
+                .collect()
+        };
+        if gone.is_empty() {
+            return;
+        }
+        // Removed out of the lock, and off the caller's thread.
+        let removing = std::thread::Builder::new()
+            .name("skwir-let-go".into())
+            .spawn(move || drop(gone));
+        if let Err(error) = removing {
+            tracing::warn!("a copy cut short removed on the caller's thread: {error}");
         }
     }
 

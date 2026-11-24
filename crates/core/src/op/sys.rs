@@ -78,6 +78,73 @@ pub(super) fn exchange(a: &Path, b: &Path) -> io::Result<()> {
     }
 }
 
+/// The largest file a FAT volume keeps (FAT12, 16 and 32 alike): a file's
+/// length is 32 bits in its folder's record. Its systems refuse a write
+/// past it (`EFBIG`, `ERROR_FILE_TOO_LARGE`).
+pub(super) const FAT_MOST: u64 = 0xFFFF_FFFF;
+
+/// The largest file the volume `dir` is on keeps, where it keeps less
+/// than any file asks: a FAT volume's [`FAT_MOST`] (USB sticks, SD cards,
+/// cameras' cards), read from what the system says the volume is
+/// (`statfs`, `GetVolumeInformationW`). `None` for any other, or where it
+/// cannot be told; a remote is never asked (its server may not answer,
+/// and a share says its own system, not the disk's). One call of the
+/// system's: ask it only of a file larger than [`FAT_MOST`] (no volume
+/// keeps less), once per folder.
+pub(super) fn largest_file(dir: &Path) -> Option<u64> {
+    if crate::fs::reach::of(dir).is_some() {
+        return None;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        const MSDOS_SUPER_MAGIC: u64 = 0x4d44;
+        let fs = rustix::fs::statfs(dir).ok()?;
+        // The kernel's `vfat` and `msdos`; exFAT (`0x2011bab0`) keeps any.
+        (u64::try_from(fs.f_type).ok()? == MSDOS_SUPER_MAGIC).then_some(FAT_MOST)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let fs = rustix::fs::statfs(dir).ok()?;
+        let name: Vec<u8> = fs
+            .f_fstypename
+            .iter()
+            .take_while(|c| **c != 0)
+            .map(|c| c.cast_unsigned())
+            .collect();
+        (name == b"msdos").then_some(FAT_MOST)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{GetVolumeInformationW, GetVolumePathNameW};
+        // MAX_PATH and a system's name, with their ends.
+        const ROOT: u32 = 261;
+        const SYSTEM: u32 = 32;
+        let path: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+        let mut root = [0u16; ROOT as usize];
+        let mut system = [0u16; SYSTEM as usize];
+        // SAFETY: a NUL-ended path, and places of the lengths given for
+        // what is asked; what is not asked is null.
+        #[allow(unsafe_code)]
+        let asked = unsafe {
+            GetVolumePathNameW(path.as_ptr(), root.as_mut_ptr(), ROOT) != 0
+                && GetVolumeInformationW(
+                    root.as_ptr(),
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    system.as_mut_ptr(),
+                    SYSTEM,
+                ) != 0
+        };
+        let end = system.iter().position(|c| *c == 0).unwrap_or(system.len());
+        // "FAT", "FAT32" (and "FAT12", "FAT16"); "exFAT" keeps any.
+        (asked && String::from_utf16_lossy(&system[..end]).starts_with("FAT")).then_some(FAT_MOST)
+    }
+}
+
 /// Make `dst` share `src`'s blocks (a reflink) where the filesystem can;
 /// false where it cannot, and the bytes are to be copied.
 pub(super) fn clone_file(src: &File, dst: &File) -> bool {
@@ -316,6 +383,18 @@ fn write_through_not_yet() -> io::Error {
         system = crate::system::named(),
         note = "Why a copy to a removable drive is not written out as it goes. system: the system's name (macOS, Windows)."
     ))
+}
+
+/// Whether a copy into `dest_dir` is written through to its drive by
+/// Skwir (`op::pace`): on Linux, onto a drive the user can unplug
+/// (`fs::volume::is_removable`), where the kernel keeps what is written
+/// in memory for as long as it likes. Not on Windows, which writes a
+/// removable drive through itself (quick removal, its default) and writes
+/// out no volume for a user who is no administrator: asked there, a
+/// copy's end would fail (`Dir::sync_volume`). A Mac's drives are not
+/// known removable yet.
+pub(super) fn written_through(dest_dir: &Path) -> bool {
+    cfg!(target_os = "linux") && crate::fs::volume::is_removable(dest_dir)
 }
 
 /// Whether a program, not the kernel, writes the volume `dir` is on

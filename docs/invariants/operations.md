@@ -435,6 +435,17 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   whose server stopped answering may answer an end of file, and then say
   the file is that short. A range of a large file read short ends what
   is written in order (`op::ranges`); what follows is read on in order.
+- **A file larger than its volume keeps** (a FAT drive's: 4 GiB less a
+  byte, `sys::largest_file`, from what the system says the volume is;
+  never asked of a remote) is refused before a byte of it is written: by
+  its copy's or move's check (`builtin::too_large`, each folder's volume
+  asked once a plan, `StepContext::largest_in`), inside a folder by the
+  plan's sizing (`StepContext::sized_large`, `room::Sized::too_large`:
+  refused, not asked as room is, since no answer makes it fit), and by
+  the copy itself (`copy_file`), in words naming FAT. Only a file larger
+  than that is asked about: no volume keeps less. A write the drive
+  refuses (`EFBIG`, `ENOSPC`) fails the copy, never ends it; only the
+  source's reading ends one (`copy_buffered`).
 - What a move compares of its original before removing it
   (`builtin::state_of`: names, kinds, sizes, change and modification
   times) leaves the change time out where the mount makes it up
@@ -715,7 +726,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - **Unmount.** Refused while an action of Skwir's is under way there,
   naming it (`Executor::refuse_under_way`; `force` cuts it). Then
   `App::release` lets go of everything under the mount point, since the
-  kernel refuses to unmount a busy volume: what can read by its path
+  kernel refuses to unmount a busy volume (a copy cut short there and
+  kept for Retry included, its staging folder's lock held:
+  `Executor::let_go_under`, the retry starting that file again): what can read by its path
   holds nothing and stays shown (ADR-149, amended), what cannot goes home
   or closes, and the windows let go of the files they show there. What
   another program announces it unmounts (GIO, Solid:
@@ -738,11 +751,17 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - **Removable** (`fs::volume::is_removable`): removable, or on USB,
   FireWire or SD, through LUKS or RAID; drawn as removable wherever
   mounted (`lsblk`'s HOTPLUG when unmounted).
-- **Write-through onto removable drives** (`op::pace`): each window of
-  bytes is handed to the drive as written, and the copy waits only while
-  the drive holds the next (`sys::write_range`). Progress is the drive's
-  within half a second (two over FUSE), and the drive never idles. A plan's
-  copies onto one volume share one pace.
+- **Write-through onto removable drives** (`op::pace`, Linux's alone:
+  `sys::written_through`; Windows writes them through itself): each
+  piece of bytes, an eighth of a window, is handed to the drive as
+  written, and the copy waits only while the drive holds a window besides
+  the oldest (`sys::write_range`). Progress moves by pieces, every few
+  hundredths of a second, and is the drive's within a quarter second (two
+  over FUSE); the drive never idles. A plan's copies onto one volume share
+  one pace. Its write-out ends with the drive asked to write its own
+  memory: `Dir::sync_volume` syncs the folder after the volume, as FAT
+  and exFAT ask it only as a folder or file is synced, never as the
+  volume is or is unmounted (Unmount's flush, `places::flush`, so too).
 - Names and folders are written out once, at the plan's end
   (`StepContext::write_out`, `syncfs`): a journaled or copy-on-write
   volume on a hard drive takes a third of a second per commit, so a

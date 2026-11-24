@@ -172,14 +172,26 @@ mod unix {
 
         /// Write out what the folder's volume holds in memory, and say
         /// what failed to be written since the folder was opened
-        /// (`syncfs`).
+        /// (`syncfs`); then have the drive write what it holds in its own
+        /// memory, by syncing the folder (`fsync`): FAT and exFAT ask the
+        /// drive for it only as a file or folder is synced, never as the
+        /// volume is or is unmounted, and a drive with a memory of its own
+        /// (a USB enclosure's) may lose what it holds when unplugged. A
+        /// volume that cannot sync a folder says so, and is no failure.
         ///
         /// # Errors
         /// When the volume could not write it all.
         pub fn sync_volume(&self) -> io::Result<()> {
             #[cfg(target_os = "linux")]
             {
-                rustix::fs::syncfs(&self.0).map_err(io::Error::from)
+                use rustix::io::Errno;
+                rustix::fs::syncfs(&self.0)?;
+                match rustix::fs::fsync(&self.0) {
+                    Err(Errno::INVAL | Errno::NOTSUP | Errno::ROFS | Errno::NOSYS) | Ok(()) => {
+                        Ok(())
+                    }
+                    Err(e) => Err(e.into()),
+                }
             }
             #[cfg(not(target_os = "linux"))]
             {

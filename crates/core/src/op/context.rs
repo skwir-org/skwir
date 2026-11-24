@@ -857,6 +857,12 @@ pub struct StepContext {
     /// The files of several names whose bytes this plan counted already:
     /// copied once, they are counted once.
     sized: RefCell<HashSet<crate::FileId>>,
+    /// The largest file sized since it was last taken that is larger than
+    /// any volume may keep ([`Self::sized_large`]), and its length.
+    large: RefCell<Option<(PathBuf, u64)>>,
+    /// The largest file each folder written into keeps, asked once a plan
+    /// ([`Self::largest_in`]).
+    largest: RefCell<HashMap<PathBuf, Option<u64>>>,
     /// Who asks the user for a step's secret ([`Self::ask_secret`]).
     secret_asker: Option<super::SecretAsker>,
     /// The transfers plugins contributed (`transfer`, ADR-078).
@@ -1218,6 +1224,8 @@ impl StepContext {
             states: RefCell::default(),
             keeps_states: std::cell::Cell::new(false),
             sized: RefCell::default(),
+            large: RefCell::default(),
+            largest: RefCell::default(),
             secret_asker: None,
             transfers: None,
             sends: RefCell::default(),
@@ -1319,6 +1327,54 @@ impl StepContext {
     /// file of several names once in this plan, as it is copied once.
     pub(super) fn sized_once(&self, meta: &std::fs::Metadata) -> bool {
         several_names(meta).is_none_or(|(file, _)| self.sized.borrow_mut().insert(file))
+    }
+
+    /// The file at `path`, of `len` bytes, was sized: kept when it is
+    /// larger than some volume keeps ([`sys::FAT_MOST`](super::sys::FAT_MOST))
+    /// and than any kept since [`Self::take_large`], so the plan can be
+    /// refused before it copies a byte where it would not fit
+    /// (`room::Sized::too_large`). One comparison a file.
+    pub(super) fn sized_large(&self, path: &Path, len: u64) {
+        if len <= super::sys::FAT_MOST {
+            return;
+        }
+        let mut large = self.large.borrow_mut();
+        if large.as_ref().is_none_or(|(_, most)| len > *most) {
+            *large = Some((path.to_path_buf(), len));
+        }
+    }
+
+    /// The largest file sized since last asked that some volume may not
+    /// keep ([`Self::sized_large`]).
+    pub(super) fn take_large(&self) -> Option<(PathBuf, u64)> {
+        self.large.borrow_mut().take()
+    }
+
+    /// The largest file the volume of the folder `dir` keeps, where it
+    /// keeps less than any file asks (`sys::largest_file`: FAT's), asked
+    /// once a plan for each folder. A folder not there yet (one the plan
+    /// makes) is on the volume of the nearest folder above it.
+    pub(super) fn largest_in(&self, dir: &Path) -> Option<u64> {
+        if let Some(known) = self.largest.borrow().get(dir) {
+            return *known;
+        }
+        // A remote is not asked (`sys::largest_file`), nor looked at here.
+        let largest = if crate::fs::reach::of(dir).is_some() {
+            None
+        } else {
+            dir.ancestors()
+                .find(|folder| std::fs::symlink_metadata(folder).is_ok_and(|m| m.is_dir()))
+                .and_then(super::sys::largest_file)
+        };
+        self.largest.borrow_mut().insert(dir.to_path_buf(), largest);
+        largest
+    }
+
+    /// Say that the volume of `dir` keeps no file larger than `most`, as a
+    /// FAT volume's would: for a test.
+    #[cfg(test)]
+    pub(super) fn assume_largest(&self, dir: &Path, most: Option<u64>) {
+        self.largest.borrow_mut().insert(dir.to_path_buf(), most);
     }
 
     /// Keep what this step's check read, for its apply to take

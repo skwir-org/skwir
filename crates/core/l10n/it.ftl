@@ -2056,6 +2056,12 @@ op_there_not_a_folder = { $name } esiste e non è una cartella
 op_time_not_given = non è stato possibile assegnare la sua data a { $path }
 
 # draft
+op_too_large_fat = un’unità formattata in FAT non conserva file di { $size } o più
+
+# draft
+op_too_large_for_fat = { $name } è troppo grande per { $folder }: un’unità formattata in FAT non conserva file di { $size } o più
+
+# draft
 op_trash_copy_left = una sua copia rimane in { $path } ({ $why })
 
 # draft

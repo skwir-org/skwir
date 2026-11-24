@@ -23683,3 +23683,55 @@ the stand-in `SlowFill` for Linux alone, and adds a unit test of
 - **Not checked:** other locations that stat on a worker while watched
   (searches, the trash, tag places, the shelf) may race the same way.
 
+
+## 2026-11-24: copies onto USB drives (ADR-049 amended)
+
+The user's two reports from copying a large file to a USB drive, looked
+into by an agent tonight.
+
+- **A copy "done", 300 MB missing:** not reproduced as a silent success.
+  A 4.3 GiB file of random bytes copied onto a real FAT32 udisks loop
+  mount failed visibly ("too large for that drive") after 25 s, and
+  written through after 21 s, stopped at 4,294,967,295 bytes:
+  `copy_file_range` is refused between btrfs and vfat (`EXDEV`), the
+  buffered loop's `write_all` fails on `EFBIG`, a short copy is caught
+  (`end < m.len()`), the close is checked, the plan's end runs `syncfs`,
+  and `udisksctl unmount` is no lazy unmount. Faults found and fixed:
+  - a file over the volume's limit (FAT: 4 GiB − 1, `sys::largest_file`
+    from `statfs`, `GetVolumeInformationW`, never asking a remote) is
+    refused before its first byte, by the Copy and Move checks, the
+    plan's sizing of what folders hold (`room::Sized::too_large`) and
+    `copy_file` (`FileTooLarge`), in words drafted in French, Italian and
+    Chinese; it kept 4 GiB on the stick for a Retry that could never end;
+  - a failed copy's partial, kept for Retry, held the staging lock open
+    on the drive and made `udisksctl unmount` say "target is busy":
+    `Executor::let_go_under`, called by `App::release`, removes stopped
+    plans' partials on local volumes there (Retry starts that file
+    again; a remote's kept);
+  - FAT and exFAT ask the drive to write its own memory only on `fsync`:
+    `Dir::sync_volume` now syncs the folder after `syncfs`, for a plan's
+    write-out and Unmount's flush alike;
+  - since 1f0b89b8 (2026-11-22) Windows calls a USB stick removable,
+    which turned on writing through, which Windows' `sync_volume` refuses:
+    every copy onto a stick should have ended in an error and a move
+    kept its originals (read from the code: Wine has no removable
+    drive). Writing through is Linux's (`sys::written_through`).
+- **Slow, progress in jumps:** the removable drive's pace counted each
+  window handed to the drive: 23 MiB steps every 255 ms. The drive is now
+  handed eighths of a window (`PIECES`), waiting only while a window is
+  queued beyond the oldest piece: 3 MiB steps every 31 to 41 ms, the
+  same speed. Measured on the user's USB hard drive (an SMR disk, btrfs
+  in LUKS, 2 GiB a run, the source dropped from memory): 85 to 89 MiB/s,
+  the drive's ceiling, when it does not stall; 7 of 11 runs stalled 83
+  to 84 s after about 830 MiB, as SMR drives do. `cp` then `sync` had
+  the data on the drive at 29 to 41 s against Skwir's 23 to 27 s.
+  Released Dolphin finishes at the page cache's speed and writes at the
+  unmount; KIO's master (2026-11-20/21) bounds what waits by
+  `sync_file_range`, as Skwir does.
+- **Checked:** stand-in drive tests (short and interrupted writes,
+  `FileTooLarge`, `StorageFull`, `WriteZero`), the checks against an
+  assumed FAT limit, room's sizing; the FAT32 test (`#[ignore]`, its
+  recipe in its comment) passed in 43 s; core's tests (1,039), clippy,
+  `check-cross`. The images and the folder on the user's drive removed,
+  the loop device detached.
+- **Not checked:** macOS, Windows' new paths beyond compiling.
