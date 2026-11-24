@@ -7590,6 +7590,9 @@ settings_intro_changed = Chaque paramètre qui diffère de sa valeur par défaut
 settings_intro_exclusions = Les fichiers et dossiers que Skwir laisse de côté : dans les recherches, le décompte des étiquettes et la chronologie, sous le dossier où ils cherchent, et dans ce que voient les agents, les modules externes à Skwir et les modèles d’IA. Les exclusions de Skwir sont rangées par catégories, chacune avec son interrupteur ; cochez ou décochez chacune, ou ajoutez les vôtres. Vos Secrets sont aussi tenus hors des index auxquels Skwir peut les signaler (Index).
 
 # draft
+settings_intro_exclusions_no_index = Les fichiers et dossiers que Skwir laisse de côté : dans les recherches, le décompte des étiquettes et la chronologie, sous le dossier où ils cherchent, et dans ce que voient les agents, les modules externes à Skwir et les modèles d’IA. Les exclusions de Skwir sont rangées par catégories, chacune avec son interrupteur ; cochez ou décochez chacune, ou ajoutez les vôtres.
+
+# draft
 settings_intro_general = La langue que parle Skwir, ce qu’il fait au démarrage et des dossiers qu’ouvrent d’autres programmes, des onglets, de la vue divisée et de l’adresse, de ce que vous glissez-déposez, et pendant qu’une action s’exécute. Les modifications s’appliquent dès que vous les faites.
 
 # draft

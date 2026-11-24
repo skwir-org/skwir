@@ -3111,8 +3111,17 @@ impl Builtin {
         (self.title)()
     }
 
-    /// What it says under its title.
-    pub(crate) fn intro(&self) -> Words {
+    /// What it says under its title, the dialog listing `pages`: a page it
+    /// names is one listed. The Exclusions page names the Index page,
+    /// where the Secrets are said kept out of an index too, only while it
+    /// is (a setting on it: an index's plugin on, ADR-150, 8).
+    pub(crate) fn intro(&self, pages: &[Page]) -> Words {
+        if self.page == Page::Exclusions && !pages.contains(&Page::Index) {
+            return words!(
+                settings_intro_exclusions_no_index = "The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours.",
+                note = "What the Exclusions page of the settings window says under its title, where no index's page is listed."
+            );
+        }
         (self.intro)()
     }
 }
@@ -4796,6 +4805,9 @@ impl SettingsView {
                 let Some(path) = paths.first() else {
                     return;
                 };
+                // Written whole: serde's own refuses a name that is not
+                // UTF-8, which `json!` would panic on.
+                let path = skwir_core::os_path::PathArg::from(path.as_path());
                 let invocation =
                     Invocation::with_args(add.as_str(), &serde_json::json!({ "path": path }));
                 if let Err(error) = this.app.dispatch(&invocation) {

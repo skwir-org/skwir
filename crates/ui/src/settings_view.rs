@@ -2659,7 +2659,9 @@ impl Render for SettingsView {
         }
         let (title, subtitle): (String, String) = if query.is_empty() {
             let page = self.page.clone();
-            let subtitle = page.builtin().map_or_else(String::new, |b| b.intro().say());
+            let subtitle = page
+                .builtin()
+                .map_or_else(String::new, |b| b.intro(&self.pages()).say());
             match &page {
                 Page::General => self.page_general(&mut items, &theme, window, cx),
                 Page::Changed => self.page_changed(&mut items, &theme, window, cx),

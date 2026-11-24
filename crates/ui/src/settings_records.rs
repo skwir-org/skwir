@@ -172,12 +172,15 @@ pub(crate) fn records(text: &str) -> Vec<Record> {
 }
 
 /// What an owner keeping a list elsewhere says of it beside its records
-/// (`RecordSource`, ADR-150, 6): its groups, in order, and a note under
-/// it, said for the window.
+/// (`RecordSource`, ADR-150, 6): its groups, in order, a note under it,
+/// said for the window, and whether the whole list is dimmed (`dimmed`:
+/// it does nothing where it is, as its note says; Kept live under skwird's
+/// system service).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Shape {
     pub groups: Vec<Group>,
     pub note: Option<String>,
+    pub dimmed: bool,
 }
 
 /// A group of a list: the records whose `group` is its `id`, headed by its
@@ -243,6 +246,7 @@ impl Shape {
                 })
                 .collect(),
             note: text(answer.get("note")).filter(|note| !note.is_empty()),
+            dimmed: answer.get("dimmed").and_then(serde_json::Value::as_bool) == Some(true),
         }
     }
 }
@@ -256,12 +260,14 @@ enum Line<'a> {
 
 /// The lines of `shown`, under their groups' headings in `shape`'s order
 /// (a group with nothing shown has none), what no group holds last; the
-/// records alone where the owner groups none.
+/// records alone where the owner groups none. Every record is dimmed where
+/// the owner dims the list.
 fn lines<'a>(shape: &'a Shape, shown: &[(usize, Option<&'a Record>)]) -> Vec<Line<'a>> {
+    let all = shape.dimmed;
     if shape.groups.is_empty() {
         return shown
             .iter()
-            .map(|(index, record)| Line::Record(*index, *record, false))
+            .map(|(index, record)| Line::Record(*index, *record, all))
             .collect();
     }
     let group_of = |record: &Record| {
@@ -288,7 +294,7 @@ fn lines<'a>(shape: &'a Shape, shown: &[(usize, Option<&'a Record>)]) -> Vec<Lin
         let Some(records) = held.remove(&group.id) else {
             continue;
         };
-        let off = group.switch.as_ref().is_some_and(|s| !s.on);
+        let off = all || group.switch.as_ref().is_some_and(|s| !s.on);
         lines.push(Line::Heading(group, records.len()));
         lines.extend(
             records
@@ -299,7 +305,7 @@ fn lines<'a>(shape: &'a Shape, shown: &[(usize, Option<&'a Record>)]) -> Vec<Lin
     lines.extend(
         loose
             .into_iter()
-            .map(|(index, record)| Line::Record(index, record, false)),
+            .map(|(index, record)| Line::Record(index, record, all)),
     );
     lines
 }
@@ -1023,7 +1029,8 @@ impl SettingsView {
             } else {
                 continue;
             };
-            // A group switched off: its records said, dimmed.
+            // A group switched off, or a list its owner dims: its records
+            // said, dimmed.
             rows = rows.child(if dimmed {
                 div().opacity(0.5).child(element).into_any_element()
             } else {
@@ -2126,6 +2133,24 @@ mod tests {
             })
             .collect();
         assert_eq!(plain, [0, 1, 2, 3], "no groups: the records alone");
+
+        // The whole list dimmed, as its owner says (Kept live under
+        // skwird's system service): every record, grouped or not.
+        let dimmed = Shape::of(&serde_json::json!({
+            "records": [],
+            "groups": [{ "id": "own", "title": "Your folders" }],
+            "dimmed": true,
+        }));
+        assert!(dimmed.dimmed);
+        let all: Vec<bool> = lines(&dimmed, &shown)
+            .iter()
+            .filter_map(|line| match line {
+                Line::Record(_, _, dimmed) => Some(*dimmed),
+                Line::Heading(..) => None,
+            })
+            .collect();
+        assert_eq!(all, [true; 4]);
+        assert!(!shape.dimmed, "not unless said");
     }
 
     /// Left and Right through a choice: from the one held, staying at the

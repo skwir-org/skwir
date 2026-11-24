@@ -6805,6 +6805,9 @@ settings_intro_changed = Every setting that differs from its default and every p
 # What a page of the settings window says under its title.
 settings_intro_exclusions = The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours. The indexes Skwir can tell keep your Secrets out too (Index).
 
+# What the Exclusions page of the settings window says under its title, where no index's page is listed.
+settings_intro_exclusions_no_index = The files and folders Skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside Skwir and models see. Skwir's own come in categories, each with its switch; tick or untick each, or add yours.
+
 # What a page of the settings window says under its title.
 settings_intro_general = The language Skwir speaks, what it does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.
 

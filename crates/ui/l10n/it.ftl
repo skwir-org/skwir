@@ -7600,6 +7600,9 @@ settings_intro_changed = Ogni impostazione che differisce dal valore predefinito
 settings_intro_exclusions = I file e le cartelle che Skwir lascia fuori: dalle ricerche, dai conteggi delle etichette e dalla linea temporale sotto la cartella in cui guardano, e da ciò che vedono agenti, plugin esterni a Skwir e modelli. Quelle di Skwir sono in categorie, ciascuna con il proprio interruttore; spunta o deseleziona ogni voce, o aggiungi le tue. Anche gli indici a cui Skwir può chiederlo tengono fuori i tuoi segreti (Indice).
 
 # draft
+settings_intro_exclusions_no_index = I file e le cartelle che Skwir lascia fuori: dalle ricerche, dai conteggi delle etichette e dalla linea temporale sotto la cartella in cui guardano, e da ciò che vedono agenti, plugin esterni a Skwir e modelli. Quelle di Skwir sono in categorie, ciascuna con il proprio interruttore; spunta o deseleziona ogni voce, o aggiungi le tue.
+
+# draft
 settings_intro_general = La lingua che parla Skwir, cosa fa all’avvio e con le cartelle che altri programmi aprono, con le schede, la divisione e l’indirizzo, con ciò che trascini e rilasci, e mentre un’azione è in corso. Le modifiche hanno effetto man mano che le fai.
 
 # draft
