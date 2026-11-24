@@ -23735,3 +23735,27 @@ into by an agent tonight.
   `check-cross`. The images and the folder on the user's drive removed,
   the loop device detached.
 - **Not checked:** macOS, Windows' new paths beyond compiling.
+
+## 2026-11-24: every dependency to its newest its dependents allow
+
+`cargo update` moved nine crates within their majors (ahash 0.8.13,
+anyhow 1.0.105, hyper 1.13.0, mail-parser 1.0.2, zip 9.8.2 among them);
+notify 8 to 9 (xxhash-rust beside it) needed no code change: core's and
+Usage's watches are one folder each, errors and rescans told as before,
+and its Windows watcher still closes a folder's handle before it lets
+go of what it tells to (ADR-149's eject relies on it). Nothing went
+down: cargo traded cfg-expr 0.20.11 back to 0.17 for Cranelift's
+target-lexicon 0.13.6, set back by hand (`cargo metadata --locked`
+takes it).
+
+Held by another dependency: zbus 5 (gpui's accesskit_unix and atspi,
+whose newest still need it; ashpd 0.13 and Zed's oo7 by Zed's pins; so
+Skwir's own users stay on 5, a port leaving 5 linked anyway), wasmtime
+48 (tree-sitter 0.27.2), parley 0.12, usvg 0.47, selectors 0.41, resvg
+0.46 and parking_lot 0.12 (gpui's), skrifa 0.44, target-lexicon 0.13.5.
+
+Checked on HEAD 22763036 with this lock, in a copy of its own: `just
+deny`, `just notices-check` (notices made again), `just lint-all`
+(check-cross included), `just test-all` (4,316 passed); core's and
+Usage's tests under Wine (796 of 799, the three Unix-path tests that
+fail there before).
