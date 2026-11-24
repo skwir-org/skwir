@@ -181,6 +181,13 @@ struct Names {
     /// (`Told`, `Names::newest`): what a stat begun before found is not
     /// told after it.
     stated: hashing::Map<EntryId, u64>,
+    /// Answered unread unasked of the folder (`hydrate`: a drive Windows
+    /// lets go of, a folder not there to read), with as much as each was
+    /// asked to be read: what a listing again (the rescan once a drive is
+    /// watched again, its removal refused) asks for again, as it does what
+    /// was stat-ed. A row answered unread counts as read: nothing else
+    /// asks for it again.
+    unread: hashing::Map<EntryId, Needs>,
     /// Asked for before this listing named them (rows of the one it was
     /// opened again in place of, `reopen`), with how soon and how much:
     /// read once it is listed, every id a hydration is given being
@@ -223,6 +230,7 @@ impl Names {
             Some(prev) if prev != id => {
                 self.by_id.remove(&prev);
                 self.stated.remove(&prev);
+                self.unread.remove(&prev);
                 self.untold.remove(&prev);
                 Some(prev)
             }
@@ -232,6 +240,7 @@ impl Names {
 
     fn remove_id(&mut self, id: EntryId) -> Option<OsString> {
         self.stated.remove(&id);
+        self.unread.remove(&id);
         self.untold.remove(&id);
         let name = self.by_id.remove(&id)?;
         self.by_name.remove(&name);
@@ -242,6 +251,7 @@ impl Names {
         let id = self.by_name.remove(name)?;
         self.by_id.remove(&id);
         self.stated.remove(&id);
+        self.unread.remove(&id);
         self.untold.remove(&id);
         Some(id)
     }
@@ -282,13 +292,20 @@ impl Names {
 
     /// Whether what the stat of `name` that took `ticket` found is applied
     /// to the names: no stat of it begun later was. Noted as applied where
-    /// another read is under way, which may hold a stat begun before it.
+    /// another read is under way, which may hold a stat begun before it,
+    /// in the place of the stat of it noted before: one entry a name, in
+    /// both maps, however often it is stat-ed while a read stays under way
+    /// (a hydration held by a server that stopped answering).
     fn applies(&mut self, name: &OsStr, ticket: u64) -> bool {
         if self.applied.get(name).is_some_and(|&newer| newer > ticket) {
             return false;
         }
         if self.reads > 1 {
-            self.applied.insert(name.to_os_string(), ticket);
+            if let Some(older) = self.applied.insert(name.to_os_string(), ticket)
+                && older != ticket
+            {
+                self.applied_by_ticket.remove(&older);
+            }
             self.applied_by_ticket.insert(ticket, name.to_os_string());
         }
         true
@@ -1125,16 +1142,19 @@ impl Shared {
         // What was stat-ed is stat-ed again, as far as it was read: what
         // the providers filled (a row drawn) read by them again, what only
         // a stat read (an order's reading, ADR-121) stat-ed alone, never
-        // the whole folder's providers at each refresh or rescan. The rest
-        // still waits to be asked for.
+        // the whole folder's providers at each refresh or rescan. So is
+        // what was answered unread unasked of the folder, as far as it was
+        // asked. The rest still waits to be asked for.
         let (mut filled, mut stat_only) = (Vec::new(), Vec::new());
         {
-            let names = self.names.lock();
+            let mut names = self.names.lock();
             for id in kept {
-                match names.stated.get(&id).copied().map(Told) {
-                    Some(told) if told.filled() => filled.push(id),
-                    Some(_) => stat_only.push(id),
-                    None => {}
+                let told = names.stated.get(&id).copied().map(Told);
+                let unread = names.unread.remove(&id);
+                if told.is_some_and(Told::filled) || unread >= Some(Needs::Providers) {
+                    filled.push(id);
+                } else if told.is_some() || unread.is_some() {
+                    stat_only.push(id);
                 }
             }
         }
@@ -1248,12 +1268,19 @@ impl Shared {
             self.opened().ok()
         };
         let Some(folder) = folder else {
+            // Asked for again by the listing again that follows (`unread`).
             let unread: Vec<EntryId> = {
-                let names = self.names.lock();
-                ids.iter()
+                let mut names = self.names.lock();
+                let unread: Vec<EntryId> = ids
+                    .iter()
                     .copied()
                     .filter(|id| names.by_id.contains_key(id))
-                    .collect()
+                    .collect();
+                for id in &unread {
+                    let asked = names.unread.entry(*id).or_insert(needs);
+                    *asked = (*asked).max(needs);
+                }
+                unread
             };
             if !unread.is_empty() {
                 self.send(ListingEvent::Unreadable(unread));
@@ -2646,6 +2673,35 @@ mod tests {
         names.read_ended(7);
     }
 
+    /// While a read stays under way (a hydration's stat held by a server
+    /// that stopped answering), each name stat-ed again and again (a shell
+    /// history the watcher tells at every command) is noted once, by its
+    /// latest stat: what is noted grows with the names, never the stats.
+    #[test]
+    fn a_name_stat_ed_again_while_a_read_stays_is_noted_once() {
+        let name = OsStr::new("it's written often, été");
+        let mut names = Names::default();
+        names.read_begins(1);
+        for ticket in 2..1_000 {
+            names.read_begins(ticket);
+            assert!(names.applies(name, ticket));
+            names.read_ended(ticket);
+        }
+        assert_eq!(names.applied.get(name), Some(&999));
+        assert_eq!(
+            names.applied_by_ticket.len(),
+            1,
+            "one a name: {:?}",
+            names.applied_by_ticket.len()
+        );
+        // What it notes still leaves out a stat begun before the latest.
+        names.read_begins(1_000);
+        assert!(!names.applies(name, 998));
+        names.read_ended(1_000);
+        names.read_ended(1);
+        assert!(names.applied.is_empty() && names.applied_by_ticket.is_empty());
+    }
+
     /// An entry a hydration re-keyed whose rename is not told yet is told
     /// renamed by whatever tells it first: the watcher's stat of its name,
     /// begun later, told before the hydration's rename, renames the row
@@ -2688,7 +2744,8 @@ mod tests {
     /// While Windows lets go of a drive (its Eject asked, ADR-149, 16), a
     /// folder listed there reads nothing of it: a row asked for is answered
     /// unread, as where it cannot be opened. The removal refused, the
-    /// rescan told once it is watched again shows what changed meanwhile.
+    /// rescan told once it is watched again shows what changed meanwhile,
+    /// and reads the row answered unread.
     #[cfg(windows)]
     #[test]
     fn a_drive_being_let_go_of_is_read_no_more_until_it_stays() {
@@ -2724,6 +2781,19 @@ mod tests {
         events_until(
             &open.rx,
             |e| matches!(e, ListingEvent::Added(batch) if batch.iter().any(|e| e.name == "it's new.txt")),
+        );
+        let told = events_until(
+            &open.rx,
+            |e| matches!(e, ListingEvent::Updated(batch) if batch.iter().any(|e| e.id == id)),
+        );
+        let read = told.iter().rev().find_map(|e| match e {
+            ListingEvent::Updated(batch) => batch.iter().find(|e| e.id == id),
+            _ => None,
+        });
+        assert!(
+            read.is_some_and(|e| e.metadata.is_hydrated()
+                && e.metadata.get(crate::entry::keys::UNREAD).is_none()),
+            "read again: {read:?}"
         );
         open.close();
     }
