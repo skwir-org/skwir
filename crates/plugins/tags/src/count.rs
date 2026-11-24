@@ -40,7 +40,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{EntryId, EntryKind, FileId};
 use skwir_core::fs::reach;
 use skwir_core::names::{Change, Journal, Mark, Since};
-use skwir_core::walks::Below;
+use skwir_core::walks::{Below, LeftOut};
 
 use crate::index::{Covered, TagIndex, stable_hash};
 
@@ -90,6 +90,23 @@ pub fn run(
     covered: Option<SystemTime>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
+    run_ruled(app, index, root, &app.left_out(), covered, cancel)
+}
+
+/// [`run`] under `rule`, what walks leave out (`App::left_out`), read once
+/// by who covers the folder with what it returns: a count is of the rule
+/// it walked under.
+///
+/// # Errors
+/// When `root` cannot be read.
+pub fn run_ruled(
+    app: &App,
+    index: &Arc<TagIndex>,
+    root: &Path,
+    rule: &Arc<LeftOut>,
+    covered: Option<SystemTime>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
     // The folders the count it relies on saw: a folder above's, when that
     // one covers it, which never walked a folder it left out below it.
     // What `root`'s own count saw is not what the index holds since.
@@ -101,12 +118,13 @@ pub fn run(
         app,
         index,
         root,
+        rule,
         covered.map(|since| (since, &dirs)),
         cancel,
     )
 }
 
-/// [`run`], given the folders the last count saw.
+/// [`run_ruled`], given the folders the last count saw.
 ///
 /// # Errors
 /// When `root` cannot be read.
@@ -114,6 +132,7 @@ pub fn run_with(
     app: &App,
     index: &Arc<TagIndex>,
     root: &Path,
+    rule: &Arc<LeftOut>,
     last: Option<(SystemTime, &HashSet<u64>)>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
@@ -131,7 +150,7 @@ pub fn run_with(
     let walkers = if remote { 1 } else { walkers() };
     // A cache's tag is never read on a remote: a lookup per folder there
     // asks its server (docs/invariants/remote.md).
-    let below = app.left_out().below(root, !remote);
+    let below = rule.below(root, !remote);
     let seeds = vec![(root.to_path_buf(), true)];
     Ok(walk_with(app, index, &below, last, cancel, walkers, seeds))
 }
@@ -180,24 +199,30 @@ pub fn follow(
     }
 }
 
-/// A check of `root` read from `journal` (every change since `last`, its
-/// count's): the folders it names, a folder holding what changed alone,
-/// one made or moved in and what it does not cover whole, each as a walk
-/// reads it. Returns what [`run`] does: the folders seen are the last
-/// count's, those read added, those removed taken off.
+/// A check of `root` under `rule` read from `journal` (every change since
+/// `last`, its count's): the folders it names, a folder holding what
+/// changed alone, one made or moved in and what it does not cover whole,
+/// each as a walk reads it, and the folder holding each entry named, where
+/// its own notes are read. Returns what [`run`] does: the folders seen are
+/// the last count's, those read added, those removed taken off; `None`
+/// only when cancelled.
+///
+/// # Errors
+/// When `root`'s real path cannot be read.
 pub fn run_followed(
     app: &App,
     index: &Arc<TagIndex>,
     root: &Path,
+    rule: &Arc<LeftOut>,
     last: &Covered,
     journal: &Journal,
     cancel: &CancelToken,
-) -> Option<(SystemTime, Vec<u64>, Counted)> {
-    let real_root = skwir_core::os_path::canonical(root).ok()?;
-    let below = app.left_out().below(root, reach::of(root).is_none());
+) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
+    let real_root = skwir_core::os_path::canonical(root)?;
+    let below = rule.below(root, reach::of(root).is_none());
     let known = index.dirs(root);
     let (seeds, removed) = seeds_of(app, root, &real_root, &below, journal);
-    let (began, seen, counted) = walk_with(
+    let Some((began, seen, counted)) = walk_with(
         app,
         index,
         &below,
@@ -205,13 +230,15 @@ pub fn run_followed(
         cancel,
         walkers(),
         seeds,
-    )?;
+    ) else {
+        return Ok(None);
+    };
     let mut dirs: HashSet<u64> = known;
     dirs.extend(seen);
     for key in removed {
         dirs.remove(&key);
     }
-    Some((began, dirs.into_iter().collect(), counted))
+    Ok(Some((began, dirs.into_iter().collect(), counted)))
 }
 
 /// The folders a journal says to read, below `root` as the walk names
@@ -243,39 +270,55 @@ fn seeds_of(
     };
     let mut seeds: Vec<(PathBuf, bool)> = Vec::new();
     let mut removed = Vec::new();
+    // An entry's own tags are read in the folder holding it, as the walk
+    // reads them (`Walk::folder` reads its folders' with its files): every
+    // entry named, a folder's too, reads the folder it is in. A tag set on
+    // a folder moves its change time alone, and the journal says nothing
+    // of its parent.
+    let holding = |path: &Path, seeds: &mut Vec<(PathBuf, bool)>| {
+        seeds.extend(path.parent().map(|p| (of_files(p.to_path_buf()), false)));
+    };
     for change in &journal.changes {
-        match change {
-            Change::Added(n) if n.kind == EntryKind::Directory => {
-                seeds.extend(walked(&n.path).map(|p| (p, true)));
-            }
-            Change::Removed(n) if n.kind == EntryKind::Directory => {
-                if let Some(path) = walked(&n.path) {
-                    if let Some((dev, ino)) = n.id {
-                        removed.push(folder_key(dev, ino, &path));
-                    }
-                    seeds.extend(path.parent().map(|p| (of_files(p.to_path_buf()), false)));
-                }
-            }
-            Change::Changed(n) if n.kind == EntryKind::Directory => {
-                seeds.extend(walked(&n.path).map(|p| (of_files(p), false)));
-            }
+        let (path, deep) = match change {
             Change::Added(n) | Change::Removed(n) | Change::Changed(n) => {
-                seeds.extend(
-                    walked(&n.path)
-                        .and_then(|p| p.parent().map(Path::to_path_buf))
-                        .map(|p| (of_files(p), false)),
-                );
+                let Some(path) = walked(&n.path) else {
+                    continue;
+                };
+                match change {
+                    // A folder made or moved in: what it holds, whole.
+                    Change::Added(_) if n.kind == EntryKind::Directory => {
+                        seeds.push((path.clone(), true));
+                    }
+                    Change::Removed(_) if n.kind == EntryKind::Directory => {
+                        if let Some((dev, ino)) = n.id {
+                            removed.push(folder_key(dev, ino, &path));
+                        }
+                    }
+                    // A folder changed: what it holds that changed, too.
+                    Change::Changed(_) if n.kind == EntryKind::Directory => {
+                        seeds.push((of_files(path.clone()), false));
+                    }
+                    _ => {}
+                }
+                (path, None)
             }
-            Change::NotCovered(hole) => seeds.extend(walked(&hole.path).map(|p| (p, true))),
+            Change::NotCovered(hole) => {
+                let Some(path) = walked(&hole.path) else {
+                    continue;
+                };
+                (path, Some(true))
+            }
+        };
+        holding(&path, &mut seeds);
+        if let Some(deep) = deep {
+            seeds.push((path, deep));
         }
     }
-    seeds.extend(
-        journal
-            .holes
-            .iter()
-            .filter_map(|h| walked(&h.path))
-            .map(|p| (p, true)),
-    );
+    // What it does not cover, whole, and the folder holding each.
+    for path in journal.holes.iter().filter_map(|h| walked(&h.path)) {
+        holding(&path, &mut seeds);
+        seeds.push((path, true));
+    }
     // Each once, below the root, nothing the walk leaves out; one inside a
     // folder read with what it holds read with it.
     seeds.retain(|(path, _)| {
@@ -284,19 +327,37 @@ fn seeds_of(
             && below.stops_above(path).is_none()
             && !reach::is_point(path)
     });
+    (nearest_kept(seeds), removed)
+}
+
+/// `seeds` each once, none inside a folder read with what it holds: in
+/// path order, which puts a folder before everything below it, a stack of
+/// the folders kept above the one considered decides it, so that each is
+/// pushed and popped once (a check naming fifty thousand folders compares
+/// each with its own folders above, never with all those kept before).
+fn nearest_kept(mut seeds: Vec<(PathBuf, bool)>) -> Vec<(PathBuf, bool)> {
     seeds.sort_by(|(a, deep_a), (b, deep_b)| a.cmp(b).then(deep_b.cmp(deep_a)));
     let mut kept: Vec<(PathBuf, bool)> = Vec::new();
+    // Indexes into `kept`: the folders kept above the last one considered,
+    // nearest last.
+    let mut above: Vec<usize> = Vec::new();
     for (path, deep) in seeds {
-        let inside = kept
-            .iter()
-            .rev()
-            .find(|(above, _)| path.starts_with(above))
-            .is_some_and(|(above, above_deep)| *above_deep || *above == path);
+        while above
+            .last()
+            .is_some_and(|&at| !path.starts_with(&kept[at].0))
+        {
+            above.pop();
+        }
+        let inside = above.last().is_some_and(|&at| {
+            let (folder, folder_deep) = &kept[at];
+            *folder_deep || *folder == path
+        });
         if !inside {
+            above.push(kept.len());
             kept.push((path, deep));
         }
     }
-    (kept, removed)
+    kept
 }
 
 /// [`run_with`], read by `walkers` threads, this one among them, from
@@ -488,6 +549,10 @@ impl Walk<'_> {
         let mut present: HashSet<OsString> = HashSet::new();
         let mut candidates: Vec<(OsString, std::fs::Metadata)> = Vec::new();
         let mut owners: HashSet<OsString> = HashSet::new();
+        // Whether a folder of companions here changed since: it may hold
+        // this folder's own notes (`TagSpaces`' `.ts/tsm.json`), which its
+        // folder's read did not see, this folder's change time unmoved.
+        let mut own_changed = false;
         let mut learned = Vec::new();
         for entry in entries {
             let name = entry.file_name();
@@ -507,13 +572,15 @@ impl Walk<'_> {
             if meta.is_dir() && app.companions.is_folder(&name) {
                 // A folder of companions for the whole folder: anything in
                 // it changed, the folder is read whole.
-                whole |= changed_since(&path, &meta, covered)
+                let changed = changed_since(&path, &meta, covered)
                     || std::fs::read_dir(&path).is_ok_and(|inside| {
                         inside.flatten().any(|e| {
                             e.metadata()
                                 .is_ok_and(|m| changed_since(&e.path(), &m, covered))
                         })
                     });
+                whole |= changed;
+                own_changed |= changed && covered.is_some();
                 continue;
             }
             if let Some(owner) = app.companions.owner(&name)
@@ -589,6 +656,27 @@ impl Walk<'_> {
             self.read.fetch_add(read.len(), Ordering::Relaxed);
             for ((name, _), notes) in read.iter().zip(notes) {
                 learned.push((dir.join(name), notes.notes.tag_names()));
+            }
+        }
+        // This folder's own notes, kept inside it, read again in the folder
+        // holding it: a read of that one asks only what moved there, and a
+        // journal names only what changed in here. Its root's own are never
+        // counted.
+        if own_changed
+            && dir != below.root()
+            && let (Some(parent), Some(name)) = (dir.parent(), dir.file_name())
+        {
+            let holder = std::fs::symlink_metadata(parent)
+                .ok()
+                .and_then(|m| skwir_core::fs::stat::identity(parent, &m));
+            let named = [(
+                name,
+                holder.map(|folder| EntryId::in_folder(id, folder, name)),
+                true,
+            )];
+            if let Some(notes) = app.notes.read(parent, &named, &self.policy, None).pop() {
+                self.read.fetch_add(1, Ordering::Relaxed);
+                learned.push((dir.to_path_buf(), notes.notes.tag_names()));
             }
         }
         let full = {
@@ -691,10 +779,17 @@ mod tests {
         std::fs::remove_file(root.join("built/CACHEDIR.TAG")).unwrap();
         let known: std::collections::HashSet<u64> = dirs.iter().copied().collect();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        let counted = super::run_with(&app, &index, &root, Some((later, &known)), &cancel)
-            .unwrap()
-            .unwrap()
-            .2;
+        let counted = super::run_with(
+            &app,
+            &index,
+            &root,
+            &app.left_out(),
+            Some((later, &known)),
+            &cancel,
+        )
+        .unwrap()
+        .unwrap()
+        .2;
         assert_eq!(counted.read, 1, "built/z.o: {counted:?}");
         assert!(!index.is_cache(&root.join("built")));
         assert_eq!(index.files_under(&root, None).len(), 5);
@@ -749,10 +844,17 @@ mod tests {
         // Nothing changed since: nothing is read.
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
         let check = |index: &Arc<crate::index::TagIndex>| {
-            super::run_with(&app, index, &root, Some((later, &known)), &cancel)
-                .unwrap()
-                .unwrap()
-                .2
+            super::run_with(
+                &app,
+                index,
+                &root,
+                &app.left_out(),
+                Some((later, &known)),
+                &cancel,
+            )
+            .unwrap()
+            .unwrap()
+            .2
         };
         assert_eq!(check(&index).read, 0);
 
@@ -771,10 +873,17 @@ mod tests {
         let mark = std::time::SystemTime::now();
         std::thread::sleep(std::time::Duration::from_millis(20));
         tag(&root.join("b"), "new");
-        let counted = super::run_with(&app, &index, &root, Some((mark, &known)), &cancel)
-            .unwrap()
-            .unwrap()
-            .2;
+        let counted = super::run_with(
+            &app,
+            &index,
+            &root,
+            &app.left_out(),
+            Some((mark, &known)),
+            &cancel,
+        )
+        .unwrap()
+        .unwrap()
+        .2;
         assert_eq!(counted.read, 2, "b, and deep/d, still a folder not seen");
         assert_eq!(
             tally(&index),
@@ -995,8 +1104,17 @@ mod tests {
             attrs: true,
             holes: Vec::new(),
         };
-        let (_, after, counted) =
-            super::run_followed(&app, &index, &root, &last, &journal, &cancel).unwrap();
+        let (_, after, counted) = super::run_followed(
+            &app,
+            &index,
+            &root,
+            &app.left_out(),
+            &last,
+            &journal,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(
             counted.folders, 4,
             "busy, came, came/in, and the root, which held sub: {counted:?}"
@@ -1022,6 +1140,254 @@ mod tests {
         let removed = super::folder_key(sub.dev(), sub.ino(), &root.join("sub"));
         assert!(dirs.contains(&removed) && !after.contains(&removed));
         assert_eq!(after.len(), dirs.len() + 1, "came and came/in in, sub out");
+    }
+
+    /// A folder tagged since, the journal saying only that it changed, and
+    /// one moved in, saying only that it came: each one's own tags are read
+    /// in the folder holding it, as a walk reads them (ADR-150, D4).
+    #[cfg(unix)]
+    #[test]
+    fn a_check_from_a_journal_reads_a_folders_own_tags_where_it_is_held() {
+        use skwir_core::entry::EntryKind;
+        use skwir_core::names::{Change, Journal, Mark, Noted};
+        let tmp = home_tempdir();
+        let root = tmp.path().join("it's held");
+        std::fs::create_dir_all(root.join("trips/rome")).unwrap();
+        std::fs::write(root.join("trips/rome/f"), b"x").unwrap();
+        std::fs::create_dir_all(tmp.path().join("away/came")).unwrap();
+        let tag = |p: &std::path::Path, v: &str| {
+            skwir_core::fs::xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
+        };
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins
+            .add(Arc::new(crate::TagsPlugin::default()), &app);
+        let slot = skwir_core::cache::Cache::new(tmp.path().join("cache")).namespace("tags");
+        let index = crate::index::TagIndex::new(Some(slot), &app, CancelToken::new());
+        let cancel = CancelToken::new();
+        let (since, dirs, _) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
+        index.cover(&root, since, &dirs, None);
+        let last = index.covering(&root).unwrap();
+
+        tag(&root.join("trips/rome"), "trip");
+        tag(&tmp.path().join("away/came"), "came");
+        std::fs::rename(tmp.path().join("away/came"), root.join("came")).unwrap();
+        let real = std::fs::canonicalize(&root).unwrap();
+        let noted = |at: &str| Noted {
+            path: real.join(at),
+            kind: EntryKind::Directory,
+            id: None,
+        };
+        let journal = Journal {
+            changes: vec![
+                Change::Changed(noted("trips/rome")),
+                Change::Added(noted("came")),
+            ],
+            mark: Mark {
+                by: "test".into(),
+                token: "t2".into(),
+            },
+            names: true,
+            attrs: true,
+            holes: Vec::new(),
+        };
+        super::run_followed(
+            &app,
+            &index,
+            &root,
+            &app.left_out(),
+            &last,
+            &journal,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        let mut found: Vec<(String, Vec<String>)> = index
+            .files_under(&root, None)
+            .into_iter()
+            .map(|(path, tags)| {
+                (
+                    path.strip_prefix(&root).unwrap().display().to_string(),
+                    tags,
+                )
+            })
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                ("came".to_owned(), vec!["came".to_owned()]),
+                ("trips/rome".to_owned(), vec!["trip".to_owned()]),
+            ]
+        );
+    }
+
+    /// A folder's own notes kept inside it (`TagSpaces`' `.ts/tsm.json`),
+    /// written since, the folder's change time unmoved: read again, by a
+    /// check that walks and by one read from a journal alike.
+    #[cfg(unix)]
+    #[test]
+    fn a_folders_own_notes_kept_inside_it_are_read_again() {
+        use skwir_core::names::{Change, Journal, Mark, Noted};
+        let tmp = home_tempdir();
+        let root = tmp.path().join("it's inside");
+        std::fs::create_dir_all(root.join("trip/.ts")).unwrap();
+        std::fs::write(root.join("trip/f"), b"x").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.companions.register("test", Arc::new(Beside));
+        app.notes.register("test", Arc::new(Inside));
+        let slot = skwir_core::cache::Cache::new(tmp.path().join("cache")).namespace("tags");
+        let index = crate::index::TagIndex::new(Some(slot), &app, CancelToken::new());
+        let cancel = CancelToken::new();
+        let (since, dirs, _) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
+        index.cover(&root, since, &dirs, None);
+        assert!(index.files_under(&root, None).is_empty());
+        let known = index.dirs(&root);
+        let changed = |p: &std::path::Path| {
+            let meta = std::fs::symlink_metadata(p).unwrap();
+            skwir_core::fs::stat::changed(p, &meta).unwrap()
+        };
+        // Checked since just after the folders were made; the note written
+        // once the clock has moved past that, as its change time says.
+        let after = changed(&root.join("trip")).max(changed(&root.join("trip/.ts")))
+            + std::time::Duration::from_nanos(1);
+        let write = |tag: &str| {
+            let own = root.join("trip/.ts/own");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                std::fs::write(&own, tag).unwrap();
+                if changed(&own) >= after || std::time::Instant::now() > deadline {
+                    break;
+                }
+                std::thread::yield_now();
+            }
+        };
+        let found = |index: &Arc<crate::index::TagIndex>| {
+            index
+                .files_under(&root, None)
+                .into_iter()
+                .map(|(path, tags)| {
+                    (
+                        path.strip_prefix(&root).unwrap().display().to_string(),
+                        tags,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(changed(&root.join("trip")) < after);
+
+        // A check that walks.
+        write("away");
+        super::run_with(
+            &app,
+            &index,
+            &root,
+            &app.left_out(),
+            Some((after, &known)),
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            found(&index),
+            [("trip".to_owned(), vec!["away".to_owned()])]
+        );
+
+        // A check read from a journal naming the note alone.
+        write("home");
+        let at = after.duration_since(std::time::UNIX_EPOCH).unwrap();
+        let last = crate::index::Covered {
+            root: root.clone(),
+            since: (at.as_secs(), at.subsec_nanos()),
+            mark: None,
+        };
+        let journal = Journal {
+            changes: vec![Change::Changed(Noted {
+                path: std::fs::canonicalize(&root).unwrap().join("trip/.ts/own"),
+                kind: skwir_core::entry::EntryKind::File,
+                id: None,
+            })],
+            mark: Mark {
+                by: "test".into(),
+                token: "t2".into(),
+            },
+            names: true,
+            attrs: true,
+            holes: Vec::new(),
+        };
+        super::run_followed(
+            &app,
+            &index,
+            &root,
+            &app.left_out(),
+            &last,
+            &journal,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            found(&index),
+            [("trip".to_owned(), vec!["home".to_owned()])]
+        );
+    }
+
+    /// A store keeping a folder's own tag inside it, in `.ts/own`, as
+    /// `TagSpaces` keeps one in `.ts/tsm.json`.
+    struct Inside;
+
+    impl skwir_core::notes::NotesStore for Inside {
+        fn id(&self) -> &'static str {
+            "inside"
+        }
+        fn title(&self) -> skwir_core::words::Words {
+            skwir_core::words::Words::as_written("inside")
+        }
+        fn kept(&self) -> skwir_core::notes::Kept {
+            skwir_core::notes::Kept::Beside
+        }
+        fn holds(&self) -> skwir_core::notes::Holds {
+            skwir_core::notes::Holds {
+                tags: true,
+                ..skwir_core::notes::Holds::default()
+            }
+        }
+        fn default_write(&self) -> skwir_core::notes::Write {
+            skwir_core::notes::Write::Off
+        }
+        fn read(
+            &self,
+            _: &std::path::Path,
+            files: &[skwir_core::notes::Probe<'_>],
+            _: Option<&skwir_core::metadata::Listed<'_>>,
+        ) -> Vec<Option<skwir_core::notes::Notes>> {
+            files
+                .iter()
+                .map(|f| {
+                    let name = std::fs::read_to_string(f.path.join(".ts/own"))
+                        .ok()
+                        .filter(|_| f.folder)?;
+                    Some(skwir_core::notes::Notes {
+                        tags: vec![skwir_core::notes::Tag { name, color: None }],
+                        ..skwir_core::notes::Notes::default()
+                    })
+                })
+                .collect()
+        }
+        fn keys(
+            &self,
+            _: &skwir_core::notes::Probe<'_>,
+            _: bool,
+        ) -> Vec<skwir_core::notes::raw::RawKey> {
+            Vec::new()
+        }
+        fn write(
+            &self,
+            _: &skwir_core::notes::Probe<'_>,
+            _: &skwir_core::notes::Notes,
+            _: bool,
+        ) -> std::io::Result<skwir_core::notes::Wrote> {
+            Ok(skwir_core::notes::Wrote::NotHere)
+        }
     }
 
     /// What a journal names becomes the folders a check reads: a change at
@@ -1052,6 +1418,8 @@ mod tests {
                 Change::Added(noted("new", EntryKind::Directory)),
                 Change::Changed(noted("new/inside/f", EntryKind::File)),
                 Change::Changed(noted("x/node_modules/p/f", EntryKind::File)),
+                // A folder tagged: read in the folder holding it.
+                Change::Changed(noted("trips/rome", EntryKind::Directory)),
                 Change::NotCovered(Hole {
                     path: root.join("gone dark"),
                     why: Why::Denied,
@@ -1076,11 +1444,74 @@ mod tests {
                 (root.to_path_buf(), false),
                 (root.join("a"), false),
                 (root.join("gone dark"), true),
+                (root.join("held"), false),
                 (root.join("held/out"), true),
                 (root.join("new"), true),
+                (root.join("trips"), false),
+                (root.join("trips/rome"), false),
             ]
         );
         assert!(removed.is_empty());
+
+        // A root gone since: an error, which ends the count, never a
+        // cancel, which leaves it running.
+        let index = crate::index::TagIndex::new(None, &app, CancelToken::new());
+        let last = crate::index::Covered {
+            root: root.to_path_buf(),
+            since: (1_800_000_000, 0),
+            mark: None,
+        };
+        let followed = super::run_followed(
+            &app,
+            &index,
+            root,
+            &app.left_out(),
+            &last,
+            &journal,
+            &CancelToken::new(),
+        );
+        assert!(followed.is_err());
+    }
+
+    /// Seeds are kept each once, none inside a folder read with what it
+    /// holds, whatever their order, among many siblings.
+    #[test]
+    fn seeds_are_kept_once_outside_folders_read_whole() {
+        use std::path::PathBuf;
+        let at = |p: &str| PathBuf::from(p);
+        let mut seeds = vec![
+            (at("/r/b/x"), false),
+            (at("/r/a"), true),
+            (at("/r/a/deep"), false),
+            (at("/r/b"), false),
+            (at("/r/b"), false),
+            (at("/r/a b"), false),
+            (at("/r/a/deep/er"), true),
+            (at("/r/b"), true),
+            (at("/r/b/y/z"), false),
+            (at("/r/c"), false),
+            (at("/r/c/d"), false),
+        ];
+        // Many siblings below a folder read with what it holds, and one
+        // shallow above them all: each compared with its own folders above.
+        seeds.extend((0..50_000).map(|i| (at(&format!("/r/many/{i:05}")), false)));
+        seeds.push((at("/r/many"), true));
+        seeds.extend((0..50_000).map(|i| (at(&format!("/r/wide/{i:05}")), false)));
+        seeds.push((at("/r/wide"), false));
+        let kept = super::nearest_kept(seeds);
+        assert_eq!(kept.len(), 7 + 50_000, "{:?}", &kept[..8]);
+        assert_eq!(
+            kept[..7],
+            [
+                (at("/r/a"), true),
+                (at("/r/a b"), false),
+                (at("/r/b"), true),
+                (at("/r/c"), false),
+                (at("/r/c/d"), false),
+                (at("/r/many"), true),
+                (at("/r/wide"), false),
+            ]
+        );
     }
 
     /// Companions kept in a folder `.ts` beside their files, as `TagSpaces`

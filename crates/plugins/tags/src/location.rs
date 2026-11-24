@@ -727,11 +727,11 @@ impl Places {
             return;
         };
         // Another list of folders left out: counted again.
-        let rule = app.left_out().fingerprint();
+        let now = app.left_out().fingerprint();
         {
             let mut scopes = self.scopes.lock();
             let scope = scopes.entry(root.to_path_buf()).or_default();
-            if scope.running || (scope.done == Some(rule) && !again) {
+            if scope.running || (scope.done == Some(now) && !again) {
                 return;
             }
             scope.running = true;
@@ -747,6 +747,9 @@ impl Places {
                 let Some(app) = this.app.upgrade() else {
                     return;
                 };
+                // What walks leave out, read once before the coverage (which
+                // the index drops when it changed): the count is of it.
+                let rule = app.left_out();
                 let last = this.index.covering(&root);
                 let covered = last.as_ref().map(Covered::since);
                 // What a names index's journal says changed since the last
@@ -755,37 +758,65 @@ impl Places {
                 let followed =
                     crate::count::follow(&app, &root, last.as_ref(), &this.lifetime);
                 let result = match (&last, followed.as_ref().and_then(|f| f.journal.as_ref())) {
-                    (Some(last), Some(journal)) => Ok(crate::count::run_followed(
+                    (Some(last), Some(journal)) => crate::count::run_followed(
                         &app,
                         &this.index,
                         &root,
+                        &rule,
                         last,
                         journal,
                         &this.lifetime,
-                    )),
-                    _ => crate::count::run(&app, &this.index, &root, covered, &this.lifetime),
+                    ),
+                    _ => crate::count::run_ruled(
+                        &app,
+                        &this.index,
+                        &root,
+                        &rule,
+                        covered,
+                        &this.lifetime,
+                    ),
                 };
-                match result {
+                // What walks leave out changed while it counted: what it read
+                // is not what they leave out now (a folder no longer left
+                // out was never entered, and a journal from its mark would
+                // never name it), so it covers nothing and is counted again.
+                let ruled = app.left_out().fingerprint() == rule.fingerprint();
+                // `None`: cancelled, nothing ended.
+                let ended = match result {
                     Ok(Some((since, dirs, counted))) => {
                         tracing::debug!(
                             checked = covered.is_some(),
                             journal = followed.as_ref().is_some_and(|f| f.journal.is_some()),
                             folders = counted.folders,
                             read = counted.read,
+                            ruled,
                             "tags: counted for a tag location"
                         );
-                        this.index
-                            .cover(&root, since, &dirs, followed.map(|f| f.mark));
+                        if ruled {
+                            this.index
+                                .cover(&root, since, &dirs, followed.map(|f| f.mark));
+                        }
+                        true
                     }
-                    Ok(None) => return,
-                    Err(error) => tracing::debug!("tags: a tag location's count: {error:#}"),
-                }
-                let touched = this.scopes.lock().get_mut(&root).is_some_and(|scope| {
+                    Ok(None) => false,
+                    Err(error) => {
+                        tracing::debug!("tags: a tag location's count: {error:#}");
+                        true
+                    }
+                };
+                // Whatever the end, the scope no longer counts: one left
+                // `running` would never be counted again this run.
+                let again = this.scopes.lock().get_mut(&root).is_some_and(|scope| {
                     scope.running = false;
-                    scope.done = Some(rule);
-                    std::mem::take(&mut scope.touched)
+                    if ended {
+                        scope.done = Some(rule.fingerprint());
+                    }
+                    std::mem::take(&mut scope.touched) || !ruled
                 });
-                if touched {
+                if !ended {
+                    return;
+                }
+                if again {
                     this.ensure(&root, true);
                 }
                 if this.index.is_full()
