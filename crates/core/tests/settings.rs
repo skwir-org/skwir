@@ -169,7 +169,17 @@ fn headless_save_finishes_before_returning_and_reports_persistence_errors() {
     let unblock = {
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
-        || std::fs::remove_dir(&path).unwrap()
+        || {
+            std::fs::remove_dir(&path).unwrap();
+            // Windows deletes a folder another handle holds (the settings'
+            // watcher reading what came there) once that handle is closed:
+            // until then it is there still, and a save would find it.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while std::fs::symlink_metadata(&path).is_ok() {
+                assert!(std::time::Instant::now() < deadline, "the folder goes");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
     };
     assert!(app.dispatch(&command("first")).is_err());
     assert!(matches!(app.settings.save_status().1, SaveState::Failed(_)));
