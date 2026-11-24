@@ -381,6 +381,7 @@ fn leads(words: &str, dir: &Path, ctx: &OpenContext, rule: Rule) -> Option<bool>
     let (tx, rx) = ctx.channel();
     let stop = ctx.cancel.child();
     let shared = Shared {
+        me: Weak::new(),
         tx,
         root: dir.to_path_buf(),
         rule,
@@ -415,6 +416,10 @@ fn leads(words: &str, dir: &Path, ctx: &OpenContext, rule: Rule) -> Option<bool>
 }
 
 pub struct Shared {
+    /// Itself, for what it reads again of its own accord (`read_again`):
+    /// none where it is asked whether anything is there (`leads_of`), which
+    /// no pane asks to read.
+    me: Weak<Shared>,
     ctx: OpenContext,
     tx: EventSink,
     root: PathBuf,
@@ -453,6 +458,11 @@ pub struct Shared {
 #[cfg(test)]
 struct Counted {
     rechecks: std::sync::atomic::AtomicUsize,
+    /// Told as each recheck ends, however it ends.
+    rechecked: (
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
     considered: std::sync::atomic::AtomicUsize,
     names_read: std::sync::atomic::AtomicUsize,
     /// The clock the names kept go by: stopped when the search opened, so
@@ -461,17 +471,34 @@ struct Counted {
     clock: Instant,
 }
 
+/// Tells a recheck ended as it is dropped, however it ends.
+#[cfg(test)]
+struct Rechecked<'a>(&'a crossbeam_channel::Sender<()>);
+
+#[cfg(test)]
+impl Drop for Rechecked<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
 #[cfg(test)]
 impl Default for Counted {
     fn default() -> Self {
         Counted {
             rechecks: std::sync::atomic::AtomicUsize::default(),
+            rechecked: crossbeam_channel::unbounded(),
             considered: std::sync::atomic::AtomicUsize::default(),
             names_read: std::sync::atomic::AtomicUsize::default(),
             clock: Instant::now(),
         }
     }
 }
+
+/// What a hydration sends at least at a time as it reads folders (as
+/// `fs::hydrate_paths` does): a search's results are from many folders, a
+/// few each, and an event a folder would wake the window as often.
+const SENT_EVERY: usize = 256;
 
 /// The results shown, by id and by path: `path_of` asks by id, and a
 /// recheck asks which are at or below each path a plan's changes say (a
@@ -488,9 +515,16 @@ struct Results {
     by_path: BTreeMap<Arc<Path>, Ids>,
     /// The results whose rows the metadata providers filled: what a stat
     /// alone told since leaves filled (`Listing::upsert` keeps their
-    /// fields). A filled answer left out behind a newer one that was not is
-    /// asked for again.
+    /// fields).
     filled: HashSet<EntryId>,
+    /// The rows a pane asked to be read (`OpenLocation::hydrate`): each is
+    /// answered by a read begun after what told it last. Told again bare
+    /// (a walk again, a stat alone), or its answer left out behind such a
+    /// tell, it is read again of its own accord: the pane, which asks once,
+    /// may not ask again (it does not when it applies the row taken out and
+    /// told back in one sync). Kept while its row goes and comes back (a
+    /// refresh, a rename undone); let go of as a walk ends without it.
+    asked: HashMap<EntryId, Asked>,
     /// Which read of each path was applied last, while an older read is
     /// under way.
     newest: Newest<PathBuf>,
@@ -500,6 +534,18 @@ struct Results {
     /// out, the recheck reading what is there now. Let go of once no read
     /// is under way (`Shared::reading`).
     replaced: BTreeMap<PathBuf, u64>,
+}
+
+/// A row asked to be read (`Results::asked`).
+#[derive(Clone, Copy)]
+struct Asked {
+    /// The least ticket its latest read takes: an answer of a read begun
+    /// before is not that read's.
+    since: u64,
+    priority: Priority,
+    /// Its latest read is under way: asked again meanwhile, it is not read
+    /// twice, and what tells it meanwhile leaves it to that read.
+    reading: bool,
 }
 
 /// Where a search's reads are counted (`Reading::begin`).
@@ -604,11 +650,91 @@ impl Results {
         Some(path)
     }
 
-    /// Every result taken out: their ids.
+    /// Every result taken out: their ids. The rows asked to be read stay
+    /// asked, their reads (the old walk's) ended: told again by the walk
+    /// after, they are read again.
     fn clear(&mut self) -> Vec<EntryId> {
         self.by_path.clear();
         self.filled.clear();
+        for asked in self.asked.values_mut() {
+            asked.reading = false;
+        }
         self.by_id.drain().map(|(id, _)| id).collect()
+    }
+
+    /// A pane asks `id` to be read at `priority`, a read of it beginning
+    /// at `floor` at least: whether it is to be read now. Not where it is
+    /// no result, nor where a read of it asked as soon is under way.
+    fn ask(&mut self, id: EntryId, floor: u64, priority: Priority) -> bool {
+        if !self.by_id.contains_key(&id) {
+            return false;
+        }
+        match self.asked.get_mut(&id) {
+            Some(asked) if asked.reading && asked.priority <= priority => false,
+            Some(asked) => {
+                *asked = Asked {
+                    since: floor,
+                    priority: asked.priority.min(priority),
+                    reading: true,
+                };
+                true
+            }
+            None => {
+                self.asked.insert(
+                    id,
+                    Asked {
+                        since: floor,
+                        priority,
+                        reading: true,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// `id` was told (`insert`ed): read again where it was asked to be
+    /// read and is told bare, no read of it under way, a read beginning at
+    /// `floor` at least. A read under way answers it, or is left out behind
+    /// this tell and reads again (`answered`).
+    fn told(&mut self, id: EntryId, floor: u64) -> Option<(EntryId, Priority)> {
+        if self.filled.contains(&id) {
+            return None;
+        }
+        let asked = self.asked.get_mut(&id).filter(|asked| !asked.reading)?;
+        asked.since = floor;
+        asked.reading = true;
+        Some((id, asked.priority))
+    }
+
+    /// The read of `id` that took `ticket` was answered: applied, or left
+    /// out (`stood` false). Its latest read ends, unless it was left out
+    /// behind a tell that said less than it (a stat alone): then it is
+    /// read again, beginning at `floor` at least.
+    fn answered(
+        &mut self,
+        id: EntryId,
+        ticket: u64,
+        stood: bool,
+        floor: u64,
+    ) -> Option<(EntryId, Priority)> {
+        let less = !stood && self.by_id.contains_key(&id) && !self.filled.contains(&id);
+        let asked = self
+            .asked
+            .get_mut(&id)
+            .filter(|asked| asked.since <= ticket)?;
+        if less {
+            asked.since = floor;
+            return Some((id, asked.priority));
+        }
+        asked.reading = false;
+        None
+    }
+
+    /// A walk ended: what it did not find is no longer asked for.
+    fn walked(&mut self) {
+        let Results { asked, by_id, .. } = self;
+        asked.retain(|id, _| by_id.contains_key(id));
     }
 
     /// Whether what the read that took `ticket` found at `path` is applied:
@@ -1023,7 +1149,8 @@ impl QueryLocation {
     ) -> Arc<Self> {
         let (tx, rx) = ctx.channel();
         let lifetime = ctx.cancel.linked(plugin);
-        let shared = Arc::new(Shared {
+        let shared = Arc::new_cyclic(|me| Shared {
+            me: me.clone(),
             ctx: ctx.clone(),
             tx,
             root: query.root.clone(),
@@ -1605,23 +1732,19 @@ impl Shared {
             if cancel.is_cancelled() {
                 return;
             }
+            let mut results = self.results.lock();
             if !batch.is_empty() {
-                let mut results = self.results.lock();
+                let floor = self.tickets.floor();
                 let entries: Vec<Entry> = batch
                     .into_iter()
                     .filter_map(|(entry, path)| {
-                        let filled = entry.metadata.is_filled();
                         if !results.stands(&path, ticket) {
-                            // Filled, behind a stat alone: read again.
-                            if filled
-                                && results.holds(entry.id, &path)
-                                && !results.filled.contains(&entry.id)
-                            {
-                                again.push(entry.id);
-                            }
                             return None;
                         }
-                        results.insert(entry.id, path, filled);
+                        results.insert(entry.id, path, entry.metadata.is_filled());
+                        // Told bare after a pane asked it read (a walk
+                        // again): read again.
+                        again.extend(results.told(entry.id, floor));
                         Some(entry)
                     })
                     .collect();
@@ -1633,11 +1756,47 @@ impl Shared {
                 }
             }
             if complete {
+                results.walked();
                 self.tx.send(ListingEvent::Complete);
             }
         }
-        if !again.is_empty() {
-            self.hydrate(&again, cancel);
+        self.read_again(again);
+    }
+
+    /// Read again of its own accord the rows asked to be read whose
+    /// answers are owed still (`Results::told`, `Results::answered`), each
+    /// at the priority it was asked at, under the walk's token.
+    fn read_again(&self, again: Vec<(EntryId, Priority)>) {
+        if again.is_empty() {
+            return;
+        }
+        let Some(this) = self.me.upgrade() else {
+            return;
+        };
+        let mut by_priority: BTreeMap<Priority, Vec<EntryId>> = BTreeMap::new();
+        for (id, priority) in again {
+            by_priority.entry(priority).or_default().push(id);
+        }
+        for (priority, ids) in by_priority {
+            Shared::spawn_reads(&this, &ids, priority);
+        }
+    }
+
+    /// Read `ids` on workers, a job for each slice, side by side, in the
+    /// root's lane, under the current walk's token: a refresh ends them,
+    /// what they read left out.
+    fn spawn_reads(this: &Arc<Self>, ids: &[EntryId], priority: Priority) {
+        for ids in ids.chunks(skwir_core::fs::HYDRATE_JOB) {
+            let s = Arc::clone(this);
+            let ids = ids.to_vec();
+            let cancel = s.walk.lock().child();
+            this.ctx.scheduler.spawn_in(
+                this.lane(),
+                priority,
+                "query.stat",
+                cancel.clone(),
+                move || s.hydrate(&ids, &cancel),
+            );
         }
     }
 
@@ -2091,7 +2250,14 @@ impl Shared {
     /// of its own, and what it found is applied under the lock it is sent
     /// under, unless a read begun later told it already.
     fn recheck(&self, location: &Location, changes: &[Change], cancel: &CancelToken) {
+        #[cfg(test)]
+        let _ended = Rechecked(&self.counted.rechecked.0);
         let Ok(q) = lang::parse(&location.rest) else {
+            return;
+        };
+        // Resolved before anything is learned: a recheck that cannot read
+        // leaves out nothing the walk holds.
+        let Ok(real_root) = skwir_core::os_path::canonical(&q.root) else {
             return;
         };
         // Dropped last, after what it sends.
@@ -2168,9 +2334,6 @@ impl Shared {
             fields: &self.ctx.fields,
             cancel,
         };
-        let Ok(real_root) = skwir_core::os_path::canonical(&q.root) else {
-            return;
-        };
         let mut reached = Reached {
             real_root,
             folders: HashMap::new(),
@@ -2186,6 +2349,7 @@ impl Shared {
             let matched = self.matches_now(&q, &path, late, &mut statter, &mut reached, whole);
             read.push((path, was, matched, ticket));
         }
+        // Rows a pane asked to be read, told bare here: read again.
         let mut asked_again = Vec::new();
         {
             let _walk = self.walk.lock();
@@ -2193,6 +2357,7 @@ impl Shared {
                 return;
             }
             let mut results = self.results.lock();
+            let floor = self.tickets.floor();
             let mut removed: Vec<EntryId> = Vec::new();
             // A result that is still one under another name (renamed,
             // moved): its row follows it, and so does its selection.
@@ -2217,24 +2382,18 @@ impl Shared {
                         results.remove(id);
                         removed.push(id);
                     }
-                    // Filled, behind a stat alone: read again.
-                    if let Some(entry) = matched
-                        && entry.metadata.is_filled()
-                        && results.holds(entry.id, &path)
-                        && !results.filled.contains(&entry.id)
-                    {
-                        asked_again.push(entry.id);
-                    }
                     continue;
                 }
                 match (matched, was) {
                     (Some(entry), Some((id, _))) if entry.id != id => {
                         results.remove(id);
                         results.insert(entry.id, path, entry.metadata.is_filled());
+                        asked_again.extend(results.told(entry.id, floor));
                         renamed.push((id, entry));
                     }
                     (Some(entry), _) => {
                         results.insert(entry.id, path, entry.metadata.is_filled());
+                        asked_again.extend(results.told(entry.id, floor));
                         added.push(entry);
                     }
                     (None, Some((id, _))) => {
@@ -2254,9 +2413,7 @@ impl Shared {
                 self.tx.send(ListingEvent::Added(added));
             }
         }
-        if !asked_again.is_empty() {
-            self.hydrate(&asked_again, cancel);
-        }
+        self.read_again(asked_again);
         self.discover(&q, arrived_folders, &seen, cancel, &mut reached);
     }
 
@@ -2367,18 +2524,29 @@ impl Shared {
     }
 
     /// Read `ids` whole (a stat and the metadata providers' pass) and
-    /// answer each, under the walk's token `cancel`: what was read is
-    /// applied under the lock it is sent under, to a result still at the
-    /// path it was read at, unless a read of that path begun later told it
-    /// (`Results::stands`). One left out filled behind a stat alone is read
-    /// again, so its row is filled; one left out behind another read
-    /// filled, gone or moved was answered by it.
+    /// answer each, under the walk's token `cancel`, in slices of
+    /// [`SENT_EVERY`] answers at least: what was read is applied under the
+    /// lock it is sent under, to a result still at the path it was read
+    /// at, unless a read of that path begun later told it
+    /// (`Results::stands`). One left out behind a tell that said less (a
+    /// stat alone) is read again, as the pane asked (`Results::answered`).
     fn hydrate(&self, ids: &[EntryId], cancel: &CancelToken) {
         let items: Vec<(EntryId, PathBuf)> = {
-            let results = self.results.lock();
-            ids.iter()
-                .filter_map(|id| results.get(*id).map(|p| (*id, p.to_path_buf())))
-                .collect()
+            let mut results = self.results.lock();
+            let mut items = Vec::with_capacity(ids.len());
+            for &id in ids {
+                match results.get(id) {
+                    Some(path) => items.push((id, path.to_path_buf())),
+                    // No result now: its read ends, and told again, it is
+                    // read again (`Results::told`).
+                    None => {
+                        if let Some(asked) = results.asked.get_mut(&id) {
+                            asked.reading = false;
+                        }
+                    }
+                }
+            }
+            items
         };
         if items.is_empty() {
             return;
@@ -2391,66 +2559,88 @@ impl Shared {
         {
             // Dropped after the last answer is applied.
             let _reading = self.reading();
-            let apply = |read: Read| {
-                let _walk = self.walk.lock();
-                // A refresh walks again: what this read is the old walk's.
-                if cancel.is_cancelled() {
-                    return;
-                }
-                let mut results = self.results.lock();
-                let mut updated = Vec::with_capacity(read.found.len());
-                for (entry, ticket) in read.found {
-                    let Some(&path) = asked.get(&entry.id) else {
-                        continue;
-                    };
-                    if !results.holds(entry.id, path) {
-                        continue;
-                    }
-                    if !results.stands(path, ticket) {
-                        if !results.filled.contains(&entry.id) {
-                            again.push(entry.id);
-                        }
-                        continue;
-                    }
-                    results.filled.insert(entry.id);
-                    updated.push(entry);
-                }
-                let answered = |found: Vec<(EntryId, u64)>, results: &mut Results| {
-                    found
-                        .into_iter()
-                        .filter(|(id, ticket)| {
-                            asked.get(id).is_some_and(|&path| {
-                                results.holds(*id, path) && results.stands(path, *ticket)
-                            })
-                        })
-                        .map(|(id, _)| id)
-                        .collect::<Vec<EntryId>>()
-                };
-                let gone = answered(read.gone, &mut results);
-                let unread = answered(read.unread, &mut results);
-                for id in &gone {
-                    results.remove(*id);
-                }
-                if !updated.is_empty() {
-                    self.tx.send(ListingEvent::Updated(updated));
-                }
-                if !gone.is_empty() {
-                    self.tx.send(ListingEvent::Removed(gone));
-                }
-                if !unread.is_empty() {
-                    self.tx.send(ListingEvent::Unreadable(unread));
-                }
-            };
+            let (mut held, mut count) = (Read::default(), 0);
             skwir_core::fs::read_paths_newest(
                 &items,
                 &self.ctx.metadata,
                 cancel,
                 &self.tickets,
-                apply,
+                |mut folder| {
+                    // A folder's at a time, a few each where results are
+                    // from many: applied, and sent, a slice at a time.
+                    count += folder.found.len() + folder.gone.len() + folder.unread.len();
+                    held.found.append(&mut folder.found);
+                    held.gone.append(&mut folder.gone);
+                    held.unread.append(&mut folder.unread);
+                    if count >= SENT_EVERY {
+                        self.answer(std::mem::take(&mut held), &asked, cancel, &mut again);
+                        count = 0;
+                    }
+                },
             );
+            self.answer(held, &asked, cancel, &mut again);
         }
-        if !again.is_empty() && !cancel.is_cancelled() {
-            self.hydrate(&again, cancel);
+        self.read_again(again);
+    }
+
+    /// What a hydration `read` (`asked`: the path each was read at), under
+    /// the walk's token `cancel`, applied under the lock it is sent under,
+    /// so events leave in the order decided. What is to be read again goes
+    /// in `again`.
+    fn answer(
+        &self,
+        read: Read,
+        asked: &HashMap<EntryId, &Path>,
+        cancel: &CancelToken,
+        again: &mut Vec<(EntryId, Priority)>,
+    ) {
+        if read.found.is_empty() && read.gone.is_empty() && read.unread.is_empty() {
+            return;
+        }
+        let _walk = self.walk.lock();
+        // A refresh walks again: what this read is the old walk's.
+        if cancel.is_cancelled() {
+            return;
+        }
+        let mut results = self.results.lock();
+        let floor = self.tickets.floor();
+        let mut stands = |results: &mut Results, id: EntryId, ticket: u64| {
+            let stood = asked
+                .get(&id)
+                .is_some_and(|&path| results.holds(id, path) && results.stands(path, ticket));
+            again.extend(results.answered(id, ticket, stood, floor));
+            stood
+        };
+        let mut updated = Vec::with_capacity(read.found.len());
+        for (entry, ticket) in read.found {
+            if stands(&mut results, entry.id, ticket) {
+                results.filled.insert(entry.id);
+                updated.push(entry);
+            }
+        }
+        let gone: Vec<EntryId> = read
+            .gone
+            .into_iter()
+            .filter(|&(id, ticket)| stands(&mut results, id, ticket))
+            .map(|(id, _)| id)
+            .collect();
+        for id in &gone {
+            results.remove(*id);
+        }
+        let unread: Vec<EntryId> = read
+            .unread
+            .into_iter()
+            .filter(|&(id, ticket)| stands(&mut results, id, ticket))
+            .map(|(id, _)| id)
+            .collect();
+        if !updated.is_empty() {
+            self.tx.send(ListingEvent::Updated(updated));
+        }
+        if !gone.is_empty() {
+            self.tx.send(ListingEvent::Removed(gone));
+        }
+        if !unread.is_empty() {
+            self.tx.send(ListingEvent::Unreadable(unread));
         }
     }
 }
@@ -2468,24 +2658,22 @@ impl OpenLocation for QueryLocation {
         &self.rx
     }
 
+    /// Each row asked is answered by a read begun after what told it
+    /// last, across a refresh too (`Results::asked`): one under way, asked
+    /// as soon, is not read twice.
     fn hydrate(&self, ids: &[EntryId], priority: Priority) {
         if ids.is_empty() {
             return;
         }
-        // A job for each slice, side by side on the workers.
-        for ids in ids.chunks(skwir_core::fs::HYDRATE_JOB) {
-            let s = Arc::clone(&self.shared);
-            let ids = ids.to_vec();
-            // The current walk's: a refresh ends it, what it read left out.
-            let cancel = s.walk.lock().child();
-            self.shared.ctx.scheduler.spawn_in(
-                self.shared.lane(),
-                priority,
-                "query.stat",
-                cancel.clone(),
-                move || s.hydrate(&ids, &cancel),
-            );
-        }
+        let wanted: Vec<EntryId> = {
+            let mut results = self.shared.results.lock();
+            let floor = self.shared.tickets.floor();
+            ids.iter()
+                .copied()
+                .filter(|id| results.ask(*id, floor, priority))
+                .collect()
+        };
+        Shared::spawn_reads(&self.shared, &wanted, priority);
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
@@ -3204,10 +3392,30 @@ mod tests {
         );
     }
 
-    /// A hydration held across a refresh tells nothing of what it read:
-    /// the walk that came after stands.
+    /// Every event until one `until` takes, by a deadline, applied to
+    /// `listing` as a window would.
+    fn apply_until(
+        open: &QueryLocation,
+        listing: &mut skwir_core::location::Listing,
+        until: impl Fn(&ListingEvent) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let event = open.rx.recv_deadline(deadline).expect("the event comes");
+            let done = until(&event);
+            listing.apply(event);
+            if done {
+                return;
+            }
+        }
+    }
+
+    /// A hydration held across a refresh tells nothing of what it read,
+    /// and the row it was asked for is read again once the walk after
+    /// finds it: the window may apply the row taken out and found again in
+    /// one sync, and then never asks for it again (`pending_hydrate`).
     #[test]
-    fn a_hydration_held_across_a_refresh_tells_nothing() {
+    fn a_row_asked_for_across_a_refresh_is_read_again_as_it_is_now() {
         let tmp = home_tempdir();
         let root = tmp.path().join("root d'été");
         std::fs::create_dir_all(&root).unwrap();
@@ -3215,22 +3423,109 @@ mod tests {
         std::fs::write(&a, "x").unwrap();
         let (metadata, held_there, release) = held();
         let (open, _) = open_with(&root, "ext:txt", metadata);
-        assert_eq!(until_complete(&open), (1, 0));
+        let mut listing = skwir_core::location::Listing::default();
+        apply_until(&open, &mut listing, |e| matches!(e, ListingEvent::Complete));
         let id = result_at(&open, &a);
 
         open.hydrate(&[id], Priority::Visible);
         held_there.recv_timeout(Duration::from_secs(10)).unwrap();
         std::fs::write(&a, "longer").unwrap();
         open.refresh();
-        assert_eq!(until_complete(&open), (1, 1));
+        // Taken out and found again, applied together.
+        apply_until(&open, &mut listing, |e| matches!(e, ListingEvent::Complete));
         release.send(()).unwrap();
         assert!(open.shared.ctx.scheduler.wait_idle(Duration::from_secs(10)));
         let late: Vec<ListingEvent> = open.rx.try_iter().collect();
         assert!(
             !late.iter().any(|event| matches!(event,
-                ListingEvent::Updated(entries) if entries.iter().any(|e| e.id == id))),
-            "the old walk's hydration left out: {late:?}"
+                ListingEvent::Updated(entries) if entries.iter().any(|e| size(e) == Some(1)))),
+            "nothing the old walk's hydration read: {late:?}"
         );
+        for event in late {
+            listing.apply(event);
+        }
+        let row = listing.get(id).expect("found again");
+        assert!(row.metadata.is_filled(), "read again");
+        assert_eq!(size(row), Some(6), "as it is now");
+    }
+
+    /// Results from many folders, one each, are told read a slice at a
+    /// time, not an event a folder.
+    #[test]
+    fn a_hydration_tells_results_of_many_folders_in_slices() {
+        const FOLDERS: usize = 300;
+        let tmp = home_tempdir();
+        let root = tmp.path().join("root d'été");
+        for i in 0..FOLDERS {
+            let folder = root.join(format!("folder {i} ü"));
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("it's.txt"), "x").unwrap();
+        }
+        let (open, _) = open(&root);
+        assert_eq!(until_complete(&open), (FOLDERS, 0));
+        let ids: Vec<EntryId> = open.shared.results.lock().by_id.keys().copied().collect();
+        open.hydrate(&ids, Priority::Normal);
+        assert!(open.shared.ctx.scheduler.wait_idle(Duration::from_secs(10)));
+        let told: Vec<usize> = open
+            .rx
+            .try_iter()
+            .filter_map(|event| match event {
+                ListingEvent::Updated(entries) => Some(entries.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(told, [SENT_EVERY, FOLDERS - SENT_EVERY]);
+    }
+
+    /// A recheck that cannot resolve the search's folder learns nothing:
+    /// the walk's match it holds meanwhile is shown, not left out behind
+    /// what no read followed.
+    #[cfg(unix)]
+    #[test]
+    fn a_recheck_that_cannot_read_leaves_out_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        /// The folder made reachable again, so the fixture can be removed.
+        struct Opened(PathBuf);
+        impl Drop for Opened {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+
+        let tmp = home_tempdir();
+        let outer = tmp.path().join("outer d'été");
+        let root = outer.join("root ü");
+        std::fs::create_dir_all(&root).unwrap();
+        let a = root.join("it's à.tagged");
+        std::fs::write(&a, "x").unwrap();
+        let (metadata, held_there, release) = held();
+        let (open, location) = open_with(&root, "tag:work", metadata);
+        // Stat-ed by the walk, held as its tags are read.
+        held_there.recv_timeout(Duration::from_secs(10)).unwrap();
+        let shut = Opened(outer.clone());
+        std::fs::set_permissions(&shut.0, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if skwir_core::os_path::canonical(&root).is_ok() {
+            // Resolved all the same (as root): the case cannot be made.
+            drop(release);
+            return;
+        }
+        let searches = followed(&open, location);
+        searches.changed(&[Change::Metadata {
+            path: a.clone(),
+            field: skwir_core::entry::keys::TAGS.into(),
+            words: None,
+        }]);
+        open.shared
+            .counted
+            .rechecked
+            .1
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the recheck ends");
+        drop(shut);
+        release.send(()).unwrap();
+        assert_eq!(until_complete(&open), (1, 0), "the match shown");
+        assert_eq!(open.path_of(result_at(&open, &a)), Some(a));
     }
 
     /// A filled answer left out behind a newer stat alone is read again:
