@@ -353,10 +353,18 @@ pub struct Welcome {
     /// What this engine does beyond the version it speaks, a word each
     /// (`docs/DESIGN.md`, Protocol, `hello`): absent or empty, nothing. A
     /// client takes a word it does not know as absent, and an engine
-    /// says none it does not do. None so far.
+    /// says none it does not do: [`NAMES_BOTH_FORMS`] since 0.2.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
 }
+
+/// A [`Welcome::features`] word: a name term is matched in both its
+/// Unicode forms, composed and decomposed (NFC and NFD), lowercased first
+/// where case is ignored; a glob in its literal parts alone (DESIGN, open
+/// question 5). A client that matches so asks no engine without it for a
+/// term whose two forms differ: the index would hold less than it
+/// matches.
+pub const NAMES_BOTH_FORMS: &str = "names-both-forms";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Done {

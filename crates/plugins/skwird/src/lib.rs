@@ -327,7 +327,7 @@ impl NameIndex for Index {
     }
 
     /// [`covers`](Self::covers), where the engine asked now says it matches
-    /// both forms ([`BOTH_FORMS`]); none where it does not.
+    /// both forms (`protocol::NAMES_BOTH_FORMS`); none where it does not.
     fn covers_both_forms(&self, q: &Query, cancel: &CancelToken) -> Option<Coverage> {
         self.probe(q, cancel, true)
     }
@@ -353,20 +353,17 @@ impl NameIndex for Index {
     }
 }
 
-/// The word an engine's hello says once it matches a name term in both
-/// its forms, composed and decomposed, as Skwir's search does (skwird's
-/// 0.2; `Session::both_forms`).
-const BOTH_FORMS: &str = "names-both-forms";
-
 /// Whether the engine `client` talks to said, in this connection's hello,
-/// that it matches a name term in both its forms: never kept from an
-/// earlier connection, since an engine replaced by an older one says less.
+/// that it matches a name term in both its forms, composed and
+/// decomposed, as Skwir's search does (`protocol::NAMES_BOTH_FORMS`,
+/// skwird 0.2; `Session::both_forms`): never kept from an earlier
+/// connection, since an engine replaced by an older one says less.
 fn says_both_forms(client: &Client) -> bool {
     client
         .welcome()
         .features
         .iter()
-        .any(|word| word == BOTH_FORMS)
+        .any(|word| word == protocol::NAMES_BOTH_FORMS)
 }
 
 /// One search's connection.
