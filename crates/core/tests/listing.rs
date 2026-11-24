@@ -668,11 +668,20 @@ fn a_folder_sorted_by_date_waits_for_no_provider() {
     // By a rating: whole only once the providers answered.
     opened_sorted_by("rating");
     let before = slow.asked();
+    // The providers asked, however late a loaded machine's worker comes
+    // to them, and the folder not whole meanwhile.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while slow.asked() == before {
+        assert!(Instant::now() < deadline, "the providers asked");
+        assert!(
+            !app.pump_until_complete(pane, Duration::from_millis(20)),
+            "waits for the providers"
+        );
+    }
     assert!(
         !app.pump_until_complete(pane, Duration::from_millis(300)),
         "waits for the providers"
     );
-    assert!(slow.asked() > before, "the providers asked");
     slow.set(true);
     assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
     let (names, stated, filled) = shown_read(&app, pane);
