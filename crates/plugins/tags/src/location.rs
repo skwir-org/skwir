@@ -26,7 +26,7 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::Invocation;
 use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
-use skwir_core::fs::reach;
+use skwir_core::fs::{Newest, Read, Reading, Tickets, reach};
 use skwir_core::location::{
     Completion, Completions, Crumb, EmptyState, EventSink, ListingEvent, Location,
     LocationProvider, OpenContext, OpenLocation, QuickFilters, Toggle, Trail, Verb, Verbs, escape,
@@ -927,10 +927,34 @@ struct Sent {
     files: HashMap<EntryId, PathBuf>,
     tags: HashMap<EntryId, Vec<String>>,
     /// Every file it ever sent: one sent again (its tag given back) is
-    /// read at once, as views may have asked already.
+    /// read at once, as views may have asked already. So a hydration's
+    /// answer left out behind the relist's stat of a file it sends again
+    /// (`newest`), which reads no more than its identity, is read again.
     ever: HashSet<EntryId>,
+    /// Of two reads of a file (a hydration's, a relist's stat of a file
+    /// it sends), the one begun later stands, whichever is told last: a
+    /// hydration held while a plan renamed its file and the undo named it
+    /// back never takes out its row, nor shows tags older than a later
+    /// hydration's (AGENTS.md, "Watchers act on changes").
+    newest: Newest<EntryId>,
     complete: bool,
 }
+
+impl Sent {
+    /// Whether what a hydration's read of `id`, asked `at` its path, found
+    /// is applied, its ticket `ticket`: the file is listed there still (a
+    /// file its tag was taken off since is not told again), and no read of
+    /// it begun later was applied.
+    fn stands(&mut self, id: EntryId, at: Option<&Path>, ticket: u64) -> bool {
+        at.is_some_and(|at| self.files.get(&id).is_some_and(|p| p == at))
+            && self.newest.applies(&id, ticket)
+    }
+}
+
+/// What a hydration sends at least at a time as it reads folders (as
+/// `fs::hydrate_paths` does): a tag's files are from many folders, a few
+/// each.
+const SENT_EVERY: usize = 256;
 
 /// Its relisting: one at a time, again once if asked meanwhile.
 #[derive(Default)]
@@ -949,6 +973,8 @@ pub struct Open {
     ctx: OpenContext,
     places: Arc<Places>,
     sent: Mutex<Sent>,
+    /// The tickets of its reads (`Sent::newest`).
+    tickets: Tickets,
     relisting: Mutex<Relisting>,
     me: Weak<Open>,
 }
@@ -1006,20 +1032,27 @@ impl Open {
         if self.ctx.cancel.is_cancelled() {
             return;
         }
-        // The files not sent yet, identified by a stat outside the lock.
+        // Its stats are a read, counted until what they found is applied
+        // (`Sent::newest`): what a hydration begun before them read of a
+        // file is left out once they sent it again. Dropped last, the lock
+        // free.
+        let reading = Reading::begin(&self.sent, |sent| &mut sent.newest, &self.tickets);
+        // The files not sent yet, identified by a stat outside the lock,
+        // each with its stat's ticket.
         let known: HashSet<PathBuf> = self.sent.lock().files.values().cloned().collect();
-        let mut new_files: Vec<(PathBuf, Entry)> = Vec::new();
+        let mut new_files: Vec<(PathBuf, Entry, u64)> = Vec::new();
         let mut gone_paths: Vec<PathBuf> = Vec::new();
         // Each folder asked once whether it is hidden (Windows' mark).
         let mut marked = HashMap::new();
         for path in contents.files.iter().filter(|p| !known.contains(*p)) {
+            let ticket = self.tickets.take();
             match entry_at(path) {
                 Some(mut entry) => {
                     // Hidden as the folder it is in, below the place's
                     // own: shown as a search without hidden files finds it.
                     entry.in_hidden_folder =
                         skwir_core::fs::hidden::below(path, &self.root, &mut marked);
-                    new_files.push((path.clone(), entry));
+                    new_files.push((path.clone(), entry, ticket));
                 }
                 None => gone_paths.push(path.clone()),
             }
@@ -1130,8 +1163,10 @@ impl Open {
         }
         removed.extend(gone);
         let mut again: Vec<EntryId> = Vec::new();
-        for (path, entry) in new_files {
-            if sent.files.contains_key(&entry.id) {
+        for (path, entry, ticket) in new_files {
+            // Sent already, or a read of it begun later was applied: that
+            // stands.
+            if sent.files.contains_key(&entry.id) || !sent.newest.applies(&entry.id, ticket) {
                 continue;
             }
             if !sent.ever.insert(entry.id) {
@@ -1170,9 +1205,109 @@ impl Open {
             self.sink.send(ListingEvent::Complete);
         }
         drop(sent);
+        drop(reading);
+        // Sent again, a file is read again: its stat said no more than its
+        // identity, and a hydration's answer left out behind it said more.
         changed.extend(again);
         if !changed.is_empty() {
             self.hydrate(&changed, Priority::Visible);
+        }
+    }
+
+    /// A hydration's job: `items` stat-ed and filled by the metadata
+    /// providers, each stat taking a ticket just before it reads, what
+    /// they found applied as it comes, some folders at a time (`apply`).
+    /// Counted as a read until its last answer is applied. Worker-only:
+    /// this is I/O, in the lane of the items' paths.
+    fn hydrate_job(&self, items: &[(EntryId, PathBuf)], cancel: &CancelToken) {
+        // The path each id was asked at, which its answer is of.
+        let asked: HashMap<EntryId, &Path> = items
+            .iter()
+            .map(|(id, path)| (*id, path.as_path()))
+            .collect();
+        // Dropped last, after what it sends, the lock free.
+        let _reading = Reading::begin(&self.sent, |sent| &mut sent.newest, &self.tickets);
+        // What a stat does not say: the folder it is in hidden below the
+        // place's own, each folder asked once.
+        let mut marked = HashMap::new();
+        let mut read = Read::default();
+        let whole = skwir_core::fs::read_paths_newest(
+            items,
+            &self.ctx.metadata,
+            cancel,
+            &self.tickets,
+            |mut folder| {
+                // One folder's at a time.
+                let dir = folder
+                    .found
+                    .first()
+                    .and_then(|(e, _)| asked.get(&e.id))
+                    .and_then(|path| path.parent());
+                if let Some(dir) = dir {
+                    let hidden = dir != self.root
+                        && skwir_core::fs::hidden::within(dir, &self.root, &mut marked);
+                    for (entry, _) in &mut folder.found {
+                        entry.in_hidden_folder = hidden;
+                    }
+                }
+                read.found.append(&mut folder.found);
+                read.gone.append(&mut folder.gone);
+                read.unread.append(&mut folder.unread);
+                if read.found.len() >= SENT_EVERY && !cancel.is_cancelled() {
+                    self.apply(std::mem::take(&mut read), &asked);
+                }
+            },
+        );
+        // Cancelled: nothing more is sent.
+        if whole {
+            self.apply(read, &asked);
+        }
+    }
+
+    /// What a hydration read (`asked`: the path each id was read at),
+    /// applied under the lock relists send under and sent there, so events
+    /// leave in the order decided: only what stands (`Sent::stands`). What
+    /// is gone is forgotten, so a relist that finds it again sends it
+    /// again: kept, the file named back after a rename would be known, and
+    /// never listed again.
+    fn apply(&self, read: Read, asked: &HashMap<EntryId, &Path>) {
+        let mut sent = self.sent.lock();
+        let updated: Vec<Entry> = read
+            .found
+            .into_iter()
+            .filter_map(|(e, ticket)| {
+                sent.stands(e.id, asked.get(&e.id).copied(), ticket)
+                    .then_some(e)
+            })
+            .collect();
+        let gone: Vec<EntryId> = read
+            .gone
+            .into_iter()
+            .filter_map(|(id, ticket)| {
+                sent.stands(id, asked.get(&id).copied(), ticket)
+                    .then_some(id)
+            })
+            .collect();
+        for id in &gone {
+            sent.files.remove(id);
+            sent.tags.remove(id);
+        }
+        let unread: Vec<EntryId> = read
+            .unread
+            .into_iter()
+            .filter_map(|(id, ticket)| {
+                sent.stands(id, asked.get(&id).copied(), ticket)
+                    .then_some(id)
+            })
+            .collect();
+        if !updated.is_empty() {
+            self.sink.send(ListingEvent::Updated(updated));
+        }
+        if !gone.is_empty() {
+            self.sink.send(ListingEvent::Removed(gone));
+        }
+        if !unread.is_empty() {
+            self.sink.send(ListingEvent::Unreadable(unread));
         }
     }
 }
@@ -1196,39 +1331,20 @@ impl OpenLocation for Open {
         if items.is_empty() {
             return;
         }
+        let Some(me) = self.me.upgrade() else { return };
         // A job for each slice, side by side on the workers, each remote's
-        // in its lane (a tag's files are from anywhere under its folder);
-        // what is gone is sent as removed by the hydration itself.
+        // in its lane (a tag's files are from anywhere under its folder).
         for (lane, items) in reach::by_lane(items, |(_, path)| path) {
             for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
                 let items = items.to_vec();
-                let sink = self.sink.clone();
-                let metadata = Arc::clone(&self.ctx.metadata);
+                let me = Arc::clone(&me);
                 let cancel = self.ctx.cancel.child();
-                let root = self.root.clone();
                 self.ctx.scheduler.spawn_in(
                     lane,
                     priority,
                     "tags.location.stat",
                     cancel.clone(),
-                    move || {
-                        // What a stat does not say: the folder it is in
-                        // hidden below the place's own.
-                        let mut marked = HashMap::new();
-                        skwir_core::fs::hydrate_paths_with(
-                            &items,
-                            &metadata,
-                            &sink,
-                            &cancel,
-                            |dir, entries| {
-                                let hidden = dir != root
-                                    && skwir_core::fs::hidden::within(dir, &root, &mut marked);
-                                for entry in entries {
-                                    entry.in_hidden_folder = hidden;
-                                }
-                            },
-                        );
-                    },
+                    move || me.hydrate_job(&items, &cancel),
                 );
             }
         }
@@ -1310,6 +1426,7 @@ impl LocationProvider for Provider {
             ctx,
             places: Arc::clone(&self.places),
             sent: Mutex::new(Sent::default()),
+            tickets: Tickets::default(),
             relisting: Mutex::new(Relisting::default()),
             me: me.clone(),
         });
@@ -1830,5 +1947,284 @@ mod tests {
         assert!(!Address::parse(&trail.filters[0].location.rest).deep);
         assert!(trail.toggles[0].on);
         assert_eq!(trail.parent(), Some(trail.crumbs[1].location.clone()));
+    }
+
+    /// A tag's place shown, its files read as a pane asks.
+    #[cfg(unix)]
+    mod reads {
+        use super::*;
+        use crossbeam_channel::Sender;
+        use skwir_core::app::AppConfig;
+        use skwir_core::command::Outcome;
+        use skwir_core::op::{EntryRef, Plan};
+        use skwir_core::workspace::PaneId;
+        use std::ffi::{OsStr, OsString};
+        use std::time::{Duration, Instant};
+
+        /// A folder where extended attributes work: not `/tmp`, often a
+        /// tmpfs.
+        fn home_tempdir() -> tempfile::TempDir {
+            let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+            std::fs::create_dir_all(&base).unwrap();
+            tempfile::Builder::new()
+                .prefix("tags-place-")
+                .tempdir_in(base)
+                .unwrap()
+        }
+
+        /// A metadata provider holding the batch that names every one of
+        /// the names it is armed with (once), after the providers before
+        /// it filled it, until let go: a hydration held between its read
+        /// and its answer.
+        struct Hold {
+            armed: Mutex<Option<Vec<OsString>>>,
+            held: (Sender<()>, Receiver<()>),
+            go: (Sender<()>, Receiver<()>),
+        }
+
+        impl Hold {
+            fn arm(&self, names: &[&str]) {
+                *self.armed.lock() = Some(names.iter().map(OsString::from).collect());
+            }
+
+            /// Until a batch is held.
+            fn wait(&self) {
+                self.held
+                    .1
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("a batch held");
+            }
+
+            fn go(&self) {
+                self.go.0.send(()).unwrap();
+            }
+        }
+
+        impl skwir_core::metadata::MetadataProvider for Hold {
+            fn id(&self) -> &'static str {
+                "test.hold"
+            }
+
+            fn fill(&self, _dir: &Path, entries: &mut [Entry]) {
+                let names: HashSet<&OsStr> = entries.iter().map(|e| e.name.as_os_str()).collect();
+                let holds = {
+                    let mut armed = self.armed.lock();
+                    let holds = armed
+                        .as_ref()
+                        .is_some_and(|want| want.iter().all(|n| names.contains(n.as_os_str())));
+                    if holds {
+                        *armed = None;
+                    }
+                    holds
+                };
+                if holds {
+                    self.held.0.send(()).unwrap();
+                    // Let go by the test, or by a test failing.
+                    let _ = self.go.1.recv_timeout(Duration::from_secs(30));
+                }
+            }
+        }
+
+        /// Pump until `f` holds, for at most a while.
+        fn until(app: &App, what: &str, mut f: impl FnMut() -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                app.pump();
+                if f() {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "waited for {what}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        /// Every job done, and what they sent applied.
+        fn settle(app: &App) {
+            assert!(app.scheduler.wait_idle_here(Duration::from_secs(10)));
+            app.pump();
+        }
+
+        fn row(app: &App, pane: PaneId, name: &str) -> Option<Entry> {
+            app.workspace
+                .read()
+                .pane(pane)?
+                .listing
+                .find_by_name(OsStr::new(name))
+                .cloned()
+        }
+
+        /// Its tags, in the order of their names.
+        fn tags_shown(app: &App, pane: PaneId, name: &str) -> Option<Vec<String>> {
+            let mut tags = crate::attrs::tags_of(&row(app, pane, name)?.metadata)?;
+            tags.sort();
+            Some(tags)
+        }
+
+        fn hydrate(app: &App, pane: PaneId, ids: &[EntryId]) {
+            app.dispatch(&Invocation::with_args(
+                "hydrate",
+                &serde_json::json!({ "ids": ids, "pane": pane }),
+            ))
+            .unwrap();
+        }
+
+        /// `names` in `root`, each tagged `red`, and the place of `red`
+        /// there shown in a pane, listed whole; the hold registered after
+        /// the tags' provider, so it holds what that read.
+        fn shown(tmp: &Path, root: &Path, names: &[&str]) -> (Arc<App>, PaneId, Arc<Hold>) {
+            std::fs::create_dir_all(root).unwrap();
+            for name in names {
+                let path = root.join(name);
+                std::fs::write(&path, b"x").unwrap();
+                crate::write_tags(&path, &["red".to_owned()]).unwrap();
+            }
+            let app = App::new(AppConfig::ephemeral(tmp.join("state"))).unwrap();
+            app.plugins
+                .add(Arc::new(crate::TagsPlugin::default()), &app);
+            let hold = Arc::new(Hold {
+                armed: Mutex::new(None),
+                held: crossbeam_channel::unbounded(),
+                go: crossbeam_channel::unbounded(),
+            });
+            app.metadata.register("test", hold.clone());
+            let pane = app.workspace.read().active_id();
+            let place = Address {
+                tag: Some("red".into()),
+                scope: Some(root.to_path_buf()),
+                deep: false,
+            };
+            app.navigate(pane, &place.location()).unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+            until(&app, "the files listed", || {
+                names.iter().all(|name| row(&app, pane, name).is_some())
+            });
+            (app, pane, hold)
+        }
+
+        /// Of two hydrations of a file, the one begun later stands, told
+        /// first: a batch held between its read and its answer, its tags
+        /// read before another was given, never shows them over those the
+        /// hydration begun after read (the place's, once the index learned
+        /// the tag given).
+        #[test]
+        fn of_two_hydrations_of_a_file_the_later_begun_stands_told_first() {
+            let tmp = home_tempdir();
+            let root = tmp.path().join("it's tagged, été");
+            let (x, z) = ("it's x, été.txt", "z's other one.txt");
+            let (app, pane, hold) = shown(tmp.path(), &root, &[x, z]);
+            let id = |name| row(&app, pane, name).unwrap().id;
+            // Both read, held once the tags' provider read them.
+            hold.arm(&[x, z]);
+            hydrate(&app, pane, &[id(x), id(z)]);
+            hold.wait();
+            // Blue given to one: learned, the place reads it again.
+            let entry = EntryRef::from_path(root.join(x)).unwrap();
+            let Ok(Outcome::Plan(plan)) = app.dispatch(&Invocation::with_args(
+                "tags.add",
+                &serde_json::json!({ "tags": ["blue"], "entries": [entry] }),
+            )) else {
+                panic!("a plan")
+            };
+            assert!(
+                app.executor
+                    .execute_blocking(&plan, app.lifetime())
+                    .error
+                    .is_none()
+            );
+            let both = Some(vec!["blue".to_owned(), "red".to_owned()]);
+            until(&app, "the later hydration told", || {
+                tags_shown(&app, pane, x) == both
+            });
+            // The held one told after it, in one answer for both files.
+            hold.go();
+            until(&app, "the held hydration told", || {
+                row(&app, pane, z).is_some_and(|e| e.metadata.is_filled())
+            });
+            settle(&app);
+            assert_eq!(tags_shown(&app, pane, x), both, "the later read stands");
+            assert_eq!(tags_shown(&app, pane, z), Some(vec!["red".to_owned()]));
+        }
+
+        /// A hydration's late answer that a file is gone never takes out
+        /// the row the place sent again since: renamed away while it read,
+        /// then named back by a plan undone, the file stays listed, and
+        /// stays once the place lists again (F5).
+        #[test]
+        fn a_late_answer_that_a_file_is_gone_never_takes_out_its_row_sent_again() {
+            let tmp = home_tempdir();
+            let root = tmp.path().join("it's tagged, été");
+            let (x, z) = ("it's x, été.txt", "z's other one.txt");
+            let (app, pane, hold) = shown(tmp.path(), &root, &[x, z]);
+            let id = |name| row(&app, pane, name).unwrap().id;
+            let ids = [id(x), id(z)];
+            // Away while a hydration reads it, held after.
+            let away = root.join("away for a while.txt");
+            std::fs::rename(root.join(x), &away).unwrap();
+            hold.arm(&[z]);
+            hydrate(&app, pane, &ids);
+            hold.wait();
+            std::fs::rename(&away, root.join(x)).unwrap();
+            // Renamed by a plan, then undone: listed under its new name,
+            // then under its own again.
+            let renamed = "renamed, it's x été.txt";
+            let mut plan = Plan::new(Words::as_written("rename"));
+            plan.push(skwir_core::op::Rename {
+                entry: EntryRef::from_path(root.join(x)).unwrap(),
+                new_name: renamed.into(),
+            });
+            assert!(
+                app.executor
+                    .execute_blocking(&plan, app.lifetime())
+                    .error
+                    .is_none()
+            );
+            until(&app, "listed renamed", || {
+                row(&app, pane, renamed).is_some() && row(&app, pane, x).is_none()
+            });
+            assert!(
+                app.executor
+                    .undo_blocking(app.lifetime())
+                    .is_some_and(|r| r.error.is_none())
+            );
+            until(&app, "listed again", || {
+                row(&app, pane, x).is_some() && row(&app, pane, renamed).is_none()
+            });
+            assert_eq!(id(x), ids[0], "the same file under its name: one entry");
+            // The held hydration tells what it found.
+            hold.go();
+            until(&app, "the held hydration told", || {
+                row(&app, pane, z).is_some_and(|e| e.metadata.is_filled())
+            });
+            settle(&app);
+            assert!(row(&app, pane, x).is_some(), "listed still");
+            app.dispatch(&Invocation::with_args(
+                "refresh",
+                &serde_json::json!({ "pane": pane }),
+            ))
+            .unwrap();
+            settle(&app);
+            assert!(row(&app, pane, x).is_some(), "listed still, listed again");
+        }
+
+        /// A file a hydration found gone is forgotten: put back where it
+        /// was, the place lists it again (F5).
+        #[test]
+        fn a_file_found_gone_and_put_back_is_listed_again() {
+            let tmp = home_tempdir();
+            let root = tmp.path().join("it's tagged, été");
+            let x = "it's x, été.txt";
+            let (app, pane, _hold) = shown(tmp.path(), &root, &[x]);
+            let away = root.join("away for a while.txt");
+            std::fs::rename(root.join(x), &away).unwrap();
+            hydrate(&app, pane, &[row(&app, pane, x).unwrap().id]);
+            until(&app, "taken out", || row(&app, pane, x).is_none());
+            std::fs::rename(&away, root.join(x)).unwrap();
+            app.dispatch(&Invocation::with_args(
+                "refresh",
+                &serde_json::json!({ "pane": pane }),
+            ))
+            .unwrap();
+            until(&app, "listed again", || row(&app, pane, x).is_some());
+        }
     }
 }
