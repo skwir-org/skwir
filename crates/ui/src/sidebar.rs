@@ -482,7 +482,7 @@ pub struct Arranged {
     /// that differs (`skwir/…`).
     pub note: Option<String>,
     /// Where a place that is a folder's path leads, as its tooltip says it
-    /// (`~/wip/skwir`).
+    /// (`~/wip/skwir`, `~\wip\skwir` on Windows: `os_path::from_home`).
     pub path: Option<String>,
 }
 
@@ -558,10 +558,12 @@ pub fn arrange(
                     before: serde_json::json!(key),
                 });
             }
+            // As a person reads a path on this system, never the
+            // exclusions list's `/` between names.
             let path = place
                 .location
                 .path()
-                .map(|path| skwir_core::exclusions::tilde(&path));
+                .map(|path| skwir_core::os_path::from_home(&path));
             Arranged {
                 place,
                 role,
@@ -3263,7 +3265,13 @@ mod tests {
     #[test]
     fn places_of_one_name_in_a_group_are_told_apart() {
         let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/home/someone"));
-        let at = |rest: &str| home.join(rest).to_string_lossy().into_owned();
+        // Joined name by name, as the system writes a path.
+        let at = |rest: &str| {
+            rest.split('/')
+                .fold(home.clone(), |path, name| path.join(name))
+                .to_string_lossy()
+                .into_owned()
+        };
         let named = |group: &str, path: &str| {
             skwir_core::registry::Place::new(
                 group,
