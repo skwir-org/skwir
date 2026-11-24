@@ -654,7 +654,17 @@ mod tests {
     #[test]
     fn what_was_written_is_unsent_while_rclone_s_record_says_so() {
         let tmp = tempfile::tempdir().unwrap();
-        let records = tmp.path().join("vfsMeta").join(":webdav{Ab12}");
+        // Windows refuses `:` and `"` in a name: rclone writes them there
+        // in their full-width forms, in its cache as on its mount.
+        let (colon, quote) = if cfg!(windows) {
+            ('\u{ff1a}', '\u{ff02}')
+        } else {
+            (':', '"')
+        };
+        let records = tmp
+            .path()
+            .join("vfsMeta")
+            .join(format!("{colon}webdav{{Ab12}}"));
         let point = Path::new("/example/mounts/rclone dav:%2F%2F127.0.0.1:8080%2F");
         let record = |name: &str, dirty: Option<bool>| {
             let at = records.join(name);
@@ -667,11 +677,13 @@ mod tests {
             };
             std::fs::write(at, text).unwrap();
         };
+        let inner = format!("a folder/inner {quote}q{quote}");
+        let two = format!("{inner}/two.txt");
         record("l'été — a note.txt", Some(true));
         record("sent.txt", Some(false));
         record("a folder/one.txt", Some(true));
-        record("a folder/inner \"q\"/two.txt", Some(true));
-        record("a folder/inner \"q\"/sent.txt", Some(false));
+        record(&two, Some(true));
+        record(&format!("{inner}/sent.txt"), Some(false));
         let written: Vec<PathBuf> = [
             "l'été — a note.txt",
             "sent.txt",
@@ -689,11 +701,7 @@ mod tests {
                 .flatten()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            [
-                "a folder/inner \"q\"/two.txt",
-                "a folder/one.txt",
-                "l'été — a note.txt"
-            ]
+            [two.as_str(), "a folder/one.txt", "l'été — a note.txt"]
         );
         assert!(unsent.contains_key(&Path::new("a folder").join("one.txt")));
         assert_eq!(record_of(&records, Path::new("sent.txt")), Record::Sent);

@@ -3885,14 +3885,17 @@ mod tests {
     #[test]
     fn a_server_mounted_opens_its_own_folder_as_its_own_place() {
         let m = mount("sftp://me@nas/", "/run/m/nas", None);
+        // The server's path below the mount's point, name by name, as this
+        // system joins a path.
+        let point = Path::new("/run/m/nas");
         for (server, folder) in [
             (
                 kept("Photos", "sftp://nas/srv/photos"),
-                "/run/m/nas/srv/photos",
+                point.join("srv").join("photos"),
             ),
             (
                 kept("Music", "sftp://nas/srv/music"),
-                "/run/m/nas/srv/music",
+                point.join("srv").join("music"),
             ),
         ] {
             let below = m
@@ -4068,7 +4071,11 @@ mod tests {
         assert_eq!(place.key, Some(format!("remote:{}", listed[1].address)));
         assert_eq!(
             place.location,
-            Location::from_path("/run/m/phone/Internal storage/DCIM")
+            Location::from_path(
+                Path::new("/run/m/phone")
+                    .join("Internal storage")
+                    .join("DCIM")
+            )
         );
     }
 }
