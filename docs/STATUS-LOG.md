@@ -23985,9 +23985,10 @@ the release that ships it).
   skwir-org/homebrew-tap: the release's zip as it is, `skwir` on the
   PATH, the quarantine never taken off, its caveats saying Open Anyway
   and `brew trust skwir-org/tap`. The tap's local branch `cask/skwir`
-  (d58f29e) adds a workflow job that installs it and checks the seal,
-  the quarantine and the Caskroom, then uninstalls it. Pushed by the user
-  with the first release after 0.6.1.
+  (ed7c600, its README made again so that it merges cleanly with
+  skwird 0.1.0's tap branch) adds a workflow job that installs it and
+  checks the seal, the quarantine and the Caskroom, then uninstalls it.
+  Pushed by the user with the first release after 0.6.1.
 - **Names in both forms** (6286ae29, 3ecbc9b7, 6ada1784, ca096d2b,
   b00a70e0; ADR-150 17). skwird's client copied at 12a90c2: its hello
   says what its engine does beyond its version. Core's

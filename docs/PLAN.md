@@ -1603,12 +1603,21 @@ U+0306 against й); exclusions by name, path completion, `jump`'s
 matcher and the save dialog's name still match one form, an excluded
 name with an accent typed composed missing a folder written decomposed.
 
-**The query plugin under Wine** (first run 2026-11-24, evening): its
-`names_index` tests find nothing through their fake index (all nine,
-the eight older ones failing before that round too); `lang`'s last
-instant of January rounds up to February on Windows' 100 ns clock;
-`groups`' type name and `field`'s whole disk as typed fail too. All
-failed before the round of names in both forms; none looked into.
+**Tests under Wine** (2026-11-24, evening). The query plugin's 13
+failures are fixed (eb6266c6: a date's end on Windows' 100 ns clock;
+45954fd5: tests that assumed Unix, a verbatim root, the Nix store, a
+full first batch). The whole suite, run crate by crate (`test-windows`
+is in no routine check since 2026-10-25, when 1,673 passed), fails 49
+tests in nine crates: `skwir` 16 (print's PDFs, "the job names no font",
+and trashing, which Wine's shell does not do; names Windows refuses,
+os error 123), `skwir-ui` 14 (the chooser's folders, the desktop's GTK
+and Qt styles, file URIs, the sidebar, the save form), print 5 and
+remote 3 (Unix paths joined with `\`), extend 5 (no home under Wine),
+core 3 (orders kept by Unix paths, an exclusion by path), control,
+open-with and places 1 each. Most read as tests assuming Unix or what
+Wine lacks; open-with's label made from the type's id ("Open image/png
+files with", where the registry names the type not) reads as a bug.
+None of them was changed that day; not looked into one by one.
 
 **Removable volumes in skwird** (designed with skwird's session,
 2026-11-24: `volumes {keep, forget, release}`, the engine listing the
