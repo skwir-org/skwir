@@ -535,6 +535,17 @@ pub(crate) struct ExternalDrag {
     icon: Option<DragIcon>,
 }
 
+impl ExternalDrag {
+    /// SKWIR: lets go of the drag's source and image.
+    fn let_go(self) -> WaylandWindowStatePtr {
+        self.source.destroy();
+        if let Some(icon) = self.icon {
+            icon.destroy();
+        }
+        self.window
+    }
+}
+
 /// SKWIR: a drag's image: a surface showing one wl_shm buffer.
 struct DragIcon {
     surface: wl_surface::WlSurface,
@@ -714,6 +725,27 @@ pub(crate) enum PendingActivation {
 }
 
 impl WaylandClientState {
+    /// SKWIR: the drag handed to the compositor, taken once a drag entering
+    /// a window shows it is over. A seat carries one drag at a time, so one
+    /// whose offer lacks this application's own type is another program's
+    /// and this one ended, though its source was never told: Hyprland says
+    /// nothing to it after a drop on an XWayland window, nor when the
+    /// target dies at the drop. Kept, it would be taken for its own drag
+    /// coming back, and the other program's files dropped as it.
+    fn take_ended_external_drag(
+        &mut self,
+        offer: Option<&wl_data_offer::WlDataOffer>,
+    ) -> Option<ExternalDrag> {
+        self.external_drag.as_ref()?;
+        let self_mime = self.clipboard.self_mime();
+        let own = offer.is_some_and(|offer| {
+            self.data_offers
+                .iter()
+                .any(|known| known.inner.id() == offer.id() && known.has_mime_type(&self_mime))
+        });
+        if own { None } else { self.external_drag.take() }
+    }
+
     fn consume_startup_activation_token(&mut self, surface: &wl_surface::WlSurface) {
         let Some(startup_activation_token) = self.startup_activation_token.take() else {
             return;
@@ -845,6 +877,9 @@ impl WaylandClientStatePtr {
         let source =
             data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
         source.offer(FILE_LIST_MIME_TYPE.to_string());
+        // SKWIR: this application's own type, as on the clipboard, by
+        // which a drag entering one of its windows is told for its own.
+        source.offer(state.clipboard.self_mime());
         source.set_actions(DndAction::Copy | DndAction::Move);
         let icon = paths
             .icon()
@@ -865,8 +900,9 @@ impl WaylandClientStatePtr {
             window,
             icon: icon.map(|(icon, _)| icon),
         });
-        if let Some(icon) = previous.and_then(|drag| drag.icon) {
-            icon.destroy();
+        // SKWIR: one the compositor never said was over goes with its source.
+        if let Some(previous) = previous {
+            previous.let_go();
         }
         true
     }
@@ -3132,6 +3168,15 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 id: data_offer,
             } => {
                 state.serial_tracker.update(SerialKind::DataDevice, serial);
+                // SKWIR: another program's drag ends the one this one handed
+                // over, before it is taken.
+                if let Some(ended) = state.take_ended_external_drag(data_offer.as_ref()) {
+                    drop(state);
+                    ended
+                        .let_go()
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Ended));
+                    state = client.borrow_mut();
+                }
                 if let Some(data_offer) = data_offer {
                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
                         return;
@@ -3293,8 +3338,17 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
             (DataSourceKind::Clipboard, wl_data_source::Event::Cancelled) => {
                 data_source.destroy();
             }
-            (DataSourceKind::Drag, wl_data_source::Event::Send { fd, .. }) => {
-                let Some(external_drag) = state.external_drag.as_ref() else {
+            // SKWIR: what a drag's source is asked is the drag under way's
+            // alone, never one let go of before (a drag never said to be
+            // over, then another), and only its list of files: the type
+            // that marks it as this application's holds nothing.
+            (DataSourceKind::Drag, wl_data_source::Event::Send { mime_type, fd }) => {
+                let Some(external_drag) = state
+                    .external_drag
+                    .as_ref()
+                    .filter(|drag| drag.source.id() == data_source.id())
+                    .filter(|_| mime_type == FILE_LIST_MIME_TYPE)
+                else {
                     return;
                 };
                 let bytes = external_drag.bytes.clone();
@@ -3304,17 +3358,17 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
                 DataSourceKind::Drag,
                 wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled,
             ) => {
-                let Some(external_drag) = state.external_drag.take() else {
+                let Some(external_drag) = state
+                    .external_drag
+                    .take_if(|drag| drag.source.id() == data_source.id())
+                else {
                     return;
                 };
-                external_drag.source.destroy();
-                if let Some(icon) = external_drag.icon {
-                    icon.destroy();
-                }
+                let window = external_drag.let_go();
 
                 let input = PlatformInput::FileDrop(FileDropEvent::Ended);
                 drop(state);
-                external_drag.window.handle_input(input);
+                window.handle_input(input);
             }
             _ => {}
         }

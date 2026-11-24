@@ -1089,6 +1089,12 @@ asks the direction.
 
 ## Drag and drop
 
+- **A drag handed to the compositor ends when another program's comes
+  in** (gpui 0092, Wayland): Hyprland never tells its source that a drop
+  on an XWayland window, or on a program that died at the drop, is over.
+  Ours carries the application's own type (the clipboard's mark), so a
+  drag entering without it is another program's: ours is let go of
+  first, and the next drag of ours ends it too.
 - **A drop asks.** Held keys decide (`dnd::held`: Shift moves, Ctrl
   copies, Ctrl+Shift links); with none, a menu at the pointer asks
   (`core.drop_asks`, `Shell::ask_drop`), the default highlighted for Enter

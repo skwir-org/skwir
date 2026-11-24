@@ -1524,6 +1524,12 @@ takes its futures and timer from zbus's runtime, which zbus 6 replaced
 with its own). A gpui feature leaving its notifications out would drop
 zbus 6 sooner.
 
+**A drag to another program on Hyprland** (2026-11-24, the user's
+report of no drop into Brave): not reproduced in a nested Hyprland (Brave
+on XWayland since their eGPU wrapper, and on Wayland); gpui 0092 ends a
+drag Hyprland never says is over. Left: the user's own checks (the
+night's summary), two monitors, Noctalia.
+
 **Scratch folders of killed processes** (built 2026-11-24): each
 process holds a lock file of its own for its life, and names its
 `file::memory_dir` folders by it; the first scratch folder a process

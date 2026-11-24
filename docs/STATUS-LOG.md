@@ -23555,3 +23555,35 @@ Two leftovers of PLAN's "What is left", built by an agent tonight.
   query, ui and the binary; core, platform and query tests (1,778);
   the binary's grouping, dialogs_offer and plugins_toggle (21).
   Windows clippy (zigbuild) on core, platform, query and tags.
+
+## 2026-11-24: a drag to another program on Hyprland (gpui 0092)
+
+The user reported that dragging files to Brave on Hyprland (Noctalia's
+shell) no longer worked. An agent reproduced it without touching their
+session: their Hyprland 0.57.2 nested in a headless labwc, driven by
+wayvnc and vncdotool, their Brave 1.99.57 with a scratch profile, a
+local page logging each drop.
+
+- **Not reproduced:** drops reached Brave on XWayland (`Files`, the file
+  named `l'été 2026.txt`) with one screen, one at an offset, a rotated
+  one and gaps, and on native Wayland. Since their dotfiles of
+  2026-10-19, a wrapper starts Brave with `--ozone-platform=x11` while
+  their eGPU is plugged in, which fits "no longer"; not reproduced:
+  Noctalia, two monitors, the eGPU, their profile.
+- **Found on the way and fixed (gpui 0092):** Hyprland never tells a
+  Wayland source that a drop on an XWayland window, or on a program that
+  died at the drop, is over; Skwir kept its drag, and the next file
+  another program dropped in was taken for its own coming back (no
+  menu). Its drag now carries the application's own type, another
+  program's drag entering ends ours, and our next drag does too. Checked
+  in the nested Hyprland: drags out reach Brave twice in a row; after an
+  XWayland drop left the drag open, another program's file shows the
+  menu (Copy Here preselected) and copies; a drag out and back is still
+  ours (Move Here). On HEAD with the patch alone: clippy on skwir-ui and
+  the binary, skwir-ui's drag tests; the patch reverses cleanly.
+- **Others' bugs seen:** Brave crashes on a dropped file with an accented
+  name only with no locale (not the user's case: `fr_FR.UTF-8`); on
+  sway, XWayland Chromium gets drops from Wayland programs empty.
+- **Left for the user:** the checks of the night's summary (whether the
+  drag's picture follows over Brave, another program's drag, Brave's
+  ozone mode, a core dump, Hyprland's drag log).
