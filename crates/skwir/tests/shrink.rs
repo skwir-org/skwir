@@ -440,6 +440,10 @@ fn a_photograph_s_copy_is_smaller_beside_it_and_undone_to_the_trash() {
     let shrunk = image::open(&copy).unwrap();
     assert_eq!((shrunk.width(), shrunk.height()), (1920, 1280));
     assert!(std::fs::metadata(&copy).unwrap().len() < std::fs::metadata(&picture).unwrap().len());
+    // Windows' shell trashes it; Wine's trashes nothing.
+    if skwir_core::system::under_wine("trashing through the shell") {
+        return;
+    }
     let undone = app.executor.undo_blocking(app.lifetime()).expect("an undo");
     assert!(undone.error.is_none(), "{:?}", undone.error);
     assert!(!copy.exists(), "taken to the trash");

@@ -191,9 +191,12 @@ fn a_pdf_saved_is_undone_to_the_trash() {
     let pdf = dir.join("letter.pdf");
     assert!(pdf.is_file());
     assert!(result.undoable);
-    let undone = app.executor.undo_blocking(app.lifetime()).expect("an undo");
-    assert!(undone.error.is_none(), "{:?}", undone.error);
-    assert!(!pdf.exists(), "taken to the trash");
+    // Windows' shell trashes it; Wine's trashes nothing.
+    if !skwir_core::system::under_wine("trashing through the shell") {
+        let undone = app.executor.undo_blocking(app.lifetime()).expect("an undo");
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+        assert!(!pdf.exists(), "taken to the trash");
+    }
     // A name taken is said so, never written over.
     std::fs::write(&pdf, b"kept").unwrap();
     let Outcome::Plan(plan) = app.dispatch(&invocation).unwrap() else {
@@ -678,10 +681,13 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(pages(&pdf), 1);
-    // Undone as the user's action is.
-    let undone = app.executor.undo_blocking(app.lifetime()).expect("an undo");
-    assert!(undone.error.is_none(), "{:?}", undone.error);
-    assert!(!pdf.exists());
+    // Undone as the user's action is, to the trash: Windows' shell trashes
+    // it, Wine's nothing.
+    if !skwir_core::system::under_wine("trashing through the shell") {
+        let undone = app.executor.undo_blocking(app.lifetime()).expect("an undo");
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+        assert!(!pdf.exists());
+    }
     // The next dialog opens on a PDF; closed, nothing is done.
     app.dispatch(&print).unwrap();
     let next = form_asked(&app);
@@ -902,6 +908,10 @@ fn the_trash_s_listing_is_saved_where_a_script_says() {
         .into_owned();
     let name = format!("{mark} ünïcode.txt");
     std::fs::write(root.join(&name), "hello").unwrap();
+    // Windows' shell trashes it; Wine's trashes nothing.
+    if skwir_core::system::under_wine("trashing through the shell") {
+        return;
+    }
     let Outcome::Plan(plan) = app
         .dispatch(&Invocation::new("trash").with("entries", named(&root.join(&name))))
         .unwrap()

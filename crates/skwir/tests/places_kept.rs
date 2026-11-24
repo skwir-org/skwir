@@ -32,9 +32,14 @@ fn app_in(state: &Path) -> Arc<App> {
     app
 }
 
-/// A folder with a picture and a text, its name quoted and spaced.
+/// A folder with a picture and a text, its name quoted and spaced: in
+/// double quotes, in single ones on Windows, which refuses `"` in a name.
 fn folder(tmp: &Path) -> PathBuf {
-    let root = tmp.join("it's \"summer\" photos");
+    let root = tmp.join(if cfg!(windows) {
+        "it's 'summer' photos"
+    } else {
+        "it's \"summer\" photos"
+    });
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("beach day.jpg"), b"\xff\xd8\xff\xe0").unwrap();
     std::fs::write(root.join("beach notes.txt"), "sand").unwrap();
