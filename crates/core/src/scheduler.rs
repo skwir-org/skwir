@@ -1241,6 +1241,13 @@ mod tests {
         );
         rx.recv_timeout(STUCK / 2)
             .expect("a worker was left for this machine's work");
+        // The lane's job taken may not have begun yet: waited for, with a
+        // deadline.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while ran.load(AtomicOrdering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "the lane's first job began");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert_eq!(ran.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(scheduler.pending(), 2);
         drop(release);
