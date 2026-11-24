@@ -483,6 +483,8 @@ pub struct NoteStores {
     snapshots: RwLock<Option<CacheSlot>>,
     /// The settings declared for each owner's stores, withdrawn with them.
     declared: RwLock<Vec<(Arc<str>, String)>>,
+    /// Moves whenever what is read may have changed (`revision`).
+    revision: std::sync::atomic::AtomicU64,
 }
 
 /// The settings page of the stores: `notes.<store>.read`,
@@ -535,12 +537,25 @@ impl NoteStores {
         let mut list = self.list.write();
         list.push((owner.into(), store));
         *self.held.write() = Self::together(&list);
+        self.moved();
     }
 
     pub fn unregister_owner(&self, owner: &str) {
         let mut list = self.list.write();
         list.retain(|(o, _)| &**o != owner);
         *self.held.write() = Self::together(&list);
+        self.moved();
+    }
+
+    /// Moves whenever the stores or the user's choices change: who keeps
+    /// what it made of [`policy`](Self::policy) keys on it.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn moved(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 
     /// What the stores registered hold together: whether skwir keeps a
@@ -639,6 +654,7 @@ impl NoteStores {
     /// Replace the user's choices (the settings, `notes.*`).
     pub fn choose(&self, policy: Option<Policy>) {
         *self.chosen.write() = policy;
+        self.moved();
     }
 
     /// How the stores are read and written now: the user's choices, and

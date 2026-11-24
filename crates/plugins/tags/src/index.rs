@@ -323,7 +323,8 @@ struct Meta {
     #[serde(default)]
     rule: u64,
     /// What notes those counts read (`reads_of`); none from an index made
-    /// before it was kept, taken as what is read now.
+    /// before it was kept, which may have read other stores than now: its
+    /// folders are counted again once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reads: Option<u64>,
     /// The folders found holding a signed `CACHEDIR.TAG`, which no walk
@@ -802,8 +803,24 @@ impl TagIndex {
                 })
             },
             reads: {
+                // Asked for every folder a count walks: made again only
+                // when the stores, the choices or the companions moved.
                 let app = app.weak();
-                Box::new(move || app.upgrade().map_or(0, |app| reads_of(&app)))
+                let kept: Mutex<Option<((u64, u64), u64)>> = Mutex::new(None);
+                Box::new(move || {
+                    let Some(app) = app.upgrade() else {
+                        return 0;
+                    };
+                    let at = (app.notes.revision(), app.companions.revision());
+                    if let Some((was, reads)) = *kept.lock()
+                        && was == at
+                    {
+                        return reads;
+                    }
+                    let reads = reads_of(&app);
+                    *kept.lock() = Some((at, reads));
+                    reads
+                })
             },
         });
         index.set_limit(
@@ -932,7 +949,7 @@ impl TagIndex {
         }
         // Folders covered under another rule, or of other stores or
         // companions, are counted again.
-        if !ruled || meta.reads.is_some_and(|r| r != reads) {
+        if !ruled || meta.reads != Some(reads) {
             state.covered.clear();
             state.changed();
         }

@@ -1514,6 +1514,28 @@ mod tests {
         );
     }
 
+    /// What a count is of follows the stores and the companions
+    /// registered, the stores' read choices too, however often it is
+    /// asked (once a folder): a store turned on is never left unread.
+    #[test]
+    fn what_a_count_is_of_follows_the_stores_and_companions() {
+        let tmp = home_tempdir();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        let index = crate::index::TagIndex::new(None, &app, CancelToken::new());
+        let before = index.under();
+        assert_eq!(index.under(), before, "the same, asked again");
+        app.companions.register("test", Arc::new(Beside));
+        let with = index.under();
+        assert_ne!(with.reads, before.reads, "a companion registered");
+        app.notes.register("test", Arc::new(Inside));
+        let stored = index.under();
+        assert_ne!(stored.reads, with.reads, "a store registered");
+        let mut policy = app.notes.policy();
+        policy.read.retain(|s| s != "inside");
+        app.notes.choose(Some(policy));
+        assert_eq!(index.under().reads, with.reads, "its reading turned off");
+    }
+
     /// Companions kept in a folder `.ts` beside their files, as `TagSpaces`
     /// keeps them.
     struct Beside;

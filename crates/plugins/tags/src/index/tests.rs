@@ -658,8 +658,8 @@ fn a_hint_names_what_the_index_knows_and_reads_nothing() {
 /// A count is of what walks left out and what notes were read as it
 /// began: ending under another rule or other stores, it covers nothing;
 /// a store turned on since a count drops what it covered, as kept
-/// between runs too, while an index kept before the stores were recorded
-/// keeps what it covered.
+/// between runs too, and an index kept before the stores were recorded
+/// is counted again once.
 #[test]
 fn a_count_of_other_stores_or_rules_covers_nothing() {
     let tmp = home_tempdir();
@@ -694,11 +694,11 @@ fn a_count_of_other_stores_or_rules_covers_nothing() {
     let same = ruled_reading(slot(), 64, Arc::clone(&rule), Arc::new(AtomicU64::new(3)));
     assert!(same.covering(root).is_some());
 
-    // An index kept before its stores were: what it covered stands.
+    // An index kept before its stores were: counted again once.
     let slot = slot().unwrap();
     let mut meta: serde_json::Value = serde_json::from_slice(&slot.get(META).unwrap()).unwrap();
     meta.as_object_mut().unwrap().remove("reads").unwrap();
     slot.put(META, &serde_json::to_vec(&meta).unwrap()).unwrap();
-    let older = ruled_reading(Some(slot), 64, rule, Arc::new(AtomicU64::new(9)));
-    assert!(older.covering(root).is_some());
+    let older = ruled_reading(Some(slot), 64, rule, Arc::new(AtomicU64::new(3)));
+    assert!(older.covering(root).is_none());
 }

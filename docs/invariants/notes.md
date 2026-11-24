@@ -182,7 +182,10 @@ registered in `App::notes` by its plugin); all share one model,
   folder it walked. What notes are read (the stores read and the
   companions registered, `index::reads_of`, `Meta::reads`) is kept so
   too: another, and every folder is counted again, as a check reads only
-  what changed and would leave a store turned on unread. A place's
+  what changed and would leave a store turned on unread (an index kept
+  before it was is counted again once). It is made again only when the
+  registries move (`NoteStores::revision`, `Companions::revision`): it is
+  asked for every folder a count walks. A place's
   per-run memo keys on both (`index::Under`). A count is of what was read
   before its coverage (`TagIndex::under`): one ending under another
   covers nothing (`cover` says so, under the index's lock) and is

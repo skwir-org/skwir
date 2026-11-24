@@ -230,6 +230,11 @@ impl Companions {
         self.shown.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Moves whenever the kinds registered change.
+    pub fn revision(&self) -> u64 {
+        self.list.revision()
+    }
+
     pub fn set_shown(&self, shown: bool) {
         self.shown
             .store(shown, std::sync::atomic::Ordering::Relaxed);
