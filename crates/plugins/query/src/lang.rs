@@ -79,8 +79,6 @@
 //! case, `c` matches it; without a flag `case:` decides. The printer always
 //! writes the flag, so a query prints and parses back to the same meaning.
 
-use std::borrow::Cow;
-use std::cell::OnceCell;
 use std::ffi::OsStr;
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -89,6 +87,7 @@ use std::time::SystemTime;
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcher;
 use skwir_core::entry::{EntryKind, Metadata, Value, keys};
+use skwir_core::name_match::{Name, NameMatch};
 use skwir_core::words;
 use skwir_core::words::Words;
 use skwir_platform::calendar::{Calendar, Period, civil_day, civil_from_days};
@@ -165,44 +164,34 @@ pub enum KindSel {
     Symlink,
 }
 
-/// A name pattern: substring (case-insensitive unless `case:sensitive`) or glob.
+/// A name pattern: substring (case-insensitive unless `case:sensitive`) or
+/// glob, in both its forms, composed and decomposed, as every place
+/// matches a name ([`NameMatch`]).
 #[derive(Clone, Debug)]
 pub struct NamePat {
     pub text: String,
-    pub glob: Option<GlobMatcher>,
     pub case_sensitive: bool,
-    lowered: String,
+    matcher: NameMatch,
 }
 
 impl NamePat {
     /// A pattern with glob characters is a glob; one that does not compile
     /// as a glob (a name like `a[b`) is searched for as written.
     fn new(text: &str, case_sensitive: bool) -> Self {
-        let glob = text
-            .contains(['*', '?', '['])
-            .then(|| {
-                globset::GlobBuilder::new(text)
-                    .case_insensitive(!case_sensitive)
-                    .literal_separator(false)
-                    .build()
-                    .ok()
-            })
-            .flatten()
-            .map(|g| g.compile_matcher());
         NamePat {
             text: text.to_owned(),
-            glob,
             case_sensitive,
-            lowered: text.to_lowercase(),
+            matcher: NameMatch::term(text, case_sensitive),
         }
     }
 
+    /// What finds the names it matches, made once.
+    pub fn matcher(&self) -> &NameMatch {
+        &self.matcher
+    }
+
     fn matches(&self, c: &Candidate<'_>) -> bool {
-        match &self.glob {
-            Some(g) => g.is_match(&*c.text),
-            None if self.case_sensitive => c.text.contains(&self.text),
-            None => c.lowered().contains(&self.lowered),
-        }
+        self.matcher.finds(&c.named)
     }
 }
 
@@ -1870,9 +1859,9 @@ pub struct Candidate<'a> {
     late: Option<Late<'a>>,
     /// Types asked once per suffix, for many names at each key ([`Types`]).
     types: Option<&'a Types>,
-    /// The name as text, and lowercased, computed once for all the terms.
-    text: Cow<'a, str>,
-    lowered: OnceCell<String>,
+    /// The name as text, and lowercased, computed once for all the terms,
+    /// and only once one asks.
+    named: Name<'a>,
 }
 
 impl<'a> Candidate<'a> {
@@ -1890,8 +1879,7 @@ impl<'a> Candidate<'a> {
             opens: (kind != EntryKind::Symlink).then_some((kind, name)),
             late: None,
             types: None,
-            text: name.to_string_lossy(),
-            lowered: OnceCell::new(),
+            named: Name::new(name),
         }
     }
 
@@ -1956,7 +1944,7 @@ impl<'a> Candidate<'a> {
     }
 
     fn lowered(&self) -> &str {
-        self.lowered.get_or_init(|| self.text.to_lowercase())
+        self.named.lowered()
     }
 }
 
@@ -2940,6 +2928,36 @@ mod tests {
             q("nope OR report").expr.unwrap().eval(&f, false),
             Verdict::Yes
         );
+    }
+
+    /// A name term, a word or a glob, finds a name in either form, composed
+    /// or decomposed, typed either way: lowercased first, then normalized,
+    /// a glob in its literal parts alone.
+    #[test]
+    fn a_name_term_finds_a_name_in_either_form() {
+        let yes = |expr: &str, name: &str| {
+            q(expr)
+                .expr
+                .unwrap()
+                .eval(&cand(name, EntryKind::File, None), false)
+                == Verdict::Yes
+        };
+        for expr in [
+            "caf\u{e9}",
+            "cafe\u{301}",
+            "CAF\u{c9}",
+            "name:CAFE\u{301}",
+            "caf\u{e9}*",
+            "*\u{c9}.TXT",
+        ] {
+            for name in ["caf\u{e9}.txt", "cafe\u{301}.txt", "CAFE\u{301}.TXT"] {
+                assert!(yes(expr, name), "{expr:?} for {name:?}");
+            }
+            assert!(!yes(expr, "cafe.txt"), "{expr:?}");
+        }
+        assert!(yes("CAF\u{c9} case:sensitive", "CAFE\u{301}.txt"));
+        assert!(!yes("CAF\u{c9} case:sensitive", "caf\u{e9}.txt"));
+        assert!(yes("report", "Report.txt"), "an ASCII word");
     }
 
     #[test]

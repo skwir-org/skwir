@@ -2120,7 +2120,7 @@ fn filters<'a>(
 /// The pane's filter as it is asked of each entry: its reader's test, or
 /// names that hold the text.
 enum Test<'a> {
-    Names(NameFilter<'a>),
+    Names(NameFilter),
     /// Its reader's test, the folders not found to lead anywhere, and,
     /// while a first look over the rows takes more than a pump, those it
     /// has reached: a folder it has not does not show yet.
@@ -2179,41 +2179,25 @@ pub fn name_holds(name: &OsStr, filter: &str) -> bool {
 }
 
 /// A name filter made once for the names it is asked about (every entry of
-/// a folder at each keystroke): its lowercase form, and whether it can be
-/// compared byte by byte. A name is then asked without an allocation,
-/// unless it is not ASCII and case is ignored.
-pub struct NameFilter<'a> {
-    text: &'a str,
-    /// The filter lowercased, when case is ignored (it has no capital).
-    lower: Option<String>,
+/// a folder at each keystroke): the words a search finds names with
+/// (`name_match`, in both their forms), case ignored unless the text has a
+/// capital. An ASCII name is then compared byte by byte, without an
+/// allocation.
+pub struct NameFilter {
+    words: crate::name_match::NameMatch,
 }
 
-impl<'a> NameFilter<'a> {
-    pub fn new(text: &'a str) -> Self {
+impl NameFilter {
+    pub fn new(text: &str) -> Self {
         NameFilter {
-            text,
-            lower: (!text.chars().any(char::is_uppercase)).then(|| text.to_lowercase()),
+            words: crate::name_match::NameMatch::words(text, text.chars().any(char::is_uppercase)),
         }
     }
 
     /// Whether `name` holds it: anywhere in it, case ignored unless it has
-    /// a capital.
+    /// a capital, composed or decomposed.
     pub fn holds(&self, name: &OsStr) -> bool {
-        let Some(lower) = &self.lower else {
-            return name.to_string_lossy().contains(self.text);
-        };
-        let bytes = name.as_encoded_bytes();
-        // ASCII both: compared byte by byte, case folded as it goes.
-        if lower.is_ascii() && bytes.is_ascii() {
-            let needle = lower.as_bytes();
-            return needle.is_empty()
-                || bytes
-                    .windows(needle.len())
-                    .any(|window| window.eq_ignore_ascii_case(needle));
-        }
-        name.to_string_lossy()
-            .to_lowercase()
-            .contains(lower.as_str())
+        self.words.matches(name)
     }
 }
 
@@ -7455,6 +7439,20 @@ mod tests {
         assert!(holds("KELVIN", "kel"));
         assert!(holds("anything", ""));
         assert!(!holds("short", "much longer"));
+    }
+
+    /// A folder filtered by name, and `/`, find a name in either form,
+    /// composed or decomposed, typed either way.
+    #[test]
+    fn a_name_filter_finds_a_name_in_either_form() {
+        let holds = |name: &str, filter: &str| name_holds(OsStr::new(name), filter);
+        for name in ["caf\u{e9}.txt", "cafe\u{301}.txt", "CAFE\u{301}.TXT"] {
+            assert!(holds(name, "caf\u{e9}"), "{name:?}");
+            assert!(holds(name, "cafe\u{301}"), "{name:?}");
+        }
+        assert!(holds("CAFE\u{301}.txt", "CAF\u{c9}"), "its case counts");
+        assert!(!holds("caf\u{e9}.txt", "CAF\u{c9}"), "its case counts");
+        assert!(!holds("cafe.txt", "caf\u{e9}"));
     }
 
     fn items(sel: &Selection) -> Vec<u64> {

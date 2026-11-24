@@ -146,6 +146,9 @@ grep-searcher = "0.1"
 grep-regex = "0.1"
 grep-matcher = "0.1"
 globset = "0.4"
+# A name term in its composed and decomposed forms (`name_match`): the
+# version the tree already links.
+unicode-normalization = "0.1"
 regex = "1"
 regex-syntax = "0.8"
 memchr = "2"

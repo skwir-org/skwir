@@ -3280,6 +3280,73 @@ mod tests {
         );
     }
 
+    /// plocate matches bytes: a term whose forms differ is asked in each,
+    /// composed and decomposed, what both name named once; an ASCII term
+    /// once. It says so, and is taken as covering such a search.
+    #[cfg(unix)]
+    #[test]
+    fn plocate_is_asked_a_term_in_both_forms() {
+        use skwir_core::names::NameIndex as _;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("asked");
+        // Each run said on a line; what every run names, and its own.
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nfor a; do last=$a; done\nprintf '/both\\0/found %s\\0' \"$last\"\n",
+            log.display()
+        );
+        let bin = tmp.path().join("plocate");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let index = plocate::Index::at(bin);
+        let never = skwir_core::cancel::CancelToken::new();
+        let mut opened = index.open(Path::new("/"), &never).expect("over /");
+        assert!(opened.session.both_forms());
+        let ask = |opened: &mut skwir_core::names::Opened, s: &str| {
+            let q = lang::parse(s).unwrap().named("/".into()).unwrap();
+            assert!(q.answered_by(&*opened.session), "{s}: taken");
+            let mut found = Vec::new();
+            opened
+                .session
+                .query(&q, &mut |paths| {
+                    found.extend(paths);
+                    true
+                })
+                .expect("name-only");
+            // Its help, asked for its databases' age, aside.
+            let asked: String = std::fs::read_to_string(&log)
+                .unwrap()
+                .lines()
+                .filter(|run| *run != "--help")
+                .flat_map(|run| [run, "\n"])
+                .collect();
+            std::fs::write(&log, "").unwrap();
+            (found, asked)
+        };
+        let (found, asked) = ask(&mut opened, "caf\u{e9} in:/");
+        assert_eq!(
+            asked,
+            "--basename --null --ignore-case -- caf\u{e9}\n\
+             --basename --null --ignore-case -- cafe\u{301}\n"
+        );
+        assert_eq!(
+            found,
+            ["/both", "/found caf\u{e9}", "/found cafe\u{301}"].map(std::path::PathBuf::from),
+            "each once"
+        );
+        let (_, asked) = ask(&mut opened, "CAF\u{c9} case:sensitive in:/");
+        assert_eq!(
+            asked, "--basename --null -- CAF\u{c9}\n--basename --null -- CAFE\u{301}\n",
+            "as typed where case counts"
+        );
+        let (found, asked) = ask(&mut opened, "report in:/");
+        assert_eq!(asked, "--basename --null --ignore-case -- report\n");
+        assert_eq!(
+            found,
+            ["/both", "/found report"].map(std::path::PathBuf::from)
+        );
+    }
+
     /// A search of `/` that plocate answers is as of its database's last
     /// update, in the listing and to whoever asks `entries`; a search that
     /// walks says nothing (ADR-050).

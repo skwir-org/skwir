@@ -9530,6 +9530,7 @@ dependencies = [
  "toml 1.2.2+spec-1.1.0",
  "tracing",
  "trash",
+ "unicode-normalization",
  "windows-sys 0.61.2",
  "xattr",
 ]

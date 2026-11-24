@@ -37,8 +37,9 @@ pub fn by() -> skwir_core::words::Words {
 
 /// plocate's database as a names index (ADR-150, 4): it covers `/` as of
 /// its databases' update, and answers a search all of whose terms are name
-/// substrings, as it did before the seam. It cannot be synced: its answer
-/// is taken as of when it is, and dated.
+/// substrings, as it did before the seam, each asked in both its forms
+/// ([`runs`]). It cannot be synced: its answer is taken as of when it is,
+/// and dated.
 #[derive(Default)]
 pub struct Index {
     /// The program asked; `None` for the `plocate` on the `PATH`.
@@ -126,6 +127,16 @@ impl NameIndex for Index {
         let at = updated(&self.databases_of(&bin, cancel))?;
         Some(Coverage::as_of(Some(at)))
     }
+
+    /// As [`covers`](Self::covers): it is asked each term in both its
+    /// forms ([`runs`]).
+    fn covers_both_forms(
+        &self,
+        q: &skwir_core::names::Query,
+        cancel: &CancelToken,
+    ) -> Option<Coverage> {
+        self.covers(q, cancel)
+    }
 }
 
 /// A search of `/` asked of plocate.
@@ -135,6 +146,11 @@ struct Located {
 }
 
 impl Session for Located {
+    /// Asked each term in both its forms ([`runs`]).
+    fn both_forms(&self) -> bool {
+        true
+    }
+
     fn sync(&mut self) -> Option<Coverage> {
         None
     }
@@ -146,7 +162,15 @@ impl Session for Located {
     ) -> Option<Answer> {
         let patterns = substrings(q)?;
         let case_sensitive = q.names.iter().any(|n| n.case_sensitive);
-        let paths = locate_with(&self.bin, &patterns, case_sensitive, &self.cancel)?;
+        let mut paths = Vec::new();
+        let mut named = std::collections::HashSet::new();
+        for run in runs(&patterns) {
+            for path in locate_with(&self.bin, &run, case_sensitive, &self.cancel)? {
+                if named.insert(path.clone()) {
+                    paths.push(path);
+                }
+            }
+        }
         each(paths);
         Some(Answer {
             coverage: Coverage::as_of(updated(&databases(&self.bin, &self.cancel))),
@@ -175,6 +199,37 @@ fn substrings(q: &skwir_core::names::Query) -> Option<Vec<String>> {
             (!n.text.is_empty() && !n.text.contains(['*', '?', '[', '\\'])).then(|| n.text.clone())
         })
         .collect()
+}
+
+/// The most runs a search asks of plocate: every form of three terms
+/// whose forms differ.
+const RUNS: usize = 8;
+
+/// What plocate is asked, a run each, for `patterns` all found in a name:
+/// each in both its forms, composed and decomposed (NFC and NFD), its case
+/// as typed, which `--ignore-case` folds; every combination of them, as
+/// plocate matches bytes and finds a name holding all a run's patterns
+/// (`name_match`: a term matches in either form). At most [`RUNS`]: a term
+/// of two forms past those is left out, which the search checks of every
+/// name, and plocate is asked for more, never fewer.
+fn runs(patterns: &[String]) -> Vec<Vec<String>> {
+    let mut runs: Vec<Vec<String>> = vec![Vec::new()];
+    for pattern in patterns {
+        let forms = skwir_core::name_match::Forms::of(pattern);
+        if !forms.is_one() && runs.len() * 2 > RUNS {
+            continue;
+        }
+        let mut next = Vec::with_capacity(runs.len() * 2);
+        for run in &runs {
+            for form in forms.iter() {
+                let mut run = run.clone();
+                run.push(form.to_owned());
+                next.push(run);
+            }
+        }
+        runs = next;
+    }
+    runs
 }
 
 /// The databases `bin` reads when given none, as plocate (and mlocate
@@ -282,6 +337,47 @@ mod tests {
         assert!(visible(Path::new("/a/b"), false, Some(2)));
         assert!(!visible(Path::new("/a/b/c"), false, Some(2)));
         assert!(!visible(Path::new("/"), true, None));
+    }
+
+    /// Each term is asked in both its forms, every combination of them,
+    /// an ASCII one once; past [`RUNS`], a term of two forms is left out,
+    /// never one of one.
+    #[test]
+    fn plocate_is_asked_each_term_in_both_forms() {
+        let strings = |run: &[&str]| run.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            runs(&strings(&["report", "q3"])),
+            [strings(&["report", "q3"])]
+        );
+        assert_eq!(
+            runs(&strings(&["CAF\u{c9}", "report"])),
+            [
+                strings(&["CAF\u{c9}", "report"]),
+                strings(&["CAFE\u{301}", "report"])
+            ],
+            "its case as typed"
+        );
+        assert_eq!(
+            runs(&strings(&["cafe\u{301}", "th\u{e9}"])),
+            [
+                strings(&["caf\u{e9}", "th\u{e9}"]),
+                strings(&["caf\u{e9}", "the\u{301}"]),
+                strings(&["cafe\u{301}", "th\u{e9}"]),
+                strings(&["cafe\u{301}", "the\u{301}"]),
+            ]
+        );
+        assert_eq!(
+            runs(&strings(&["\u{434}\u{43e}\u{43c}"])),
+            [strings(&["\u{434}\u{43e}\u{43c}"])],
+            "one form"
+        );
+        let many = strings(&["\u{e9}1", "\u{e9}2", "\u{e9}3", "\u{e9}4", "x"]);
+        let asked = runs(&many);
+        assert_eq!(asked.len(), RUNS);
+        for run in &asked {
+            assert_eq!(run.len(), 4, "the fourth left out: {run:?}");
+            assert_eq!(run.last().map(String::as_str), Some("x"));
+        }
     }
 
     #[test]

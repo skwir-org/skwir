@@ -64,6 +64,7 @@ pub mod lru;
 pub mod map_points;
 pub mod media;
 pub mod metadata;
+pub mod name_match;
 pub mod names;
 pub mod notes;
 pub mod op;

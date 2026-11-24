@@ -50,6 +50,9 @@ struct Fake {
     running: bool,
     /// What was asked of it, in order.
     calls: Arc<Mutex<Vec<String>>>,
+    /// Whether its engine says, on each connection, that it matches a term
+    /// in both its forms.
+    both_forms: bool,
 }
 
 impl Fake {
@@ -64,12 +67,14 @@ impl Fake {
             queries,
             running: false,
             calls: Arc::default(),
+            both_forms: false,
         }
     }
 }
 
 struct FakeSession {
     root: PathBuf,
+    both_forms: bool,
     synced: Option<Coverage>,
     queries: Vec<Said>,
     asked: usize,
@@ -77,6 +82,10 @@ struct FakeSession {
 }
 
 impl Session for FakeSession {
+    fn both_forms(&self) -> bool {
+        self.both_forms
+    }
+
     fn sync(&mut self) -> Option<Coverage> {
         self.calls.lock().push("sync".into());
         self.synced.clone()
@@ -130,6 +139,11 @@ impl NameIndex for Fake {
         self.calls.lock().push("follow".into());
         self.running.then(|| self.session(root))
     }
+    /// Asked now, its engine says whether it matches both forms.
+    fn covers_both_forms(&self, _: &Query, _: &CancelToken) -> Option<Coverage> {
+        self.calls.lock().push("covers both forms".into());
+        (self.running && self.both_forms).then(|| self.coverage.clone())
+    }
 }
 
 impl Fake {
@@ -142,6 +156,7 @@ impl Fake {
             coverage,
             session: Box::new(FakeSession {
                 root: self.root.clone(),
+                both_forms: self.both_forms,
                 synced: self.synced.clone(),
                 queries: self.queries.clone(),
                 asked: 0,
@@ -340,6 +355,88 @@ fn a_proven_answer_equals_the_walk_s() {
     assert_eq!(
         *calls.lock(),
         ["open", "query report", "sync", "query report"]
+    );
+}
+
+/// A term whose forms differ (`caf\u{e9}` as a keyboard types it, a name
+/// written decomposed beside) is not answered by an index whose engine did
+/// not say it matches both forms: it is opened, never asked, and the search
+/// walks, finding the name written either way. An ASCII term is asked of
+/// it, and an engine that says it matches both forms is asked either; a
+/// search shown as typed alike, from what each engine says as it is asked.
+#[test]
+fn a_term_of_two_forms_walks_unless_the_engine_says_both() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap().join("search");
+    for name in [
+        "caf\u{e9} composed.txt",
+        "cafe\u{301} decomposed.txt",
+        "deep/CAFE\u{301} DECOMPOSED.TXT",
+        "report.txt",
+    ] {
+        let path = root.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "fixture").unwrap();
+    }
+    let live = proven(Proof::Live { since: at() }, Vec::new());
+    let index = |both_forms: bool| {
+        let named = vec!["caf\u{e9} composed.txt", "report.txt"];
+        let mut index = Fake::new(
+            &root,
+            live.clone(),
+            vec![Some((named, live.clone(), false))],
+        );
+        index.synced = Some(live.clone());
+        index.both_forms = both_forms;
+        index.running = true;
+        index
+    };
+    let all = set(&[
+        "caf\u{e9} composed.txt",
+        "cafe\u{301} decomposed.txt",
+        "deep/CAFE\u{301} DECOMPOSED.TXT",
+    ]);
+    for typed in ["caf\u{e9}", "cafe\u{301}", "CAF\u{c9}", "caf\u{e9}*"] {
+        let one = index(false);
+        let calls = Arc::clone(&one.calls);
+        let walked = search(&root, typed, vec![one]);
+        assert_eq!(walked.found, all, "{typed:?}: either form");
+        assert_eq!(walked.rests_on, [None], "{typed:?}: walked");
+        assert_eq!(*calls.lock(), ["open"], "{typed:?}: never asked");
+        // Shown as typed: the probe asks whether it matches both forms.
+        let one = index(false);
+        let calls = Arc::clone(&one.calls);
+        let (open, scheduler, _) = opened(&root, typed, vec![one], true);
+        assert!(scheduler.wait_idle(Duration::from_secs(10)));
+        let shown = said(&root, typed, &*open);
+        assert_eq!(shown.found, all, "{typed:?}: shown as typed");
+        assert_eq!(*calls.lock(), ["covers both forms"], "{typed:?}");
+    }
+    let one = index(false);
+    let calls = Arc::clone(&one.calls);
+    let named = search(&root, "report", vec![one]);
+    assert_eq!(named.found, set(&["report.txt"]));
+    assert_eq!(named.rests_on, rests_on(Proof::Live { since: at() }));
+    assert_eq!(*calls.lock(), ["open", "sync", "query report"]);
+    let both = index(true);
+    let calls = Arc::clone(&both.calls);
+    let answered = search(&root, "caf\u{e9}", vec![both]);
+    assert_eq!(
+        answered.found,
+        set(&["caf\u{e9} composed.txt"]),
+        "what it named, the walk skipped"
+    );
+    assert_eq!(answered.rests_on, rests_on(Proof::Live { since: at() }));
+    assert_eq!(*calls.lock(), ["open", "sync", "query caf\u{e9}"]);
+    let both = index(true);
+    let calls = Arc::clone(&both.calls);
+    let (open, scheduler, _) = opened(&root, "caf\u{e9}", vec![both], true);
+    assert!(scheduler.wait_idle(Duration::from_secs(10)));
+    let shown = said(&root, "caf\u{e9}", &*open);
+    assert_eq!(shown.found, set(&["caf\u{e9} composed.txt"]));
+    assert_eq!(
+        *calls.lock(),
+        ["covers both forms", "follow", "sync", "query caf\u{e9}"]
     );
 }
 

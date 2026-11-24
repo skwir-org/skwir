@@ -35,6 +35,7 @@ icu_segmenter.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 globset.workspace = true
+unicode-normalization.workspace = true
 toml.workspace = true
 regex.workspace = true
 tempfile.workspace = true

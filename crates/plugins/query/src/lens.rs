@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use skwir_core::entry::Entry;
+use skwir_core::name_match::{Name, NameMatch};
 use skwir_core::words;
 use skwir_core::words::Words;
 use skwir_core::workspace::{Lens, ReadFilter};
@@ -231,41 +232,29 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
 }
 
 /// What a filter's name terms ask of every entry at each key, over folders
-/// of a hundred thousand names: plain words each found in the name as the
-/// query finds them (case ignored unless `case:sensitive`), byte by byte
-/// where both are ASCII, never making a candidate of the entry; anything
-/// else (a glob, `ext:`, an OR) as the query evaluates it.
+/// of a hundred thousand names: each term matched as the query matches it
+/// (`name_match`: case ignored unless `case:sensitive`, in both its forms),
+/// an ASCII name compared byte by byte with an ASCII word, never making a
+/// candidate of the entry; anything else (`ext:`, an OR) as the query
+/// evaluates it.
 enum Names {
     None,
-    Words(Vec<Word>),
+    Terms(Vec<NameMatch>),
     Expr(Expr),
-}
-
-/// A word to find in names: lowercased unless case counts.
-struct Word {
-    text: String,
-    case_sensitive: bool,
 }
 
 impl Names {
     fn of(items: Vec<Expr>) -> Self {
-        let words: Option<Vec<Word>> = items
+        let terms: Option<Vec<NameMatch>> = items
             .iter()
             .map(|item| match item {
-                Expr::Term(Term::Name(p)) if p.glob.is_none() => Some(Word {
-                    text: if p.case_sensitive {
-                        p.text.clone()
-                    } else {
-                        p.text.to_lowercase()
-                    },
-                    case_sensitive: p.case_sensitive,
-                }),
+                Expr::Term(Term::Name(p)) => Some(p.matcher().clone()),
                 _ => None,
             })
             .collect();
-        match (words, and(items)) {
+        match (terms, and(items)) {
             (_, None) => Names::None,
-            (Some(words), Some(_)) => Names::Words(words),
+            (Some(terms), Some(_)) => Names::Terms(terms),
             (None, Some(expr)) => Names::Expr(expr),
         }
     }
@@ -273,37 +262,14 @@ impl Names {
     fn hold(&self, entry: &Entry) -> bool {
         match self {
             Names::None => true,
-            Names::Words(words) => words.iter().all(|w| w.in_name(&entry.name)),
+            Names::Terms(terms) => {
+                let name = Name::new(&entry.name);
+                terms.iter().all(|term| term.finds(&name))
+            }
             Names::Expr(expr) => {
                 let c = Candidate::of_entry(entry, Path::new(&entry.name));
                 expr.eval(&c, false) == Verdict::Yes
             }
-        }
-    }
-}
-
-impl Word {
-    /// Whether `name` holds it, as `NamePat` finds a word.
-    fn in_name(&self, name: &std::ffi::OsStr) -> bool {
-        let bytes = name.as_encoded_bytes();
-        let needle = self.text.as_bytes();
-        if needle.is_empty() {
-            return true;
-        }
-        if self.text.is_ascii() && bytes.is_ascii() {
-            return if self.case_sensitive {
-                bytes.windows(needle.len()).any(|w| w == needle)
-            } else {
-                bytes
-                    .windows(needle.len())
-                    .any(|w| w.eq_ignore_ascii_case(needle))
-            };
-        }
-        let text = name.to_string_lossy();
-        if self.case_sensitive {
-            text.contains(&self.text)
-        } else {
-            text.to_lowercase().contains(&self.text)
         }
     }
 }
@@ -406,6 +372,45 @@ mod tests {
         ];
         assert_eq!(kept("été", &names), ["Été.txt"]);
         assert_eq!(kept("h*.txt", &names), ["hiver.txt"]);
+    }
+
+    /// A word or a glob typed over a folder finds a name in either form,
+    /// composed or decomposed, typed either way, its case ignored unless
+    /// asked; in an OR too, as the query evaluates it.
+    #[test]
+    fn a_name_is_found_in_either_form() {
+        let names = vec![
+            entry("caf\u{e9}.txt", EntryKind::File, Some(1), &[]),
+            entry("cafe\u{301}.txt", EntryKind::File, Some(1), &[]),
+            entry("CAFE\u{301} cr\u{e8}me.txt", EntryKind::File, Some(1), &[]),
+            entry("cafe.txt", EntryKind::File, Some(1), &[]),
+        ];
+        let either = [
+            "caf\u{e9}.txt",
+            "cafe\u{301}.txt",
+            "CAFE\u{301} cr\u{e8}me.txt",
+        ];
+        for text in [
+            "caf\u{e9}",
+            "cafe\u{301}",
+            "CAF\u{c9}",
+            "name:caf\u{e9}",
+            "caf\u{e9}*",
+            "CAF\u{c9}*.txt",
+            "caf\u{e9} OR nothing",
+        ] {
+            assert_eq!(kept(text, &names), either, "{text:?}");
+        }
+        assert_eq!(
+            kept("CAF\u{c9} case:sensitive", &names),
+            ["CAFE\u{301} cr\u{e8}me.txt"]
+        );
+        // An ASCII word, as before: a name written decomposed holds its
+        // letters.
+        assert_eq!(
+            kept("cafe", &names),
+            ["cafe\u{301}.txt", "CAFE\u{301} cr\u{e8}me.txt", "cafe.txt"]
+        );
     }
 
     #[test]

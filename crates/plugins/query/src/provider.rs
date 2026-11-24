@@ -1956,6 +1956,12 @@ impl Shared {
             if cancel.is_cancelled() {
                 return None;
             }
+            // Names as the walk matches them: where a term's forms differ,
+            // only what an engine that said it matches both names
+            // (`names::Query::answered_by`), else the walk answers.
+            if !asked.answered_by(&*session) {
+                continue;
+            }
             // Sizes and times only of one that holds them live (ADR-150, 5).
             let Some(asked) = asked.as_covered(&coverage) else {
                 continue;

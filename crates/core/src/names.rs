@@ -25,18 +25,41 @@ use std::time::SystemTime;
 use crate::cancel::CancelToken;
 use crate::coverage::{Coverage, Hole};
 use crate::entry::EntryKind;
+use crate::name_match::NameMatch;
 use crate::registry::{Contributions, OwnerGate};
 use crate::words::Words;
 
-/// A name every file must have, matched as the query plugin matches a
-/// name term (`NamePat`): a glob where the text holds `*`, `?` or `[` and
-/// compiles as one (globset, `literal_separator(false)`), else a
-/// substring; both sides lowercased unless case counts. skwird matches so
-/// (its `Match::Skwir`); a change here is told to its session first.
+/// A name every file must have, matched as every place Skwir matches a
+/// name matches it ([`NameMatch::term`]): a glob where the text holds
+/// `*`, `?` or `[` and compiles as one (globset, `literal_separator(false)`),
+/// else a substring; case ignored unless it counts, both sides lowercased
+/// (a glob of ASCII literals folding ASCII alone, on the name as it is);
+/// in both its forms, composed and decomposed (NFC and NFD), lowercased
+/// first, then normalized, a glob in its literal parts alone. skwird's
+/// protocol 0 (its `Match::Skwir`) matches a term as written, one form: it
+/// names what this finds only where [`NameTerm::as_written`] says so, and
+/// an engine that matches both forms says it, on the connection it answers
+/// on ([`Session::both_forms`], [`NameIndex::covers_both_forms`]). A change
+/// here is told to skwird's session first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameTerm {
     pub text: String,
     pub case_sensitive: bool,
+}
+
+impl NameTerm {
+    /// What finds the names it asks for.
+    pub fn matcher(&self) -> NameMatch {
+        NameMatch::term(&self.text, self.case_sensitive)
+    }
+
+    /// Whether an index that matches it as written, in one form, names
+    /// every file it finds ([`NameMatch::as_written`]): every ASCII term,
+    /// and one whose two forms are one, but a glob holding more than ASCII
+    /// where case is ignored.
+    pub fn as_written(&self) -> bool {
+        self.text.is_ascii() || self.matcher().as_written()
+    }
 }
 
 /// What a search asks an index: the terms of its AND an index can answer.
@@ -90,6 +113,22 @@ impl Query {
             whole: false,
             ..self.clone()
         })
+    }
+
+    /// Whether every name term is matched alike as written, in one form
+    /// ([`NameTerm::as_written`]: every ASCII one), so that an index that
+    /// matches so names every file the search finds by its names.
+    pub fn as_written(&self) -> bool {
+        self.names.iter().all(NameTerm::as_written)
+    }
+
+    /// Whether what `session` names may be taken as what this search finds
+    /// by its names: where every term is matched alike as written, or where
+    /// the engine it talks to said it matches both forms
+    /// ([`Session::both_forms`]). Elsewhere it may name fewer than match:
+    /// the index is not taken as covering, and the search walks.
+    pub fn answered_by(&self, session: &dyn Session) -> bool {
+        session.both_forms() || self.as_written()
     }
 
     /// What `coverage` lets an index be asked of this: sizes and times
@@ -264,6 +303,21 @@ pub enum Since {
 /// where it has one, given up on with the search's token: dropped, it is
 /// let go of.
 pub trait Session: Send {
+    /// Whether the engine this session talks to said it matches a name term
+    /// in both its forms, composed and decomposed, as [`NameMatch::term`]
+    /// matches it (lowercased first, then normalized; a glob in its literal
+    /// parts alone, and, where those hold more than ASCII and case is
+    /// ignored, lowercased and matched on the name lowercased): skwird in
+    /// its hello's features, `names-both-forms` (its 0.2); plocate, asked
+    /// each form. Read from what the connection said, never kept from an
+    /// earlier one: an engine replaced by an older one says less. One that
+    /// does not (the default: it matches a term as written, one form, as
+    /// skwird's protocol 0) is taken as covering a search only where every
+    /// name term is matched alike either way ([`Query::answered_by`]).
+    fn both_forms(&self) -> bool {
+        false
+    }
+
     /// Prove the root current now: a barrier where it is live, a check
     /// elsewhere. `None` where it failed, or cannot ([`NameIndex::syncs`]).
     fn sync(&mut self) -> Option<Coverage>;
@@ -328,6 +382,16 @@ pub trait NameIndex: Send + Sync {
     /// (the default): it cannot tell without opening, or would not answer
     /// `q`.
     fn covers(&self, _q: &Query, _cancel: &CancelToken) -> Option<Coverage> {
+        None
+    }
+
+    /// [`covers`](Self::covers) for a query some of whose name terms are
+    /// not matched alike as written ([`Query::as_written`]): how far it
+    /// would answer `q` now only where the engine, asked now, says it
+    /// matches both forms ([`Session::both_forms`]: skwird's hello,
+    /// `names-both-forms`). `None` (the default) where it cannot tell: the
+    /// address field then takes no index as answering at once.
+    fn covers_both_forms(&self, _q: &Query, _cancel: &CancelToken) -> Option<Coverage> {
         None
     }
 
@@ -398,14 +462,23 @@ impl NameIndexes {
 
     /// What each index would answer of `q` now ([`NameIndex::covers`]),
     /// the strongest proof of names first, as [`open`](Self::open) sorts
-    /// them; none that cannot tell or does not cover it.
+    /// them; none that cannot tell or does not cover it. A query with a
+    /// name term not matched alike as written ([`Query::as_written`]) is
+    /// asked of each only as one of both forms
+    /// ([`NameIndex::covers_both_forms`]).
     pub fn covers(&self, q: &Query, cancel: &CancelToken) -> Vec<(Arc<dyn NameIndex>, Coverage)> {
+        let as_written = q.as_written();
         let mut covered: Vec<(Arc<dyn NameIndex>, Coverage)> = Vec::new();
         for index in self.list.all() {
             if cancel.is_cancelled() {
                 return Vec::new();
             }
-            if let Some(coverage) = index.covers(q, cancel)
+            let coverage = if as_written {
+                index.covers(q, cancel)
+            } else {
+                index.covers_both_forms(q, cancel)
+            };
+            if let Some(coverage) = coverage
                 && coverage.names.answers()
             {
                 covered.push((index, coverage));
@@ -621,5 +694,147 @@ mod tests {
         assert_eq!((by_name.modified, by_name.whole), (None, false));
         indexes.unregister_owner("d");
         assert_eq!(indexes.ids(), ["as of", "denied", "checked", "checked too"]);
+    }
+
+    /// A session whose engine says whether it matches both forms.
+    struct Said(bool);
+
+    impl Session for Said {
+        fn both_forms(&self) -> bool {
+            self.0
+        }
+        fn sync(&mut self) -> Option<Coverage> {
+            None
+        }
+        fn query(&mut self, _: &Query, _: &mut dyn FnMut(Vec<PathBuf>) -> bool) -> Option<Answer> {
+            None
+        }
+    }
+
+    /// An index whose engine says, on each connection, whether it matches a
+    /// term in both its forms.
+    struct Matching(&'static str, bool);
+
+    impl NameIndex for Matching {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn by(&self) -> Words {
+            Words::as_written(self.0)
+        }
+        fn syncs(&self) -> bool {
+            true
+        }
+        fn open(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
+            Some(Opened {
+                coverage: Coverage::as_of(None),
+                session: Box::new(Said(self.1)),
+            })
+        }
+        fn covers(&self, _: &Query, _: &CancelToken) -> Option<Coverage> {
+            Some(Coverage::as_of(None))
+        }
+        /// Asked now, its engine says whether it matches both forms.
+        fn covers_both_forms(&self, q: &Query, cancel: &CancelToken) -> Option<Coverage> {
+            self.covers(q, cancel).filter(|_| self.1)
+        }
+    }
+
+    /// An index that keeps every default but `covers`: protocol 0's.
+    struct Silent;
+
+    impl NameIndex for Silent {
+        fn id(&self) -> &'static str {
+            "silent"
+        }
+        fn by(&self) -> Words {
+            Words::as_written("silent")
+        }
+        fn syncs(&self) -> bool {
+            true
+        }
+        fn open(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
+            Some(Opened {
+                coverage: Coverage::as_of(None),
+                session: Box::new(Nothing),
+            })
+        }
+        fn covers(&self, _: &Query, _: &CancelToken) -> Option<Coverage> {
+            Some(Coverage::as_of(None))
+        }
+    }
+
+    /// Coverage is never overstated: what a connection that did not say it
+    /// matches both forms names is not taken for a search with a term whose
+    /// forms differ (`caf\u{e9}`, composed or decomposed), nor a glob it
+    /// would match otherwise (Cyrillic letters, case ignored), and the
+    /// probe says none covers such a search but one whose engine said so;
+    /// for an ASCII term and one of one form, every index is taken.
+    #[test]
+    fn only_an_engine_that_says_both_forms_covers_a_term_whose_forms_differ() {
+        let indexes = NameIndexes::default();
+        indexes.register("a", Arc::new(Matching("one form", false)));
+        indexes.register("b", Arc::new(Matching("both forms", true)));
+        indexes.register("c", Arc::new(Silent));
+        let query = |text: &str, case_sensitive: bool| Query {
+            root: PathBuf::from("/"),
+            names: vec![
+                NameTerm {
+                    text: "report".into(),
+                    case_sensitive: false,
+                },
+                NameTerm {
+                    text: text.into(),
+                    case_sensitive,
+                },
+            ],
+            kinds: None,
+            size: None,
+            modified: None,
+            whole: true,
+        };
+        let never = CancelToken::new();
+        let taken = |q: &Query| -> (Vec<&str>, Vec<&str>) {
+            (
+                indexes
+                    .covers(q, &never)
+                    .into_iter()
+                    .map(|(index, _)| index.id())
+                    .collect(),
+                indexes
+                    .open(&q.root, &never)
+                    .into_iter()
+                    .filter(|asked| q.answered_by(&*asked.session))
+                    .map(|asked| asked.index.id())
+                    .collect(),
+            )
+        };
+        for (text, case_sensitive) in [
+            ("caf\u{e9}", false),
+            ("cafe\u{301}", false),
+            ("CAF\u{c9}", true),
+            ("caf\u{e9}*", false),
+            ("\u{434}\u{43e}\u{43c}*", false),
+        ] {
+            let q = query(text, case_sensitive);
+            assert!(!q.as_written(), "{text:?}");
+            assert_eq!(
+                taken(&q),
+                (vec!["both forms"], vec!["both forms"]),
+                "{text:?}"
+            );
+        }
+        for (text, case_sensitive) in [
+            ("cafe", false),
+            ("Caf*.TXT", false),
+            ("\u{434}\u{43e}\u{43c}", false),
+            ("\u{434}\u{43e}\u{43c}*", true),
+            ("\u{65e5}\u{672c}", false),
+        ] {
+            let q = query(text, case_sensitive);
+            assert!(q.as_written(), "{text:?}");
+            let all = vec!["one form", "both forms", "silent"];
+            assert_eq!(taken(&q), (all.clone(), all), "{text:?}");
+        }
     }
 }
