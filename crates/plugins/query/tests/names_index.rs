@@ -619,6 +619,49 @@ fn a_search_shown_as_typed_asks_only_what_answers_at_once() {
     assert_eq!(*calls.lock(), ["covers", "open", "sync", "query report"]);
 }
 
+/// A lens asks of every folder it shows whether it leads to what it
+/// keeps: of a names index, only one answering at once, never one opened
+/// (an engine started) or synced for it; elsewhere the walk answers.
+#[test]
+fn a_lens_asks_only_what_answers_at_once() {
+    let (_tmp, root) = tree();
+    let checked = proven(Proof::Checked { at: at() }, Vec::new());
+    let mut engine = Fake::new(
+        &root,
+        checked.clone(),
+        vec![Some((vec!["docs/report.pdf"], checked.clone(), false))],
+    );
+    engine.synced = Some(checked);
+    let calls = Arc::clone(&engine.calls);
+    let names = NameIndexes::default();
+    names.register("test", Arc::new(engine));
+    let ctx = OpenContext {
+        scheduler: Scheduler::new(1),
+        cancel: CancelToken::new(),
+        batch_size: 1,
+        waker: None,
+        metadata: Arc::default(),
+        fields: Arc::default(),
+        hints: Arc::default(),
+        names: Arc::new(names),
+        companions: Arc::default(),
+        hidden_shown: false,
+        reads: skwir_core::location::Needs::Nothing,
+    };
+    let leads = skwir_plugin_query::provider::leads_of(Weak::new(), CancelToken::new());
+    assert_eq!(
+        leads("report", &root, &ctx),
+        Some(true),
+        "the walk found it"
+    );
+    assert_eq!(leads("nothing-named-so", &root, &ctx), Some(false));
+    assert!(
+        calls.lock().iter().all(|c| c == "covers"),
+        "never opened: {:?}",
+        calls.lock()
+    );
+}
+
 /// Sizes asked of an index holding them live when the search opened stand
 /// only where it still held them so as it answered: else the walk answers.
 #[test]

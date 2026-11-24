@@ -351,8 +351,10 @@ type Rule = Arc<dyn Fn() -> Arc<LeftOut> + Send + Sync>;
 /// (`registry::FilterReader::leads`): what a search of the folder for the
 /// lens's words would answer, by that search, ended at its first match. A
 /// folder is left out only on the search's own word for it. Ends with the
-/// plugin, as a search does.
-pub(crate) fn leads_of(app: Weak<App>, lifetime: CancelToken) -> skwir_core::registry::LeadsBelow {
+/// plugin, as a search does. Asked for every folder a lens shows, it asks
+/// a names index as a search shown as typed does (`Typing::Typed`): only
+/// the one answering at once, which starts nothing and syncs nothing.
+pub fn leads_of(app: Weak<App>, lifetime: CancelToken) -> skwir_core::registry::LeadsBelow {
     Arc::new(move |words, dir, ctx| {
         let ctx = OpenContext {
             cancel: ctx.cancel.linked(&lifetime),
@@ -389,7 +391,7 @@ fn leads(words: &str, dir: &Path, ctx: &OpenContext, rule: Rule) -> Option<bool>
         lifetime: ctx.cancel.clone(),
         first: Some(stop.clone()),
         unlooked: AtomicBool::new(false),
-        typing: Mutex::new(Typing::No),
+        typing: Mutex::new(Typing::Typed),
         ctx,
         #[cfg(test)]
         counted: Counted::default(),
