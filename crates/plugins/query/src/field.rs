@@ -850,7 +850,9 @@ mod tests {
         let shown = |names: Proof, syncs: bool, holes: Vec<Hole>, text: &str| {
             shown_with(names, Proof::AsOf { at: None }, syncs, holes, text)
         };
-        let root = PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+        // Holes as an index names them, under the real root the search
+        // asks it of: `/`, or on Windows the drive of `\`.
+        let root = skwir_core::os_path::canonical(std::path::MAIN_SEPARATOR_STR).unwrap();
         let hole = |at: &str, why| Hole {
             path: root.join(at),
             why,
@@ -895,15 +897,18 @@ mod tests {
             ),
             "walked with excluded:yes"
         );
-        assert!(
-            shown(
-                live(),
-                true,
-                vec![hole("nix/store", Why::Excluded)],
-                "dunes"
-            ),
-            "the Nix store left out (ADR-125, 15)"
-        );
+        // The Nix store, left out where it may be (ADR-125, 15).
+        if cfg!(any(target_os = "linux", target_os = "macos")) {
+            assert!(
+                shown(
+                    live(),
+                    true,
+                    vec![hole("nix/store", Why::Excluded)],
+                    "dunes"
+                ),
+                "the Nix store left out (ADR-125, 15)"
+            );
+        }
         if cfg!(target_os = "linux") {
             assert!(
                 shown(live(), true, vec![hole("proc", Why::Mount)], "dunes"),

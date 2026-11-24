@@ -269,8 +269,12 @@ fn said(root: &Path, expr: &str, open: &dyn skwir_core::location::OpenLocation) 
 /// hole names, one in a snapshot, one hidden, and one no index names.
 fn tree() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
-    // The real path: an index knows no other.
-    let root = std::fs::canonicalize(tmp.path()).unwrap().join("search");
+    // The real path, as the search asks an index of it (`os_path::canonical`,
+    // which on Windows leaves out the `\\?\` std's adds): an index knows no
+    // other.
+    let root = skwir_core::os_path::canonical(tmp.path())
+        .unwrap()
+        .join("search");
     for name in [
         "docs/report.pdf",
         "docs/notes.txt",
@@ -367,7 +371,9 @@ fn a_proven_answer_equals_the_walk_s() {
 #[test]
 fn a_term_of_two_forms_walks_unless_the_engine_says_both() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(tmp.path()).unwrap().join("search");
+    let root = skwir_core::os_path::canonical(tmp.path())
+        .unwrap()
+        .join("search");
     for name in [
         "caf\u{e9} composed.txt",
         "cafe\u{301} decomposed.txt",

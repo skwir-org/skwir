@@ -224,7 +224,12 @@ fn closing_a_search_stops_an_arriving_subtree_from_publishing() {
         .events()
         .recv_timeout(Duration::from_secs(10))
         .unwrap();
-    assert!(matches!(first, ListingEvent::Added(entries) if entries.len() == 2));
+    // A batch's size (two), or one alone where it came once the batch was
+    // 100 ms old (`Batcher::MAX_AGE`), as under the load of every test.
+    assert!(
+        matches!(&first, ListingEvent::Added(entries) if (1..=2).contains(&entries.len())),
+        "{first:?}"
+    );
     search.open.close();
     // Events queued before close remain valid; none may arrive after it.
     search.open.events().try_iter().for_each(drop);

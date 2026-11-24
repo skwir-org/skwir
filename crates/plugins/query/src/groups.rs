@@ -1182,6 +1182,12 @@ mod tests {
     /// and one read while they moved is not kept.
     #[test]
     fn a_type_s_name_is_read_again_once_the_words_move() {
+        // Windows names a type in its registry, and the database a package
+        // carries holds no names: no name to keep where the registry has
+        // none (a type named not is the next test's).
+        if skwir_core::system::under_wine("a name for PNG in its registry") {
+            return;
+        }
         let png = Mime("image/png".into());
         let named = || match type_group(&png) {
             TypeName::Named(group) => group,
