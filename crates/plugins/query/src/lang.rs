@@ -1784,7 +1784,7 @@ impl Query {
                     ..
                 }) => {
                     // `[after, before)`: the last instant before `before`.
-                    let to = before.and_then(|b| b.checked_sub(std::time::Duration::from_nanos(1)));
+                    let to = before.and_then(last_before);
                     let was = modified.unwrap_or(skwir_core::names::Times {
                         from: None,
                         to: None,
@@ -2210,6 +2210,18 @@ pub fn content_matches(path: &Path, pat: &ContentPat) -> bool {
         }),
     );
     r.is_ok() && found
+}
+
+/// The last instant before `before` the system's times hold: a nanosecond
+/// before it, or where they are coarser, the step they count in (Windows'
+/// 100 ns, which a nanosecond taken off leaves as it was); none before the
+/// earliest one.
+fn last_before(before: std::time::SystemTime) -> Option<std::time::SystemTime> {
+    [1, 100].into_iter().find_map(|nanos| {
+        before
+            .checked_sub(std::time::Duration::from_nanos(nanos))
+            .filter(|to| *to < before)
+    })
 }
 
 #[cfg(test)]
@@ -2884,9 +2896,14 @@ mod tests {
         let dated = at("report modified>=2026-01-01 modified<2026-02-01");
         let times = dated.modified.expect("dated");
         let (from, to) = (times.from.unwrap(), times.to.unwrap());
+        let february = from + std::time::Duration::from_hours(31 * 24);
+        assert!(to < february, "February left out");
+        // The last instant the system's times hold: a nanosecond before,
+        // on Windows the 100 ns they count in.
+        let step = if cfg!(windows) { 100 } else { 1 };
         assert_eq!(
-            to.duration_since(from).unwrap(),
-            std::time::Duration::from_hours(31 * 24) - std::time::Duration::from_nanos(1),
+            february.duration_since(to).unwrap(),
+            std::time::Duration::from_nanos(step),
             "January, its last instant included"
         );
         assert!(dated.whole && dated.names.len() == 1);
