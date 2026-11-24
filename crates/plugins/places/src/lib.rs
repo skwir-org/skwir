@@ -3197,7 +3197,11 @@ mod tests {
             assert_eq!(top.at(point).as_os_str(), point.as_os_str());
         }
         let nested = Opened::new(None, false, Some(PathArg::from(Path::new("./a//b/")))).unwrap();
-        assert_eq!(nested.at(point).as_os_str(), point.join("a/b").as_os_str());
+        // Joined as this system joins a path, `\` between them on Windows.
+        assert_eq!(
+            nested.at(point).as_os_str(),
+            point.join("a").join("b").as_os_str()
+        );
         assert_eq!(Opened::new(None, false, None).unwrap().at(point), point);
     }
 
