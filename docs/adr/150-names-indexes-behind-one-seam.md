@@ -17,7 +17,7 @@ menu's entry, skwird-check), checked in the release window. Amended the
 same evening (the Index page, steps E and F, the footer's
 words), and again (13 to 15: step D's whole disk as typed, sizes
 and times, the journal), and on 2026-11-24 (16: Usage from folder
-totals). Amends
+totals; 17: names in both forms). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 
@@ -258,4 +258,34 @@ time, folder totals: agreed with it, built on its side next).
     journal keeps the breakdowns current in place of Usage's own watches.
     A figure means the same from either source: the same fixture measured
     both ways agrees folder by folder against a real engine.
+
+### 2026-11-24, evening: names in both forms
+
+The user's choice (2026-11-24, with skwird's session, its DESIGN's open
+question 5), built the same evening on skwir's side:
+
+17. **A name term is matched in both its forms**, composed and
+    decomposed (NFC and NFD), as fsearch does: point 2's "as the query
+    plugin's `NamePat` matches" now reads "as `name_match` matches", the
+    one matcher of every place Skwir matches typed words with a name.
+    macOS's programs often write names decomposed, and keyboards type
+    them composed.
+    - The term is lowercased first, then normalized. A glob is
+      normalized in its literal parts alone. A glob whose literals hold
+      more than ASCII, case ignored, is matched on the name lowercased,
+      as globset folds ASCII alone. No name is rewritten, and an ASCII
+      term costs what it did.
+    - **An index proves only what it matches alike.** skwird's hello
+      says what its engine does beyond its version (`Welcome.features`,
+      copied at skwird 12a90c2). An engine that says `names-both-forms`
+      (skwird 0.2) matches as `name_match` does. One that does not
+      (0.1.0) is taken as covering only a search whose every name term
+      is matched alike in one form (`Query::as_written`: every ASCII
+      one). Elsewhere the search walks.
+    - The word is read from each connection's hello, never kept from an
+      earlier one (`Session::both_forms`, `NameIndex::covers_both_forms`):
+      an engine replaced by an older one says less.
+    - plocate is asked every combination of the terms' forms, eight runs
+      at most. Past that, a term is left out of what it is asked, so it
+      names more, never fewer.
 

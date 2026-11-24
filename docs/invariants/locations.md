@@ -416,7 +416,13 @@ sends by itself:
   and asked again; one that cannot be synced (plocate, `/`, name
   substrings alone) stands as of when it is; a failed sync, an answer cut
   short or none walks, skipping what was considered, so nothing shown is
-  taken back. Its holes are walked, but for a snapshot below the folder
+  taken back. An index whose connection did not say it matches both
+  forms (`Session::both_forms`: skwird's hello saying `names-both-forms`;
+  plocate, asked every form, `plocate::runs`) is not taken for a search
+  with a name term whose forms differ, or a glob of more than ASCII with
+  case ignored (`Query::answered_by`): the search walks there, and the
+  address field asks `NameIndex::covers_both_forms` for such a search,
+  none by default. Its holes are walked, but for a snapshot below the folder
   searched (unless `excluded:yes`) and what the walk leaves out anyway
   (`holes_walked`, one function for the walk and for the address field,
   which shows a search of `/` as typed only where it walks nothing:

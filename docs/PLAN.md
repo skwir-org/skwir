@@ -1588,6 +1588,27 @@ nothing run on a Mac, and `brew style` and `brew audit` not run here
 (the tap's workflow runs them once pushed); the site's download page
 does not name the cask yet.
 
+**Names in both forms** (the user's choice with skwird, 2026-11-24;
+built that evening, ADR-150 17). A name term is matched composed and
+decomposed through core's `name_match`, in a search, a filter's words,
+the name filter and `/`; plocate is asked every form; skwird's index is
+trusted for a term whose forms differ only where the connection's hello
+says `names-both-forms` (skwird 0.2; the client copied at 12a90c2).
+Left: with skwird 0.1.0, a search with such a term walks, though asking
+the engine its ASCII terms alone and checking the rest would do; a term
+typed in mixed forms no longer finds a name mixed alike (two forms, as
+skwird will match); typing to reach an entry, by the collation, misses
+a decomposed non-Latin letter under the C locale's folded order (и and
+U+0306 against й); exclusions by name, path completion, `jump`'s
+matcher and the save dialog's name still match one form, an excluded
+name with an accent typed composed missing a folder written decomposed.
+
+**Removable volumes in skwird** (designed with skwird's session,
+2026-11-24: `volumes {keep, forget, release}`, the engine listing the
+volumes it sees mounted with their ids, released before an eject): skwird
+builds it for its 0.2, after its 0.1.0; nothing on Skwir's side until
+then.
+
 **From the review of 2026-11-24** (45 findings on the night's work, all
 fixed but these). Usage from an index: a file of several names that
 takes no room says one. A drive Windows is letting go of reads nothing

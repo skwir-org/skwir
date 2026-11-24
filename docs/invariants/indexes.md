@@ -28,6 +28,10 @@ what is built.
   (reconciled against the folders then), as of a time (loaded, not yet
   reconciled), or not covered and why. The four words are skwird's; the
   footer says them (`location::RestsOn`), and `entries` answers them.
+- An index names what `name_match` finds, a term in both its forms: one
+  whose connection does not say it does (`Session::both_forms`) proves
+  only a search whose every name term is matched alike as written
+  (`Query::as_written`: every ASCII one).
 - A claim never skips the scan; a proof does (ADR-050). Under a covered
   root a search considers what the index names and nothing else; under
   any other it hints and scans, or, for meaning, lists what it has and

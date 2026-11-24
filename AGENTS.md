@@ -262,6 +262,14 @@ working in an area, also read that area's rules (see
   index (`Listing::named`, `named_file`, `is_named`, `find_by_name`),
   kept current as entries arrive, are renamed and go; never walk a
   listing to find a name.
+- **Words typed find a name through one matcher**, core's
+  `name_match::NameMatch`: a search's name terms, a filter's words, the
+  name filter and `/`. Case is folded by `to_lowercase` unless it
+  counts, and the term is matched in both its forms (NFC and NFD),
+  lowercased first, a glob in its literal parts alone. No name is
+  rewritten. Never test typed words against a name with `contains` or a
+  glob of your own. Typing to reach an entry goes by the collation
+  (`collate::Prefix`), which already takes both forms alike.
 - **References.** Reference entries by `EntryRef` (id + path hint), never
   by path alone. A reference follows a file to a new name only when it
   knew the file had one name (`EntryRef::only_name`: from
