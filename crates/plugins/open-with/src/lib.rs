@@ -32,7 +32,7 @@ use skwir_core::registry::{
 };
 use skwir_core::scheduler::{Lane, Priority, on_window_thread};
 use skwir_core::words;
-use skwir_core::words::{Kind, Name, Words};
+use skwir_core::words::{Arg, Kind, Name, Words};
 use skwir_core::workspace::PaneId;
 use skwir_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
 use skwir_platform::mime::{self, Mime};
@@ -1144,11 +1144,12 @@ fn choices(args: ChoicesArgs, cache: &Cached, app: &App) -> anyhow::Result<Outco
             "title": words!(
                 open_with_always_use = "Always use for { $kind ->
                     [folder] folders
+                    [unnamed] files of this type
                    *[file] { $description } files
                 }",
                 kind = kind,
                 description = of,
-                note = "A check in the chooser: makes the application chosen the default for the type. The type is as the system describes it (PNG image, plain text document)."
+                note = "A check in the chooser: makes the application chosen the default for the type. The type is as the system describes it (PNG image, plain text document), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way."
             )
             .to_data(),
             "field": "set_default",
@@ -1228,15 +1229,20 @@ fn opens_with() -> Words {
 
 /// The chooser's title for the files of `mime`.
 fn open_files_with(mime: &str) -> Words {
-    let (kind, of) = files_of(mime);
+    open_files_said(files_of(mime))
+}
+
+/// The chooser's title for files said so ([`files_of`]).
+fn open_files_said((kind, of): (Arg, String)) -> Words {
     words!(
         open_with_open_files_with = "Open { $kind ->
             [folder] folders
+            [unnamed] files of this type
            *[file] { $description } files
         } with",
         kind = kind,
         description = of,
-        note = "The title of the chooser of a default application for a type, as the system describes it (PNG image, plain text document)."
+        note = "The title of the chooser of a default application for a type, as the system describes it (PNG image, plain text document), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way."
     )
 }
 
@@ -1330,14 +1336,28 @@ fn spawn_in(
 }
 
 /// How a sentence names the files of `mime`, for its selector: folders
-/// (`Kind::Folder`), or files of a type (`Kind::File`) and the type as the
-/// system describes it (`PNG image`, `plain text document`), else its name.
-fn files_of(mime: &str) -> (Kind, String) {
+/// (`Kind::Folder`), files of a type (`Kind::File`) and how the type is
+/// said, or files of a type said no way (`unnamed`): never by its id.
+fn files_of(mime: &str) -> (Arg, String) {
     if mime == "inode/directory" {
-        return (Kind::Folder, String::new());
+        return (Kind::Folder.into(), String::new());
     }
-    let Some(description) = Mime(mime.to_owned()).description() else {
-        return (Kind::File, mime.to_owned());
+    let mime = Mime(mime.to_owned());
+    files_said(mime.description(), &mime::extensions(&mime))
+}
+
+/// Files of a type, said for [`files_of`]: as the system describes the
+/// type (`PNG image`, `plain text document`), else, where it names it not
+/// (a type it does not know, a package carrying no names of the
+/// database's beside the system's), by the first of the `extensions` its
+/// files are named by, in capitals (`PNG`), as a file of a type unnamed is
+/// (`mime::unnamed`); with none, as files of this type.
+fn files_said(description: Option<String>, extensions: &[String]) -> (Arg, String) {
+    let Some(description) = description else {
+        return match extensions.first() {
+            Some(extension) => (Kind::File.into(), extension.to_uppercase()),
+            None => (Arg::from("unnamed"), String::new()),
+        };
     };
     // Lower the first letter of a word, not of an acronym ("PNG"): the
     // system's description, said inside a sentence.
@@ -1349,7 +1369,7 @@ fn files_of(mime: &str) -> (Kind, String) {
             .collect(),
         _ => description,
     };
-    (Kind::File, lowered)
+    (Kind::File.into(), lowered)
 }
 
 /// The error of an application asked by an ID no desktop entry has.
@@ -1413,31 +1433,34 @@ fn apply_edit(app: &App, cache: &Cached, edit: &AssociationEdit, undo: bool) {
                 (Some(application), Some(_)) => words!(
                     open_with_now_opens = "{ $app } now opens { $kind ->
                         [folder] folders
+                        [unnamed] files of this type
                        *[file] { $description } files
                     }",
                     app = application.name.clone(),
                     kind = kind,
                     description = of,
-                    note = "Said once a default application is chosen, with Undo. The application is named as its desktop entry names it; the type as the system describes it (PNG image)."
+                    note = "Said once a default application is chosen, with Undo. The application is named as its desktop entry names it; the type as the system describes it (PNG image), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way."
                 ),
                 (Some(application), None) => words!(
                     open_with_already_opens = "{ $app } already opens { $kind ->
                         [folder] folders
+                        [unnamed] files of this type
                        *[file] { $description } files
                     }",
                     app = application.name.clone(),
                     kind = kind,
                     description = of,
-                    note = "Said when the application chosen as the default was it already."
+                    note = "Said when the application chosen as the default was it already. The type as the system describes it (PNG image), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way."
                 ),
                 (None, _) => words!(
                     open_with_none_opens = "No application opens { $kind ->
                         [folder] folders
+                        [unnamed] files of this type
                        *[file] { $description } files
                     }",
                     kind = kind,
                     description = of,
-                    note = "Said once a default is taken back and nothing opens the type."
+                    note = "Said once a default is taken back and nothing opens the type. The type as the system describes it (PNG image), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way."
                 ),
             };
             match changed {
@@ -2633,6 +2656,14 @@ mod tests {
 
     #[test]
     fn properties_say_what_a_file_opens_with_and_change_it() {
+        // Wine's registry names few types, `image/png` not, and what runs
+        // the tests carries no names of the database's beside it, as a
+        // package does not: there the type is said by its extension.
+        let png = if skwir_core::system::under_wine("a name for image/png") {
+            "PNG"
+        } else {
+            "PNG image"
+        };
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("root");
         std::fs::create_dir_all(&root).unwrap();
@@ -2670,7 +2701,7 @@ mod tests {
         assert_eq!(change["name"], "ui.choose");
         assert_eq!(
             english(&change["args"]["title"]),
-            "Open PNG image files with"
+            format!("Open {png} files with")
         );
         let source_args = &change["args"]["source"];
         let Outcome::Value(choices) = app
@@ -2698,7 +2729,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             next_notification(&app).text.english(),
-            "Editor now opens PNG image files"
+            format!("Editor now opens {png} files")
         );
         assert!(
             source[0]
@@ -2747,7 +2778,29 @@ mod tests {
         assert_eq!(said("text/plain"), "Open plain text document files with");
         assert_eq!(
             said("application/x-no-such-type"),
-            "Open application/x-no-such-type files with"
+            "Open files of this type with",
+            "never by its id"
+        );
+    }
+
+    /// A type the system names not is said by an extension its files are
+    /// named by, as a file of it is, never by its id; with none, as files
+    /// of this type.
+    #[test]
+    fn a_type_named_not_is_said_by_its_extension() {
+        let said = |description: Option<&str>, extensions: &[&str]| {
+            let extensions: Vec<String> = extensions.iter().map(|e| (*e).to_owned()).collect();
+            open_files_said(files_said(description.map(str::to_owned), &extensions)).english()
+        };
+        assert_eq!(said(None, &["png", "apng"]), "Open PNG files with");
+        assert_eq!(said(None, &[]), "Open files of this type with");
+        assert_eq!(
+            said(Some("PNG image"), &["png"]),
+            "Open PNG image files with"
+        );
+        assert_eq!(
+            said(Some("Plain text document"), &["txt"]),
+            "Open plain text document files with"
         );
     }
 }

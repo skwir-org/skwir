@@ -1,14 +1,16 @@
 # Made from the code by `just words` (tools/words/extract.py): never edit by hand.
 
-# Said when the application chosen as the default was it already.
+# Said when the application chosen as the default was it already. The type as the system describes it (PNG image), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way.
 open_with_already_opens = { $app } already opens { $kind ->
         [folder] folders
+        [unnamed] files of this type
        *[file] { $description } files
     }
 
-# A check in the chooser: makes the application chosen the default for the type. The type is as the system describes it (PNG image, plain text document).
+# A check in the chooser: makes the application chosen the default for the type. The type is as the system describes it (PNG image, plain text document), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way.
 open_with_always_use = Always use for { $kind ->
         [folder] folders
+        [unnamed] files of this type
        *[file] { $description } files
     }
 
@@ -96,9 +98,10 @@ open_with_no_location = pane has no location
 # An error an agent or a script reads: the pane it named is not there.
 open_with_no_such_pane = no such pane
 
-# Said once a default is taken back and nothing opens the type.
+# Said once a default is taken back and nothing opens the type. The type as the system describes it (PNG image), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way.
 open_with_none_opens = No application opens { $kind ->
         [folder] folders
+        [unnamed] files of this type
        *[file] { $description } files
     }
 
@@ -118,9 +121,10 @@ open_with_nothing_to_open = nothing to open
 # Under an application's name in the chooser of a default: the one that opens the type now.
 open_with_now = Now
 
-# Said once a default application is chosen, with Undo. The application is named as its desktop entry names it; the type as the system describes it (PNG image).
+# Said once a default application is chosen, with Undo. The application is named as its desktop entry names it; the type as the system describes it (PNG image), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way.
 open_with_now_opens = { $app } now opens { $kind ->
         [folder] folders
+        [unnamed] files of this type
        *[file] { $description } files
     }
 
@@ -132,9 +136,10 @@ open_with_open = Open
 # Read by agents and in F1's list of actions.
 open_with_open_description = Enter the selected directory, or open the selected files with the default application of their type, as the desktop's lists choose it (the one the context menu names)
 
-# The title of the chooser of a default application for a type, as the system describes it (PNG image, plain text document).
+# The title of the chooser of a default application for a type, as the system describes it (PNG image, plain text document), else as the extension its files are named by, in capitals (PNG); unnamed: a type said neither way.
 open_with_open_files_with = Open { $kind ->
         [folder] folders
+        [unnamed] files of this type
        *[file] { $description } files
     } with
 

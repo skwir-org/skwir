@@ -3,12 +3,14 @@
 # draft
 open_with_already_opens = { $app } 已是{ $kind ->
         [folder] 文件夹
+        [unnamed] 此类文件
        *[file] { $description } 文件
     }的默认打开方式
 
 # draft
 open_with_always_use = 始终用于打开{ $kind ->
         [folder] 文件夹
+        [unnamed] 此类文件
        *[file] { $description } 文件
     }
 
@@ -108,6 +110,7 @@ open_with_no_such_pane = 没有这个窗格
 # draft
 open_with_none_opens = 没有应用可打开{ $kind ->
         [folder] 文件夹
+        [unnamed] 此类文件
        *[file] { $description } 文件
     }
 
@@ -132,6 +135,7 @@ open_with_now = 当前
 # draft
 open_with_now_opens = 现在用 { $app } 打开{ $kind ->
         [folder] 文件夹
+        [unnamed] 此类文件
        *[file] { $description } 文件
     }
 
@@ -147,6 +151,7 @@ open_with_open_description = 进入所选目录，或用所选文件类型的默
 # draft
 open_with_open_files_with = 选择打开{ $kind ->
         [folder] 文件夹
+        [unnamed] 此类文件
        *[file] { $description } 文件
     }的应用
 

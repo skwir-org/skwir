@@ -3,12 +3,14 @@
 # draft
 open_with_already_opens = { $app } apre già { $kind ->
         [folder] le cartelle
+        [unnamed] i file di questo tipo
        *[file] i file di tipo { $description }
     }
 
 # draft
 open_with_always_use = Usa sempre per { $kind ->
         [folder] le cartelle
+        [unnamed] i file di questo tipo
        *[file] i file di tipo { $description }
     }
 
@@ -108,6 +110,7 @@ open_with_no_such_pane = nessun riquadro di questo tipo
 # draft
 open_with_none_opens = Nessuna applicazione apre { $kind ->
         [folder] le cartelle
+        [unnamed] i file di questo tipo
        *[file] i file di tipo { $description }
     }
 
@@ -132,6 +135,7 @@ open_with_now = Ora
 # draft
 open_with_now_opens = { $app } ora apre { $kind ->
         [folder] le cartelle
+        [unnamed] i file di questo tipo
        *[file] i file di tipo { $description }
     }
 
@@ -147,6 +151,7 @@ open_with_open_description = Entra nella cartella selezionata, o apre i file sel
 # draft
 open_with_open_files_with = Apri { $kind ->
         [folder] le cartelle
+        [unnamed] i file di questo tipo
        *[file] i file di tipo { $description }
     } con
 
