@@ -224,9 +224,14 @@ after review).
     their volume name and told by the volumes' broadcast
     (`reach::drives_changed`): a folder on a drive removed says so
     (`Failure::Left`) and comes back with it. Tried under Wine with the
-    notices handed to the window, never with a drive removed. macOS's
-    notice of an unmount to come (DiskArbitration's approval) is still
-    not followed: compiled only.
+    notices handed to the window, never with a drive removed. A watch
+    let go of tells nothing more (its own token cancelled before its
+    watcher drops), and what reads a folder there asks
+    `watch::letting_go` first: changes are not applied and hydrations are
+    answered unread until the rescan it is told once watched again
+    (after the review of 2026-11-24). macOS's notice of an unmount to
+    come (DiskArbitration's approval) is still not followed: compiled
+    only.
 
 ## Considered
 

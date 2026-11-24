@@ -175,8 +175,14 @@ walked into btrfs snapshot stores, which no entry names):
    is passed over as the Searches role passes over a tool store, counted
    among what the walk left out, walked when searched in and with
    `excluded:yes` (ADR-150, 5, says the same of skwird's snapshot holes).
-   Every tool's store alike (snapper's `/.snapshots`, timeshift's,
-   btrbk's), and no list to keep. Linux's (btrfs); elsewhere nothing is.
+   Every tool's read-only store alike (snapper's `/.snapshots`,
+   btrbk's), and no list to keep; timeshift makes its snapshots writable,
+   to boot and restore them, and a writable subvolume may be the live
+   system: they are walked (corrected 2026-11-24). A walk keeps nothing
+   per folder it finds (`walks::KEPT` bounds what it remembers of the
+   folders above paths an index handed it), and asks the mount table in
+   memory whether btrfs is there at all. Linux's (btrfs); elsewhere
+   nothing is.
 
 15. **What indexes leave out is left out of searches too** (the user's
    choice, 2026-11-23, from ADR-150's D1: a search of `/` walked /proc,
@@ -189,7 +195,10 @@ walked into btrfs snapshot stores, which no entry names):
      by their type in the mount table wherever they are mounted (a
      chroot's `/proc` as well), never by a name: an entry of a kind of its
      own (`Matcher::Mounted`, `mounted = "kernel"` in `builtin.toml`),
-     Skwir's alone, never copied into the user's (no Duplicate). The
+     Skwir's alone, never copied into the user's (no Duplicate),
+     answered by `Rule::names` from the mount table in memory for every
+     role that keeps it (amended 2026-11-24: kept from agents, `/proc`
+     is private to them too). The
      memory filesystems (tmpfs at `/tmp`, `/run`) are walked: people put
      files there, and a removable volume is mounted below `/run/media`.
    - **Nix store:** `/nix/store`, a path.

@@ -18,6 +18,10 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   guessed. A user's shortcut is checked against the declarations when a
   save adds or changes it; one stored unchanged whose command nothing
   registers waits for its plugin, bound to nothing (ADR-024).
+- A path in a command's JSON arguments is an `os_path::PathArg`, made
+  and read as one: serde refuses a `PathBuf` whose name is not UTF-8,
+  and `json!` panics on it (a folder's menu once did, on the window's
+  thread).
 - A caller in this process holding typed arguments (the window's views:
   hydration, a rubber band) dispatches with `App::dispatch_args(name,
   args)`. A command registered with that type (`register::<A>`) is

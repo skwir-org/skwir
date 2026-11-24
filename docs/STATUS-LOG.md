@@ -23759,3 +23759,46 @@ deny`, `just notices-check` (notices made again), `just lint-all`
 (check-cross included), `just test-all` (4,316 passed); core's and
 Usage's tests under Wine (796 of 799, the three Unix-path tests that
 fail there before).
+
+## 2026-11-24: the review of the night's work, fixed
+
+Five reviewers read the night's commits (b12d7fe9..1b6577f9) by area
+(core and Windows volumes, searches and the tags index, skwird's plugin
+and settings, Usage, copies and the folder provider's race) and found
+45 problems, three high: a folder tagged since the last count never
+read from a journal, nor its own notes kept inside it (TagSpaces), and
+Usage's breakdowns taken from skwird's totals kept in its cache with
+nothing keeping them current once the pane that asked them moved. Five
+fixers each fixed their area, with tests that fail without the fixes:
+733317af..3bc9d8b4, then fix-search's three leftovers, 02c6d885 (a count
+covers nothing where the notes stores or companions read, or what walks
+leave out, changed while it ran) and 82eed65e (a lens's folders never
+start or sync an engine; every folder did).
+
+What changed most: agents' Kernel filesystems switch now keeps /proc
+from them (it did nothing: only searches read the mount table); a walk
+on btrfs keeps nothing per folder and asks the table in memory; a copy
+cut short keeps its partial on the volume when the volume is let go of,
+and Retry goes on from it (the release deleted it, before anyone knew
+the unmount would succeed); a file too large for its volume is not
+offered Retry; Kept live's edits keep their order and wake the window,
+and nothing asks skwird at start; a path in a command's JSON is a
+`PathArg` (a folder's menu panicked on a name that is not UTF-8, on
+the window's thread); a stat that found an entry gone no longer removes
+a file back since; Windows' Eject reads nothing of the drive it lets go
+of. The docs say each where its rule is read (ADR-125, 149, 150; the
+invariants of commands, locations, notes, operations, settings, views).
+
+- **Checked,** on the tree before the fixes were committed: words made
+  again and checked, rustfmt, clippy on every target, `cargo nextest
+  run` (4,299 passed), the six real-engine tests against skwird built
+  optimized (`skwird_engine`, Usage compared field by field at every
+  level the map opens), `just check-cross`. Kept live's tick pressed by
+  the pointer in the window check on Xvfb (`skwird_window.py`). The
+  Windows paths (a move's copy flushed onto its stick, a drive let go
+  of reading nothing) under Wine. The two leftovers: the tags and query
+  crates' clippy and tests, the binary's tag and search tests.
+- **Not checked:** real Windows (Wine keeps no write cache and has no
+  display for the drive window's test), macOS, a real FAT32 stick since
+  the partial is kept (its test is ignored). Left in PLAN, "From the
+  review of 2026-11-24".

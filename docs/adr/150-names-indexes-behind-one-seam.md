@@ -108,7 +108,10 @@ ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
    (the desktop's, `places::user_dirs`) and **Bookmarks**
    (`places::bookmarks`), each heading's switch following its source
    (on by default: one added is ticked, one gone leaves); **Added by
-   you**, with Add folder… and removal. Rows are ticked; a row of a
+   you**, with Add folder… and removal; a folder added is kept there even
+   where a source offers it, so it stays once the source no longer does,
+   and the menu's entry on a folder of a source switched off adds it
+   (after the review of 2026-11-24). Rows are ticked; a row of a
    followed source unticked is remembered by its path. Each row says
    what it is: live, not live and why (too many folders for the share,
    on a network), or inside another folder kept live (not registered

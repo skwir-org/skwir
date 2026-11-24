@@ -1542,20 +1542,40 @@ night's summary), two monitors, Noctalia.
 **Copies onto USB drives** (2026-11-24, the user's report: a copy
 "done" missing 300 MB, and progress in jumps): no Skwir path found that
 drops bytes and says done (FAT32's limit fails visibly; now refused
-before the first byte); a failed copy's partial no longer holds the
-drive busy; a FAT or exFAT drive's own memory is written out; progress
-moves by eighths of a window. Left: the user's own case (the filesystem,
+before the first byte, and not offered Retry); a failed copy's partial
+no longer holds the drive busy, and stays there for Retry (its staging
+lock closed on release, taken again by Retry); a FAT or exFAT drive's
+own memory is written out; progress moves by eighths of a window. Left: the user's own case (the filesystem,
 the file's size, a toast, the version; a counterfeit-capacity stick
 would lose a large file's end with copy and unmount succeeding); steps
 staging onto a removable drive (extract, compress, Reduce Size, Make
 PDF) are neither written through nor written out at the plan's end; an
 archive's member over 4 GiB onto FAT fails in the helper; Windows'
-`largest_file` and `written_through` compiled only.
+`largest_file` and `written_through` compiled only; Windows' flush of a
+move's copy onto a removable drive (`sys::flush_tree`) tried under Wine,
+which keeps no write cache, so whether it holds under "Better
+performance" is not known; a process with a file size limit of its own
+(`RLIMIT_FSIZE`) is offered Retry for a file its volume cannot hold (the
+error does not say whose limit refused it); the FAT32 test (ignored)
+not run since the partial is kept.
 
 **Two stats of an entry** (2026-11-24): the folder provider keeps the
-later begun (`Names::newest`); other locations that stat on a worker
-while watched (searches, the trash, tag places, the shelf) were not
-checked for the same race.
+later begun, whatever each found (`Names::newest`, `Names::applies`,
+the watcher's inserts and removals included); other locations that stat
+on a worker while watched (searches, the trash, tag places, the shelf)
+were not checked for the same race.
+
+**From the review of 2026-11-24** (45 findings on the night's work, all
+fixed but these). skwird's connect and its hello wait up to its 60 s
+silence with nothing to stop them, a search given up on included:
+skwird be46cd7 (`Stopper::new`, `Client::connect_stopped`) stops them,
+on a branch of skwird's until its main takes it; then skwir's copy of
+the client, and a hello of a few seconds by skwir's own timer. Usage
+from an index: a file of several names that takes no room says one. A
+drive Windows is letting go of reads nothing (`watch::letting_go`): its
+rows answered unread then stay so after a refused removal until read
+again; tried under Wine, never with a drive. Drive registration after
+the places plugin returns: compiled only (Wine has no display).
 
 **Scratch folders of killed processes** (built 2026-11-24): each
 process holds a lock file of its own for its life, and names its

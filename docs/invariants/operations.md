@@ -727,8 +727,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   naming it (`Executor::refuse_under_way`; `force` cuts it). Then
   `App::release` lets go of everything under the mount point, since the
   kernel refuses to unmount a busy volume (a copy cut short there and
-  kept for Retry included, its staging folder's lock held:
-  `Executor::let_go_under`, the retry starting that file again): what can read by its path
+  kept for Retry included: `Executor::let_go_under` closes its staging
+  folder's lock and keeps the partial on the volume; Retry takes the lock
+  again and goes on from it, its tail checked, or starts that file again
+  where the volume went with it): what can read by its path
   holds nothing and stays shown (ADR-149, amended), what cannot goes home
   or closes, and the windows let go of the files they show there. What
   another program announces it unmounts (GIO, Solid:
@@ -766,9 +768,18 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`StepContext::write_out`, `syncfs`): a journaled or copy-on-write
   volume on a hard drive takes a third of a second per commit, so a
   commit is never a unit of progress.
+- **A file its volume cannot hold is refused before its first byte**
+  (FAT: 4 GiB − 1, `sys::largest_file` from what the system says the
+  volume is), by its step's check, the plan's sizing and the copy
+  (`FileTooLarge`); a write the volume refuses as too large keeps no
+  partial and offers no Retry (`builtin::fails_again`), unless the
+  process has a file size limit of its own (`RLIMIT_FSIZE`, which can be
+  lifted while Skwir runs, and which the error does not tell apart).
 - A move removes originals only once a write-out has their copies on the
   drive (`StepContext::after_write_out`, batched so write-outs stay a
-  tenth of the plan's time), and keeps an original that changed after its
+  tenth of the plan's time; on Windows, where nothing is written
+  through, each file of a copy onto a removable drive is flushed first,
+  `sys::flush_tree`), and keeps an original that changed after its
   copy began. A move whose original's removal waits (here, or for the
   plan's end after a batch) is undone by an `Unmove` (a trash by an
   `Untrash`, [The trash](#the-trash)): where the original

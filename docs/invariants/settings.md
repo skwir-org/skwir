@@ -357,7 +357,9 @@ The key is the owner's; the page is the subject's (ADR-072).
   `group`'s heading as the Exclusions page heads its categories (the
   title, how many it holds, a `switch` that runs the owner's command, its
   records dimmed while it is off), a record's `tick` a box before its
-  words, and a `note` under the list. A switch or a tick runs its command
+  words, a `note` under the list, and `dimmed`, every record dimmed
+  where the list does nothing (Kept live under skwird's system service).
+  A switch or a tick runs its command
   with `on`, the value it is to have; a command left empty is no button.
   One that adds folders (`RecordSource::adding_folders`) opens the
   system's chooser first. Nothing of this is the owner's to draw.
@@ -366,7 +368,9 @@ The key is the owner's; the page is the subject's (ADR-072).
   through `Settings::set` and saves it on a worker when asked from the
   window (a save holds the settings' writer across the file's write),
   the changes queued in the order made (`ui.grammar_choose`, as the
-  pinned tags do), and where it is asked otherwise.
+  pinned tags do, Kept live's `Kept::edits`), and where it is asked
+  otherwise; the window is woken once it is kept (`App::wake`): an owner
+  keeping a list elsewhere moves its `RecordSource` and wakes.
 - **Changed by you** lists what differed from its default when it was
   reached, settings and plugins (`PluginInfo::enabled_by_default`), each
   with its way back, then Restore all; its count in the sidebar is live.

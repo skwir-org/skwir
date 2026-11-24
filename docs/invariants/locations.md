@@ -332,7 +332,9 @@ and `notes.agree` are core `notes.*` commands.
 - **A lens's folders are found, never guessed (ADR-126).** A folder the
   lens does not keep by itself shows once a search of it found something
   (`Pane::folders_to_ask`, `registry::LeadsBelow`, ended at its first
-  hit), dimmed as only the way (`Pane::only_leads`, read of the lens's
+  hit; of a names index it asks, as a search shown as typed does, only
+  one answering at once, never opening or syncing one for a folder),
+  dimmed as only the way (`Pane::only_leads`, read of the lens's
   test alone, so it does not flicker). What cannot be looked into stands:
   a link, a remote folder (ADR-077), one that cannot be read, a listing
   that is no folder's. Words and `name:` never look below: they go with
@@ -392,7 +394,15 @@ and `notes.agree` are core `notes.*` commands.
   searched (unless `excluded:yes`) and what the walk leaves out anyway
   (`holes_walked`, one function for the walk and for the address field,
   which shows a search of `/` as typed only where it walks nothing:
-  ADR-150, 13). Each run says what its answer rests
+  ADR-150, 13). A search shown as typed (`provider::as_typed`) asks only
+  the index the field found answering at once (`provider::typed_index`,
+  the rule `answered_at_once` shares), opened as it runs, never synced
+  where that is a check; Enter or F5 searches it as any search unless an
+  index answered it live. Sizes and times stand only where the answer
+  held them live, and `size:` matches no folder (a folder has no size,
+  as its sort says). The kernel's mounts below a folder searched are
+  named by the rule itself (`Rule::names`, from the mount table in
+  memory), for every role. Each run says what its answer rests
   on once it is whole (`ListingEvent::RestsOn`: the index and its proof,
   or `None` for a walk), and the footer ("index up to date", "index
   checked …", "index as of …") and `entries` (`index`, and `as_of` as it

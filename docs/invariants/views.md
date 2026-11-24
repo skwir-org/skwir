@@ -917,12 +917,23 @@ around the views is in [shell.md](shell.md).
   out, a private one, one unread) is scanned, watched, and added in, so
   nothing goes missing; what caches and trashes hold is found by name
   through it (a signed `CACHEDIR.TAG`, a trash) and each one's room
-  summed. Those breakdowns are kept current by its journal, asked every
-  `REVALIDATE` while shown (`Worker::journals`): a change drops the
-  breakdowns holding it, a journal not every change since drops the
-  folder's. Only the root and what is scanned are watched. Elsewhere
-  the disk is read as below, and a figure means the same either way
-  (checked against a real engine: `just skwird-check`).
+  summed. What each answer says it did not count is scanned; a cache
+  inside a cache is one too, and what is scanned inside one counts as
+  room given back with it. A file of several names says how many; an
+  answer whose counts of names are not all known is not used. A
+  breakdown from an index is kept only with the journal that keeps it
+  current (`Cache::insert_journaled`), whichever pane or scan reuses it.
+  That journal is asked every `REVALIDATE` while a pane shows what it
+  keeps and someone looks (`App::looked_at`), and when a pane is shown
+  (`admit`): a change drops the breakdowns holding it and counts again
+  every pane showing them; a folder newly not covered is counted whole;
+  a journal not every change since drops all it kept; its mark never
+  moves past what a kept breakdown counted. A disk scan never counts
+  with a breakdown from an index (`Cache::counted`). Only the root and
+  what is scanned are watched; a breakdown whose scanned folders are not
+  all watched is not kept. Elsewhere the disk is read as below, and a
+  figure means the same either way (checked field by field, at every
+  level the map opens, against a real engine: `just skwird-check`).
 - **A change is counted at once; changes that keep coming wait.** A
   change that comes within `REVALIDATE_DUTY` (4) times the duration of
   the last recount a change asked for waits until then, remembered
