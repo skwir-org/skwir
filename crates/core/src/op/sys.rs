@@ -165,25 +165,37 @@ pub(super) fn clone_file(src: &File, dst: &File) -> bool {
 /// and times with it; on macOS `clonefile`, which shares the blocks on
 /// APFS and keeps the attributes, mode and times, used where they are to
 /// be kept (`keep_attributes`). `wrote` is told the
-/// bytes written so far, and stops the copy when it says no. `None`
-/// where the bytes are copied here (`copy_range`, a buffer): Linux, and
-/// a Mac volume that clones nothing.
+/// bytes written so far, and stops the copy when it says no. With
+/// `flush` ([`flushed_as_closed`]), Windows' copy is on its drive once
+/// made: flushed through its own handle as its copy ends, else (Wine's
+/// copy tells its routine nothing) opened again for it. `None` where the
+/// bytes are copied here (`copy_range`, a buffer): Linux, and a Mac
+/// volume that clones nothing.
 // One signature on every system: Windows' always copies, Linux's never.
 #[cfg_attr(not(target_os = "macos"), allow(clippy::unnecessary_wraps))]
 pub(super) fn copy_whole(
     src: &Path,
     dst: &Path,
     keep_attributes: bool,
+    flush: bool,
     wrote: &mut dyn FnMut(u64) -> bool,
 ) -> Option<io::Result<Whole>> {
     #[cfg(windows)]
     {
         let _ = keep_attributes;
-        Some(crate::fs::win::copy_file(src, dst, wrote).map(|()| Whole::Copied))
+        Some(
+            crate::fs::win::copy_file(src, dst, flush, wrote).and_then(|flushed| {
+                if flush && !flushed {
+                    flush_file(dst)?;
+                }
+                Ok(Whole::Copied)
+            }),
+        )
     }
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::ffi::OsStrExt;
+        let _ = flush;
         // A clone keeps every attribute: not for a copy asked without.
         if !keep_attributes {
             return None;
@@ -211,7 +223,7 @@ pub(super) fn copy_whole(
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = (src, dst, keep_attributes, wrote);
+        let _ = (src, dst, keep_attributes, flush, wrote);
         None
     }
 }
@@ -397,73 +409,99 @@ pub(super) fn written_through(dest_dir: &Path) -> bool {
     cfg!(target_os = "linux") && crate::fs::volume::is_removable(dest_dir)
 }
 
-/// Whether a move into `dest_dir` has the drive hold its copy before its
-/// original is removed ([`flush_tree`]): on Windows, onto a drive it calls
-/// removable, which it writes through itself only under its Quick removal
-/// policy (its default). Set to Better performance, it keeps what is
-/// written in memory, and a stick pulled out unejected would lose a copy
-/// whose original went. Linux's are written through as they go
-/// ([`written_through`]); a Mac's drives are not known removable yet.
-pub(super) fn flushed_before_removal(dest_dir: &Path) -> bool {
+/// Whether a copy into `dest_dir` (a file's, or one in its folder) is
+/// on its drive once made ([`copy_whole`]'s `flush`: `FlushFileBuffers`
+/// on the copy's own handle as its copy ends, which no administrator
+/// needs, as a whole volume's would), and a move's names before its
+/// original is removed ([`flush_names`]): on Windows, onto a drive it
+/// calls removable, which it writes through itself only under its Quick
+/// removal policy (its default), where this costs nothing. Set to Better
+/// performance, it keeps what is written in memory, and a stick pulled
+/// out unejected would lose a copy, and a move's original with it.
+/// Linux's are written through as they go ([`written_through`]); a Mac's
+/// drives are not known removable yet. Asks the system, not the drive.
+pub(super) fn flushed_as_closed(dest_dir: &Path) -> bool {
     cfg!(windows) && crate::fs::volume::is_removable(dest_dir)
 }
 
-/// Have the drive hold what is at `path`, a copy just placed, and all a
-/// folder there holds (Windows: `FlushFileBuffers` on each file, which no
-/// administrator needs, as a whole volume's would): each file's bytes and
-/// its record in its folder. Each folder is asked as well, for the names
-/// in it, where the volume flushes a folder (FAT does): one that does not
-/// is no failure. A read-only file is opened to its owner for it, and
-/// given its mode back. A link is left, its target no part of the copy.
-/// Elsewhere, nothing.
+/// Have the drive hold the names of what is at `path`, a copy just
+/// placed whose files were flushed as they were made
+/// ([`flushed_as_closed`]): the record of it in its folder, and of what
+/// each folder of it holds (Windows: `FlushFileBuffers` on each folder,
+/// where the volume flushes one, as FAT does: one that does not is no
+/// failure). No file is opened again. A link is left, its target no part
+/// of the copy. Elsewhere, nothing.
 ///
 /// # Errors
-/// When a file cannot be opened or its drive does not say it holds it.
+/// When a folder of it cannot be listed.
 // One signature on every system: Windows' may fail, the others never.
 #[cfg_attr(not(windows), allow(clippy::unnecessary_wraps))]
-pub(super) fn flush_tree(path: &Path) -> io::Result<()> {
+pub(super) fn flush_names(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
-        // `FILE_FLAG_BACKUP_SEMANTICS`: what opens a folder.
-        const FOLDER: u32 = 0x0200_0000;
-        let meta = std::fs::symlink_metadata(path)?;
-        if meta.is_dir() {
-            for entry in std::fs::read_dir(path)? {
-                flush_tree(&entry?.path())?;
+        /// Flush `dir` and each folder below it, deepest first.
+        fn below(dir: &Path) -> io::Result<()> {
+            for entry in std::fs::read_dir(dir)? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    below(&entry.path())?;
+                }
             }
-            if let Ok(folder) = std::fs::OpenOptions::new()
-                .write(true)
-                .custom_flags(FOLDER)
-                .open(path)
-            {
-                let _ = folder.sync_all();
-            }
-            return Ok(());
+            flush_folder(dir);
+            Ok(())
         }
-        if !meta.is_file() {
-            return Ok(());
+        if std::fs::symlink_metadata(path)?.is_dir() {
+            below(path)?;
         }
-        let flush = || {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(path)?
-                .sync_all()
-        };
-        let own = meta.permissions();
-        if open_to_owner(&own) {
-            return flush();
+        if let Some(parent) = path.parent() {
+            flush_folder(parent);
         }
-        std::fs::set_permissions(path, opened_to_owner(&own))?;
-        let flushed = flush();
-        std::fs::set_permissions(path, own)?;
-        flushed
+        Ok(())
     }
     #[cfg(not(windows))]
     {
         let _ = path;
         Ok(())
     }
+}
+
+/// Ask the drive to hold what the folder `dir` names (Windows:
+/// `FlushFileBuffers` on it), where its volume flushes a folder: one that
+/// does not, or that cannot be opened for it, is no failure.
+#[cfg(windows)]
+fn flush_folder(dir: &Path) {
+    use std::os::windows::fs::OpenOptionsExt;
+    // `FILE_FLAG_BACKUP_SEMANTICS`: what opens a folder.
+    const FOLDER: u32 = 0x0200_0000;
+    if let Ok(folder) = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(FOLDER)
+        .open(dir)
+    {
+        let _ = folder.sync_all();
+    }
+}
+
+/// Have the drive hold the file at `path`, a copy just made that was not
+/// flushed as it was made ([`copy_whole`]: Wine's copy tells its routine
+/// nothing), and its record (Windows: `FlushFileBuffers`, opened again):
+/// a read-only one opened to its owner for it, and given its mode back.
+#[cfg(windows)]
+fn flush_file(path: &Path) -> io::Result<()> {
+    let flush = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .sync_all()
+    };
+    let own = std::fs::symlink_metadata(path)?.permissions();
+    if open_to_owner(&own) {
+        return flush();
+    }
+    std::fs::set_permissions(path, opened_to_owner(&own))?;
+    let flushed = flush();
+    std::fs::set_permissions(path, own)?;
+    flushed
 }
 
 /// Whether a program, not the kernel, writes the volume `dir` is on

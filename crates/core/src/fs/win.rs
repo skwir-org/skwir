@@ -460,27 +460,53 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 /// (the mark a downloaded file carries), its attributes and its times.
 /// `progress` is told how many bytes are written so far; when it says
 /// no, the copy stops, Windows removes what it wrote, and it fails with
-/// `Interrupted`.
-pub fn copy_file(from: &Path, to: &Path, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
+/// `Interrupted`. With `flush`, each stream is flushed through the copy's
+/// own handle as its copy ends (`FlushFileBuffers`), before Windows
+/// closes it: its bytes and its record on its drive, no file opened
+/// again. Whether the copy was, its last stream flushed as it ended:
+/// false where the routine was told nothing of it (Wine's copy says
+/// nothing as it goes).
+pub fn copy_file(
+    from: &Path,
+    to: &Path,
+    flush: bool,
+    progress: &mut dyn FnMut(u64) -> bool,
+) -> io::Result<bool> {
     /// What the routine is handed, through the copy's `lpData`.
     struct Data<'a> {
         progress: &'a mut dyn FnMut(u64) -> bool,
+        flush: bool,
+        /// Whether the stream last told of was flushed as its copy ended.
+        flushed: bool,
+        /// What refused a flush, which stopped the copy.
+        refused: Option<io::Error>,
     }
 
     unsafe extern "system" fn routine(
         _total: i64,
         transferred: i64,
-        _stream_total: i64,
-        _stream_transferred: i64,
+        stream_total: i64,
+        stream_transferred: i64,
         _stream: u32,
         _reason: u32,
         _from: windows_sys::Win32::Foundation::HANDLE,
-        _to: windows_sys::Win32::Foundation::HANDLE,
+        to: windows_sys::Win32::Foundation::HANDLE,
         data: *const core::ffi::c_void,
     ) -> u32 {
         // SAFETY: `data` is the `Data` `copy_file` passed, alive and not
         // otherwise used while the copy runs on this thread.
         let data = unsafe { &mut *data.cast::<Data<'_>>().cast_mut() };
+        if data.flush {
+            // A stream's copy ended (an empty one as it begins): flushed
+            // before Windows gives it its times and closes it.
+            data.flushed = stream_transferred == stream_total;
+            // SAFETY: `to` is the handle of the stream being written,
+            // Windows' own, open while the routine runs.
+            if data.flushed && unsafe { fs::FlushFileBuffers(to) } == 0 {
+                data.refused = Some(io::Error::last_os_error());
+                return fs::PROGRESS_CANCEL;
+            }
+        }
         if (data.progress)(u64::try_from(transferred).unwrap_or(0)) {
             fs::PROGRESS_CONTINUE
         } else {
@@ -488,7 +514,12 @@ pub fn copy_file(from: &Path, to: &Path, progress: &mut dyn FnMut(u64) -> bool) 
         }
     }
 
-    let mut data = Data { progress };
+    let mut data = Data {
+        progress,
+        flush,
+        flushed: false,
+        refused: None,
+    };
     let (from, to) = (wide(from), wide(to));
     // SAFETY: both paths are NUL-terminated UTF-16 that outlive the call,
     // and `data` is what `routine` reads, alive until the copy returns.
@@ -503,7 +534,10 @@ pub fn copy_file(from: &Path, to: &Path, progress: &mut dyn FnMut(u64) -> bool) 
         )
     };
     if ok != 0 {
-        return Ok(());
+        return Ok(data.flushed);
+    }
+    if let Some(refused) = data.refused {
+        return Err(refused);
     }
     let error = io::Error::last_os_error();
     if error.raw_os_error().and_then(|c| u32::try_from(c).ok())

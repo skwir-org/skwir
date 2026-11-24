@@ -1028,8 +1028,9 @@ fn move_entry(
             }
             let copied_as = originals[0].1;
             // Onto a stick Windows may keep in memory: the copy on it
-            // before its original goes, or the original stays.
-            let flush = !through && sys::flushed_before_removal(&dest_dir);
+            // before its original goes, or the original stays. Its files
+            // are, as each was made (`sys::copy_whole`); its names too.
+            let flush = !through && sys::flushed_as_closed(&dest_dir);
             let remove = move || {
                 // Edited while it was copied, or since: the copy may not
                 // hold it, so nothing of it goes. Gone is nothing to remove.
@@ -1068,7 +1069,7 @@ fn move_entry(
                     for copy in
                         std::iter::once(target).chain(moved.beside.iter().map(PathBuf::as_path))
                     {
-                        sys::flush_tree(copy)
+                        sys::flush_names(copy)
                             .context(super::pace::not_written_out())
                             .context(super::context::moved_stays())?;
                     }
@@ -2293,39 +2294,83 @@ fn too_large_there(most: u64) -> Words {
 /// (`FileTooLarge`, `EFBIG`), whatever the volume (FAT where it is not
 /// told so: through FUSE, a share; ext2 and ext3 on blocks of 1 KiB, 16
 /// GiB; UDF; a server's). What the copy wrote is not kept for a Retry
-/// (`copy_staged`), and none is offered (`Executor::apply_plan`).
-///
-/// Where this process has a file size limit of its own (`RLIMIT_FSIZE`),
-/// the same `EFBIG` may be that limit's: a limit of the process, not of
-/// the volume, which `prlimit` (or the process, up to its hard limit) lifts
-/// while Skwir runs, so the partial is kept and Retry offered as for any
-/// failure. The system says which of the two refused only by the length
-/// written, which the error does not carry: any limit of the process's
-/// counts as possibly its, a rare setting, rather than a vain partial
-/// kept where it is not. A write the volume refuses with no such limit
-/// is the volume's.
+/// (`copy_staged`), and none is offered (`Executor::apply_plan`). One the
+/// copy told this process's own file size limit's ([`own_limit`]) is not
+/// the volume's: it is retried as any failure.
 pub(super) fn fails_again(error: &anyhow::Error) -> bool {
-    let too_large = error.chain().any(|cause| {
+    error.chain().any(|cause| {
         cause
             .downcast_ref::<std::io::Error>()
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::FileTooLarge)
-    });
-    too_large && !limited_here()
+            .is_some_and(volume_refused)
+    })
 }
 
-/// Whether this process may write no file past a length of its own
-/// (`RLIMIT_FSIZE`): a write past it fails with `EFBIG`, as one past what
-/// a volume keeps does.
-fn limited_here() -> bool {
+/// Whether `io` is a refusal of a file as larger than its volume keeps:
+/// `FileTooLarge`, unless the copy told it this process's own limit's.
+fn volume_refused(io: &std::io::Error) -> bool {
+    io.kind() == std::io::ErrorKind::FileTooLarge
+        && io.get_ref().is_none_or(|inner| !inner.is::<OwnLimit>())
+}
+
+/// This process's own file size limit (`RLIMIT_FSIZE`) refused a copy's
+/// write ([`own_limit`]): no limit of its volume, so a Retry may not meet
+/// it again (the limit lifted meanwhile, as `prlimit` lifts it while the
+/// process runs). Said as any `FileTooLarge` is.
+#[derive(Debug)]
+struct OwnLimit;
+
+impl std::fmt::Display for OwnLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // For logs alone: what a refusal says is its kind's words
+        // (`op::io_words`).
+        f.write_str("this process's file size limit")
+    }
+}
+
+impl std::error::Error for OwnLimit {}
+
+/// `error`, which cut short a copy that reached `reached` bytes, told as
+/// this process's own file size limit's (`OwnLimit`) where that limit is
+/// what refused it: a write refused as too large (`EFBIG`) is the limit's
+/// exactly where the copy reached the limit (`RLIMIT_FSIZE`'s soft one),
+/// and the volume's anywhere below it. How far it reached is where the
+/// refused write began (past a hole) or the copy's length (the system
+/// writes up to the limit, then refuses), the further of the two; a mount
+/// read in ranges at once (`ranges`) writes out of order, where its length
+/// alone is told. With `SIGXFSZ` as the system leaves it, a write reaching
+/// the limit ends the process before it returns: an `EFBIG` seen there
+/// says the signal is ignored (a test cutting copies short,
+/// `tests/retry.rs`). `reached` is asked only where a limit is set and
+/// the refusal is one.
+fn own_limit(error: anyhow::Error, reached: impl FnOnce() -> Option<u64>) -> anyhow::Error {
+    let refused = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(volume_refused)
+    });
+    if refused
+        && let Some(most) = file_size_limit()
+        && reached().is_some_and(|len| len >= most)
+    {
+        return anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            OwnLimit,
+        ));
+    }
+    error
+}
+
+/// The length this process may write no file past (`RLIMIT_FSIZE`'s
+/// soft limit), if any: a write past it fails with `EFBIG`, as one past
+/// what a volume keeps does.
+fn file_size_limit() -> Option<u64> {
     #[cfg(unix)]
     {
-        rustix::process::getrlimit(rustix::process::Resource::Fsize)
-            .current
-            .is_some()
+        rustix::process::getrlimit(rustix::process::Resource::Fsize).current
     }
     #[cfg(not(unix))]
     {
-        false
+        None
     }
 }
 
@@ -2493,10 +2538,13 @@ fn copy_file(
     // `clonefile` refuses one taken): what a run this one retries cut
     // short there is gone on from, or replaced, byte by byte.
     let mut written = 0;
+    // Onto a stick Windows may keep in memory: on it once made, through
+    // its own handle, however it is copied.
+    let flush = sys::flushed_as_closed(dst);
     let whole = if ctx.is_cut(dst) {
         None
     } else {
-        sys::copy_whole(src, dst, preserve_attributes, &mut |total| {
+        sys::copy_whole(src, dst, preserve_attributes, flush, &mut |total| {
             // Counted as the system says: nothing is written through off
             // Linux yet (`fs::volume::is_removable`).
             ctx.advance(total.saturating_sub(written));
@@ -2611,8 +2659,12 @@ fn copy_file(
         // Should it fail partway, what it wrote may be gone on from.
         ctx.copying(dst, &m);
         let began = std::time::Instant::now();
-        let end =
-            copy_contents(&sf, &df, (&m, devices), from, pace, ctx).couldnt(|| not_copied(src))?;
+        // Refused as too large: by the volume, or where the copy reached
+        // this process's own limit, by it (`own_limit`), as its length
+        // says.
+        let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx)
+            .map_err(|error| own_limit(error, || df.metadata().ok().map(|meta| meta.len())))
+            .couldnt(|| not_copied(src))?;
         // From a server, how fast it reads (its thumbnails' Automatic).
         crate::fs::reach::note_read(src, dst, end.saturating_sub(from), began.elapsed());
         // A mount may answer the end of a file its server stopped serving,
@@ -2630,6 +2682,9 @@ fn copy_file(
                 note = "Why a copy failed: its source ended early (a server stopped serving it). read: how many bytes were read; bytes: how many it holds. Begins in lower case."
             ))));
         }
+    }
+    if flush {
+        df.sync_all().couldnt(|| not_copied(src))?;
     }
     // Whole once closing it says so: a FUSE remote sends there what it
     // held, and says there what its server refused. Its mode and time are
@@ -2841,6 +2896,10 @@ fn copy_sparse(
 ) -> anyhow::Result<()> {
     #[cfg(unix)]
     use std::os::unix::fs::FileExt;
+    // Written at `from`, past a hole maybe: what a write refused as too
+    // large reached is the further of that and the copy's length
+    // (`own_limit`), its length alone where it writes up to a limit.
+    let reached = |from: u64| move || Some(df.metadata().map_or(from, |meta| meta.len().max(from)));
     let mut at = start;
     // A hole moves no byte: done, never speed (ADR-113).
     while let Some((data, hole)) = sys::next_data(sf, at)? {
@@ -2854,7 +2913,8 @@ fn copy_sparse(
             let kernel = if ctx.kernel_refuses(devices, Kernel::Range) {
                 None
             } else {
-                sys::copy_range_at(sf, df, from, want)?
+                sys::copy_range_at(sf, df, from, want)
+                    .map_err(|error| own_limit(error.into(), reached(from)))?
             };
             // Without Unix the buffer's branch only ends the copy, which
             // reads as a let-else there, and as none here.
@@ -2873,7 +2933,8 @@ fn copy_sparse(
                     if n == 0 {
                         break;
                     }
-                    df.write_all_at(&buf[..n], from)?;
+                    df.write_all_at(&buf[..n], from)
+                        .map_err(|error| own_limit(error.into(), reached(from)))?;
                     n
                 }
                 #[cfg(not(unix))]
@@ -2891,7 +2952,9 @@ fn copy_sparse(
         at = hole.max(from);
     }
     ctx.advance_unmeasured(len.saturating_sub(at));
-    df.set_len(len)?;
+    // Its end a hole, the copy reaches its length only here.
+    df.set_len(len)
+        .map_err(|error| own_limit(error.into(), || Some(len)))?;
     Ok(())
 }
 
@@ -6631,52 +6694,72 @@ mod tests {
         assert_eq!(refused(copy(&src).check(&ctx)), None, "keeps any");
     }
 
-    /// A move's copy flushed onto a drive Windows may keep in memory
-    /// (`sys::flush_tree`): each file and folder of it, a read-only file
-    /// opened for it and given its mark back, as it was.
+    /// A copy flushed onto a drive Windows may keep in memory, as it is
+    /// made (`sys::copy_whole`'s `flush`: through its own handle, or
+    /// opened again where its routine is told nothing, as under Wine), and
+    /// a move's names (`sys::flush_names`): whole, a read-only file given
+    /// its mark back, as it was.
     #[cfg(windows)]
     #[test]
     fn a_copy_flushed_onto_its_drive_is_as_it_was() {
         let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let dir = tempfile::tempdir_in(base).unwrap();
-        let copy = dir.path().join("it's moved, été");
-        std::fs::create_dir_all(copy.join("inside")).unwrap();
-        std::fs::write(copy.join("inside/notes.txt"), b"notes").unwrap();
-        let sealed = copy.join("sealed.txt");
+        let sealed = dir.path().join("sealed.txt");
         std::fs::write(&sealed, b"sealed").unwrap();
         let mut read_only = std::fs::metadata(&sealed).unwrap().permissions();
         read_only.set_readonly(true);
         std::fs::set_permissions(&sealed, read_only).unwrap();
-        sys::flush_tree(&copy).unwrap();
-        sys::flush_tree(&sealed).unwrap();
-        assert!(std::fs::metadata(&sealed).unwrap().permissions().readonly());
-        assert_eq!(std::fs::read(&sealed).unwrap(), b"sealed");
+        let copy = dir.path().join("it's moved, été");
+        std::fs::create_dir_all(copy.join("inside")).unwrap();
+        std::fs::write(copy.join("inside/notes.txt"), b"notes").unwrap();
+        let made = copy.join("sealed.txt");
+        let whole =
+            sys::copy_whole(&sealed, &made, true, true, &mut |_| true).expect("Windows copies");
+        assert_eq!(whole.unwrap(), sys::Whole::Copied);
+        let empty = copy.join("inside/empty");
+        std::fs::write(dir.path().join("empty"), b"").unwrap();
+        sys::copy_whole(&dir.path().join("empty"), &empty, true, true, &mut |_| true)
+            .expect("Windows copies")
+            .unwrap();
+        sys::flush_names(&copy).unwrap();
+        sys::flush_names(&made).unwrap();
+        assert!(std::fs::metadata(&made).unwrap().permissions().readonly());
+        assert_eq!(std::fs::read(&made).unwrap(), b"sealed");
+        assert_eq!(std::fs::read(&empty).unwrap(), b"");
         assert_eq!(
             std::fs::read(copy.join("inside/notes.txt")).unwrap(),
             b"notes"
         );
-        let mut open = std::fs::metadata(&sealed).unwrap().permissions();
-        #[allow(clippy::permissions_set_readonly_false)] // Windows: no bits for others.
-        open.set_readonly(false);
-        std::fs::set_permissions(&sealed, open).unwrap();
+        for file in [&sealed, &made] {
+            let mut open = std::fs::metadata(file).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)] // Windows: no bits for others.
+            open.set_readonly(false);
+            std::fs::set_permissions(file, open).unwrap();
+        }
     }
 
     /// A write its volume refused as too large meets its Retry again: not
     /// retried. One a full drive refused is, and so is one the process's
-    /// own file size limit may have refused (`RLIMIT_FSIZE`, which can be
-    /// lifted while it runs; `tests/retry.rs` goes on after one).
+    /// own file size limit refused (`RLIMIT_FSIZE`, which can be lifted
+    /// while it runs; `tests/retry.rs` goes on after one): told apart by
+    /// how far the copy went, the limit's only where it reached it.
     #[cfg(unix)]
     #[test]
     fn a_write_its_volume_refused_as_too_large_is_not_retried() {
-        let refused = |kind: std::io::ErrorKind| {
-            not_copied(Path::new("/example/it's a film.mkv")).because(std::io::Error::from(kind))
-        };
+        let not_copied = || not_copied(Path::new("/example/it's a film.mkv"));
+        let refused = |kind: std::io::ErrorKind| not_copied().because(std::io::Error::from(kind));
         let too_large = refused(std::io::ErrorKind::FileTooLarge);
         assert!(fails_again(&too_large), "the volume's");
         assert!(!fails_again(&refused(std::io::ErrorKind::StorageFull)));
+        let cut = |reached: u64| {
+            let error = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::FileTooLarge));
+            not_copied().because(own_limit(error, || Some(reached)))
+        };
+        // No limit of the process's: the volume's, however far it went.
+        assert!(fails_again(&cut(u64::MAX - 1)));
         // A limit of this test's own process (nextest runs each in one of
-        // its own), far above anything it writes.
+        // its own) of 1 MiB, which nothing here writes past.
         let limit = |bytes| {
             rustix::process::setrlimit(
                 rustix::process::Resource::Fsize,
@@ -6687,11 +6770,22 @@ mod tests {
             )
             .unwrap();
         };
-        limit(Some(1 << 40));
-        let limited = fails_again(&too_large);
+        limit(Some(1 << 20));
+        let (at_the_limit, below) = (cut(1 << 20), cut((1 << 20) - 1));
+        let anything = fails_again(&too_large);
         limit(None);
-        assert!(!limited, "maybe the process's own limit: retried");
-        assert!(fails_again(&too_large), "the volume's again");
+        assert!(
+            !fails_again(&at_the_limit),
+            "the process's own limit: retried"
+        );
+        assert!(fails_again(&below), "below it, the volume's");
+        assert!(anything, "a refusal the copy did not tell is the volume's");
+        // Told as any refusal of a file too large.
+        let said = Words::of_error(at_the_limit).english();
+        assert!(
+            said.ends_with("the file is too large for that drive"),
+            "{said}"
+        );
     }
 
     /// The home's volume keeps any file: only a FAT one is said to keep
