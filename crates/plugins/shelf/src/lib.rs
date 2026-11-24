@@ -2,7 +2,7 @@
 //! move, copy, or trash them all at once into wherever you are. The shelf is
 //! also a virtual location (`shelf:`) so any view can show it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -122,18 +122,21 @@ impl Shelf {
         for (old, path, entry, ticket) in found {
             // Only items still on the shelf, still at that path; what
             // could not be read there says nothing.
-            let (Some(n), Some(entry)) = (s.at_path(old, &path), entry) else {
+            let Some(entry) = entry.filter(|_| s.items.at(old, &path).is_some()) else {
                 continue;
             };
             if entry.id == old {
                 // Its file under its name still (a rename undone before
                 // this was asked): told, unless a read begun later was.
                 if s.newest.applies(&old, ticket) {
+                    if let Some(slot) = s.items.slot_mut(old) {
+                        slot.filled |= entry.metadata.is_filled();
+                    }
                     updated.push(entry);
                 }
                 continue;
             }
-            if s.at.contains_key(&entry.id) {
+            if s.items.contains(entry.id) {
                 // Now the same file as another item: keep that one.
                 lost.push(old);
                 continue;
@@ -142,8 +145,10 @@ impl Shelf {
             // under the id it takes, so a read of that begun before (a
             // hydration of the name an undo gives back) is left out.
             s.newest.applies(&entry.id, ticket);
-            s.rekey(n, entry.id);
-            s.items[n].kind = entry.kind;
+            if let Some(slot) = s.items.rekey(old, entry.id) {
+                slot.item.kind = entry.kind;
+                slot.filled = entry.metadata.is_filled();
+            }
             renamed.push((old, entry));
         }
         // Renamed, so a row keeps its place and its selection.
@@ -159,60 +164,80 @@ impl Shelf {
     /// Hydrate `items` for the listing of `sink`: stat-ed and filled one
     /// folder at a time, each answer told under the shelf's lock only
     /// where the shelf holds it still where it was looked for and no read
-    /// of it begun later was told (`State::newest`). Worker-only: this is
-    /// I/O, in the lane of the paths.
+    /// of it begun later was told (`State::newest`). Returns what is to be
+    /// read again: left out behind a read that told its row less
+    /// (`Slot::filled`). Worker-only: this is I/O, in the lane of the
+    /// paths.
     fn hydrate_now(
         &self,
         items: &[(EntryId, PathBuf)],
         metadata: &MetadataProviders,
         sink: &EventSink,
         cancel: &CancelToken,
-    ) {
+    ) -> Vec<(EntryId, PathBuf)> {
         // Dropped last, after its answers are told.
         let _reading = Reading::begin(&self.state, |s| &mut s.newest, &self.tickets);
         let asked: hashing::Map<EntryId, &Path> = items
             .iter()
             .map(|(id, path)| (*id, path.as_path()))
             .collect();
-        let (mut reads, mut held) = (Vec::new(), 0);
+        let (mut reads, mut held, mut behind) = (Vec::new(), 0, Vec::new());
         read_paths_newest(items, metadata, cancel, &self.tickets, |read| {
             held += read.found.len() + read.gone.len() + read.unread.len();
             reads.push(read);
             if held >= SENT_EVERY {
-                self.answer(std::mem::take(&mut reads), &asked, sink, cancel);
+                behind.extend(self.answer(std::mem::take(&mut reads), &asked, sink, cancel));
                 held = 0;
             }
         });
-        self.answer(reads, &asked, sink, cancel);
+        behind.extend(self.answer(reads, &asked, sink, cancel));
+        behind
     }
 
     /// Tell what `reads` found, `asked` where each was looked for. Moved
     /// or gone is decided here, under the lock, before anything is told:
     /// gone from where it was looked for, it leaves the shelf; moved
     /// meanwhile, or moved and moved back (a rename undone), the follow's
-    /// read of it stands.
+    /// read of it stands. Returns what is to be read again, as asked:
+    /// left out behind a read that told its row less than this one would
+    /// (an item shelved again bare, a plan's rename), or its row stays
+    /// unfilled for good, its asker waiting on this answer. Each read
+    /// again takes later tickets than the one it was left out behind.
     fn answer(
         &self,
         reads: Vec<Read>,
         asked: &hashing::Map<EntryId, &Path>,
         sink: &EventSink,
         cancel: &CancelToken,
-    ) {
+    ) -> Vec<(EntryId, PathBuf)> {
         let mut s = self.lock();
         if cancel.is_cancelled() {
-            return;
+            return Vec::new();
         }
         let s = &mut *s;
-        let stands = |s: &mut State, id: EntryId, ticket: u64| {
-            asked
-                .get(&id)
-                .is_some_and(|path| s.at_path(id, path).is_some())
-                && s.newest.applies(&id, ticket)
+        let mut behind = Vec::new();
+        let mut stands = |s: &mut State, id: EntryId, ticket: u64| {
+            let Some(&path) = asked.get(&id) else {
+                return false;
+            };
+            let Some(filled) = s.items.at(id, path).map(|slot| slot.filled) else {
+                return false;
+            };
+            if s.newest.applies(&id, ticket) {
+                return true;
+            }
+            if !filled {
+                behind.push((id, path.to_path_buf()));
+            }
+            false
         };
         let (mut updated, mut gone, mut unread) = (Vec::new(), Vec::new(), Vec::new());
         for read in reads {
             for (e, ticket) in read.found {
                 if stands(s, e.id, ticket) {
+                    if let Some(slot) = s.items.slot_mut(e.id) {
+                        slot.filled |= e.metadata.is_filled();
+                    }
                     updated.push(e);
                 }
             }
@@ -235,16 +260,110 @@ impl Shelf {
         if !unread.is_empty() {
             sink.send(ListingEvent::Unreadable(unread));
         }
+        behind
+    }
+}
+
+/// A shelved item, with what its rows were last told.
+struct Slot {
+    item: ShelfItem,
+    /// Whether by a read the metadata providers filled (a hydration's, a
+    /// follow's), not less (shelved bare, renamed by a plan): a hydration
+    /// left out behind one that told less is read again (`Shelf::answer`).
+    filled: bool,
+}
+
+/// The items shelved, in the order they were shelved, each found by its id
+/// at once: taking some off costs what is taken, never the whole shelf,
+/// which `path_of` waits for from the window's thread.
+#[derive(Default)]
+struct Items {
+    /// By the order they were shelved in.
+    by_order: BTreeMap<u64, Slot>,
+    /// Each item's place in `by_order`, by its id: one item an id.
+    by_id: hashing::Map<EntryId, u64>,
+    /// The place of the next item shelved.
+    next: u64,
+}
+
+impl Items {
+    fn iter(&self) -> impl Iterator<Item = &ShelfItem> {
+        self.by_order.values().map(|slot| &slot.item)
+    }
+
+    fn slots_mut(&mut self) -> impl Iterator<Item = &mut Slot> {
+        self.by_order.values_mut()
+    }
+
+    fn len(&self) -> usize {
+        self.by_order.len()
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.by_order.is_empty()
+    }
+
+    fn to_vec(&self) -> Vec<ShelfItem> {
+        self.iter().cloned().collect()
+    }
+
+    fn contains(&self, id: EntryId) -> bool {
+        self.by_id.contains_key(&id)
+    }
+
+    fn get(&self, id: EntryId) -> Option<&ShelfItem> {
+        Some(&self.by_order.get(self.by_id.get(&id)?)?.item)
+    }
+
+    fn slot_mut(&mut self, id: EntryId) -> Option<&mut Slot> {
+        self.by_order.get_mut(self.by_id.get(&id)?)
+    }
+
+    /// The item `id`, if it is still at `path`.
+    fn at(&self, id: EntryId, path: &Path) -> Option<&Slot> {
+        self.by_order
+            .get(self.by_id.get(&id)?)
+            .filter(|slot| slot.item.path == path)
+    }
+
+    /// Shelve `item` last, its rows told `filled` or not; false where its
+    /// id is shelved already.
+    fn push(&mut self, item: ShelfItem, filled: bool) -> bool {
+        if self.by_id.contains_key(&item.id) {
+            return false;
+        }
+        let place = self.next;
+        self.next += 1;
+        self.by_id.insert(item.id, place);
+        self.by_order.insert(place, Slot { item, filled });
+        true
+    }
+
+    fn remove(&mut self, id: EntryId) -> Option<ShelfItem> {
+        let place = self.by_id.remove(&id)?;
+        self.by_order.remove(&place).map(|slot| slot.item)
+    }
+
+    /// The item `old` is the entry `id` now, in its place (`id` not
+    /// shelved).
+    fn rekey(&mut self, old: EntryId, id: EntryId) -> Option<&mut Slot> {
+        let place = self.by_id.remove(&old)?;
+        self.by_id.insert(id, place);
+        let slot = self.by_order.get_mut(&place)?;
+        slot.item.id = id;
+        Some(slot)
+    }
+
+    fn clear(&mut self) {
+        self.by_order.clear();
+        self.by_id.clear();
     }
 }
 
 #[derive(Default)]
 struct State {
-    items: Vec<ShelfItem>,
-    /// Where each item is in `items`, by its id: what a read of one, a
-    /// plan's change and `path_of` ask, on a shelf that may hold a
-    /// folder's hundred thousand.
-    at: hashing::Map<EntryId, usize>,
+    items: Items,
     /// Open `shelf:` listings to keep live.
     sinks: Vec<EventSink>,
     /// Where the item count is published; empty while disabled.
@@ -257,36 +376,6 @@ struct State {
 }
 
 impl State {
-    /// Where the item `id` is in `items`, if it is still at `path`.
-    fn at_path(&self, id: EntryId, path: &Path) -> Option<usize> {
-        self.at
-            .get(&id)
-            .copied()
-            .filter(|&n| self.items[n].path == path)
-    }
-
-    fn push(&mut self, item: ShelfItem) {
-        self.at.entry(item.id).or_insert(self.items.len());
-        self.items.push(item);
-    }
-
-    /// `at` made again, after items left.
-    fn reindex(&mut self) {
-        self.at.clear();
-        for (n, i) in self.items.iter().enumerate() {
-            self.at.entry(i.id).or_insert(n);
-        }
-    }
-
-    /// The item at `n` is the entry `id` now.
-    fn rekey(&mut self, n: usize, id: EntryId) {
-        let old = std::mem::replace(&mut self.items[n].id, id);
-        if self.at.get(&old) == Some(&n) {
-            self.at.remove(&old);
-        }
-        self.at.insert(id, n);
-    }
-
     /// `ids` are as a change trusted without a stat says (a plan's, an
     /// item shelved as its listing knew it), as of now: what a read of one
     /// begun before found, told after, is left out.
@@ -322,23 +411,15 @@ impl State {
         }
     }
 
-    /// Drop `ids` from the shelf and from every open listing of it.
+    /// Drop `ids` from the shelf and from every open listing of it, each
+    /// by its id: what is taken off costs, never the whole shelf.
     fn forget(&mut self, ids: &[EntryId]) -> usize {
-        if ids.is_empty() {
-            return 0;
-        }
-        // Asked of every item: a set, as Clear asks them all.
-        let ids: hashing::Set<EntryId> = ids.iter().copied().collect();
-        let mut removed = Vec::new();
-        self.items.retain(|i| {
-            let gone = ids.contains(&i.id);
-            if gone {
-                removed.push(i.id);
-            }
-            !gone
-        });
+        let removed: Vec<EntryId> = ids
+            .iter()
+            .copied()
+            .filter(|id| self.items.remove(*id).is_some())
+            .collect();
         if !removed.is_empty() {
-            self.reindex();
             self.broadcast(&ListingEvent::Removed(removed.clone()));
             self.publish_count();
         }
@@ -378,7 +459,7 @@ struct RemoveArgs {
 impl ShelfPlugin {
     /// Current items, in insertion order.
     pub fn items(&self) -> Vec<ShelfItem> {
-        self.state.lock().items.clone()
+        self.state.lock().items.to_vec()
     }
 
     /// Shelve `new` with the entries their listing already holds, so
@@ -396,9 +477,12 @@ impl ShelfPlugin {
         };
         let mut added = Vec::new();
         for ((item, entry), fresh) in new.into_iter().zip(fresh) {
-            if fresh {
-                added.push(entry.unwrap_or_else(|| item.entry()));
-                s.push(item);
+            if !fresh {
+                continue;
+            }
+            let entry = entry.unwrap_or_else(|| item.entry());
+            if s.items.push(item, entry.metadata.is_filled()) {
+                added.push(entry);
             }
         }
         let n = added.len();
@@ -433,7 +517,8 @@ fn follow(state: &Arc<Shelf>, changes: &[Change], app: &App) {
     let mut renamed = Vec::new();
     let mut moved = Vec::new();
     let follow = skwir_core::op::Follow::new(changes);
-    for item in &mut s.items {
+    for slot in s.items.slots_mut() {
+        let item = &mut slot.item;
         let Some(path) = follow.through(&item.path).at else {
             gone.push(item.id);
             continue;
@@ -442,9 +527,11 @@ fn follow(state: &Arc<Shelf>, changes: &[Change], app: &App) {
             if let Some(name) = path.file_name().filter(|n| *n != item.name) {
                 item.name = name.to_owned();
                 renamed.push(item.entry());
+                // Told bare, under its new name.
+                slot.filled = false;
             }
-            item.path.clone_from(&path);
-            moved.push((item.id, path));
+            slot.item.path.clone_from(&path);
+            moved.push((slot.item.id, path));
         }
     }
     // Where the plan put them, as of now: what a hydration read where they
@@ -533,7 +620,7 @@ fn dropped_item(entry: &EntryRef) -> Option<(ShelfItem, Option<Entry>)> {
     ))
 }
 
-fn plan_into(items: &[ShelfItem], dest: &Path, copy: bool, app: &App) -> anyhow::Result<Outcome> {
+fn plan_into(items: &Items, dest: &Path, copy: bool, app: &App) -> anyhow::Result<Outcome> {
     let steps: Vec<Box<dyn Operation>> = items
         .iter()
         .filter(|i| copy || i.path.parent() != Some(dest))
@@ -620,7 +707,7 @@ impl OpenLocation for ShelfLocation {
         let items: Vec<(EntryId, PathBuf)> = {
             let s = self.state.lock();
             ids.iter()
-                .filter_map(|id| Some((*id, s.items[*s.at.get(id)?].path.clone())))
+                .filter_map(|id| Some((*id, s.items.get(*id)?.path.clone())))
                 .collect()
         };
         if items.is_empty() {
@@ -640,7 +727,15 @@ impl OpenLocation for ShelfLocation {
                     priority,
                     "shelf.stat",
                     cancel.clone(),
-                    move || state.hydrate_now(&items, &metadata, &sink, &cancel),
+                    move || {
+                        let mut items = items;
+                        // What was left out behind a read that told its
+                        // row less, read again: each time with tickets
+                        // later than the read it was left out behind.
+                        while !items.is_empty() && !cancel.is_cancelled() {
+                            items = state.hydrate_now(&items, &metadata, &sink, &cancel);
+                        }
+                    },
                 );
             }
         }
@@ -648,7 +743,7 @@ impl OpenLocation for ShelfLocation {
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
         let s = self.state.lock();
-        s.at.get(&id).map(|&n| s.items[n].path.clone())
+        s.items.get(id).map(|i| i.path.clone())
     }
 
     fn refresh(&self) {
@@ -874,7 +969,7 @@ impl Plugin for ShelfPlugin {
                 words!(shelf_list = "List shelf"),
                 words!(shelf_list_description = "Return the shelved entries"),
                 move |_, _| {
-                    let items = st.lock().items.clone();
+                    let items = st.lock().items.to_vec();
                     Ok(Outcome::Value(serde_json::to_value(items)?))
                 },
             )
@@ -922,7 +1017,7 @@ impl Plugin for ShelfPlugin {
                 words!(shelf_trash = "Trash shelf"),
                 words!(shelf_trash_description = "Move every shelved entry to the trash (plan)"),
                 move |_, _| {
-                    let items = st.lock().items.clone();
+                    let items = st.lock().items.to_vec();
                     if items.is_empty() {
                         anyhow::bail!(words!(
                             shelf_nothing_to_trash = "the shelf is empty",
@@ -987,7 +1082,6 @@ impl Plugin for ShelfPlugin {
     fn on_disable(&self, _app: &App) {
         let mut s = self.state.lock();
         s.items.clear();
-        s.at.clear();
         s.sinks.clear();
         s.app = Weak::new();
     }
@@ -1417,7 +1511,7 @@ mod tests {
         for event in open.events().try_iter() {
             listing.apply(event);
         }
-        let items = shelf.lock().items.clone();
+        let items = shelf.lock().items.to_vec();
         assert!(
             items.iter().any(|i| i.id == x && i.path == here),
             "still shelved where it is: {items:?}"
@@ -1425,6 +1519,57 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(listing.get(x).map(|e| e.name.clone()), Some(name.into()));
         assert_eq!(listing.len(), 2);
+    }
+
+    /// An item taken off the shelf and shelved again bare while its
+    /// hydration is held: told after, that read is left out behind the
+    /// shelving, which told its row less, and is read again, so the row is
+    /// filled though nothing asks for it again.
+    #[test]
+    fn an_item_shelved_again_while_its_hydration_is_held_is_read_again() {
+        let tmp = home_tempdir();
+        let src = tmp.path().join("l'été, à l'ombre");
+        std::fs::create_dir(&src).unwrap();
+        let name = "it's ☂ shelved again.txt";
+        std::fs::write(src.join(name), b"shelved").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = Arc::new(ShelfPlugin::default());
+        let shelf = Arc::clone(&plugin.state);
+        app.plugins.add(plugin, &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&src)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        select(&app, pane, &[name]);
+        app.dispatch(&Invocation::new("shelf.add")).unwrap();
+        let x = shelf.lock().items.iter().next().unwrap().id;
+        let open = app.open_location(&Location::parse("shelf:")).unwrap();
+        let mut listing = skwir_core::Listing::default();
+        until(
+            &*open,
+            &mut listing,
+            "listed",
+            skwir_core::Listing::is_complete,
+        );
+        assert!(!listing.get(x).unwrap().metadata.is_filled());
+        let (held, go) = hold(&app, name);
+        open.hydrate(&[x], Priority::Visible);
+        held.recv_timeout(Duration::from_secs(10)).expect("held");
+        // Taken off and shelved again, as the pane's listing knows it: bare.
+        let ids = serde_json::json!({ "ids": [x] });
+        app.dispatch(&Invocation::with_args("shelf.remove", &ids))
+            .unwrap();
+        app.dispatch(&Invocation::with_args("shelf.add", &ids))
+            .unwrap();
+        until(&*open, &mut listing, "shelved again", |l| {
+            l.get(x).is_some()
+        });
+        // The hydration let go: its answer is the older, and its row is
+        // read again rather than left unfilled.
+        go.send(()).unwrap();
+        until(&*open, &mut listing, "filled", |l| {
+            l.get(x).is_some_and(|e| e.metadata.is_filled())
+        });
+        assert_eq!(shelf.lock().items.len(), 1);
     }
 
     /// A hydration of a shelf of a folder's worth of files, all gone (their
