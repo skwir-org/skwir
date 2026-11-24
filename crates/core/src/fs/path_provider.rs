@@ -2298,15 +2298,104 @@ mod tests {
         open.close();
     }
 
+    /// What stats found is told only if no stat begun later was: an older
+    /// stat after a newer is left out, read again where only it was
+    /// filled by the providers (the newer a stat alone, for an order); a
+    /// rename left out takes out the row it renames; what no stat found
+    /// here (no ticket) and what is no entry's now pass as they are.
+    #[test]
+    fn of_two_stats_the_later_begun_stands() {
+        let id = |ino| EntryId {
+            file: FileId::new(1, ino),
+            at: 0,
+        };
+        let entry = |ino, filled: bool| {
+            let mut e = Entry::new(id(ino), format!("it's {ino}, été"), EntryKind::File);
+            e.metadata.set(
+                crate::entry::keys::SIZE,
+                crate::entry::Value::UInt(ino),
+                crate::entry::Provenance::Filesystem,
+            );
+            if filled {
+                e.metadata.mark_filled();
+            }
+            e
+        };
+        let mut names = Names::default();
+        for ino in 1..=3 {
+            names.insert(id(ino), format!("it's {ino}, été").into());
+        }
+        let tickets = |of: &[(u64, u64)]| -> hashing::Map<EntryId, u64> {
+            of.iter().map(|&(ino, ticket)| (id(ino), ticket)).collect()
+        };
+        let told = |(events, again): (Vec<ListingEvent>, Vec<EntryId>)| {
+            let ids: Vec<EntryId> = events
+                .iter()
+                .flat_map(|e| match e {
+                    ListingEvent::Updated(batch) | ListingEvent::Added(batch) => {
+                        batch.iter().map(|e| e.id).collect::<Vec<_>>()
+                    }
+                    _ => Vec::new(),
+                })
+                .collect();
+            (ids, again)
+        };
+        // A stat alone begun later told first: the filled one after it is
+        // left out, and read again.
+        let newer = names.newest(
+            ListingEvent::Updated(vec![entry(1, false)]),
+            &tickets(&[(1, 7)]),
+        );
+        assert_eq!(told(newer), (vec![id(1)], vec![]));
+        let older = names.newest(
+            ListingEvent::Updated(vec![entry(1, true), entry(2, true)]),
+            &tickets(&[(1, 5), (2, 6)]),
+        );
+        assert_eq!(told(older), (vec![id(2)], vec![id(1)]), "1 read again");
+        // Filled told, a stat alone after it from before: left out, as
+        // the row holds more.
+        let older = names.newest(
+            ListingEvent::Updated(vec![entry(2, false)]),
+            &tickets(&[(2, 4)]),
+        );
+        assert_eq!(told(older), (vec![], vec![]));
+        // Later still: told, and filled still (the row keeps its fields).
+        let later = names.newest(
+            ListingEvent::Added(vec![entry(2, false)]),
+            &tickets(&[(2, 9)]),
+        );
+        assert_eq!(told(later), (vec![id(2)], vec![]));
+        assert!(Told(names.stated[&id(2)]).filled());
+        // No ticket, or no entry's now: as they are, nothing noted.
+        let bare = names.newest(
+            ListingEvent::Added(vec![entry(3, false), entry(4, false)]),
+            &tickets(&[(4, 1)]),
+        );
+        assert_eq!(told(bare).0, [id(3), id(4)]);
+        assert!(!names.stated.contains_key(&id(3)) && !names.stated.contains_key(&id(4)));
+        // A rename from a stat begun before the one told: its row goes.
+        let (events, _) = names.newest(
+            ListingEvent::Renamed(vec![(id(9), entry(2, true))]),
+            &tickets(&[(2, 8)]),
+        );
+        assert!(
+            matches!(&events[..], [ListingEvent::Renamed(kept), ListingEvent::Removed(gone)]
+                if kept.is_empty() && gone == &[id(9)]),
+            "{events:?}"
+        );
+    }
+
     /// A metadata provider that, once armed, holds the next fill it is
     /// asked until let go: a hydration whose providers are slow.
-    struct Held {
+    #[cfg(target_os = "linux")]
+    struct SlowFill {
         armed: std::sync::atomic::AtomicBool,
         entered: Mutex<std::sync::mpsc::Sender<()>>,
         release: Mutex<std::sync::mpsc::Receiver<()>>,
     }
 
-    impl crate::metadata::MetadataProvider for Held {
+    #[cfg(target_os = "linux")]
+    impl crate::metadata::MetadataProvider for SlowFill {
         fn id(&self) -> &'static str {
             "held"
         }
@@ -2334,7 +2423,7 @@ mod tests {
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
         let (entered, on_entered) = std::sync::mpsc::channel();
         let (release, on_release) = std::sync::mpsc::channel();
-        let held = Arc::new(Held {
+        let held = Arc::new(SlowFill {
             armed: std::sync::atomic::AtomicBool::new(false),
             entered: Mutex::new(entered),
             release: Mutex::new(on_release),
@@ -2355,6 +2444,9 @@ mod tests {
         let marked = |e: &Entry| e.metadata.value(keys::WRITING) == Some(&Value::Bool(true));
         let size = |e: &Entry| e.metadata.value(keys::SIZE).cloned();
 
+        for event in events_until(&open.rx, |e| matches!(e, ListingEvent::Complete)) {
+            listing.apply(event);
+        }
         let mut file = std::fs::File::create(dir.join(name)).unwrap();
         file.write_all(b"the first part").unwrap();
         until(&mut listing, &marked);

@@ -500,8 +500,12 @@ working in an area, also read that area's rules (see
   time) as a write (`IN_MODIFY`) no close follows: a writer putting a
   file's time back gives both times (`FileTimes` with the access time),
   told as attributes. A stat of it meanwhile carries the mark too (a
-  row hydrated: the folder's provider keeps what was last told); a
-  rescan, which says nothing of it (the kernel's queue
+  row hydrated: the folder's provider keeps what was last told). Of two
+  stats of an entry, the one begun later stands, whichever is told last:
+  each takes a ticket just before it reads (`Shared::ticket`), and what an
+  older one found is left out once a newer was told (`Names::newest`,
+  under the names' lock); a full hydration left out behind a stat alone
+  is read again. A rescan, which says nothing of it (the kernel's queue
   overflowed), tells those names again unmarked.
 - **Remote paths (ADR-077).** A path may be on a server that stops
   answering, where `stat` waits for good. Work that reads one runs in its

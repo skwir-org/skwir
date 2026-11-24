@@ -1539,6 +1539,11 @@ on XWayland since their eGPU wrapper, and on Wayland); gpui 0092 ends a
 drag Hyprland never says is over. Left: the user's own checks (the
 night's summary), two monitors, Noctalia.
 
+**Two stats of an entry** (2026-11-24): the folder provider keeps the
+later begun (`Names::newest`); other locations that stat on a worker
+while watched (searches, the trash, tag places, the shelf) were not
+checked for the same race.
+
 **Scratch folders of killed processes** (built 2026-11-24): each
 process holds a lock file of its own for its life, and names its
 `file::memory_dir` folders by it; the first scratch folder a process

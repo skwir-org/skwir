@@ -23521,8 +23521,8 @@ close.
   fail with the watch fix taken out. On HEAD with this change alone:
   clippy on core and geo, 70 tests of watch, written, geotag.
 - **Left:** a race in the folder provider (a hydration's stat deciding
-  the mark, sent after a change cleared it) can still leave a mark or a
-  size stale: given to the folders track tonight.
+  the mark, sent after a change cleared it) could still leave a mark or a
+  size stale: fixed the same night (below).
 
 ## 2026-11-24: an order reads only what it needs; scratch folders swept (ADR-121 amended)
 
@@ -23653,3 +23653,33 @@ found a removable drive in use while a pane showed a folder there.
 - **Not checked:** anything on a real Windows machine (Explorer's Eject
   and Safely Remove, a stick and a USB disk Windows calls fixed, the
   lock and dismount events, a busy drive's waits).
+
+## 2026-11-24: of two stats of an entry, the later begun stands
+
+The race the writing marks' work found: the folder provider's hydration
+decided an entry's mark when it stat-ed it and sent later; a change
+clearing the mark meanwhile was overtaken, and the row stayed marked
+written at its old size. Each stat now takes a ticket just before it
+reads (`Shared::ticket`, in `hydrate_in` and `apply_changes`, which
+notes the names being written before taking its own); every result is
+sent under the names' lock (`send_stated`), where `Names::newest` leaves
+out an entry a stat begun later was already sent for. A dropped rename
+becomes the old row's removal; a full hydration (tags, ratings) dropped
+behind a stat alone is read again. `Names::stated` became a map (8 bytes
+more an entry stat-ed, about 3 MB for 385,000 entries); `Names::insert`
+forgets a replaced id's record.
+
+The fix itself went into 8100535d, taken with the order's work while it
+was being built; its test then created its file before the folder's
+watch could exist (a 20 s timeout once) and its stand-in was dead code
+on Windows. The next commit makes the test wait for the listing, names
+the stand-in `SlowFill` for Linux alone, and adds a unit test of
+`Names::newest`.
+
+- **Checked:** the race test (a file marked, a hydration blocked in its
+  providers, the file closed at another size, the hydration released)
+  fails with the comparison off; five runs of both tests on HEAD with the
+  follow-up, all of core (1,033), clippy on core, Windows clippy.
+- **Not checked:** other locations that stat on a worker while watched
+  (searches, the trash, tag places, the shelf) may race the same way.
+

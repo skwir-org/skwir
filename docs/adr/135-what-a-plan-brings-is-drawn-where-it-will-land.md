@@ -255,3 +255,8 @@ attributes, so its own writes mark nothing. A download that pauses
 longer than 2 s on Linux loses its pill until it writes again, as on
 macOS and Windows.
 
+A row hydrated while its file was written, its providers slow, could
+also be told after the watcher's stat of the closed file, and stay
+marked written at its old size. Stats now take tickets, and of two stats
+of an entry the one begun later stands (`Names::newest`).
+
