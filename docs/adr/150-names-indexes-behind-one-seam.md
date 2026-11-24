@@ -277,7 +277,8 @@ question 5), built the same evening on skwir's side:
       term costs what it did.
     - **An index proves only what it matches alike.** skwird's hello
       says what its engine does beyond its version (`Welcome.features`,
-      copied at skwird 12a90c2). An engine that says `names-both-forms`
+      copied at skwird 12a90c2; its word `NAMES_BOTH_FORMS` and 0.2's
+      matcher at dc08f67, checked against a real engine). An engine that says `names-both-forms`
       (skwird 0.2) matches as `name_match` does. One that does not
       (0.1.0) is taken as covering only a search whose every name term
       is matched alike in one form (`Query::as_written`: every ASCII

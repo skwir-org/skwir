@@ -1593,8 +1593,10 @@ built that evening, ADR-150 17). A name term is matched composed and
 decomposed through core's `name_match`, in a search, a filter's words,
 the name filter and `/`; plocate is asked every form; skwird's index is
 trusted for a term whose forms differ only where the connection's hello
-says `names-both-forms` (skwird 0.2; the client copied at 12a90c2).
-Left: with skwird 0.1.0, a search with such a term walks, though asking
+says `names-both-forms` (skwird 0.2; the client copied at dc08f67,
+whose engine answers such a term from its index, checked by
+`skwird_engine`'s test of a term typed either way and a glob). Left:
+with skwird 0.1.0, a search with such a term walks, though asking
 the engine its ASCII terms alone and checking the rest would do; a term
 typed in mixed forms no longer finds a name mixed alike (two forms, as
 skwird will match); typing to reach an entry, by the collation, misses

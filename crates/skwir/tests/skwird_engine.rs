@@ -209,6 +209,39 @@ fn a_search_is_answered_from_a_real_engine_and_proven() {
     );
 }
 
+/// An engine whose hello says it matches both forms (skwird 0.2,
+/// `names-both-forms`) answers a term whose two forms differ, typed either
+/// way, a glob's too: the names written composed, decomposed, or in
+/// capitals, found from its index and proven, never walked.
+#[test]
+#[ignore = "needs a real skwird: `just skwird-check`"]
+fn a_term_of_two_forms_is_answered_by_an_engine_that_matches_both() {
+    let (_dir, root) = fixture(&[
+        "caf\u{e9} composed.txt",
+        "docs/cafe\u{301} decomposed.txt",
+        "CAFE\u{301} LOUD.txt",
+        "cafe plain.txt",
+    ]);
+    let engine = Engine::start(&root, &[]);
+    let state = tempfile::tempdir().unwrap();
+    let app = app(state.path(), &engine);
+    let all = set(&[
+        "caf\u{e9} composed.txt",
+        "docs/cafe\u{301} decomposed.txt",
+        "CAFE\u{301} LOUD.txt",
+    ]);
+    for typed in ["caf\u{e9}", "cafe\u{301}", "CAF\u{c9}", "caf\u{e9}*"] {
+        let (found, rests_on) = search(&app, typed, &root);
+        assert_eq!(found, all, "{typed:?}");
+        let rests_on = rests_on.unwrap_or_else(|| panic!("{typed:?}: skwird answered"));
+        assert_eq!(rests_on.by, skwir_plugin_skwird::by(), "{typed:?}");
+        assert!(
+            matches!(rests_on.proof, Proof::Checked { .. }),
+            "{typed:?}: {rests_on:?}"
+        );
+    }
+}
+
 /// A folder skwird keeps out is a hole of its answer: the search walks it.
 #[test]
 #[ignore = "needs a real skwird: `just skwird-check`"]
