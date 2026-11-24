@@ -4190,7 +4190,26 @@ mod tests {
 
     #[test]
     fn file_uris_are_read_as_the_paths_they_name() {
-        assert_eq!(super::uri_path("file:///").as_deref(), Some("/"));
+        // A root and a file, as this system writes them: a drive's on
+        // Windows, where `file:///` names none.
+        let (root, file) = if cfg!(windows) {
+            (
+                ("file:///C:/", r"C:\"),
+                ("file:///C:/a%20b/it's.txt", r"C:\a b\it's.txt"),
+            )
+        } else {
+            (
+                ("file:///", "/"),
+                ("file:///a%20b/it's.txt", "/a b/it's.txt"),
+            )
+        };
+        for (uri, path) in [root, file] {
+            assert_eq!(super::uri_path(uri).as_deref(), Some(path), "{uri}");
+        }
+        if cfg!(windows) {
+            assert_eq!(super::uri_path("file:///"), None);
+        }
+        assert_eq!(super::uri_path("/not/a/uri"), None);
     }
 
     #[test]

@@ -505,6 +505,7 @@ pub fn sizes(settings: &Settings) -> Sizes {
 mod tests {
     use super::*;
     use crate::theme::Theme;
+    use skwir_platform::desktop_style::TOOLKITS;
 
     fn app() -> (tempfile::TempDir, Arc<App>) {
         let tmp = tempfile::tempdir().unwrap();
@@ -782,22 +783,23 @@ mod tests {
         assert_eq!(automatic.interface, Some(px(10.)));
         assert_eq!(automatic.from, Some(Read::gtk("GTK")));
         assert_eq!(automatic.scaling, Some(1.25));
-        // Qt's alone, families and sizes.
+        // Qt's alone, families and sizes, where the toolkits are read
+        // apart; elsewhere Qt chosen (a file brought from Linux) is
+        // Automatic.
         choose("qt");
-        assert_eq!(
-            fonts(&app.settings).interface.as_deref(),
-            Some("DejaVu Sans")
-        );
-        assert_eq!(fonts(&app.settings).monospace.as_deref(), Some("Hack"));
-        let qt = sizes(&app.settings);
-        assert_eq!((qt.interface, qt.monospace), (Some(px(9.)), Some(px(10.))));
-        assert_eq!(qt.from, Some(Read::qt("Qt (qt6ct)")));
+        let qt_s = if TOOLKITS { "DejaVu Sans" } else { "Noto Sans" };
+        assert_eq!(fonts(&app.settings).interface.as_deref(), Some(qt_s));
+        if TOOLKITS {
+            assert_eq!(fonts(&app.settings).monospace.as_deref(), Some("Hack"));
+            let qt = sizes(&app.settings);
+            assert_eq!((qt.interface, qt.monospace), (Some(px(9.)), Some(px(10.))));
+            assert_eq!(qt.from, Some(Read::qt("Qt (qt6ct)")));
+        } else {
+            assert_eq!(sizes(&app.settings), automatic);
+        }
         // Skwir's own colors are the colors alone: the fonts stay Qt's.
         app.settings.set(COLORS_FROM_KEY, OWN.into());
-        assert_eq!(
-            fonts(&app.settings).interface.as_deref(),
-            Some("DejaVu Sans")
-        );
+        assert_eq!(fonts(&app.settings).interface.as_deref(), Some(qt_s));
         // Skwir's own: its fonts, at the sizes Automatic reads, the
         // scaling followed too.
         choose(OWN);
@@ -815,10 +817,17 @@ mod tests {
             .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
         keep_own_fonts(&app.settings);
         assert_eq!(Source::of_fonts(&app.settings), Source::Own);
-        // Chosen since, it is never moved again.
+        // Chosen since, it is never moved again: GTK's where the toolkits
+        // are read apart, Automatic elsewhere (a file brought from Linux).
         app.settings.set(FONTS_FROM_KEY, "gtk".into());
         keep_own_fonts(&app.settings);
-        assert_eq!(Source::of_fonts(&app.settings), Source::Gtk);
+        assert_eq!(app.settings.text(FONTS_FROM_KEY).as_deref(), Some("gtk"));
+        let gtk = if TOOLKITS {
+            Source::Gtk
+        } else {
+            Source::Automatic
+        };
+        assert_eq!(Source::of_fonts(&app.settings), gtk);
         // Desktop colors left on: nothing moves.
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
@@ -850,10 +859,17 @@ mod tests {
         let (_tmp, on) = file(true);
         assert_eq!(on.settings.text(COLORS_FROM_KEY), None);
         assert_eq!(on.settings.text(DESKTOP_COLORS_KEY), None);
-        // Chosen since, it is never moved again.
+        // Chosen since, it is never moved again: Qt's where the toolkits
+        // are read apart, Automatic elsewhere (a file brought from Linux).
         off.settings.set(COLORS_FROM_KEY, "qt".into());
         keep_own_colors(&off.settings);
-        assert_eq!(ColorSource::chosen(&off.settings), ColorSource::Qt);
+        assert_eq!(off.settings.text(COLORS_FROM_KEY).as_deref(), Some("qt"));
+        let qt = if TOOLKITS {
+            ColorSource::Qt
+        } else {
+            ColorSource::Automatic
+        };
+        assert_eq!(ColorSource::chosen(&off.settings), qt);
     }
 
     /// Readings that overlap (macOS's, asked again at each activation) are
@@ -982,13 +998,23 @@ mod tests {
             qt_colors: None,
             ..with_scheme(Some(breeze()), None)
         });
-        assert!(colors(&app.settings).schemes.light.is_some(), "Automatic's");
+        let automatic = colors(&app.settings);
+        assert!(automatic.schemes.light.is_some(), "Automatic's");
         app.settings.set(COLORS_FROM_KEY, "gtk".into());
         let gtk = colors(&app.settings);
-        assert!(gtk.schemes.light.is_none() && gtk.schemes.dark.is_some());
+        if TOOLKITS {
+            assert!(gtk.schemes.light.is_none() && gtk.schemes.dark.is_some());
+        } else {
+            // Not read apart here (a file brought from Linux): Automatic.
+            assert_eq!(gtk, automatic);
+        }
         // Qt names none: skwir's colors, with the accent its scheme had not.
         app.settings.set(COLORS_FROM_KEY, "qt".into());
-        assert!(colors(&app.settings).schemes.light.is_none());
+        if TOOLKITS {
+            assert!(colors(&app.settings).schemes.light.is_none());
+        } else {
+            assert_eq!(colors(&app.settings), automatic);
+        }
         assert_eq!(colors_source(), Some(Read::desktop("Plasma")));
         assert_eq!(Source::now(Some(&Read::desktop("Plasma"))), "Plasma");
         assert_eq!(Source::now(Some(&Read::qt("Qt (qt6ct)"))), "qt");

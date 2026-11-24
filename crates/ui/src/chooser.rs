@@ -2133,24 +2133,27 @@ fn choose_a_file_first() -> Words {
 mod tests {
     use super::*;
 
+    /// The path of `names` (`/` between them) from this system's root:
+    /// `/home/a/one`, `C:\home\a\one` on Windows, where a path without a
+    /// drive is not absolute and a record or a dialog leaves it out.
+    fn rooted(names: &str) -> PathBuf {
+        let root = PathBuf::from(if cfg!(windows) { r"C:\" } else { "/" });
+        names.split('/').fold(root, |path, name| path.join(name))
+    }
+
     /// What `open` names in a dialog is what it answers with (ADR-144,
     /// 1): a path, or a file named by its identity and path, in their
     /// order; nothing for a relative path or for none named, when the
     /// selection answers.
     #[test]
     fn open_names_what_it_answers_with() {
+        let (one, three) = (rooted("home/u/one's file.txt"), rooted("home/u/tröis.png"));
         let args = serde_json::json!({ "entries": [
-            "/home/u/one's file.txt",
-            { "id": { "dev": 1, "ino": 2 }, "path": "/home/u/tröis.png" },
+            one,
+            { "id": { "dev": 1, "ino": 2 }, "path": three },
             "relative.txt",
         ], "pane": 3 });
-        assert_eq!(
-            named(&args),
-            [
-                PathBuf::from("/home/u/one's file.txt"),
-                PathBuf::from("/home/u/tröis.png")
-            ]
-        );
+        assert_eq!(named(&args), [one, three]);
         assert!(named(&serde_json::json!({ "pane": 3 })).is_empty());
     }
 
@@ -2170,9 +2173,10 @@ mod tests {
     #[test]
     fn a_program_keeps_its_last_folders() {
         let mut kept = toml::Table::new();
+        let old = rooted("home/a/Old");
         kept.insert(
             "org.example.Old".into(),
-            toml::Value::String("/home/a/Old".into()),
+            toml::Value::String(old.to_str().unwrap().into()),
         );
         kept.insert(
             "relative".into(),
@@ -2180,45 +2184,30 @@ mod tests {
         );
         assert_eq!(
             folders_of(&kept, "org.example.Old"),
-            [PathBuf::from("/home/a/Old")]
+            std::slice::from_ref(&old)
         );
         assert!(folders_of(&kept, "relative").is_empty());
         assert!(folders_of(&kept, "org.example.None").is_empty());
-        let kept = with_folder(kept, "org.example.Old", Path::new("/home/a/New"), 10);
+        let kept = with_folder(kept, "org.example.Old", &rooted("home/a/New"), 10);
         assert_eq!(
             folders_of(&kept, "org.example.Old"),
-            [PathBuf::from("/home/a/New"), PathBuf::from("/home/a/Old")]
+            [rooted("home/a/New"), old]
         );
         let mut kept = kept;
         for at in 0..12 {
-            kept = with_folder(kept, "", Path::new(&format!("/home/a/{at}")), 20 + at);
+            kept = with_folder(kept, "", &rooted(&format!("home/a/{at}")), 20 + at);
         }
-        kept = with_folder(kept, "", Path::new("/home/a/3"), 40);
-        let host: Vec<String> = folders_of(&kept, "")
+        kept = with_folder(kept, "", &rooted("home/a/3"), 40);
+        let host: Vec<PathBuf> = [3, 11, 10, 9, 8, 7, 6, 5, 4, 2]
             .iter()
-            .map(|f| f.display().to_string())
+            .map(|at| rooted(&format!("home/a/{at}")))
             .collect();
-        assert_eq!(
-            host,
-            [
-                "/home/a/3",
-                "/home/a/11",
-                "/home/a/10",
-                "/home/a/9",
-                "/home/a/8",
-                "/home/a/7",
-                "/home/a/6",
-                "/home/a/5",
-                "/home/a/4",
-                "/home/a/2"
-            ],
-            "ten kept, the newest first"
-        );
+        assert_eq!(folders_of(&kept, ""), host, "ten kept, the newest first");
         for at in 0..PROGRAMS_KEPT {
             kept = with_folder(
                 kept,
                 &format!("org.example.P{at}"),
-                Path::new("/home/a"),
+                &rooted("home/a"),
                 100 + i64::try_from(at).unwrap(),
             );
         }
@@ -2250,7 +2239,7 @@ mod tests {
     /// taken out (its last too), all, and the Undo of either (RD-8).
     #[test]
     fn forgotten_folders_are_put_back_and_said() {
-        let (one, two) = (PathBuf::from("/home/a/one"), PathBuf::from("/home/a/two"));
+        let (one, two) = (rooted("home/a/one"), rooted("home/a/two"));
         let kept = put_back(
             toml::Table::new(),
             "org.example.App",
@@ -2305,7 +2294,7 @@ mod tests {
     #[test]
     fn an_undo_puts_back_what_it_took_out_and_keeps_what_came_since() {
         let program = "org.example.App";
-        let at = |name: &str| PathBuf::from(format!("/home/a/{name}"));
+        let at = |name: &str| rooted(&format!("home/a/{name}"));
         let (src, docs, pics, inbox) = (at("src"), at("docs"), at("pics"), at("inbox"));
         let before = [src.clone(), docs.clone(), pics.clone()];
         let record = put_back(toml::Table::new(), program, &before, Some(7));
@@ -2359,9 +2348,9 @@ mod tests {
         let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         let program = "org.example.App";
         let (one, two, gone) = (
-            PathBuf::from("/home/a/one"),
-            PathBuf::from("/home/a/two"),
-            PathBuf::from("/home/a/gone"),
+            rooted("home/a/one"),
+            rooted("home/a/two"),
+            rooted("home/a/gone"),
         );
         let kept = put_back(
             toml::Table::new(),
@@ -2435,32 +2424,29 @@ mod tests {
     #[test]
     fn a_program_forgets_where_it_chose() {
         let mut kept = toml::Table::new();
-        for (at, folder) in ["/home/a/one", "/home/a/two", "/home/a/three"]
+        for (at, folder) in ["home/a/one", "home/a/two", "home/a/three"]
             .iter()
             .enumerate()
         {
-            kept = with_folder(kept, "org.example.App", Path::new(folder), 10 + at as i64);
+            kept = with_folder(kept, "org.example.App", &rooted(folder), 10 + at as i64);
         }
-        kept = with_folder(kept, "org.example.Other", Path::new("/srv"), 5);
-        let kept = without_folder(kept, "org.example.App", Some(Path::new("/home/a/two")));
+        kept = with_folder(kept, "org.example.Other", &rooted("srv"), 5);
+        let kept = without_folder(kept, "org.example.App", Some(&rooted("home/a/two")));
         assert_eq!(
             folders_of(&kept, "org.example.App"),
-            [PathBuf::from("/home/a/three"), PathBuf::from("/home/a/one")]
+            [rooted("home/a/three"), rooted("home/a/one")]
         );
         assert_eq!(
             kept["org.example.App"].get("used"),
             Some(&toml::Value::Integer(12))
         );
-        let unknown = without_folder(kept.clone(), "org.example.App", Some(Path::new("/x")));
+        let unknown = without_folder(kept.clone(), "org.example.App", Some(&rooted("x")));
         assert_eq!(unknown, kept, "a folder it never chose in");
         let all = without_folder(kept.clone(), "org.example.App", None);
         assert!(!all.contains_key("org.example.App"));
-        assert_eq!(
-            folders_of(&all, "org.example.Other"),
-            [PathBuf::from("/srv")]
-        );
-        let one = without_folder(kept, "org.example.App", Some(Path::new("/home/a/one")));
-        let last = without_folder(one, "org.example.App", Some(Path::new("/home/a/three")));
+        assert_eq!(folders_of(&all, "org.example.Other"), [rooted("srv")]);
+        let one = without_folder(kept, "org.example.App", Some(&rooted("home/a/one")));
+        let last = without_folder(one, "org.example.App", Some(&rooted("home/a/three")));
         assert!(!last.contains_key("org.example.App"), "its last forgotten");
     }
 

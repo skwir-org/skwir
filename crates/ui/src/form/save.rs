@@ -999,15 +999,18 @@ mod tests {
         assert_eq!(FormState::save_value("~", ""), "~", "a folder alone stays");
         assert_eq!(folder_of("letters/x.pdf"), None, "relative");
         assert_eq!(folder_of("x.pdf"), None);
+        // A whole path as this system writes one (a drive's on Windows).
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
         assert_eq!(
-            folder_of("/example/a b/x.pdf"),
-            Some(PathBuf::from("/example/a b/"))
+            folder_of(&format!("{root}example{sep}a b{sep}x.pdf")),
+            Some(Path::new(root).join("example").join("a b"))
         );
         if let Some(home) = skwir_core::os_path::home() {
             assert_eq!(folder_of("~/x.pdf"), Some(home.clone()));
-            assert_eq!(written(&home.join("l'été")), "~/l'été/");
+            assert_eq!(written(&home.join("l'été")), format!("~{sep}l'été{sep}"));
         }
-        assert_eq!(written(Path::new("/")), "/");
+        assert_eq!(written(Path::new(root)), root);
     }
 
     #[cfg(unix)]
