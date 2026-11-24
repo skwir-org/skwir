@@ -186,6 +186,27 @@ struct Names {
     /// read once it is listed, every id a hydration is given being
     /// answered.
     early: Vec<(Vec<EntryId>, Priority, Needs)>,
+    /// Of each name stat-ed while another read of the folder was under way
+    /// (`reading`), the ticket of the newest stat applied to the names,
+    /// whatever it found (the file, none, one unread): one begun before
+    /// it, applied after, is left out (`Names::applies`), so of two stats
+    /// of a name the one begun later stands, gone or unread too. Forgotten
+    /// once no read under way may hold a stat begun before it
+    /// (`Names::read_ended`): empty while one reads alone.
+    applied: hashing::Map<OsString, u64>,
+    /// `applied` by ticket, oldest first: what is forgotten next.
+    applied_by_ticket: std::collections::BTreeMap<u64, OsString>,
+    /// The reads of stats under way (a hydration's batch, the watcher's
+    /// changes), by the ticket their first stat takes at least, counted
+    /// (`Shared::reading`), and how many in all.
+    reading: std::collections::BTreeMap<u64, u32>,
+    reads: u32,
+    /// Ids a hydration re-keyed to (a provisional id, a file another took
+    /// the place of) whose rename is not told yet, with the id their row
+    /// is still told under: whatever tells one of them first tells it
+    /// renamed from that (`Names::newest`), so a row keeps its selection
+    /// whichever stat of it is told, and in whatever order.
+    untold: hashing::Map<EntryId, EntryId>,
 }
 
 impl Names {
@@ -202,6 +223,7 @@ impl Names {
             Some(prev) if prev != id => {
                 self.by_id.remove(&prev);
                 self.stated.remove(&prev);
+                self.untold.remove(&prev);
                 Some(prev)
             }
             _ => None,
@@ -210,6 +232,7 @@ impl Names {
 
     fn remove_id(&mut self, id: EntryId) -> Option<OsString> {
         self.stated.remove(&id);
+        self.untold.remove(&id);
         let name = self.by_id.remove(&id)?;
         self.by_name.remove(&name);
         Some(name)
@@ -219,7 +242,56 @@ impl Names {
         let id = self.by_name.remove(name)?;
         self.by_id.remove(&id);
         self.stated.remove(&id);
+        self.untold.remove(&id);
         Some(id)
+    }
+
+    /// A read of stats begins, its first stat's ticket `floor` at least
+    /// ([`Shared::reading`]).
+    fn read_begins(&mut self, floor: u64) {
+        *self.reading.entry(floor).or_default() += 1;
+        self.reads += 1;
+    }
+
+    /// The read begun at `floor` ended: what only a stat begun before the
+    /// oldest read left could be overtaken by is forgotten, all of it once
+    /// none is under way.
+    fn read_ended(&mut self, floor: u64) {
+        if let Some(count) = self.reading.get_mut(&floor) {
+            *count -= 1;
+            if *count == 0 {
+                self.reading.remove(&floor);
+            }
+            self.reads -= 1;
+        }
+        let Some(&oldest) = self.reading.keys().next() else {
+            self.applied.clear();
+            self.applied_by_ticket.clear();
+            return;
+        };
+        while let Some(first) = self.applied_by_ticket.first_entry() {
+            if *first.key() > oldest {
+                break;
+            }
+            let (ticket, name) = first.remove_entry();
+            if self.applied.get(&name) == Some(&ticket) {
+                self.applied.remove(&name);
+            }
+        }
+    }
+
+    /// Whether what the stat of `name` that took `ticket` found is applied
+    /// to the names: no stat of it begun later was. Noted as applied where
+    /// another read is under way, which may hold a stat begun before it.
+    fn applies(&mut self, name: &OsStr, ticket: u64) -> bool {
+        if self.applied.get(name).is_some_and(|&newer| newer > ticket) {
+            return false;
+        }
+        if self.reads > 1 {
+            self.applied.insert(name.to_os_string(), ticket);
+            self.applied_by_ticket.insert(ticket, name.to_os_string());
+        }
+        true
     }
 
     /// The id a directory entry is listed under.
@@ -230,10 +302,16 @@ impl Names {
             .unwrap_or(provisional)
     }
 
-    /// `old` turned out to be `new` when stat-ed.
+    /// `old` turned out to be `new` when stat-ed: its row, told under
+    /// `old` (or what `old` was re-keyed from, not told yet), is told
+    /// renamed by whatever tells `new` first (`untold`).
     fn rekey(&mut self, old: EntryId, new: EntryId) {
+        let told_as = self.untold.get(&old).copied().unwrap_or(old);
         if let Some(name) = self.remove_id(old) {
             self.insert(new, name);
+            if told_as != new {
+                self.untold.insert(new, told_as);
+            }
         }
         let provisional = self
             .aliased
@@ -262,11 +340,13 @@ impl Names {
     /// later stands, whichever is told last (a hydration's, its providers
     /// slow, told after the watcher's of a file written meanwhile, would
     /// leave its row as it was then, marked written for good). Each entry
-    /// kept is noted as told (`Told`). A rename whose entry is left out
-    /// takes out the row it renames: the entry it would become was told
-    /// already. With what is to be read again: an entry the providers
-    /// filled, left out for a stat alone begun later (an order's reading)
-    /// that told less than it would have.
+    /// kept is noted as told (`Told`). An entry kept whose rename is not
+    /// told yet (`untold`) is told renamed, whatever told it: the row keeps
+    /// its place and its selection. A rename whose entry is left out takes
+    /// out the row it renames, where one is left: the entry it would become
+    /// was told already, renamed so. With what is to be read again: an
+    /// entry the providers filled, left out for a stat alone begun later
+    /// (an order's reading) that told less than it would have.
     fn newest(
         &mut self,
         event: ListingEvent,
@@ -299,7 +379,7 @@ impl Names {
                 }
             }
         };
-        let events = match event {
+        let mut events = match event {
             ListingEvent::Added(mut batch) => {
                 batch.retain(|e| newest(e));
                 vec![ListingEvent::Added(batch)]
@@ -316,7 +396,53 @@ impl Names {
             }
             other => vec![other],
         };
+        if !self.untold.is_empty() {
+            let carried = self.carry_renames(&mut events);
+            if !carried.is_empty() {
+                events.push(ListingEvent::Renamed(carried));
+            }
+        }
         (events, again)
+    }
+
+    /// The entries `events` tell whose rename is not told yet (`untold`),
+    /// taken out of an `Added` or `Updated` and returned as renamed from
+    /// the id their row is told under; a rename from another id told too.
+    /// Each told so is no longer untold.
+    fn carry_renames(&mut self, events: &mut [ListingEvent]) -> Vec<(EntryId, Entry)> {
+        let mut carried = Vec::new();
+        for event in events {
+            match event {
+                ListingEvent::Added(batch) | ListingEvent::Updated(batch) => {
+                    for e in std::mem::take(batch) {
+                        match self.untold_of(e.id) {
+                            Some(old) => carried.push((old, e)),
+                            None => batch.push(e),
+                        }
+                    }
+                }
+                ListingEvent::Renamed(pairs) => {
+                    for (from, e) in pairs.iter() {
+                        if let Some(old) = self.untold_of(e.id)
+                            && old != *from
+                        {
+                            carried.push((old, e.clone()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        carried
+    }
+
+    /// The id the row of `id`, listed now, is still told under (`untold`),
+    /// told renamed from now on.
+    fn untold_of(&mut self, id: EntryId) -> Option<EntryId> {
+        if !self.by_id.contains_key(&id) {
+            return None;
+        }
+        self.untold.remove(&id)
     }
 }
 
@@ -800,6 +926,18 @@ pub fn wait_let_go(path: &Path, at_most: Duration) -> bool {
     true
 }
 
+/// A read of stats under way ([`Shared::reading`]).
+struct Reading<'a> {
+    shared: &'a Shared,
+    floor: u64,
+}
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        self.shared.names.lock().read_ended(self.floor);
+    }
+}
+
 impl Shared {
     /// Send what an event says, as the names hold it now, under their
     /// lock (`as_now`), unless it was lost: every event of a folder listed
@@ -848,11 +986,37 @@ impl Shared {
         again
     }
 
+    /// Whether its folder is on a drive whose watches are let go of now
+    /// (`watch::letting_go`: Windows' Eject asked, never on Linux), by its
+    /// path or where the system resolved it: nothing of it is read
+    /// meanwhile. From memory.
+    fn letting_go(&self) -> bool {
+        watch::letting_go(&self.dir()) || watch::letting_go(&self.at)
+    }
+
     /// The next stat's ticket, taken just before it reads: after what was
     /// changed before it (the names the watcher says are written), so a
     /// stat with a higher one read them as they are now.
     fn ticket(&self) -> u64 {
         self.tickets.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// A read of stats begins (a hydration's batch, the watcher's
+    /// changes): counted until the guard is dropped, so what a stat found
+    /// is noted applied while another read may hold one begun before it
+    /// (`Names::applies`). Taken before its first ticket, dropped after
+    /// its last event is sent, no names' guard held then.
+    fn reading(&self) -> Reading<'_> {
+        let floor = {
+            let mut names = self.names.lock();
+            let floor = self.tickets.load(Ordering::SeqCst) + 1;
+            names.read_begins(floor);
+            floor
+        };
+        Reading {
+            shared: self,
+            floor,
+        }
     }
 
     fn dir(&self) -> PathBuf {
@@ -958,14 +1122,22 @@ impl Shared {
             return;
         }
         let (kept, gone) = gone_after(previous, &seen, replaced);
-        // What was stat-ed is stat-ed again; the rest still waits to be
-        // asked for.
-        let names = self.names.lock();
-        let stayed: Vec<EntryId> = kept
-            .into_iter()
-            .filter(|id| names.stated.contains_key(id))
-            .collect();
-        drop(names);
+        // What was stat-ed is stat-ed again, as far as it was read: what
+        // the providers filled (a row drawn) read by them again, what only
+        // a stat read (an order's reading, ADR-121) stat-ed alone, never
+        // the whole folder's providers at each refresh or rescan. The rest
+        // still waits to be asked for.
+        let (mut filled, mut stat_only) = (Vec::new(), Vec::new());
+        {
+            let names = self.names.lock();
+            for id in kept {
+                match names.stated.get(&id).copied().map(Told) {
+                    Some(told) if told.filled() => filled.push(id),
+                    Some(_) => stat_only.push(id),
+                    None => {}
+                }
+            }
+        }
         if !gone.is_empty() {
             let mut names = self.names.lock();
             for id in &gone {
@@ -1003,8 +1175,16 @@ impl Shared {
         for (ids, priority, needs) in early {
             self.ask(&ids, priority, needs);
         }
-        if !stayed.is_empty() {
-            self.ask(&stayed, Priority::Background, Needs::Providers);
+        if !filled.is_empty() {
+            self.ask(&filled, Priority::Background, Needs::Providers);
+        }
+        if !stat_only.is_empty() {
+            let needs = if self.ctx.reads >= Needs::Providers {
+                Needs::Providers
+            } else {
+                Needs::Stat
+            };
+            self.ask(&stat_only, Priority::Background, needs);
         }
     }
 
@@ -1059,9 +1239,15 @@ impl Shared {
             HANDED_ON => return Some(ids.to_vec()),
             _ => return None,
         }
-        // Not there to read now (its volume going): answered, its rows as
+        // Not there to read now (its volume going), or not to be read (a
+        // drive Windows lets go of, `letting_go`): answered, its rows as
         // listed.
-        let Ok(folder) = self.opened() else {
+        let folder = if self.letting_go() {
+            None
+        } else {
+            self.opened().ok()
+        };
+        let Some(folder) = folder else {
             let unread: Vec<EntryId> = {
                 let names = self.names.lock();
                 ids.iter()
@@ -1094,7 +1280,11 @@ impl Shared {
         if self.is_lost() {
             return self.handed_on(ids);
         }
+        // Dropped last, after what this read sends.
+        let _reading = self.reading();
         let mut stated = Vec::with_capacity(ids.len());
+        // What a stat found gone or could not read: its id, its name, its
+        // stat's ticket.
         let (mut gone, mut unread) = (Vec::new(), Vec::new());
         let mut early = Vec::new();
         for &id in ids {
@@ -1129,9 +1319,9 @@ impl Shared {
                     }
                     stated.push((id, e, ticket));
                 }
-                Stated::Gone => gone.push(id),
+                Stated::Gone => gone.push((id, e.name, ticket)),
                 // There, unread: answered, its row as listed.
-                Stated::Unread => unread.push(id),
+                Stated::Unread => unread.push((id, e.name, ticket)),
             }
         }
         let (mut updated, mut rekeyed): (Vec<Entry>, Vec<Entry>) = (Vec::new(), Vec::new());
@@ -1142,9 +1332,15 @@ impl Shared {
         // (`send_stated`), and what is to be read again.
         let mut tickets = hashing::Map::default();
         let mut again = Vec::new();
-        {
+        // Of two stats of a name, the one begun later stands, whatever
+        // each found (`Names::applies`): a file the watcher found back
+        // since is not taken out by a stat that found it gone before.
+        let (gone, unread) = {
             let mut names = self.names.lock();
             for (id, e, ticket) in stated {
+                if !names.applies(&e.name, ticket) {
+                    continue;
+                }
                 if e.id == id {
                     tickets.insert(id, ticket);
                     updated.push(e);
@@ -1155,10 +1351,21 @@ impl Shared {
                     rekeyed.push(e);
                 }
             }
+            let gone: Vec<EntryId> = gone
+                .into_iter()
+                .filter(|(_, name, ticket)| names.applies(name, *ticket))
+                .map(|(id, _, _)| id)
+                .collect();
             for id in &gone {
                 names.remove_id(*id);
             }
-        }
+            let unread: Vec<EntryId> = unread
+                .into_iter()
+                .filter(|(_, name, ticket)| names.applies(name, *ticket))
+                .map(|(id, _, _)| id)
+                .collect();
+            (gone, unread)
+        };
         let dir = self.dir();
         let fills = needs >= Needs::Providers;
         if !updated.is_empty() {
@@ -1427,6 +1634,13 @@ impl Shared {
         if self.is_lost() {
             return;
         }
+        // A drive Windows lets go of (its Eject asked, ADR-149, 16): what
+        // its watch told before it was let go of is not read there, which
+        // would hold the drive. Should the drive stay, the rescan it is told
+        // once watched again covers it; gone, it is told its folder went.
+        if self.letting_go() {
+            return;
+        }
         // Its filesystem let go of by its automounter, unused a while
         // (ADR-149): no folder going, as it is mounted again as it is
         // looked up. Nothing of its path is read now (that would mount it);
@@ -1498,6 +1712,8 @@ impl Shared {
             .filter_map(|n| self.ctx.companions.owner(n))
             .collect();
         names.extend(owners);
+        // Dropped last, after what this read sends.
+        let _reading = self.reading();
         // Each entry's stat's ticket (`send_stated`): taken after what is
         // written was noted above, as a hydration's after it reads it.
         let mut tickets = hashing::Map::default();
@@ -1521,6 +1737,11 @@ impl Shared {
                 );
             }
             let mut names = self.names.lock();
+            // A stat of it begun later applied already (a hydration's that
+            // found it gone, or another file there): it stands.
+            if !names.applies(&name, ticket) {
+                continue;
+            }
             if stated == Stated::Found {
                 // A rename onto this name leaves the id it replaced stale.
                 if let Some(stale) = names.insert(e.id, name) {
@@ -2385,6 +2606,128 @@ mod tests {
         );
     }
 
+    /// Of two stats of a name, the one begun later stands whatever each
+    /// found, applied in either order: a hydration's that found a file
+    /// gone (or could not read it) before the watcher's found it back is
+    /// left out once the watcher's applied, and so is a watcher's begun
+    /// before a hydration's that found it gone. Noted only while another
+    /// read is under way, and forgotten once no read left may hold a stat
+    /// begun before.
+    #[test]
+    fn of_two_stats_of_a_name_the_later_begun_stands_whatever_it_found() {
+        let name = OsStr::new("it's back, été");
+        let mut names = Names::default();
+        // A hydration's batch begins (its stats from ticket 1), then the
+        // watcher's changes (from 3).
+        names.read_begins(1);
+        names.read_begins(3);
+        // The watcher's stat, begun later (4), found the file and applied
+        // first: the hydration's (2), which found it gone, is left out.
+        assert!(names.applies(name, 4));
+        assert!(!names.applies(name, 2), "gone, from before: left out");
+        // The other way: a hydration's (5) found it gone and applied
+        // first, then a watcher's begun before (3) found it.
+        let other = OsStr::new("it's gone, été");
+        assert!(names.applies(other, 5));
+        assert!(!names.applies(other, 3), "found, from before: left out");
+        // A stat begun later still stands.
+        assert!(names.applies(other, 6));
+        // The hydration ends: what only it could be older than is
+        // forgotten, the watcher's own kept while it reads on.
+        names.read_ended(1);
+        assert_eq!(names.applied.get(name), Some(&4));
+        names.read_ended(3);
+        assert!(names.applied.is_empty() && names.applied_by_ticket.is_empty());
+        assert_eq!(names.reads, 0);
+        // A read alone notes nothing: no stat begun before it is under way.
+        names.read_begins(7);
+        assert!(names.applies(name, 7));
+        assert!(names.applied.is_empty());
+        names.read_ended(7);
+    }
+
+    /// An entry a hydration re-keyed whose rename is not told yet is told
+    /// renamed by whatever tells it first: the watcher's stat of its name,
+    /// begun later, told before the hydration's rename, renames the row
+    /// (its place and its selection kept), and the rename left out after
+    /// it takes out nothing left.
+    #[test]
+    fn a_rename_left_out_is_told_by_the_stat_that_left_it_out() {
+        let id = |ino| EntryId {
+            file: FileId::new(1, ino),
+            at: 0,
+        };
+        let name = "it's saved, été";
+        let entry = |ino| Entry::new(id(ino), name, EntryKind::File);
+        let (old, new) = (id(1), id(2));
+        let mut names = Names::default();
+        names.insert(old, name.into());
+        let mut listing = crate::Listing::default();
+        listing.apply(ListingEvent::Added(vec![entry(1)]));
+        // The hydration's stat (5) found another file under the name: its
+        // row re-keyed, under the names' lock, then filled.
+        names.rekey(old, new);
+        // The watcher's stat of the name (6) is told first.
+        let tickets = |ticket| std::iter::once((new, ticket)).collect::<hashing::Map<_, _>>();
+        let (events, _) = names.newest(ListingEvent::Added(vec![entry(2)]), &tickets(6));
+        for event in events.into_iter().flat_map(|e| as_now(&names, e)) {
+            listing.apply(event);
+        }
+        assert_eq!(listing.take_renamed(), vec![(old, new)], "renamed");
+        // The hydration's rename, from a stat begun before, told after.
+        let (events, _) = names.newest(ListingEvent::Renamed(vec![(old, entry(2))]), &tickets(5));
+        for event in events.into_iter().flat_map(|e| as_now(&names, e)) {
+            listing.apply(event);
+        }
+        let rows: Vec<EntryId> = listing.iter().map(|e| e.id).collect();
+        assert_eq!(rows, vec![new], "one row, renamed");
+        assert!(listing.take_renamed().is_empty());
+        assert!(names.untold.is_empty());
+    }
+
+    /// While Windows lets go of a drive (its Eject asked, ADR-149, 16), a
+    /// folder listed there reads nothing of it: a row asked for is answered
+    /// unread, as where it cannot be opened. The removal refused, the
+    /// rescan told once it is watched again shows what changed meanwhile.
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_being_let_go_of_is_read_no_more_until_it_stays() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let dir = tmp.path().join("on a stick, l'été");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("it's there.txt"), "x").unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let open = opened_here(&app, &dir, Needs::Nothing);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        let id = told
+            .iter()
+            .find_map(|e| match e {
+                ListingEvent::Added(batch) => batch.first().map(|e| e.id),
+                _ => None,
+            })
+            .expect("listed");
+        let volume = crate::fs::reach::volume_of(&dir).expect("a drive");
+        assert!(watch::let_go_on(&volume, Duration::from_secs(5)));
+        assert!(watch::letting_go(&dir));
+        open.hydrate(&[id], Priority::Visible);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Unreadable(_)));
+        assert!(
+            !told.iter().any(|e| matches!(e, ListingEvent::Updated(_))),
+            "nothing read: {told:?}"
+        );
+        // Its removal refused: watched again, and read again.
+        std::fs::write(dir.join("it's new.txt"), "y").unwrap();
+        watch::watch_again_on(&volume);
+        assert!(!watch::letting_go(&dir));
+        events_until(
+            &open.rx,
+            |e| matches!(e, ListingEvent::Added(batch) if batch.iter().any(|e| e.name == "it's new.txt")),
+        );
+        open.close();
+    }
+
     /// A metadata provider that, once armed, holds the next fill it is
     /// asked until let go: a hydration whose providers are slow.
     #[cfg(target_os = "linux")]
@@ -2532,6 +2875,21 @@ mod tests {
         open.hydrate(&ids, Priority::Visible);
         let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Updated(_)));
         assert_eq!(read(&told), (2, 2), "filled once asked for");
+        // A refresh reads again each entry as far as it was read: the two
+        // filled by the providers again, the rest stat-ed alone.
+        assert!(app.scheduler.wait_idle(Duration::from_secs(20)));
+        let before = asked.load(Ordering::SeqCst);
+        open.refresh();
+        let mut told = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while read(&told).0 < 150 {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            told.push(open.rx.recv_timeout(left).expect("read again in time"));
+        }
+        assert!(app.scheduler.wait_idle(Duration::from_secs(20)));
+        told.extend(open.rx.try_iter());
+        assert_eq!(read(&told), (150, 2), "as far as each was read");
+        assert_eq!(asked.load(Ordering::SeqCst) - before, 2, "two filled again");
         open.close();
 
         let open = opened_here(&app, &dir, Needs::Providers);
