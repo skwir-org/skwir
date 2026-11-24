@@ -107,6 +107,10 @@ struct Shared {
     /// holds it while names move.
     #[cfg(test)]
     listing_at: Mutex<Option<ListingAt>>,
+    /// Called as a hydration has stat-ed its batch, before what it found is
+    /// applied: where a test holds it, as a slow server would.
+    #[cfg(test)]
+    hydration_at: Mutex<Option<Box<dyn FnMut() + Send>>>,
     /// Whether it was lost, and how: [`LISTED`] not, [`HANDED_ON`],
     /// [`LOST_MISSING`] or [`LOST_LEFT`] (its volume let go of, which a
     /// deletion told after does not say over). Changed only under the
@@ -623,6 +627,8 @@ fn open_folder(
         opens: std::sync::atomic::AtomicUsize::new(0),
         #[cfg(test)]
         listing_at: Mutex::new(None),
+        #[cfg(test)]
+        hydration_at: Mutex::new(None),
         lost: std::sync::atomic::AtomicU8::new(LISTED),
     });
     // Watched before it is listed, so nothing changed
@@ -1323,6 +1329,13 @@ impl Shared {
                 Stated::Unread => unread.push((id, e.name, ticket)),
             }
         }
+        #[cfg(test)]
+        {
+            let hook = self.hydration_at.lock().take();
+            if let Some(mut hook) = hook {
+                hook();
+            }
+        }
         let (mut updated, mut rekeyed): (Vec<Entry>, Vec<Entry>) = (Vec::new(), Vec::new());
         // Ids a stat found another file under: a provisional one, or a
         // file another took the place of (an editor saving).
@@ -1331,13 +1344,27 @@ impl Shared {
         // (`send_stated`), and what is to be read again.
         let mut tickets = hashing::Map::default();
         let mut again = Vec::new();
+        // Left out behind a read begun later that told its row less than
+        // this one would (a listing's, which stats nothing; a stat alone
+        // where the providers were asked): read again, as asked, or its
+        // row stays unread for good, its asker waiting on this answer.
+        let mut behind = Vec::new();
         // Of two stats of a name, the one begun later stands, whatever
         // each found (`Names::applies`): a file the watcher found back
         // since is not taken out by a stat that found it gone before.
         let (gone, unread) = {
             let mut names = self.names.lock();
+            let fills = needs >= Needs::Providers;
+            let mut left_out = |names: &Names, id: EntryId, ticket: u64| {
+                let told = names.stated.get(&id).copied().map(Told);
+                let as_much = told.is_some_and(|t| t.ticket() >= ticket && (t.filled() || !fills));
+                if names.by_id.contains_key(&id) && !as_much {
+                    behind.push(id);
+                }
+            };
             for (id, e, ticket) in stated {
                 if !names.newest.applies(&e.name, ticket) {
+                    left_out(&names, id, ticket);
                     continue;
                 }
                 if e.id == id {
@@ -1350,18 +1377,23 @@ impl Shared {
                     rekeyed.push(e);
                 }
             }
+            let mut kept = |names: &mut Names, (id, name, ticket): (EntryId, OsString, u64)| {
+                let stands = names.newest.applies(&name, ticket);
+                if !stands {
+                    left_out(names, id, ticket);
+                }
+                stands.then_some(id)
+            };
             let gone: Vec<EntryId> = gone
                 .into_iter()
-                .filter(|(_, name, ticket)| names.newest.applies(name, *ticket))
-                .map(|(id, _, _)| id)
+                .filter_map(|read| kept(&mut names, read))
                 .collect();
             for id in &gone {
                 names.remove_id(*id);
             }
             let unread: Vec<EntryId> = unread
                 .into_iter()
-                .filter(|(_, name, ticket)| names.newest.applies(name, *ticket))
-                .map(|(id, _, _)| id)
+                .filter_map(|read| kept(&mut names, read))
                 .collect();
             (gone, unread)
         };
@@ -1394,6 +1426,11 @@ impl Shared {
         // its row filled as asked.
         if !again.is_empty() {
             let _ = self.hydrate(&again, priority, Needs::Providers);
+        }
+        // Each read again takes a ticket later than the read it was left
+        // out behind: this ends.
+        if !behind.is_empty() {
+            let _ = self.hydrate(&behind, priority, needs);
         }
         if !early.is_empty() {
             let mut names = self.names.lock();
@@ -2788,6 +2825,72 @@ mod tests {
         let row = listing.iter().find(|e| e.name == name).unwrap();
         assert!(!marked(row), "marked no more");
         assert_eq!(size(row), last, "at its last size");
+        open.close();
+    }
+
+    /// A row's first hydration left out behind a refresh's listing begun
+    /// after it, which stats nothing (F5 while a slow server answers it):
+    /// it is read again, its row hydrated, where it stayed unread for good,
+    /// its asker waiting on that answer.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_hydration_left_out_behind_a_listing_is_read_again() {
+        use crate::entry::keys;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("l'été, slow");
+        std::fs::create_dir(&dir).unwrap();
+        let name = "it's twelve bytes";
+        std::fs::write(dir.join(name), b"twelve bytes").unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let scheduler = crate::scheduler::Scheduler::new(4);
+        let open = opened_on(&app, scheduler.clone(), &dir, Needs::Nothing);
+        let mut listing = crate::Listing::default();
+        for event in events_until(&open.rx, |e| matches!(e, ListingEvent::Complete)) {
+            listing.apply(event);
+        }
+        let id = listing.iter().find(|e| e.name == name).unwrap().id;
+        // Its first hydration stat-ed it, then held before it applies what
+        // it found, as one whose server answers the rest slowly.
+        let (at, on_at) = std::sync::mpsc::channel::<()>();
+        let (go, on_go) = std::sync::mpsc::channel::<()>();
+        let shared = open.shared.lock().clone().expect("listed");
+        *shared.hydration_at.lock() = Some(Box::new(move || {
+            at.send(()).unwrap();
+            on_go.recv_timeout(Duration::from_secs(20)).expect("let go");
+        }));
+        open.hydrate(&[id], Priority::Visible);
+        on_at
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the hydration stat-ed it");
+        // F5 meanwhile: listed again, bare.
+        open.refresh();
+        for event in events_until(&open.rx, |e| matches!(e, ListingEvent::Complete)) {
+            listing.apply(event);
+        }
+        // The hydration let go, its answer left out behind the listing.
+        go.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let size = |listing: &crate::Listing| {
+            listing
+                .iter()
+                .find(|e| e.name == name)
+                .and_then(|e| e.metadata.value(keys::SIZE).cloned())
+        };
+        while size(&listing).is_none() {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match open.rx.recv_timeout(left) {
+                Ok(event) => {
+                    listing.apply(event);
+                }
+                Err(_) => break,
+            }
+        }
+        assert_eq!(
+            size(&listing),
+            Some(crate::entry::Value::UInt(12)),
+            "read again, hydrated"
+        );
+        assert!(scheduler.wait_idle(Duration::from_secs(20)));
         open.close();
     }
 

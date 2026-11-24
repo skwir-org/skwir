@@ -57,8 +57,11 @@ sends by itself:
   where `Newest::applies` allows: no read of the entry begun later was
   applied. Late answers never take out a file renamed and named back,
   or stand over a newer stat.
-- A filled answer left out behind a newer stat-only one is asked again,
-  or its row would stay unfilled for good.
+- An answer left out for an entry still held, behind a read that told
+  it less (a listing, a walk's stat alone, a plan's change, a stat alone
+  where the providers were asked), is read again as asked. The view asks
+  for a row once and waits for its answer, a refresh's listing too, so a
+  row left out so would stay unread for good.
 - A read is counted (`Reading`) from before its first ticket until its
   last answer is applied.
 
