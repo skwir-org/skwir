@@ -3,7 +3,8 @@
 Status: accepted and built, 2026-11-06, on Linux; macOS and Windows
 compiled only. Follows ADR-120 (a folder appears whole, built and
 sorted on a worker). Amended 2026-11-12: an order that reads what its
-entries lack is made once they are read.
+entries lack is made once they are read. Amended 2026-11-24: it reads
+only what it needs.
 
 ## Context
 
@@ -122,6 +123,24 @@ entries lack is made once they are read.
   settles in 11.6 s, nearly all of it the providers reading 385 000
   entries (9.3 s) before one 2.2 s sort.
 - **Not done**: what is read on demand (Taken, Dimensions, Duration,
-  ADR-131) is still placed as it comes, 64 entries a batch. A sort by a
-  stat waits for the providers' pass too (tags, comments), which it
-  does not need: a reading of the stat alone would end sooner.
+  ADR-131) is still placed as it comes, 64 entries a batch.
+
+## Amended 2026-11-24: an order reads only what it needs
+
+A sort by a stat waited for the metadata providers' pass too (tags,
+comments: 9.3 s of the 11.6 s grouping `/nix/store` by Modified took in
+the debug build). Now an order says what it needs (`location::Needs`:
+nothing, a stat, or the providers' pass; `SortKey::needs`, the one list,
+from which `has_read`, `needs_metadata` and `SortSpec::needs`, the
+larger of the sort's and the grouping's, derive). A folder opened for
+an order by a stat is complete once every entry is stat-ed
+(`OpenContext::reads`), and an order asked anew asks only that much
+(`OpenLocation::read`, whose default hydrates, so other providers are
+unchanged; `ReadJob::needs`). What the providers say is read of the rows
+drawn, as in any listing; an order by tags or a rating waits for them
+as before. Measured in the debug build on 100,000 files (no tags, the
+machine loaded): a folder opened 2.3 to 4.8 s against 3.6 to 6.4 s, an
+order asked anew 1.2 to 1.4 s against 1.6 to 1.9 s. Left: F5 of a folder
+whose order read every entry reads them all with the providers again;
+search, trash and tag locations use the default reading.
+

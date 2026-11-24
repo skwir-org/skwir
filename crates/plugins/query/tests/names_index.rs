@@ -160,7 +160,7 @@ fn search(root: &Path, expr: &str, indexes: Vec<Fake>) -> Searched {
         names: Arc::new(names),
         companions: Arc::default(),
         hidden_shown: false,
-        reads_metadata: false,
+        reads: skwir_core::location::Needs::Nothing,
     };
     let location = skwir_plugin_query::location_for(expr, Some(root));
     let open = provider.open(&location, ctx).unwrap();

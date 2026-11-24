@@ -534,10 +534,11 @@ around the views is in [shell.md](shell.md).
   chosen from it, as it would be from that view.
 - **A folder comes read for an order that reads it** (ADR-120,
   amended): a pane sorted or grouped by what a stat or the metadata
-  providers say (`SortSpec::needs_metadata`) opens its locations saying
-  so (`OpenContext::reads_metadata`, from `App::open_in` and `open_for`),
-  and the folder provider reads every entry's (`hydrate`, its names all
-  known) before its listing completes: the folder appears in its order
+  providers say (`SortSpec::needs`: what a stat gives, or the providers'
+  pass too, `location::Needs`) opens its locations saying so
+  (`OpenContext::reads`, from `App::open_in` and `open_for`), and the
+  folder provider reads every entry that far (a stat alone, or
+  `hydrate`, its names all known) before its listing completes: the folder appears in its order
   and its groups at once, never every file in one group, then moved. A
   provider that cannot leaves it to the reading the listing asks once
   whole, as an order chosen while a folder is shown does (ADR-121,

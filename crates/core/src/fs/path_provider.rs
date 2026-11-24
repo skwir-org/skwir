@@ -13,7 +13,8 @@ use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId, EntryKind, FileId};
 use crate::hashing;
 use crate::location::{
-    EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation, PATH_SCHEME,
+    EventSink, ListingEvent, Location, LocationProvider, Needs, OpenContext, OpenLocation,
+    PATH_SCHEME,
 };
 use crate::scheduler::{Lane, Priority};
 
@@ -93,6 +94,10 @@ struct Shared {
     /// ([`Shared::hand_over`]) is asked of the folder its listing opens
     /// after it.
     opening: std::sync::Weak<Mutex<Opening>>,
+    /// Counts the stats made of its entries: each takes the next
+    /// ([`Shared::ticket`]) just before it reads, so of two stats of one
+    /// entry the one begun later has the higher (`Names::newest`).
+    tickets: std::sync::atomic::AtomicU64,
     /// How many times it was opened from its path for a read: what the
     /// tests count.
     #[cfg(test)]
@@ -172,12 +177,15 @@ struct Names {
     /// The entries stat-ed since they were listed: what a listing again
     /// (F5, a watcher's rescan) stats again, its metadata kept meanwhile.
     /// The others were never asked for, and a refresh does not read the
-    /// whole folder for them.
-    stated: hashing::Set<EntryId>,
+    /// whole folder for them. Each with what was last told of it
+    /// (`Told`, `Names::newest`): what a stat begun before found is not
+    /// told after it.
+    stated: hashing::Map<EntryId, u64>,
     /// Asked for before this listing named them (rows of the one it was
-    /// opened again in place of, `reopen`), with how soon: read once it is
-    /// listed, every id a hydration is given being answered.
-    early: Vec<(Vec<EntryId>, Priority)>,
+    /// opened again in place of, `reopen`), with how soon and how much:
+    /// read once it is listed, every id a hydration is given being
+    /// answered.
+    early: Vec<(Vec<EntryId>, Priority, Needs)>,
 }
 
 impl Names {
@@ -193,6 +201,7 @@ impl Names {
         match self.by_name.insert(name, id) {
             Some(prev) if prev != id => {
                 self.by_id.remove(&prev);
+                self.stated.remove(&prev);
                 Some(prev)
             }
             _ => None,
@@ -245,6 +254,89 @@ impl Names {
 
     fn ids(&self) -> Vec<EntryId> {
         self.by_id.keys().copied().collect()
+    }
+
+    /// `event`, what stats found (`Added`, `Updated`, `Renamed`; `tickets`
+    /// the ticket each entry's stat took, by its id), without what a stat
+    /// begun later told already: of two stats of an entry, the one begun
+    /// later stands, whichever is told last (a hydration's, its providers
+    /// slow, told after the watcher's of a file written meanwhile, would
+    /// leave its row as it was then, marked written for good). Each entry
+    /// kept is noted as told (`Told`). A rename whose entry is left out
+    /// takes out the row it renames: the entry it would become was told
+    /// already. With what is to be read again: an entry the providers
+    /// filled, left out for a stat alone begun later (an order's reading)
+    /// that told less than it would have.
+    fn newest(
+        &mut self,
+        event: ListingEvent,
+        tickets: &hashing::Map<EntryId, u64>,
+    ) -> (Vec<ListingEvent>, Vec<EntryId>) {
+        let mut again = Vec::new();
+        let mut newest = |e: &Entry| {
+            let Some(&ticket) = tickets.get(&e.id) else {
+                return true;
+            };
+            // Not its now: `as_now` leaves it out, and nothing is noted.
+            if !self.by_id.contains_key(&e.id) {
+                return true;
+            }
+            let filled = e.metadata.is_filled();
+            let told = self.stated.get(&e.id).copied().map(Told);
+            match told {
+                Some(told) if told.ticket() > ticket => {
+                    if filled && !told.filled() {
+                        again.push(e.id);
+                    }
+                    false
+                }
+                // The providers' fields a row holds stay under a stat alone
+                // (`Listing::upsert`): filled still.
+                _ => {
+                    let filled = filled || told.is_some_and(Told::filled);
+                    self.stated.insert(e.id, Told::of(ticket, filled).0);
+                    true
+                }
+            }
+        };
+        let events = match event {
+            ListingEvent::Added(mut batch) => {
+                batch.retain(|e| newest(e));
+                vec![ListingEvent::Added(batch)]
+            }
+            ListingEvent::Updated(mut batch) => {
+                batch.retain(|e| newest(e));
+                vec![ListingEvent::Updated(batch)]
+            }
+            ListingEvent::Renamed(pairs) => {
+                let (kept, left): (Vec<_>, Vec<_>) =
+                    pairs.into_iter().partition(|(_, e)| newest(e));
+                let gone = left.into_iter().map(|(old, _)| old).collect();
+                vec![ListingEvent::Renamed(kept), ListingEvent::Removed(gone)]
+            }
+            other => vec![other],
+        };
+        (events, again)
+    }
+}
+
+/// What was last told of an entry (`Names::stated`): the ticket of the
+/// stat it came from, and whether its row is filled by the metadata
+/// providers since, in one number (the ticket, then a bit).
+#[derive(Clone, Copy)]
+struct Told(u64);
+
+impl Told {
+    fn of(ticket: u64, filled: bool) -> Self {
+        Told(ticket << 1 | u64::from(filled))
+    }
+
+    fn ticket(self) -> u64 {
+        self.0 >> 1
+    }
+
+    fn filled(self) -> bool {
+        self.0 & 1 == 1
     }
 }
 
@@ -365,10 +457,10 @@ pub struct PathLocation {
 struct Opening {
     under_way: bool,
     again: bool,
-    /// What was asked to be read (`OpenLocation::hydrate`) while no folder
-    /// was held, an open under way: asked of the folder it opens once it
-    /// holds it, never dropped while its rows show.
-    wanted: Vec<(Vec<EntryId>, Priority)>,
+    /// What was asked to be read (`OpenLocation::hydrate`, `read`) while
+    /// no folder was held, an open under way: asked of the folder it opens
+    /// once it holds it, never dropped while its rows show.
+    wanted: Vec<(Vec<EntryId>, Priority, Needs)>,
     /// Its volume is about to be let go of (`OpenLocation::hold_nothing`):
     /// every folder it opens from then on is read by its path, one an open
     /// under way finds too, until a volume is mounted there again
@@ -438,6 +530,7 @@ fn open_folder(
         writing: Mutex::new(std::collections::HashSet::new()),
         slot: Arc::downgrade(slot),
         opening: Arc::downgrade(opening),
+        tickets: std::sync::atomic::AtomicU64::new(0),
         #[cfg(test)]
         opens: std::sync::atomic::AtomicUsize::new(0),
         lost: std::sync::atomic::AtomicU8::new(LISTED),
@@ -480,34 +573,36 @@ fn open_folder(
         shared.lose(gone);
         return Ok(Some(shared));
     }
-    for (ids, priority) in wanted {
-        shared.ask(&ids, priority);
+    for (ids, priority, needs) in wanted {
+        shared.ask(&ids, priority, needs);
     }
     Ok(Some(shared))
 }
 
-/// Ask what the listing holds now (`slot`) to read `ids`, or, while it
-/// opens one, the one it opens once it holds it (`Opening::wanted`): every
-/// id a hydration is given is answered (AGENTS.md, "Entries arrive before
-/// metadata") by the listing whose rows they are. Nothing while it holds
-/// none and opens none: lost, its rows went with it.
+/// Ask what the listing holds now (`slot`) to read `needs` of `ids`, or,
+/// while it opens one, the one it opens once it holds it
+/// (`Opening::wanted`): every id a hydration is given is answered
+/// (AGENTS.md, "Entries arrive before metadata") by the listing whose rows
+/// they are. Nothing while it holds none and opens none: lost, its rows
+/// went with it.
 fn hydrate_held(
     slot: &Mutex<Option<Arc<Shared>>>,
     opening: &Mutex<Opening>,
     ids: Vec<EntryId>,
     priority: Priority,
+    needs: Needs,
 ) {
     let held = {
         let mut opening = opening.lock();
         let held = slot.lock().clone().filter(|held| !held.is_lost());
         if held.is_none() && opening.under_way {
-            opening.wanted.push((ids, priority));
+            opening.wanted.push((ids, priority, needs));
             return;
         }
         held
     };
     if let Some(held) = held {
-        held.ask(&ids, priority);
+        held.ask(&ids, priority, needs);
     }
 }
 
@@ -728,6 +823,38 @@ impl Shared {
             .all(|event| self.tx.send(event))
     }
 
+    /// [`Shared::send`] of what stats found, `tickets` the ticket each
+    /// entry's stat took, by its id: what a stat begun later told already
+    /// is left out (`Names::newest`), under the lock it is decided by.
+    /// What is to be read again, the providers' fields of it not told.
+    #[must_use]
+    fn send_stated(
+        &self,
+        event: ListingEvent,
+        tickets: &hashing::Map<EntryId, u64>,
+    ) -> Vec<EntryId> {
+        let mut names = self.names.lock();
+        if self.is_lost() {
+            return Vec::new();
+        }
+        let (newest, again) = names.newest(event, tickets);
+        for event in newest {
+            for event in as_now(&names, event) {
+                if !self.tx.send(event) {
+                    return Vec::new();
+                }
+            }
+        }
+        again
+    }
+
+    /// The next stat's ticket, taken just before it reads: after what was
+    /// changed before it (the names the watcher says are written), so a
+    /// stat with a higher one read them as they are now.
+    fn ticket(&self) -> u64 {
+        self.tickets.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
     fn dir(&self) -> PathBuf {
         self.dir.read().clone()
     }
@@ -836,7 +963,7 @@ impl Shared {
         let names = self.names.lock();
         let stayed: Vec<EntryId> = kept
             .into_iter()
-            .filter(|id| names.stated.contains(id))
+            .filter(|id| names.stated.contains_key(id))
             .collect();
         drop(names);
         if !gone.is_empty() {
@@ -854,11 +981,14 @@ impl Shared {
             std::mem::take(&mut names.early)
         };
         // The pane's order reads what a stat finds (a date, a size, an
-        // owner, tags): every entry is read before the listing completes,
-        // so the folder appears whole in that order, in its groups, rather
-        // than moving as rows are read (ADR-120, amended). Its names are
-        // all known now, which the metadata providers read beside it.
-        if first && self.ctx.reads_metadata {
+        // owner) or what the providers say (tags, a rating): every entry
+        // is read that far before the listing completes, so the folder
+        // appears whole in that order, in its groups, rather than moving
+        // as rows are read (ADR-120, amended). No further: for an order by
+        // a stat, what the providers say is read of the rows drawn, as in
+        // any listing (ADR-121, amended 2026-11-24). Its names are all
+        // known now, which the metadata providers read beside it.
+        if first && self.ctx.reads > Needs::Nothing {
             for chunk in seen.chunks(self.ctx.batch_size.max(1)) {
                 if cancel.is_cancelled() {
                     return;
@@ -866,15 +996,15 @@ impl Shared {
                 // Handed on meanwhile: the next listing reads what its
                 // order wants. In the folder this listing opened: read by
                 // its path, it is opened once.
-                let _ = self.hydrate_in(&folder, chunk, Priority::Visible);
+                let _ = self.hydrate_in(&folder, chunk, Priority::Visible, self.ctx.reads);
             }
         }
         self.send(ListingEvent::Complete);
-        for (ids, priority) in early {
-            self.ask(&ids, priority);
+        for (ids, priority, needs) in early {
+            self.ask(&ids, priority, needs);
         }
         if !stayed.is_empty() {
-            self.ask(&stayed, Priority::Background);
+            self.ask(&stayed, Priority::Background, Needs::Providers);
         }
     }
 
@@ -889,10 +1019,10 @@ impl Shared {
         }
     }
 
-    /// Read `ids` in batches, a job each in its lane: what a job finds
-    /// handed on is asked of the folder its listing holds after it
-    /// ([`Shared::hand_over`]).
-    fn ask(self: &Arc<Self>, ids: &[EntryId], priority: Priority) {
+    /// Read `needs` of `ids` in batches, a job each in its lane: what a
+    /// job finds handed on is asked of the folder its listing holds after
+    /// it ([`Shared::hand_over`]).
+    fn ask(self: &Arc<Self>, ids: &[EntryId], priority: Priority, needs: Needs) {
         for chunk in ids.chunks(self.ctx.batch_size.max(1)) {
             let (s, ids) = (Arc::clone(self), chunk.to_vec());
             self.ctx.scheduler.spawn_in(
@@ -901,8 +1031,8 @@ impl Shared {
                 "fs.stat",
                 self.ctx.cancel.child(),
                 move || {
-                    if let Some(ids) = s.hydrate(&ids, priority) {
-                        s.hand_over(ids, priority);
+                    if let Some(ids) = s.hydrate(&ids, priority, needs) {
+                        s.hand_over(ids, priority, needs);
                     }
                 },
             );
@@ -911,18 +1041,19 @@ impl Shared {
 
     /// What was asked of it once it was handed on, asked of the folder its
     /// listing holds or opens now.
-    fn hand_over(&self, ids: Vec<EntryId>, priority: Priority) {
+    fn hand_over(&self, ids: Vec<EntryId>, priority: Priority, needs: Needs) {
         if let (Some(slot), Some(opening)) = (self.slot.upgrade(), self.opening.upgrade()) {
-            hydrate_held(&slot, &opening, ids, priority);
+            hydrate_held(&slot, &opening, ids, priority, needs);
         }
     }
 
-    /// Answer `ids` (`Updated`, `Removed`, `Unreadable`), those it does not
-    /// name yet read once it is listed. What it could not answer as it was
-    /// handed on to the folder its listing opened again (`reopen`), for that
-    /// one to answer: never dropped while their rows show. Nothing once lost:
-    /// its rows went with it.
-    fn hydrate(&self, ids: &[EntryId], priority: Priority) -> Option<Vec<EntryId>> {
+    /// Answer `ids` (`Updated`, `Removed`, `Unreadable`), as far as
+    /// `needs` reads (`hydrate_in`), those it does not name yet read once
+    /// it is listed. What it could not answer as it was handed on to the
+    /// folder its listing opened again (`reopen`), for that one to answer:
+    /// never dropped while their rows show. Nothing once lost: its rows
+    /// went with it.
+    fn hydrate(&self, ids: &[EntryId], priority: Priority, needs: Needs) -> Option<Vec<EntryId>> {
         match self.lost.load(Ordering::Acquire) {
             LISTED => {}
             HANDED_ON => return Some(ids.to_vec()),
@@ -943,18 +1074,22 @@ impl Shared {
             }
             return self.handed_on(ids);
         };
-        self.hydrate_in(&folder, ids, priority)
+        self.hydrate_in(&folder, ids, priority, needs)
     }
 
     /// [`Shared::hydrate`] in `folder` as a read already found it (the
     /// listing's own, which stats every entry before it completes): a
     /// folder read by its path is opened once for that read, never once
-    /// for each batch of it.
+    /// for each batch of it. Each entry is stat-ed, and filled by the
+    /// metadata providers where `needs` reads what they say: an order by
+    /// a stat alone waits for no more (ADR-121, amended 2026-11-24), what
+    /// they say read when its row is drawn (`hydrate`).
     fn hydrate_in(
         &self,
         folder: &Dir,
         ids: &[EntryId],
         priority: Priority,
+        needs: Needs,
     ) -> Option<Vec<EntryId>> {
         if self.is_lost() {
             return self.handed_on(ids);
@@ -980,6 +1115,7 @@ impl Shared {
                 continue;
             };
             let mut e = Entry::new(id, name, EntryKind::Unknown);
+            let ticket = self.ticket();
             match stat_entry_as(folder, &mut e) {
                 Stated::Found => {
                     // Written still as the watcher last said: a stat of it
@@ -991,7 +1127,7 @@ impl Shared {
                             crate::entry::Provenance::Filesystem,
                         );
                     }
-                    stated.push((id, e));
+                    stated.push((id, e, ticket));
                 }
                 Stated::Gone => gone.push(id),
                 // There, unread: answered, its row as listed.
@@ -1002,15 +1138,19 @@ impl Shared {
         // Ids a stat found another file under: a provisional one, or a
         // file another took the place of (an editor saving).
         let mut stale = Vec::new();
+        // Each entry's stat's ticket, noted as told once it is
+        // (`send_stated`), and what is to be read again.
+        let mut tickets = hashing::Map::default();
+        let mut again = Vec::new();
         {
             let mut names = self.names.lock();
-            for (id, e) in stated {
+            for (id, e, ticket) in stated {
                 if e.id == id {
-                    names.stated.insert(id);
+                    tickets.insert(id, ticket);
                     updated.push(e);
                 } else if names.by_id.contains_key(&id) {
                     names.rekey(id, e.id);
-                    names.stated.insert(e.id);
+                    tickets.insert(e.id, ticket);
                     stale.push(id);
                     rekeyed.push(e);
                 }
@@ -1020,9 +1160,12 @@ impl Shared {
             }
         }
         let dir = self.dir();
+        let fills = needs >= Needs::Providers;
         if !updated.is_empty() {
-            self.fill(&dir, &mut updated);
-            self.send(ListingEvent::Updated(updated));
+            if fills {
+                self.fill(&dir, &mut updated);
+            }
+            again.extend(self.send_stated(ListingEvent::Updated(updated), &tickets));
         }
         if !gone.is_empty() {
             self.send(ListingEvent::Removed(gone));
@@ -1033,10 +1176,18 @@ impl Shared {
         // The row under the name is the file found there, in its place
         // and its selection.
         if !rekeyed.is_empty() {
-            self.fill(&dir, &mut rekeyed);
-            self.send(ListingEvent::Renamed(
-                stale.into_iter().zip(rekeyed).collect(),
+            if fills {
+                self.fill(&dir, &mut rekeyed);
+            }
+            again.extend(self.send_stated(
+                ListingEvent::Renamed(stale.into_iter().zip(rekeyed).collect()),
+                &tickets,
             ));
+        }
+        // Filled, and left out for a stat alone begun later: read again,
+        // its row filled as asked.
+        if !again.is_empty() {
+            let _ = self.hydrate(&again, priority, Needs::Providers);
         }
         if !early.is_empty() {
             let mut names = self.names.lock();
@@ -1044,9 +1195,9 @@ impl Shared {
                 // Listed meanwhile: read now (handed on, all of `ids` are
                 // asked again below).
                 drop(names);
-                let _ = self.hydrate(&early, priority);
+                let _ = self.hydrate(&early, priority, needs);
             } else {
-                names.early.push((early, priority));
+                names.early.push((early, priority, needs));
             }
         }
         self.handed_on(ids)
@@ -1221,8 +1372,8 @@ impl Shared {
         };
         // What was asked of it and not read yet, asked of the next one.
         let (ids, early) = early;
-        for (asked, priority) in early {
-            self.hand_over(asked, priority);
+        for (asked, priority, needs) in early {
+            self.hand_over(asked, priority, needs);
         }
         Some(ids)
     }
@@ -1347,11 +1498,15 @@ impl Shared {
             .filter_map(|n| self.ctx.companions.owner(n))
             .collect();
         names.extend(owners);
+        // Each entry's stat's ticket (`send_stated`): taken after what is
+        // written was noted above, as a hydration's after it reads it.
+        let mut tickets = hashing::Map::default();
         for name in names {
             if self.ctx.cancel.is_cancelled() {
                 return;
             }
             let mut e = Entry::new(EntryId::UNKNOWN, name.clone(), EntryKind::Unknown);
+            let ticket = self.ticket();
             let stated = stat_entry_as(&folder, &mut e);
             if stated == Stated::Unread {
                 // There, unread: what is listed of it stays.
@@ -1372,6 +1527,7 @@ impl Shared {
                     removed.push(stale);
                     replaced.push((stale, e.id));
                 }
+                tickets.insert(e.id, ticket);
                 added.push(e);
             } else if let Some(id) = names.remove_name(&name) {
                 removed.push(id);
@@ -1386,11 +1542,16 @@ impl Shared {
         if !renamed.is_empty() {
             let (olds, mut news): (Vec<EntryId>, Vec<Entry>) = renamed.drain(..).unzip();
             self.fill(&self.dir(), &mut news);
-            self.send(ListingEvent::Renamed(olds.into_iter().zip(news).collect()));
+            let again = self.send_stated(
+                ListingEvent::Renamed(olds.into_iter().zip(news).collect()),
+                &tickets,
+            );
+            self.ask(&again, Priority::Visible, Needs::Providers);
         }
         if !added.is_empty() {
             self.fill(&self.dir(), &mut added);
-            self.send(ListingEvent::Added(added));
+            let again = self.send_stated(ListingEvent::Added(added), &tickets);
+            self.ask(&again, Priority::Visible, Needs::Providers);
         }
     }
 }
@@ -1539,10 +1700,17 @@ impl OpenLocation for PathLocation {
     /// Asked while it opens its folder again (`reopen`), of the one it
     /// opens: every id is answered (`hydrate_held`).
     fn hydrate(&self, ids: &[EntryId], priority: Priority) {
+        self.read(ids, Needs::Providers, priority);
+    }
+
+    /// As `hydrate`, its entries filled by the metadata providers only
+    /// where `needs` reads what they say: an order by a date is made once
+    /// its entries are stat-ed (ADR-121, amended 2026-11-24).
+    fn read(&self, ids: &[EntryId], needs: Needs, priority: Priority) {
         if ids.is_empty() {
             return;
         }
-        hydrate_held(&self.shared, &self.opening, ids.to_vec(), priority);
+        hydrate_held(&self.shared, &self.opening, ids.to_vec(), priority, needs);
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
@@ -1662,8 +1830,8 @@ mod tests {
     }
 
     /// `dir` opened as a pane opens it, the listing itself at hand.
-    fn opened_here(app: &crate::App, dir: &Path, reads_metadata: bool) -> Arc<PathLocation> {
-        opened_on(app, app.scheduler.clone(), dir, reads_metadata)
+    fn opened_here(app: &crate::App, dir: &Path, reads: Needs) -> Arc<PathLocation> {
+        opened_on(app, app.scheduler.clone(), dir, reads)
     }
 
     /// `dir` opened as a pane opens it, its work on `scheduler`.
@@ -1671,7 +1839,7 @@ mod tests {
         app: &crate::App,
         scheduler: crate::scheduler::Scheduler,
         dir: &Path,
-        reads_metadata: bool,
+        reads: Needs,
     ) -> Arc<PathLocation> {
         let ctx = OpenContext {
             scheduler,
@@ -1684,7 +1852,7 @@ mod tests {
             names: Arc::clone(&app.names),
             companions: Arc::clone(&app.companions),
             hidden_shown: false,
-            reads_metadata,
+            reads,
         };
         PathLocation::open(Location::from_path(dir), dir.to_path_buf(), ctx)
     }
@@ -1720,7 +1888,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         std::fs::write(dir.join("a.txt"), "a").unwrap();
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let open = opened_here(&app, &dir, true);
+        let open = opened_here(&app, &dir, Needs::Providers);
         events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
         let shared = open.shared.lock().clone().expect("listed");
 
@@ -1759,7 +1927,7 @@ mod tests {
         assert!(open.shared.lock().is_none(), "let go of by its listing");
 
         // Handed on: nothing more, not even a loss.
-        let again = opened_here(&app, &dir, false);
+        let again = opened_here(&app, &dir, Needs::Nothing);
         events_until(&again.rx, |e| matches!(e, ListingEvent::Complete));
         let shared = again.shared.lock().clone().expect("listed");
         assert_eq!(shared.hand_on().map(|ids| ids.len()), Some(1));
@@ -1807,7 +1975,7 @@ mod tests {
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
 
         let (scheduler, release) = held_scheduler();
-        let open = opened_on(&app, scheduler, &dir, false);
+        let open = opened_on(&app, scheduler, &dir, Needs::Nothing);
         open.volume_gone(crate::ListingError::left(crate::words::Words::as_written(
             "unmounted",
         )));
@@ -1832,7 +2000,7 @@ mod tests {
         open.close();
 
         let (scheduler, release) = held_scheduler();
-        let open = opened_on(&app, scheduler, &dir, false);
+        let open = opened_on(&app, scheduler, &dir, Needs::Nothing);
         assert!(open.hold_nothing());
         drop(release);
         events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
@@ -1852,7 +2020,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         std::fs::write(dir.join("a.txt"), "a").unwrap();
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let open = opened_here(&app, &dir, false);
+        let open = opened_here(&app, &dir, Needs::Nothing);
         events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
         let before = open.shared.lock().clone().expect("listed");
         open.reopen();
@@ -1880,7 +2048,7 @@ mod tests {
         std::fs::write(dir.join("a.txt"), "a").unwrap();
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
         let scheduler = crate::scheduler::Scheduler::new(1);
-        let open = opened_on(&app, scheduler.clone(), &dir, false);
+        let open = opened_on(&app, scheduler.clone(), &dir, Needs::Nothing);
         let listed = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
         let ids: Vec<EntryId> = listed
             .iter()
@@ -1938,7 +2106,7 @@ mod tests {
         std::fs::write(shown.join("a.txt"), "a").unwrap();
         crate::fs::reach::pretend_remote(&volume);
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let open = opened_here(&app, &shown, false);
+        let open = opened_here(&app, &shown, Needs::Nothing);
         events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
         let shared = open.shared.lock().clone().expect("listed");
         assert!(matches!(*shared.folder.read(), Folder::ByPath));
@@ -1979,7 +2147,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         std::fs::write(dir.join("a.txt"), "a").unwrap();
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let open = opened_here(&app, &dir, false);
+        let open = opened_here(&app, &dir, Needs::Nothing);
         let listed: Vec<EntryId> = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete))
             .iter()
             .filter_map(|e| match e {
@@ -2014,7 +2182,7 @@ mod tests {
         let link = tmp.path().join("it leads, été");
         std::os::unix::fs::symlink(&first, &link).unwrap();
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let open = opened_here(&app, &link, false);
+        let open = opened_here(&app, &link, Needs::Nothing);
         events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
         std::fs::remove_file(&link).unwrap();
         std::os::unix::fs::symlink(tmp.path().join("nowhere"), &link).unwrap();
@@ -2074,7 +2242,7 @@ mod tests {
             if on_demand {
                 crate::fs::reach::pretend_on_demand(&point);
             }
-            let open = opened_here(&app, &shown, false);
+            let open = opened_here(&app, &shown, Needs::Nothing);
             events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
             assert!(
                 open.shared
@@ -2130,6 +2298,156 @@ mod tests {
         open.close();
     }
 
+    /// A metadata provider that, once armed, holds the next fill it is
+    /// asked until let go: a hydration whose providers are slow.
+    struct Held {
+        armed: std::sync::atomic::AtomicBool,
+        entered: Mutex<std::sync::mpsc::Sender<()>>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl crate::metadata::MetadataProvider for Held {
+        fn id(&self) -> &'static str {
+            "held"
+        }
+        fn fill(&self, _: &Path, _: &mut [Entry]) {
+            if self.armed.swap(false, Ordering::SeqCst) {
+                let _ = self.entered.lock().send(());
+                let _ = self.release.lock().recv_timeout(Duration::from_secs(20));
+            }
+        }
+    }
+
+    /// Of two stats of an entry, the one begun later stands, whichever is
+    /// told last: a row hydrated while its file is written, its providers
+    /// slow, is told after the watcher's stat of the file closed, and its
+    /// mark and its size as they were then are left out; the row is marked
+    /// no more, at its last size (ADR-135).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stat_told_after_a_later_one_is_left_out() {
+        use crate::entry::{Value, keys};
+        use std::io::Write as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("l'été, written");
+        std::fs::create_dir(&dir).unwrap();
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let (entered, on_entered) = std::sync::mpsc::channel();
+        let (release, on_release) = std::sync::mpsc::channel();
+        let held = Arc::new(Held {
+            armed: std::sync::atomic::AtomicBool::new(false),
+            entered: Mutex::new(entered),
+            release: Mutex::new(on_release),
+        });
+        app.metadata.register("held", held.clone());
+        let scheduler = crate::scheduler::Scheduler::new(4);
+        let open = opened_on(&app, scheduler.clone(), &dir, Needs::Nothing);
+        let mut listing = crate::Listing::default();
+        let name = "it's coming.part";
+        // Applies what comes until `done` holds of the row.
+        let until = |listing: &mut crate::Listing, done: &dyn Fn(&Entry) -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            while !listing.iter().find(|e| e.name == name).is_some_and(done) {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                listing.apply(open.rx.recv_timeout(left).expect("told"));
+            }
+        };
+        let marked = |e: &Entry| e.metadata.value(keys::WRITING) == Some(&Value::Bool(true));
+        let size = |e: &Entry| e.metadata.value(keys::SIZE).cloned();
+
+        let mut file = std::fs::File::create(dir.join(name)).unwrap();
+        file.write_all(b"the first part").unwrap();
+        until(&mut listing, &marked);
+        let id = listing.iter().find(|e| e.name == name).unwrap().id;
+        // Its row hydrated while it is written: stat-ed, marked, then held
+        // in its providers.
+        held.armed.store(true, Ordering::SeqCst);
+        open.hydrate(&[id], Priority::Visible);
+        on_entered
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the hydration reached its providers");
+        // Written on and closed meanwhile: the watcher's stat says so.
+        file.write_all(b", and the rest").unwrap();
+        drop(file);
+        let last = Some(Value::UInt(28));
+        until(&mut listing, &|e| !marked(e) && size(e) == last);
+        // The hydration let go: told last, from a stat begun before.
+        release.send(()).unwrap();
+        assert!(scheduler.wait_idle(Duration::from_secs(20)));
+        for event in open.rx.try_iter() {
+            listing.apply(event);
+        }
+        let row = listing.iter().find(|e| e.name == name).unwrap();
+        assert!(!marked(row), "marked no more");
+        assert_eq!(size(row), last, "at its last size");
+        open.close();
+    }
+
+    /// A folder opened for an order by a stat (a date) is complete once
+    /// every entry is stat-ed, none filled by the metadata providers, which
+    /// are not asked: an order that reads no more waits for no more
+    /// (ADR-121, amended 2026-11-24). For an order by what they say (a
+    /// rating), every entry is filled before it completes; asked for a row,
+    /// an entry is filled whatever the order.
+    #[test]
+    fn a_folder_is_read_as_far_as_its_order_reads_before_it_completes() {
+        use std::sync::atomic::AtomicUsize;
+        /// Counts the entries it is asked to fill.
+        struct Count(Arc<AtomicUsize>);
+        impl crate::metadata::MetadataProvider for Count {
+            fn id(&self) -> &'static str {
+                "count"
+            }
+            fn fill(&self, _: &Path, entries: &mut [Entry]) {
+                self.0.fetch_add(entries.len(), Ordering::SeqCst);
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("many, l'été");
+        std::fs::create_dir(&dir).unwrap();
+        for i in 0..150 {
+            std::fs::write(dir.join(format!("it's {i}.txt")), "x").unwrap();
+        }
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let asked = Arc::new(AtomicUsize::new(0));
+        app.metadata
+            .register("count", Arc::new(Count(Arc::clone(&asked))));
+        let read = |told: &[ListingEvent]| -> (usize, usize) {
+            let updated = told.iter().filter_map(|e| match e {
+                ListingEvent::Updated(entries) => Some(entries),
+                _ => None,
+            });
+            let all: Vec<&Entry> = updated.flatten().collect();
+            assert!(all.iter().all(|e| e.metadata.is_hydrated()), "stat-ed");
+            let filled = all.iter().filter(|e| e.metadata.is_filled()).count();
+            (all.len(), filled)
+        };
+
+        let open = opened_here(&app, &dir, Needs::Stat);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        assert_eq!(read(&told), (150, 0), "stat-ed, none filled");
+        assert_eq!(asked.load(Ordering::SeqCst), 0, "no provider asked");
+        // A row drawn asks for the rest.
+        let ids: Vec<EntryId> = told
+            .iter()
+            .filter_map(|e| match e {
+                ListingEvent::Updated(entries) => Some(entries.iter().map(|e| e.id)),
+                _ => None,
+            })
+            .flatten()
+            .take(2)
+            .collect();
+        open.hydrate(&ids, Priority::Visible);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Updated(_)));
+        assert_eq!(read(&told), (2, 2), "filled once asked for");
+        open.close();
+
+        let open = opened_here(&app, &dir, Needs::Providers);
+        let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
+        assert_eq!(read(&told), (150, 150), "every entry filled first");
+        open.close();
+    }
+
     /// A folder read by its path (a remote's, as pretended) is opened once
     /// for a read: the listing's own stats of every entry, made before it
     /// completes for a pane whose order reads them, read in the folder the
@@ -2146,7 +2464,7 @@ mod tests {
         }
         crate::fs::reach::pretend_remote(&volume);
         let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let open = opened_here(&app, &shown, true);
+        let open = opened_here(&app, &shown, Needs::Providers);
         let told = events_until(&open.rx, |e| matches!(e, ListingEvent::Complete));
         let updated: usize = told
             .iter()

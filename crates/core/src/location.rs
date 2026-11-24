@@ -288,14 +288,16 @@ pub struct OpenContext {
     /// A search that does not say follows it
     /// ([`LocationProvider::follows_hidden`]).
     pub hidden_shown: bool,
-    /// Whether the order of the pane it is opened for reads what a stat or
-    /// the metadata providers say (`SortSpec::needs_metadata`: sorted or
-    /// grouped by a date, a size, an owner, a rating, tags). A folder then
-    /// reads it of every entry before it says it is complete, so that it
-    /// appears in that order at once rather than moving as each entry is
-    /// read (ADR-120, amended). A provider that cannot leaves it to the
-    /// view's hydration, as without it; no pane, no.
-    pub reads_metadata: bool,
+    /// How much of each entry the order of the pane it is opened for reads
+    /// (`SortSpec::needs`: sorted or grouped by a date, a size, an owner;
+    /// by a rating, tags). A folder then reads that much of every entry
+    /// before it says it is complete, so that it appears in that order at
+    /// once rather than moving as each entry is read (ADR-120, amended):
+    /// a stat alone for a date (ADR-121, amended 2026-11-24), what the
+    /// providers say read after, of what is drawn, as in any listing. A
+    /// provider that cannot leaves it to the view's hydration, as without
+    /// it; no pane, nothing.
+    pub reads: Needs,
 }
 
 impl OpenContext {
@@ -480,6 +482,16 @@ pub trait OpenLocation: Send + Sync {
 
     /// Ask for metadata on these entries (lazy stat). Results arrive as `Updated`.
     fn hydrate(&self, ids: &[EntryId], priority: Priority);
+
+    /// Ask for as much of these entries as `needs` says, for an order that
+    /// waits for it (`Listing::reading_wanted`, ADR-121 amended): a stat
+    /// alone where it reads no more (a date, a size), the providers' pass
+    /// left to what asks for it after (`hydrate`, the rows drawn). Every
+    /// id is answered, as for `hydrate`. By default all of it, `hydrate`.
+    fn read(&self, ids: &[EntryId], needs: Needs, priority: Priority) {
+        let _ = needs;
+        self.hydrate(ids, priority);
+    }
 
     /// Where this entry lives on disk, if anywhere. Operations need this.
     fn path_of(&self, id: EntryId) -> Option<PathBuf>;
@@ -1011,6 +1023,37 @@ pub struct QuickFilters {
 /// together.
 pub const FOLDERS_FIRST: &str = "core.folders_first";
 
+/// How much of an entry an order reads beyond what its listing says
+/// (ADR-121, amended 2026-11-24): of a criterion (`SortKey::needs`), of
+/// an order (`SortSpec::needs`, the most of its sort's and its groups').
+/// Each reads what the one before it does: the providers run over what a
+/// stat found. An order by a stat alone waits for no more, its folder
+/// complete once its entries are stat-ed (`OpenContext::reads`), what the
+/// providers say read after, of what is drawn, as in any listing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Needs {
+    /// What a listing says: a name, a kind, a type, an extension.
+    #[default]
+    Nothing,
+    /// What a stat finds: a size, a date, an owner
+    /// (`Metadata::is_hydrated`).
+    Stat,
+    /// What the metadata providers read after the stat: tags, a rating
+    /// (`Metadata::is_filled`).
+    Providers,
+}
+
+impl Needs {
+    /// Whether `metadata` holds what it reads.
+    pub fn met_by(self, metadata: &crate::entry::Metadata) -> bool {
+        match self {
+            Needs::Nothing => true,
+            Needs::Stat => metadata.is_hydrated(),
+            Needs::Providers => metadata.is_filled(),
+        }
+    }
+}
+
 /// What to sort a listing by, and to group it by (ADR-130: one list of
 /// criteria for both): within folders and files apart while folders come
 /// first (`SortSpec::folders_first`), else all together. What has none
@@ -1091,41 +1134,42 @@ impl SortKey {
         SortKey::Folder,
     ];
 
-    /// Whether the order depends on what a stat finds, or the providers,
-    /// which a listing learns only when its entries are hydrated or
-    /// filled.
-    pub fn needs_metadata(self) -> bool {
-        matches!(
-            self,
-            SortKey::Size
-                | SortKey::Modified
-                | SortKey::Rating
-                | SortKey::Created
-                | SortKey::Accessed
-                | SortKey::Tags
-                | SortKey::Owner
-        )
-    }
-
-    /// Whether what it sorts by has been read of an entry whose metadata
-    /// is `metadata`: a size, a date or an owner once stat-ed
-    /// (`Metadata::is_hydrated`), a rating or tags once the providers read
-    /// them (`Metadata::is_filled`), a name always. What a sort waits for,
-    /// and asks to be read, is this alone, of an entry it applies to
-    /// (`applies_to`): a search's hits, stat-ed by its walk, sort by size
-    /// at once.
-    pub fn has_read(self, metadata: &crate::entry::Metadata) -> bool {
-        if let Some(field) = self.field() {
-            return metadata.value(field).is_some();
-        }
+    /// What it reads of an entry beyond what a listing says (ADR-121,
+    /// amended 2026-11-24): a size, a date or an owner from a stat; a
+    /// rating or tags from the metadata providers' pass after it. The one
+    /// list every reader of an order asks: what the order waits for
+    /// (`has_read`), what a folder reads of every entry before it is
+    /// complete (`OpenContext::reads`), what a reading asks of its
+    /// location (`OpenLocation::read`). What is read on demand is not
+    /// among it (`field`).
+    pub fn needs(self) -> Needs {
         match self {
-            SortKey::Rating | SortKey::Tags => metadata.is_filled(),
             SortKey::Size
             | SortKey::Modified
             | SortKey::Created
             | SortKey::Accessed
-            | SortKey::Owner => metadata.is_hydrated(),
-            _ => true,
+            | SortKey::Owner => Needs::Stat,
+            SortKey::Rating | SortKey::Tags => Needs::Providers,
+            _ => Needs::Nothing,
+        }
+    }
+
+    /// Whether the order depends on what a stat finds, or the providers,
+    /// which a listing learns only when its entries are hydrated or
+    /// filled (`needs`).
+    pub fn needs_metadata(self) -> bool {
+        self.needs() > Needs::Nothing
+    }
+
+    /// Whether what it sorts by has been read of an entry whose metadata
+    /// is `metadata` (`needs`, `Needs::met_by`), or what it reads on
+    /// demand (`field`); a name always. What a sort waits for, and asks to
+    /// be read, is this alone, of an entry it applies to (`applies_to`): a
+    /// search's hits, stat-ed by its walk, sort by size at once.
+    pub fn has_read(self, metadata: &crate::entry::Metadata) -> bool {
+        match self.field() {
+            Some(field) => metadata.value(field).is_some(),
+            None => self.needs().met_by(metadata),
         }
     }
 
@@ -1595,12 +1639,22 @@ impl SortSpec {
         fields
     }
 
+    /// How much of each entry its order reads (`SortKey::needs`): the most
+    /// of what it is sorted by and what it is grouped by.
+    pub fn needs(&self) -> Needs {
+        std::iter::once(self.key)
+            .chain(self.group_key())
+            .map(SortKey::needs)
+            .max()
+            .unwrap_or_default()
+    }
+
     /// Whether its order reads what a stat or the metadata providers say
-    /// (`SortKey::needs_metadata`): by what it is sorted by, or by what it
-    /// is grouped by. Whoever orders so asks for every entry's, else
-    /// those not read yet wait after the rest until each is drawn.
+    /// (`needs`): by what it is sorted by, or by what it is grouped by.
+    /// Whoever orders so asks for every entry's, else those not read yet
+    /// wait after the rest until each is drawn.
     pub fn needs_metadata(&self) -> bool {
-        self.key.needs_metadata() || self.group_key().is_some_and(SortKey::needs_metadata)
+        self.needs() > Needs::Nothing
     }
 
     /// The groups' direction: the sort's for Same as sort.
@@ -2565,12 +2619,14 @@ impl ListingJob {
 pub struct ReadJob {
     pub open: Arc<dyn OpenLocation>,
     pub ids: Vec<EntryId>,
+    /// How much of them the order reads (`SortSpec::needs`).
+    pub needs: Needs,
 }
 
 impl ReadJob {
-    /// Ask for them, after what is drawn (`OpenLocation::hydrate`).
+    /// Ask for them, after what is drawn (`OpenLocation::read`).
     pub fn run(self) {
-        self.open.hydrate(&self.ids, Priority::Normal);
+        self.open.read(&self.ids, self.needs, Priority::Normal);
     }
 }
 
@@ -2578,6 +2634,7 @@ impl fmt::Debug for ReadJob {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadJob")
             .field("ids", &self.ids.len())
+            .field("needs", &self.needs)
             .finish_non_exhaustive()
     }
 }
@@ -3681,12 +3738,13 @@ impl Listing {
     }
 
     /// What the order by `spec` waits to read of the entries shown, for
-    /// the pane to ask of the location (`OpenLocation::hydrate`, ADR-121
-    /// amended): once the listing is whole, every entry that lacks what
-    /// it reads (`Reads::lacks`); after, each that came since; every one
-    /// again when what it reads changed, or what is shown did otherwise
-    /// than by a change of the entry (a companion's file came). Empty when
-    /// nothing is to be asked. An order that reads nothing forgets it.
+    /// the pane to ask of the location (`OpenLocation::read`, as much as
+    /// `SortSpec::needs` says; ADR-121 amended): once the listing is
+    /// whole, every entry that lacks what it reads (`Reads::lacks`);
+    /// after, each that came since; every one again when what it reads
+    /// changed, or what is shown did otherwise than by a change of the
+    /// entry (a companion's file came). Empty when nothing is to be
+    /// asked. An order that reads nothing forgets it.
     pub fn reading_wanted(&mut self, spec: SortSpec) -> Vec<EntryId> {
         let mut spec = spec;
         spec.show_hidden |= self.hidden_asked;

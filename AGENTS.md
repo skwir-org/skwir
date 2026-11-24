@@ -422,10 +422,12 @@ working in an area, also read that area's rules (see
   Meanwhile the view draws the files of the folder left, `tabs::HOLD` at
   most (`Pane::drawn_entry`, never what a command finds). For a pane
   whose order reads a stat or the metadata providers, the folder
-  provider reads every entry's before the listing completes
-  (`OpenContext::reads_metadata`); an order asked anew that reads what
-  the entries lack is made once the listing has read it
-  (`Listing::reading_wanted`, ADR-121 amended), what moves meanwhile
+  provider reads every entry as far as the order needs (a stat alone, or
+  the providers' pass too) before the listing completes
+  (`OpenContext::reads`, `SortSpec::needs`, from `SortKey::needs`, the
+  one list); an order asked anew that reads what the entries lack is
+  made once the listing has read that much (`OpenLocation::read`,
+  `Listing::reading_wanted`, ADR-121 amended), what moves meanwhile
   left where it was.
   The window's thread builds no folder it opens. An order asked anew
   (a column's header) is made on a worker too, the order before shown

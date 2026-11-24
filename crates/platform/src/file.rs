@@ -132,9 +132,21 @@ pub const DESKTOP_FILE: u64 = 4 << 20;
 /// the system's pace, not at each frame; Windows is asked to keep the
 /// video's slot in memory (`FILE_ATTRIBUTE_TEMPORARY`).
 ///
+/// Removed when dropped; one its process left, killed before (a helper
+/// killed, a test stopped), is removed by the next process to make one:
+/// each is named by the process that made it (`Owner`), whose lock the
+/// system lets go of only as it ends, so no folder of a process still
+/// running is removed, whichever process it is and however many run
+/// (`sweep`). `prefix` begins with `skwir-` and ends with `-`.
+///
 /// # Errors
 /// When no folder can be made.
 pub fn memory_dir(prefix: &str) -> std::io::Result<tempfile::TempDir> {
+    debug_assert!(prefix.starts_with("skwir-") && prefix.ends_with('-'));
+    if let Some(dir) = owner().and_then(|owner| owner.make(prefix).ok()) {
+        return Ok(dir);
+    }
+    // Named by no one, never swept: as made before owners were named.
     #[cfg(target_os = "linux")]
     if let Ok(dir) = tempfile::Builder::new()
         .prefix(prefix)
@@ -143,4 +155,367 @@ pub fn memory_dir(prefix: &str) -> std::io::Result<tempfile::TempDir> {
         return Ok(dir);
     }
     tempfile::Builder::new().prefix(prefix).tempdir()
+}
+
+/// What names the folders a process makes ([`memory_dir`]): a lock file
+/// of its own beside them, `skwir-owner-<token>.lock`, locked while it
+/// lives and let go of by the system as it ends, killed or not; each
+/// folder is `<prefix><token>.<random>`. Made at the process's first
+/// folder, which sweeps what processes ended left ([`sweep`]).
+struct Owner {
+    /// Where its folders are made: `/dev/shm` where it can be, else the
+    /// temporary folder.
+    base: std::path::PathBuf,
+    /// The random part of its lock file's name.
+    token: String,
+    /// Its lock file, locked for as long as the process lives: never
+    /// closed (a static's), so only the process's end lets go of it.
+    _held: std::fs::File,
+}
+
+/// What begins an owner's lock file's name, and ends it.
+const OWNER_PREFIX: &str = "skwir-owner-";
+const OWNER_SUFFIX: &str = ".lock";
+/// How long an owner's token is: letters and digits, never the same twice.
+const TOKEN_LEN: usize = 12;
+
+/// This process's owner, made with its first folder; `None` where no lock
+/// file can be made (its folders then named by no one).
+fn owner() -> Option<&'static Owner> {
+    static OWNER: std::sync::OnceLock<Option<Owner>> = std::sync::OnceLock::new();
+    OWNER
+        .get_or_init(|| {
+            #[cfg(target_os = "linux")]
+            let bases = [Path::new("/dev/shm").to_path_buf(), std::env::temp_dir()];
+            #[cfg(not(target_os = "linux"))]
+            let bases = [std::env::temp_dir()];
+            let owner = bases.iter().find_map(|base| Owner::new(base).ok())?;
+            let removed = sweep(&owner.base, Some(&owner.token));
+            if removed > 0 {
+                tracing::debug!(removed, "scratch folders of ended processes removed");
+            }
+            Some(owner)
+        })
+        .as_ref()
+}
+
+impl Owner {
+    /// A lock file of its own in `base`, locked, under its name still: a
+    /// sweep that found it before it was locked took it for an ended
+    /// process's and removed it (with no folder yet), and another is made.
+    fn new(base: &Path) -> io::Result<Owner> {
+        let mut last = io::Error::other("no lock file could be made");
+        for _ in 0..4 {
+            let made = tempfile::Builder::new()
+                .prefix(OWNER_PREFIX)
+                .suffix(OWNER_SUFFIX)
+                .rand_bytes(TOKEN_LEN)
+                .disable_cleanup(true)
+                .make_in(base, lock_file)?;
+            let (file, path) = made.keep().map_err(|e| e.error)?;
+            if let Err(error) = file.lock() {
+                last = error;
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            if still_named(&path, &file) {
+                let token = path
+                    .file_name()
+                    .and_then(|name| lock_token(name.to_str()?))
+                    .ok_or_else(|| io::Error::other("a lock file of no token"))?
+                    .to_owned();
+                return Ok(Owner {
+                    base: base.to_path_buf(),
+                    token,
+                    _held: file,
+                });
+            }
+        }
+        Err(last)
+    }
+
+    /// A folder of its own, `<prefix><token>.<random>`.
+    fn make(&self, prefix: &str) -> io::Result<tempfile::TempDir> {
+        tempfile::Builder::new()
+            .prefix(&format!("{prefix}{}.", self.token))
+            .tempdir_in(&self.base)
+    }
+}
+
+/// A new lock file at `path`, the user's alone: no one else may hold its
+/// lock and so keep it from being swept. On Windows no other process may
+/// delete it while it is open: a sweep that locked it before its owner
+/// did cannot take it away.
+fn lock_file(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    options.open(path)
+}
+
+/// Whether `path` names `file` still: a sweep may have removed it before
+/// it was locked. Windows lets no one remove it while it is open
+/// (`lock_file`).
+fn still_named(path: &Path, file: &std::fs::File) -> bool {
+    #[cfg(unix)]
+    {
+        let identity = |meta: &std::fs::Metadata| skwir_core::fs::stat::identity(path, meta);
+        match (std::fs::symlink_metadata(path), file.metadata()) {
+            (Ok(named), Ok(held)) => identity(&named).is_some_and(|id| identity(&held) == Some(id)),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, file);
+        true
+    }
+}
+
+/// The token of an owner's lock file named `name`.
+fn lock_token(name: &str) -> Option<&str> {
+    let token = name
+        .strip_prefix(OWNER_PREFIX)?
+        .strip_suffix(OWNER_SUFFIX)?;
+    is_token(token).then_some(token)
+}
+
+/// The token of the owner of a folder named `name`
+/// (`<prefix><token>.<random>`, the prefix `skwir-…-`).
+fn folder_token(name: &str) -> Option<&str> {
+    if !name.starts_with("skwir-") {
+        return None;
+    }
+    let (head, random) = name.rsplit_once('.')?;
+    let (_, token) = head.rsplit_once('-')?;
+    (is_token(token) && !random.is_empty() && random.bytes().all(|b| b.is_ascii_alphanumeric()))
+        .then_some(token)
+}
+
+fn is_token(token: &str) -> bool {
+    token.len() == TOKEN_LEN && token.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// Remove from `base` the folders of the owners that ended: those whose
+/// lock file this process can lock, which the system lets go of only as
+/// its process ends. Each owner's folders go, then its lock file, kept
+/// while one of them could not be removed, for the next sweep. Left: an
+/// owner's whose lock is held (its process runs), `own`, a folder whose
+/// owner has no lock file (named by no one: made before owners were
+/// named, or by another program), what is not the user's. How many
+/// folders were removed.
+fn sweep(base: &Path, own: Option<&str>) -> usize {
+    let Ok(listed) = std::fs::read_dir(base) else {
+        return 0;
+    };
+    let mut owners = Vec::new();
+    let mut folders: std::collections::HashMap<String, Vec<std::ffi::OsString>> =
+        std::collections::HashMap::new();
+    for entry in listed.flatten() {
+        let name = entry.file_name();
+        let Some(text) = name.to_str() else { continue };
+        if let Some(token) = lock_token(text) {
+            owners.push(token.to_owned());
+        } else if let Some(token) = folder_token(text) {
+            folders
+                .entry(token.to_owned())
+                .or_default()
+                .push(name.clone());
+        }
+    }
+    let mut removed = 0;
+    for token in owners {
+        if own == Some(token.as_str()) {
+            continue;
+        }
+        let lock = base.join(format!("{OWNER_PREFIX}{token}{OWNER_SUFFIX}"));
+        let Ok(file) = std::fs::File::open(&lock) else {
+            continue;
+        };
+        // Held: its process runs; refused otherwise: nothing is known.
+        if !file.metadata().is_ok_and(|meta| users(&meta)) || file.try_lock().is_err() {
+            continue;
+        }
+        let mut all = true;
+        for name in folders.remove(&token).unwrap_or_default() {
+            let path = base.join(name);
+            let folder = std::fs::symlink_metadata(&path)
+                .is_ok_and(|meta| meta.file_type().is_dir() && users(&meta));
+            if folder && std::fs::remove_dir_all(&path).is_ok() {
+                removed += 1;
+            } else {
+                all = false;
+            }
+        }
+        if all {
+            let _ = std::fs::remove_file(&lock);
+        }
+    }
+    removed
+}
+
+/// Whether what `meta` describes is the user's: `/dev/shm` is every
+/// user's.
+fn users(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.uid() == rustix::process::geteuid().as_raw()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A lock file and a folder of an owner `token`, made by hand: an
+    /// ended process's, its lock let go of.
+    fn left_by(base: &Path, token: &str, folder: &str) -> std::path::PathBuf {
+        std::fs::write(
+            base.join(format!("{OWNER_PREFIX}{token}{OWNER_SUFFIX}")),
+            b"",
+        )
+        .unwrap();
+        let dir = base.join(format!("skwir-pages-{token}.{folder}"));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("it's a page, été.png"), b"x").unwrap();
+        dir
+    }
+
+    /// What an ended process left is swept: its folders, then its lock
+    /// file. A running owner's folders stay (its lock held, here by
+    /// another file of this process), this process's own too, and what
+    /// is named by no owner, or by one without a lock file.
+    #[test]
+    fn what_ended_processes_left_is_swept_and_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let ended = left_by(base, "EndedAbc1234", "Zx81Qp");
+        let ended_too = base.join("skwir-video-EndedAbc1234.Ab12Cd");
+        std::fs::create_dir(&ended_too).unwrap();
+
+        let running = left_by(base, "Running12345", "Qw3rTy");
+        let held =
+            std::fs::File::open(base.join(format!("{OWNER_PREFIX}Running12345{OWNER_SUFFIX}")))
+                .unwrap();
+        held.lock().unwrap();
+
+        let own = Owner::new(base).unwrap();
+        let mine = own.make("skwir-archive-").unwrap();
+        let unnamed = base.join("skwir-video-AbCdEf");
+        std::fs::create_dir(&unnamed).unwrap();
+        let no_lock = base.join("skwir-pages-NoLockFile12.Ab12Cd");
+        std::fs::create_dir(&no_lock).unwrap();
+        let other = base.join("other-program-Running12345.Ab12Cd");
+        std::fs::create_dir(&other).unwrap();
+
+        assert_eq!(sweep(base, Some(&own.token)), 2);
+        assert!(
+            !ended.exists() && !ended_too.exists(),
+            "an ended one's gone"
+        );
+        assert!(
+            !base
+                .join(format!("{OWNER_PREFIX}EndedAbc1234{OWNER_SUFFIX}"))
+                .exists(),
+            "its lock file after them"
+        );
+        for kept in [
+            &running,
+            &mine.path().to_path_buf(),
+            &unnamed,
+            &no_lock,
+            &other,
+        ] {
+            assert!(kept.exists(), "{} kept", kept.display());
+        }
+        assert_eq!(sweep(base, Some(&own.token)), 0, "nothing more");
+
+        // Its owner ended: its lock let go of.
+        drop(held);
+        assert_eq!(sweep(base, Some(&own.token)), 1);
+        assert!(!running.exists());
+        // Swept by another process: this one's own is held.
+        assert_eq!(sweep(base, None), 0);
+        assert!(mine.path().exists());
+    }
+
+    /// The names an owner gives are the ones a sweep reads.
+    #[test]
+    fn an_owner_s_names_are_read_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let own = Owner::new(tmp.path()).unwrap();
+        let dir = own.make("skwir-djvu-test-").unwrap();
+        let name = dir.path().file_name().unwrap().to_str().unwrap();
+        assert_eq!(folder_token(name), Some(own.token.as_str()));
+        assert_eq!(
+            lock_token(&format!("{OWNER_PREFIX}{}{OWNER_SUFFIX}", own.token)),
+            Some(own.token.as_str())
+        );
+        assert_eq!(folder_token("skwir-video-AbCdEf"), None, "named by no one");
+        assert_eq!(lock_token("skwir-owner-short.lock"), None);
+    }
+
+    /// What a process killed left goes at the next sweep, and not before:
+    /// while it runs, its folder stays. The process is this test's own
+    /// program, started again to make a folder and wait.
+    #[cfg(unix)]
+    #[test]
+    fn a_killed_process_s_folder_goes_and_a_running_one_s_stays() {
+        use std::io::BufRead;
+        const CHILD: &str = "SKWIR_TEST_SCRATCH_OWNER";
+        if let Some(base) = std::env::var_os(CHILD) {
+            let own = Owner::new(Path::new(&base)).unwrap();
+            let dir = own.make("skwir-pages-").unwrap();
+            println!("made {}", dir.path().display());
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        // This test's own program, from the console the tests run in.
+        #[allow(clippy::disallowed_methods)]
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "file::tests::a_killed_process_s_folder_goes_and_a_running_one_s_stays",
+                "--nocapture",
+            ])
+            .env(CHILD, tmp.path())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let made = out
+            .lines()
+            .map_while(Result::ok)
+            .find_map(|line| line.strip_prefix("made ").map(std::path::PathBuf::from))
+            .expect("the child made its folder");
+        assert!(made.exists());
+        assert_eq!(sweep(tmp.path(), None), 0, "its process runs");
+        assert!(made.exists());
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(sweep(tmp.path(), None), 1, "killed");
+        assert!(!made.exists());
+        assert_eq!(
+            std::fs::read_dir(tmp.path()).unwrap().count(),
+            0,
+            "its lock file gone too"
+        );
+    }
 }

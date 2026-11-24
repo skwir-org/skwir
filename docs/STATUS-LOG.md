@@ -23523,3 +23523,35 @@ close.
 - **Left:** a race in the folder provider (a hydration's stat deciding
   the mark, sent after a change cleared it) can still leave a mark or a
   size stale: given to the folders track tonight.
+
+## 2026-11-24: an order reads only what it needs; scratch folders swept (ADR-121 amended)
+
+Two leftovers of PLAN's "What is left", built by an agent tonight.
+
+- **An order by a stat waits for the stat alone.** `location::Needs`
+  (nothing, a stat, the providers' pass) and `SortKey::needs`, the one
+  list; `OpenContext::reads` in place of `reads_metadata`; a folder
+  opened for an order by a stat completes once every entry is stat-ed,
+  and an order asked anew asks only that much (`OpenLocation::read`,
+  `ReadJob::needs`). Tests: a folder sorted by date completes in date
+  order with a stand-in provider that blocks, none filled and the
+  provider never asked; by rating it waits for it; the same for an order
+  asked anew; a folder read as far as its order reads. Measured, debug
+  build, 100,000 empty files, tags plugin on, load 12 to 16, rounds
+  alternated: a folder opened 2.30 to 4.84 s against 3.64 to 6.41 s, an
+  order asked anew 1.16 to 1.37 s against 1.62 to 1.87 s, 100,000
+  folders 2.29 to 4.39 s against 3.33 to 7.56 s. `/nix/store` not
+  measured.
+- **Scratch folders of killed processes.** Each process holds a lock
+  file (`skwir-owner-<token>.lock`) for its life and names its folders by
+  its token; a process's first scratch folder sweeps those of owners
+  whose lock it can take. Pid and start time were not used: pid and time
+  namespaces make them differ between processes. Tests: an ended owner
+  swept, a running one kept, folders of no owner and of other programs
+  kept; on Unix the test binary run again as a child making a folder,
+  kept while it runs, swept after SIGKILL. Under Wine the in-process
+  tests pass.
+- **Checked on HEAD with this work alone:** clippy on core, platform,
+  query, ui and the binary; core, platform and query tests (1,778);
+  the binary's grouping, dialogs_offer and plugins_toggle (21).
+  Windows clippy (zigbuild) on core, platform, query and tags.

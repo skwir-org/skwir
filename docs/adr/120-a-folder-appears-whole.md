@@ -55,7 +55,7 @@ the streaming past a second removed (this record says the last).
    date, a size, an owner, tags) showed a folder first with nothing
    read, every file in one group, then moved them as rows were read;
    such a pane's folder is now read of every entry before its listing
-   completes (`OpenContext::reads_metadata`, the folder provider's
+   completes (`OpenContext::reads_metadata`, `reads` since 2026-11-24, the folder provider's
    listing), and appears in its groups at once.) The footer says nothing at
    first, then, with the banner after 200 ms as before, "Loading…" and
    how many entries have been read ("Loading… 120 000 items",

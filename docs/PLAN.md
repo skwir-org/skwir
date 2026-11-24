@@ -1524,11 +1524,14 @@ takes its futures and timer from zbus's runtime, which zbus 6 replaced
 with its own). A gpui feature leaving its notifications out would drop
 zbus 6 sooner.
 
-**Scratch folders of killed processes** (2026-11-23):
-`file::memory_dir`'s folders under `/dev/shm` stay when their process is
-killed (tests stopped by nextest, a helper killed): ~240 empty or sparse
-folders over a few days (60 KB, no memory). Remove a stale one at start,
-or name each by its owner.
+**Scratch folders of killed processes** (built 2026-11-24): each
+process holds a lock file of its own for its life, and names its
+`file::memory_dir` folders by it; the first scratch folder a process
+makes sweeps the folders of owners whose lock it can take (ended, even
+killed). Left: the folders made before it have no owner and are never
+swept (a reboot clears them); a normal exit leaves a 0-byte lock file
+until the next sweep; the sweep runs at a process's first scratch
+folder, not at start.
 
 **A drag moves what has nothing to select** (ADR-143, built
 2026-11-19). Left: the open and closed hands were read in the code, not
@@ -1886,10 +1889,11 @@ not with Orca. MathML that uses an element `math::mathml` does not know
 (`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
 hidden label alone in its block is lost (an empty block is not kept).
 
-**Big folders** (ADR-121 amended, 2026-11-12): a sort by a stat waits
-for the metadata providers' pass too (tags, comments: 9.3 s of the
-11.6 s grouping `/nix/store` by Modified takes in the debug build),
-which it does not need; a reading of the stat alone would end sooner.
+**Big folders** (ADR-121 amended 2026-11-12 and 2026-11-24): a sort by a
+stat now waits for the stat alone. F5 of a folder whose order read
+every entry reads them all with the providers again (the folder does
+not know which rows were drawn); search, trash and tag locations use
+the default reading.
 What is read on demand (Taken, Dimensions, Duration) is still placed
 64 entries at a time. Compiled for Windows and macOS not checked for
 this change (`just check-cross`).

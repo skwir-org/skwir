@@ -506,6 +506,241 @@ fn a_folder_sorted_by_date_is_read_before_it_appears() {
     );
 }
 
+/// A metadata provider that answers only once let go (`open`): one that
+/// reads slowly, as the tags of 385 000 files are read. It rates each file
+/// by its name (`RATED`) and counts the entries it was asked of.
+#[derive(Default)]
+struct Slow {
+    open: std::sync::Mutex<bool>,
+    let_go: std::sync::Condvar,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+/// The files of `dated`, each with its rating and when it was modified:
+/// newest first `a`, `c`, `b`; highest rated first `b`, `c`, `a`.
+const RATED: [(&str, u64, u64); 3] = [
+    ("b old.txt", 5, 1_740_787_200),
+    ("a new.txt", 1, 1_793_491_200),
+    ("c middle's.txt", 3, 1_767_225_600),
+];
+
+impl Slow {
+    fn set(&self, open: bool) {
+        *self.open.lock().unwrap() = open;
+        self.let_go.notify_all();
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl skwir_core::metadata::MetadataProvider for Slow {
+    fn id(&self) -> &'static str {
+        "slow"
+    }
+    fn fill(&self, _: &std::path::Path, entries: &mut [skwir_core::Entry]) {
+        use skwir_core::entry::{Provenance, Value, keys};
+        self.asked
+            .fetch_add(entries.len(), std::sync::atomic::Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut open = self.open.lock().unwrap();
+        while !*open {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let (now, waited) = self.let_go.wait_timeout(open, left).unwrap();
+            open = now;
+            if waited.timed_out() {
+                break;
+            }
+        }
+        drop(open);
+        for e in entries {
+            if let Some((_, rating, _)) = RATED.iter().find(|(name, ..)| e.name == *name) {
+                e.metadata
+                    .set(keys::RATING, Value::UInt(*rating), Provenance::User);
+            }
+        }
+    }
+}
+
+/// `dir` made with the files of [`RATED`], each modified when it says.
+fn dated(dir: &std::path::Path) {
+    std::fs::create_dir(dir).unwrap();
+    for (name, _, secs) in RATED {
+        let path = dir.join(name);
+        std::fs::write(&path, b"x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(secs))
+            .unwrap();
+    }
+}
+
+/// The names the pane shows, in its order, and how many of its entries
+/// are stat-ed and how many filled by the metadata providers.
+fn shown_read(
+    app: &skwir_core::App,
+    pane: skwir_core::workspace::PaneId,
+) -> (Vec<String>, usize, usize) {
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    let names = p
+        .order()
+        .iter()
+        .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+        .collect();
+    let stated = p
+        .listing
+        .iter()
+        .filter(|e| e.metadata.is_hydrated())
+        .count();
+    let filled = p.listing.iter().filter(|e| e.metadata.is_filled()).count();
+    (names, stated, filled)
+}
+
+/// Sorted by a date, a folder is whole once its entries are stat-ed: the
+/// metadata providers' pass (tags, a rating), which an order by a date
+/// does not read, is not waited for, and reads what the rows drawn ask
+/// for after, as in any listing (ADR-121, amended 2026-11-24). Sorted by
+/// a rating, it waits for that pass.
+#[test]
+fn a_folder_sorted_by_date_waits_for_no_provider() {
+    use skwir_core::command::Invocation;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("dated notes, l'été");
+    dated(&dir);
+    let app = app(tmp.path());
+    let slow = std::sync::Arc::new(Slow::default());
+    app.metadata.register("slow", slow.clone());
+    let pane = active(&app);
+    let sort = |key: &str| {
+        app.dispatch(&Invocation::with_args(
+            "sort",
+            &serde_json::json!({ "key": key }),
+        ))
+        .unwrap();
+    };
+    // Sorted while elsewhere, the folder then opened anew.
+    let opened_sorted_by = |key: &str| {
+        slow.set(true);
+        navigate(&app, tmp.path());
+        app.keep_locations(pane, &[]);
+        sort(key);
+        wait(&app, pane, |l| !l.is_sorting() && l.reading().is_none());
+        slow.set(false);
+        app.dispatch(&Invocation::with_args(
+            "navigate",
+            &serde_json::json!({ "location": dir }),
+        ))
+        .unwrap();
+    };
+
+    opened_sorted_by("modified");
+    let before = slow.asked();
+    assert!(
+        app.pump_until_complete(pane, Duration::from_secs(10)),
+        "whole while the providers have not answered"
+    );
+    assert_eq!(slow.asked(), before, "no provider asked before it is whole");
+    let (names, stated, filled) = shown_read(&app, pane);
+    assert_eq!(names, ["a new.txt", "c middle's.txt", "b old.txt"]);
+    assert_eq!((stated, filled), (3, 0), "every entry stat-ed, none filled");
+
+    // The rows drawn ask for the rest, as in any listing.
+    let ids: Vec<_> = app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .listing
+        .ids()
+        .collect();
+    app.dispatch(&Invocation::with_args(
+        "hydrate",
+        &serde_json::json!({ "ids": ids, "pane": pane }),
+    ))
+    .unwrap();
+    slow.set(true);
+    wait(&app, pane, |l| l.iter().all(|e| e.metadata.is_filled()));
+
+    // By a rating: whole only once the providers answered.
+    opened_sorted_by("rating");
+    let before = slow.asked();
+    assert!(
+        !app.pump_until_complete(pane, Duration::from_millis(300)),
+        "waits for the providers"
+    );
+    assert!(slow.asked() > before, "the providers asked");
+    slow.set(true);
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    let (names, stated, filled) = shown_read(&app, pane);
+    assert_eq!(names, ["b old.txt", "c middle's.txt", "a new.txt"]);
+    assert_eq!((stated, filled), (3, 3));
+}
+
+/// An order asked anew of a folder shown waits for as much as it reads:
+/// by a date, for the stats alone, made while the providers have not
+/// answered; by a rating, for the providers too (ADR-121, amended
+/// 2026-11-24).
+#[test]
+fn an_order_asked_anew_by_date_waits_for_no_provider() {
+    use skwir_core::command::Invocation;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("dated notes, l'été");
+    dated(&dir);
+    let app = app(tmp.path());
+    let slow = std::sync::Arc::new(Slow::default());
+    app.metadata.register("slow", slow.clone());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let sort = |key: &str| {
+        app.dispatch(&Invocation::with_args(
+            "sort",
+            &serde_json::json!({ "key": key }),
+        ))
+        .unwrap();
+    };
+    let names = |app: &skwir_core::App| shown_read(app, pane).0;
+
+    sort("modified");
+    wait(&app, pane, |l| !l.is_sorting() && l.reading().is_none());
+    assert_eq!(names(&app), ["a new.txt", "c middle's.txt", "b old.txt"]);
+    assert_eq!(slow.asked(), 0, "no provider asked");
+    assert_eq!(shown_read(&app, pane).1, 3, "every entry stat-ed");
+
+    sort("rating");
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(slow.asked() > 0, "the providers asked");
+    assert!(
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .listing
+            .reading()
+            .is_some(),
+        "the order waits for them"
+    );
+    assert_eq!(
+        names(&app),
+        ["a new.txt", "c middle's.txt", "b old.txt"],
+        "the order before stays meanwhile"
+    );
+    slow.set(true);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while names(&app) != ["b old.txt", "c middle's.txt", "a new.txt"] {
+        assert!(Instant::now() < deadline, "by rating: {:?}", names(&app));
+        app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1041,7 +1276,7 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
         names: std::sync::Arc::clone(&app.names),
         companions: std::sync::Arc::clone(&app.companions),
         hidden_shown: false,
-        reads_metadata: false,
+        reads: skwir_core::location::Needs::Nothing,
     };
     let (sink, rx) = ctx.channel();
     let id = |ino| skwir_core::EntryId {
@@ -1105,7 +1340,7 @@ fn what_cannot_be_read_is_answered_unreadable() {
         names: std::sync::Arc::clone(&app.names),
         companions: std::sync::Arc::clone(&app.companions),
         hidden_shown: false,
-        reads_metadata: false,
+        reads: skwir_core::location::Needs::Nothing,
     };
     let (sink, rx) = ctx.channel();
     let id = skwir_core::EntryId {

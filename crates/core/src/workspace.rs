@@ -3882,6 +3882,7 @@ impl Pane {
                     jobs.push(ListingJob::Read(ReadJob {
                         open: Arc::clone(open),
                         ids,
+                        needs: sort.spec.needs(),
                     }));
                 }
             } else {

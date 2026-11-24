@@ -55,7 +55,7 @@ dialogs', apart from the user's windows').
    location; `key`, `ascending`, `group`, `group_ascending`). Read once,
    held as a map (`orders::Orders`): a navigation looks it up in memory
    before opening (`App::open_in`), so the folder is listed and sorted
-   once, by the order it remembers (`OpenContext::reads_metadata` from
+   once, by the order it remembers (`OpenContext::reads_metadata`, `reads` since 2026-11-24, from
    it). Saved on a worker; a change made by another skwir is taken in as
    it happens, as every data setting is. A record that does not read (a
    later skwir's criterion, a hand edit) is kept as written; a setting
