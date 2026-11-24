@@ -425,18 +425,26 @@ impl NameIndexes {
         cancel: &CancelToken,
     ) -> Option<(Arc<dyn NameIndex>, Opened)> {
         let all = self.list.all();
+        // Asked once: the one the mark names is not asked again below.
+        let mut asked: Option<&'static str> = None;
         if let Some(by) = by
             && let Some(index) = all.iter().find(|i| i.id() == by)
-            && let Some(opened) = index.follow(root, cancel)
-            && opened.coverage.names.answers()
         {
-            return Some((Arc::clone(index), opened));
+            asked = Some(index.id());
+            if let Some(opened) = index.follow(root, cancel)
+                && opened.coverage.names.answers()
+            {
+                return Some((Arc::clone(index), opened));
+            }
         }
         // The strongest, the first registered among equals.
         let mut best: Option<(Arc<dyn NameIndex>, Opened)> = None;
         for index in all {
             if cancel.is_cancelled() {
                 return None;
+            }
+            if asked == Some(index.id()) {
+                continue;
             }
             if let Some(opened) = index.follow(root, cancel)
                 && opened.coverage.names.answers()
@@ -489,6 +497,52 @@ mod tests {
         fn covers(&self, _: &Query, _: &CancelToken) -> Option<Coverage> {
             Some(self.1.clone())
         }
+    }
+
+    /// An index that counts how often it is asked to follow, and answers
+    /// with its coverage.
+    struct Counted(&'static str, Coverage, std::sync::atomic::AtomicUsize);
+
+    impl NameIndex for Counted {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn by(&self) -> Words {
+            Words::as_written(self.0)
+        }
+        fn syncs(&self) -> bool {
+            true
+        }
+        fn open(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
+            None
+        }
+        fn follow(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
+            self.2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Some(Opened {
+                coverage: self.1.clone(),
+                session: Box::new(Nothing),
+            })
+        }
+    }
+
+    /// The index a mark names is followed where it answers; where it does
+    /// not, the strongest other is, each asked once.
+    #[test]
+    fn the_index_a_mark_names_is_asked_once() {
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_007);
+        let counted = |id, coverage| Arc::new(Counted(id, coverage, 0.into()));
+        let asked = |index: &Counted| index.2.load(std::sync::atomic::Ordering::Relaxed);
+        let indexes = NameIndexes::default();
+        let kept = counted("kept", Coverage::not_covered(Why::Denied));
+        let other = counted("other", Coverage::as_of(Some(t)));
+        indexes.register("a", Arc::clone(&kept) as Arc<dyn NameIndex>);
+        indexes.register("b", Arc::clone(&other) as Arc<dyn NameIndex>);
+        let followed = indexes.follow(Path::new("/"), Some("kept"), &CancelToken::new());
+        assert_eq!(followed.map(|(index, _)| index.id()), Some("other"));
+        assert_eq!((asked(&kept), asked(&other)), (1, 1));
+        let followed = indexes.follow(Path::new("/"), Some("other"), &CancelToken::new());
+        assert_eq!(followed.map(|(index, _)| index.id()), Some("other"));
+        assert_eq!((asked(&kept), asked(&other)), (1, 2), "the mark's answers");
     }
 
     #[test]
