@@ -105,10 +105,10 @@ pub fn catalogs(installed: &Path, crate_folder: &str) {
     }
 }
 
-/// A temporary folder on the home filesystem.
+/// A temporary folder on the home filesystem: the home folder as skwir
+/// reads it, which Windows names by no `HOME`.
 pub fn home_tempdir() -> tempfile::TempDir {
-    let base = std::env::var_os("HOME")
-        .map(PathBuf::from)
+    let base = skwir_core::os_path::home()
         .expect("home")
         .join(".cache")
         .join("skwir-tests");
