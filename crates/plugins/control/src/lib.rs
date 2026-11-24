@@ -503,11 +503,15 @@ pub fn run(
     }
     let privacy = app.privacy();
     let mut check = privacy.checker();
+    // Why a call is refused is said as it is, for the agent, in English:
+    // it names nothing the agent did not (a path a lookup would reach
+    // another machine for, which redacting would say private and leave
+    // the agent no reason).
+    admit(app, invocation, &mut check, cancelled)
+        .map_err(|refused| anyhow::anyhow!(Words::of_error(refused).english()))?;
     // What it counts of a pane's entries leaves the private ones out.
-    let answer = admit(app, invocation, &mut check, cancelled).and_then(|()| {
-        permissions::as_agent(privacy.clone(), || {
-            dispatched(app, invocation, mode, cancelled)
-        })
+    let answer = permissions::as_agent(privacy.clone(), || {
+        dispatched(app, invocation, mode, cancelled)
     });
     match answer {
         Ok(answer) => Ok(Answer {
