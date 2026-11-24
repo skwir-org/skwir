@@ -622,7 +622,9 @@ fn a_folder_sorted_by_date_waits_for_no_provider() {
         ))
         .unwrap();
     };
-    // Sorted while elsewhere, the folder then opened anew.
+    // Sorted while elsewhere, the folder then opened anew: how often the
+    // providers were asked before it was, counted before it is opened, as
+    // a worker may ask them before the opening returns.
     let opened_sorted_by = |key: &str| {
         slow.set(true);
         navigate(&app, tmp.path());
@@ -630,15 +632,16 @@ fn a_folder_sorted_by_date_waits_for_no_provider() {
         sort(key);
         wait(&app, pane, |l| !l.is_sorting() && l.reading().is_none());
         slow.set(false);
+        let before = slow.asked();
         app.dispatch(&Invocation::with_args(
             "navigate",
             &serde_json::json!({ "location": dir }),
         ))
         .unwrap();
+        before
     };
 
-    opened_sorted_by("modified");
-    let before = slow.asked();
+    let before = opened_sorted_by("modified");
     assert!(
         app.pump_until_complete(pane, Duration::from_secs(10)),
         "whole while the providers have not answered"
@@ -666,10 +669,9 @@ fn a_folder_sorted_by_date_waits_for_no_provider() {
     wait(&app, pane, |l| l.iter().all(|e| e.metadata.is_filled()));
 
     // By a rating: whole only once the providers answered.
-    opened_sorted_by("rating");
-    let before = slow.asked();
+    let before = opened_sorted_by("rating");
     // The providers asked, however late a loaded machine's worker comes
-    // to them, and the folder not whole meanwhile.
+    // to them, or however early, and the folder not whole meanwhile.
     let deadline = Instant::now() + Duration::from_secs(10);
     while slow.asked() == before {
         assert!(Instant::now() < deadline, "the providers asked");
