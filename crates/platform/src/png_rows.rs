@@ -111,10 +111,12 @@ impl<R: BufRead + Seek> ImageDecoder for Decoder<R> {
             .reader
             .output_line_size(self.size.0)
             .ok_or_else(too_large)?;
-        // A row is held whatever the region is, within what the decode
-        // may hold besides it: `png` measured it against `image`'s own
-        // limits as the picture was opened, never the caller's.
-        if line as u64 > self.held {
+        // Three rows are held whatever the region is (this one, and
+        // `png`'s row being unfiltered and the one above it), within what
+        // the decode may hold besides it: `png` measured them against
+        // `image`'s own limits as the picture was opened, never the
+        // caller's.
+        if (line as u64).saturating_mul(3) > self.held {
             return Err(too_large());
         }
         let rows = buf.chunks_exact_mut(across);
@@ -220,6 +222,10 @@ mod tests {
             decoder.read_image(&mut pixel)
         };
         assert!(read(64 << 20).is_ok(), "a row of 4 MB within 64 MB");
+        assert!(
+            matches!(read(8 << 20), Err(ImageError::Limits(_))),
+            "three rows of 4 MB beyond 8 MB"
+        );
         assert!(
             matches!(read(1 << 20), Err(ImageError::Limits(_))),
             "a row of 4 MB beyond 1 MB"
