@@ -709,9 +709,10 @@ fn not_saved(app: &App, error: anyhow::Error) {
     );
 }
 
-/// What a row says under its name: its folder, and how skwird keeps it.
+/// What a row says under its name: its folder, as a person reads a path
+/// on this system, and how skwird keeps it.
 fn state(row: &Row, said: &Said) -> Words {
-    let folder = skwir_core::exclusions::tilde(&row.path);
+    let folder = skwir_core::os_path::from_home(&row.path);
     if !row.kept {
         return skwir_core::words!(
             skwird_kept_not = "{ $folder } · not kept live",
@@ -747,7 +748,7 @@ fn state(row: &Row, said: &Said) -> Words {
         (protocol::Keeping::Live(_), Some(within)) => skwir_core::words!(
             skwird_kept_within = "{ $folder } · live, inside { $within }",
             folder = folder,
-            within = skwir_core::exclusions::tilde(&within.to_path()),
+            within = skwir_core::os_path::from_home(&within.to_path()),
             note = "Under a folder's name in the list of folders kept live: another folder kept live holds it. within: that folder."
         ),
         (protocol::Keeping::Live(_), None) => skwir_core::words!(

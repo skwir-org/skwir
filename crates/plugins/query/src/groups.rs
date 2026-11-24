@@ -111,9 +111,10 @@ fn by_folder() -> Keyer {
         Some(folder) => made.get(folder.to_path_buf(), || Group {
             rank: 1,
             key: Arc::from(skwir_core::collate::sort_key(folder.as_os_str())),
-            // Its heading drawn alone, its controls shown (ADR-139, 5).
+            // Its heading drawn alone, its controls shown (ADR-139, 5), the
+            // path as a person reads it on this system (`~\…` on Windows).
             label: Arc::from(
-                skwir_core::words::shown_controls(&skwir_core::exclusions::tilde(folder)).as_ref(),
+                skwir_core::words::shown_controls(&skwir_core::os_path::from_home(folder)).as_ref(),
             ),
             folders: false,
             term: None,
@@ -1651,17 +1652,19 @@ mod tests {
             })
         };
         let notes = home.join("notes");
-        let maps = home.join("notes/maps");
+        let maps = notes.join("maps");
+        // From the home folder, its names apart as the system writes them.
+        let sep = std::path::MAIN_SEPARATOR;
         assert!(Arc::ptr_eq(&of(Some(&notes)), &of(Some(&notes))));
         assert!(!Arc::ptr_eq(&of(Some(&notes)), &of(Some(&maps))));
-        assert_eq!(&*of(Some(&maps)).label, "~/notes/maps");
+        assert_eq!(&*of(Some(&maps)).label, format!("~{sep}notes{sep}maps"));
         assert!(of(Some(&notes)).standing(&of(Some(&maps))).is_lt());
         assert_eq!(of(Some(&notes)).term, None, "a filter cannot say where");
         assert_eq!(&*of(None).label, "No folder");
         assert!(of(None).standing(&of(Some(&notes))).is_lt());
         // A folder's heading shows its controls, never obeys them.
         let spoof = home.join("a\u{202e}b");
-        assert_eq!(&*of(Some(&spoof)).label, "~/a⟨RLO⟩b");
+        assert_eq!(&*of(Some(&spoof)).label, format!("~{sep}a⟨RLO⟩b"));
     }
 
     /// A sort by name, by size or by a date needs no keys of its own; by

@@ -284,7 +284,7 @@ fn a_search_groups_by_the_folder_each_file_is_in() {
         } else {
             root.join(dir)
         };
-        skwir_core::exclusions::tilde(&path)
+        skwir_core::os_path::from_home(&path)
     };
     assert_eq!(
         shown(&app, pane),
