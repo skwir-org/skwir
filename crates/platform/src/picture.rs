@@ -299,8 +299,10 @@ pub fn decode_region<R: BufRead + Seek>(
     side: u32,
     threads: Threads,
 ) -> ImageResult<DynamicImage> {
-    // A JPEG's rows around the region alone, a JPEG XL's or a HEIF's
-    // region alone; any other picture whole.
+    // A JPEG's rows around the region alone, a PNG's rows down to it, a
+    // TIFF's strips or tiles it meets, a JPEG XL's or a HEIF's region
+    // alone; any other picture whole (a WebP: `image-webp` decodes a frame
+    // only whole).
     let format = reader.format();
     let mut inner = reader.into_inner();
     let band = if format == Some(ImageFormat::Jpeg) {
@@ -308,6 +310,10 @@ pub fn decode_region<R: BufRead + Seek>(
             Some(band) => band,
             None => Band::whole(whole(ImageReader::with_format(inner, ImageFormat::Jpeg))?),
         }
+    } else if format == Some(ImageFormat::Png) {
+        region_alone(crate::png_rows::Decoder::new(inner)?, own, region)?
+    } else if format == Some(ImageFormat::Tiff) && crate::tiff_chunks::by_chunks(&mut inner)? {
+        region_alone(crate::tiff_chunks::Decoder::new(inner)?, own, region)?
     } else if format.is_none() && crate::jxl::starts(inner.fill_buf()?) {
         region_alone(crate::jxl::Decoder::new(inner)?, own, region)?
     } else if format.is_none() && crate::heif::starts(inner.fill_buf()?) {
@@ -511,10 +517,15 @@ impl Band {
 }
 
 /// A decoder that reads a region of its picture alone: a JPEG XL's groups
-/// (`jxl`), a HEIF's tiles (`heif`, ADR-148 amended).
+/// (`jxl`), a HEIF's tiles (`heif`, ADR-148 amended), a PNG's rows down to
+/// it (`png_rows`), a TIFF's strips or tiles (`tiff_chunks`, ADR-146
+/// amended).
 pub(crate) trait Regional: ImageDecoder {
-    /// Read `region` alone (left, top, width, height, as shown), within
-    /// the picture (`inside`): what [`Regional::region`] says.
+    /// Read `region` alone (left, top, width, height, in its pixels as it
+    /// decodes them: as shown where it turns them itself, a JPEG XL's or a
+    /// HEIF's; as stored where its orientation says how to turn them, a
+    /// PNG's or a TIFF's), within the picture (`inside`): what
+    /// [`Regional::region`] says.
     fn cut(&mut self, region: [u32; 4]);
     /// What is read: the whole, or what [`Regional::cut`] said.
     fn region(&self) -> [u32; 4];
@@ -533,21 +544,25 @@ pub(crate) fn inside([left, top, width, height]: [u32; 4], size: (u32, u32)) -> 
     ]
 }
 
-/// The region of a picture a zoom shows, decoded alone by `decoder` at its
-/// full size, the only one it is decoded at, as it is shown (`own`): the
-/// decoder turns it.
+/// The region of a picture a zoom shows (`region`, of the picture as it is
+/// shown, `own`), decoded alone by `decoder` at its full size, the only one
+/// it is decoded at: where the region lies as stored, turned as its
+/// orientation says (none where the decoder turns it itself, a JPEG XL's,
+/// a HEIF's).
 fn region_alone(
     mut decoder: impl Regional,
     own: (u32, u32),
     region: [u32; 4],
 ) -> ImageResult<Band> {
+    let orientation = orientation(&mut decoder);
     let size = decoder.dimensions();
+    let stored = turned(own.0, own.1, orientation);
     // In its pixels, should what was shown be of another size.
     let (across, down) = (
-        f64::from(size.0) / f64::from(own.0.max(1)),
-        f64::from(size.1) / f64::from(own.1.max(1)),
+        f64::from(size.0) / f64::from(stored.0.max(1)),
+        f64::from(size.1) / f64::from(stored.1.max(1)),
     );
-    let [x, y, width, height] = region;
+    let [x, y, width, height] = stored_region(region, own, orientation);
     let at = |at: u32, scale: f64| (f64::from(at) * scale).floor() as u32;
     let end = |at: u32, scale: f64| (f64::from(at) * scale).ceil() as u32;
     let (left, top) = (at(x, across), at(y, down));
@@ -563,7 +578,7 @@ fn region_alone(
         left,
         top,
         size,
-        orientation: Orientation::NoTransforms,
+        orientation,
     })
 }
 
@@ -794,8 +809,20 @@ mod tests {
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut plain, 100)
             .encode_image(&pixels)
             .unwrap();
-        // An APP1 segment right after SOI: "Exif\0\0", then a little-endian
-        // TIFF header and one directory holding Orientation.
+        // An APP1 segment right after SOI: "Exif\0\0", then the EXIF.
+        let mut segment = b"Exif\0\0".to_vec();
+        segment.extend_from_slice(&exif(tag));
+        let mut out = plain[..2].to_vec();
+        out.extend_from_slice(&[0xFF, 0xE1]);
+        out.extend_from_slice(&u16::try_from(segment.len() + 2).unwrap().to_be_bytes());
+        out.extend_from_slice(&segment);
+        out.extend_from_slice(&plain[2..]);
+        out
+    }
+
+    /// EXIF saying Orientation `tag`: a little-endian TIFF header and one
+    /// directory holding it.
+    fn exif(tag: u16) -> Vec<u8> {
         let mut tiff = b"II*\0\x08\0\0\0".to_vec();
         tiff.extend_from_slice(&1u16.to_le_bytes());
         tiff.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation
@@ -804,14 +831,7 @@ mod tests {
         tiff.extend_from_slice(&tag.to_le_bytes());
         tiff.extend_from_slice(&[0, 0]);
         tiff.extend_from_slice(&0u32.to_le_bytes()); // no next directory
-        let mut segment = b"Exif\0\0".to_vec();
-        segment.extend_from_slice(&tiff);
-        let mut out = plain[..2].to_vec();
-        out.extend_from_slice(&[0xFF, 0xE1]);
-        out.extend_from_slice(&u16::try_from(segment.len() + 2).unwrap().to_be_bytes());
-        out.extend_from_slice(&segment);
-        out.extend_from_slice(&plain[2..]);
-        out
+        tiff
     }
 
     fn reader(bytes: &[u8]) -> ImageReader<Cursor<&[u8]>> {
@@ -1367,6 +1387,526 @@ mod tests {
                 "{region:?}: {differs} pixels differ"
             );
         }
+    }
+
+    /// `length` bytes of noise, the same at each call: no filter or
+    /// compression makes a picture of it trivial, and every byte is a
+    /// sample (or, packed, a few).
+    fn noise(length: usize) -> Vec<u8> {
+        let mut state = 0x2545_F491_u32;
+        (0..length)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state.to_le_bytes()[1]
+            })
+            .collect()
+    }
+
+    /// `samples` as stored in a PNG of `color` in `depth` (big-endian at
+    /// sixteen bits, packed below eight), not interlaced, each row filtered
+    /// by `filter`; with four colours, the last two partly transparent,
+    /// where it is a palette's, and EXIF saying Orientation `turn` where
+    /// given.
+    fn png_of(
+        (width, height): (u32, u32),
+        (color, depth): (png::ColorType, png::BitDepth),
+        filter: png::Filter,
+        samples: &[u8],
+        turn: Option<u16>,
+    ) -> Vec<u8> {
+        let mut info = png::Info::with_size(width, height);
+        info.color_type = color;
+        info.bit_depth = depth;
+        info.exif_metadata = turn.map(|tag| exif(tag).into());
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::with_info(&mut out, info).unwrap();
+        encoder.set_filter(filter);
+        if color == png::ColorType::Indexed {
+            encoder.set_palette(vec![200, 30, 30, 30, 200, 30, 30, 30, 200, 250, 250, 250]);
+            encoder.set_trns(vec![255, 255, 128, 0]);
+        }
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(samples).unwrap();
+        writer.finish().unwrap();
+        out
+    }
+
+    /// `samples` (eight bits, `channels` a pixel) as an interlaced PNG of
+    /// `color`, each of Adam7's seven passes in its rows, unfiltered: the
+    /// encoder writes none.
+    fn interlaced_png(
+        (width, height): (u32, u32),
+        color: png::ColorType,
+        channels: u32,
+        samples: &[u8],
+    ) -> Vec<u8> {
+        // Where each pass starts, and its steps across and down.
+        const PASSES: [(u32, u32, u32, u32); 7] = [
+            (0, 0, 8, 8),
+            (4, 0, 8, 8),
+            (0, 4, 4, 8),
+            (2, 0, 4, 4),
+            (0, 2, 2, 4),
+            (1, 0, 2, 2),
+            (0, 1, 1, 2),
+        ];
+        let mut rows = Vec::new();
+        for (left, top, across, down) in PASSES {
+            for y in (top..height).step_by(down as usize) {
+                if left >= width {
+                    break;
+                }
+                rows.push(0);
+                for x in (left..width).step_by(across as usize) {
+                    let at = ((y * width + x) * channels) as usize;
+                    rows.extend_from_slice(&samples[at..at + channels as usize]);
+                }
+            }
+        }
+        let mut zlib = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut zlib, &rows).unwrap();
+        let data = zlib.finish().unwrap();
+        let mut info = png::Info::with_size(width, height);
+        info.color_type = color;
+        info.interlaced = true;
+        let mut out = Vec::new();
+        let mut writer = png::Encoder::with_info(&mut out, info)
+            .unwrap()
+            .write_header()
+            .unwrap();
+        writer.write_chunk(png::chunk::IDAT, &data).unwrap();
+        writer.finish().unwrap();
+        out
+    }
+
+    /// `samples` as a TIFF of `C`, in strips of `rows`, compressed and
+    /// predicted as said, its Orientation tag `turn`.
+    fn tiff_strips<C: tiff::encoder::colortype::ColorType>(
+        (width, height): (u32, u32),
+        samples: &[C::Inner],
+        rows: u32,
+        (compression, predictor): (tiff::encoder::Compression, tiff::tags::Predictor),
+        turn: u16,
+    ) -> Vec<u8>
+    where
+        [C::Inner]: tiff::encoder::TiffValue,
+    {
+        let mut out = Cursor::new(Vec::new());
+        let mut tiff = tiff::encoder::TiffEncoder::new(&mut out)
+            .unwrap()
+            .with_compression(compression)
+            .with_predictor(predictor);
+        let mut image = tiff.new_image::<C>(width, height).unwrap();
+        image.rows_per_strip(rows).unwrap();
+        image
+            .encoder()
+            .write_tag(tiff::tags::Tag::Orientation, turn)
+            .unwrap();
+        image.write_data(samples).unwrap();
+        out.into_inner()
+    }
+
+    /// `samples` (eight bits, three a pixel in RGB, four in RGBA) as a TIFF
+    /// in tiles of `tile` × `tile` (a multiple of 16), each deflated, its
+    /// Orientation tag `turn`: the encoder writes no tiles. Those on the
+    /// right and the bottom run past the picture, padded.
+    fn tiff_tiles(
+        (width, height): (u32, u32),
+        channels: u16,
+        samples: &[u8],
+        (tile, turn): (u32, u16),
+    ) -> Vec<u8> {
+        use tiff::tags::Tag;
+        let pixel = usize::from(channels);
+        let mut out = Cursor::new(Vec::new());
+        let mut tiff = tiff::encoder::TiffEncoder::new(&mut out).unwrap();
+        let mut directory = tiff.image_directory().unwrap();
+        let (mut offsets, mut counts) = (Vec::new(), Vec::<u32>::new());
+        for down in 0..height.div_ceil(tile) {
+            for across in 0..width.div_ceil(tile) {
+                let mut part = Vec::new();
+                for y in down * tile..(down + 1) * tile {
+                    for x in across * tile..(across + 1) * tile {
+                        if x < width && y < height {
+                            let at = (y * width + x) as usize * pixel;
+                            part.extend_from_slice(&samples[at..at + pixel]);
+                        } else {
+                            part.extend(std::iter::repeat_n(0, pixel));
+                        }
+                    }
+                }
+                let mut zlib =
+                    flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+                std::io::Write::write_all(&mut zlib, &part).unwrap();
+                let part = zlib.finish().unwrap();
+                let at = directory.write_data(part.as_slice()).unwrap();
+                offsets.push(u32::try_from(at).unwrap());
+                counts.push(u32::try_from(part.len()).unwrap());
+            }
+        }
+        directory.write_tag(Tag::ImageWidth, width).unwrap();
+        directory.write_tag(Tag::ImageLength, height).unwrap();
+        directory
+            .write_tag(Tag::BitsPerSample, &vec![8u16; pixel][..])
+            .unwrap();
+        directory.write_tag(Tag::Compression, 8u16).unwrap(); // deflate
+        directory
+            .write_tag(Tag::PhotometricInterpretation, 2u16)
+            .unwrap(); // RGB
+        directory.write_tag(Tag::SamplesPerPixel, channels).unwrap();
+        if channels == 4 {
+            directory.write_tag(Tag::ExtraSamples, 2u16).unwrap(); // alpha
+        }
+        directory.write_tag(Tag::TileWidth, tile).unwrap();
+        directory.write_tag(Tag::TileLength, tile).unwrap();
+        directory
+            .write_tag(Tag::TileOffsets, offsets.as_slice())
+            .unwrap();
+        directory
+            .write_tag(Tag::TileByteCounts, counts.as_slice())
+            .unwrap();
+        directory.write_tag(Tag::Orientation, turn).unwrap();
+        directory.finish().unwrap();
+        out.into_inner()
+    }
+
+    /// A region of the picture `bytes` holds, anywhere (its corners, a
+    /// pixel, a band across, inside, the whole), is the whole decoded and
+    /// cut, to the bit: as it is shown, turned as it says.
+    fn regions_are_the_whole_cut(bytes: &[u8], what: &str) {
+        let whole = decode(reader(bytes), image::Limits::default()).unwrap();
+        let (width, height) = (whole.width(), whole.height());
+        for region in [
+            [0, 0, 13, 9],
+            [width - 17, height - 11, 17, 11],
+            [width - 1, 0, 1, 1],
+            [0, height - 1, 1, 1],
+            [width / 3, height / 4, width / 2, height / 3],
+            [0, height / 2, width, 5],
+            [width / 2, 0, 7, height],
+            [0, 0, width, height],
+        ] {
+            let cut = decode_region(
+                reader(bytes),
+                (width, height),
+                region,
+                width.max(height),
+                Threads::Caller,
+            )
+            .unwrap();
+            let [x, y, across, down] = region;
+            assert!(
+                cut == whole.crop_imm(x, y, across, down),
+                "{what}: {region:?} differs"
+            );
+        }
+    }
+
+    /// A PNG's region is read from its rows down to it, as the whole
+    /// decoded and cut: every filter, every depth and colour `image` expands
+    /// (a palette with transparency, two bits of grey, sixteen bits), turned
+    /// by its EXIF; an interlaced one decoded whole and cut.
+    #[test]
+    fn a_png_region_is_read_from_its_rows() {
+        use png::{BitDepth, ColorType, Filter};
+        let sides = (97, 61);
+        let pixels = 97 * 61;
+        let rgb = noise(pixels * 3);
+        for filter in [
+            Filter::NoFilter,
+            Filter::Sub,
+            Filter::Up,
+            Filter::Avg,
+            Filter::Paeth,
+            Filter::Adaptive,
+        ] {
+            let png = png_of(sides, (ColorType::Rgb, BitDepth::Eight), filter, &rgb, None);
+            regions_are_the_whole_cut(&png, &format!("RGB, {filter:?}"));
+        }
+        for (what, color, samples) in [
+            ("RGBA, 16 bits", ColorType::Rgba, noise(pixels * 8)),
+            ("grey, 16 bits", ColorType::Grayscale, noise(pixels * 2)),
+            (
+                "grey and alpha, 16 bits",
+                ColorType::GrayscaleAlpha,
+                noise(pixels * 4),
+            ),
+        ] {
+            let png = png_of(
+                sides,
+                (color, BitDepth::Sixteen),
+                Filter::Paeth,
+                &samples,
+                None,
+            );
+            regions_are_the_whole_cut(&png, what);
+        }
+        // Rows of 97 samples of two bits: 25 bytes.
+        let packed = noise(25 * 61);
+        let png = png_of(
+            sides,
+            (ColorType::Indexed, BitDepth::Two),
+            Filter::Up,
+            &packed,
+            None,
+        );
+        assert!(
+            decode(reader(&png), image::Limits::default())
+                .unwrap()
+                .as_rgba8()
+                .is_some(),
+            "a palette with transparency is RGBA"
+        );
+        regions_are_the_whole_cut(&png, "a palette of two bits");
+        let png = png_of(
+            sides,
+            (ColorType::Grayscale, BitDepth::Two),
+            Filter::Sub,
+            &packed,
+            None,
+        );
+        regions_are_the_whole_cut(&png, "grey, two bits");
+        for turn in [3, 6, 8] {
+            let png = png_of(
+                sides,
+                (ColorType::Rgb, BitDepth::Eight),
+                Filter::Adaptive,
+                &rgb,
+                Some(turn),
+            );
+            assert_eq!(
+                size(reader(&png)).unwrap().0,
+                if turn == 3 { 97 } else { 61 }
+            );
+            regions_are_the_whole_cut(&png, &format!("turned by {turn}"));
+        }
+        let png = interlaced_png(sides, ColorType::Rgb, 3, &rgb);
+        assert_eq!(
+            decode(reader(&png), image::Limits::default())
+                .unwrap()
+                .into_rgb8()
+                .into_raw(),
+            rgb,
+            "an interlaced PNG as written"
+        );
+        regions_are_the_whole_cut(&png, "interlaced");
+        let png = interlaced_png(sides, ColorType::Rgba, 4, &noise(pixels * 4));
+        regions_are_the_whole_cut(&png, "interlaced, RGBA");
+    }
+
+    /// A TIFF's region is read from the strips or tiles it meets, as the
+    /// whole decoded and cut: strips of a row to the whole picture,
+    /// compressed three ways and predicted, eight and sixteen bits, floats,
+    /// tiles cut where the picture ends, turned by its Orientation tag; a
+    /// layout `image` draws otherwise than it is stored (CMYK) decoded whole.
+    #[test]
+    fn a_tiff_region_is_read_from_the_chunks_it_meets() {
+        use tiff::encoder::Compression;
+        use tiff::encoder::colortype::{CMYK8, Gray8, RGB8, RGB32Float, RGBA16};
+        use tiff::encoder::compression::DeflateLevel;
+        use tiff::tags::Predictor;
+        let sides = (97, 61);
+        let pixels = 97 * 61;
+        let wide = |bytes: Vec<u8>| -> Vec<u16> {
+            bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .collect()
+        };
+        let chunked =
+            |bytes: &[u8]| crate::tiff_chunks::by_chunks(&mut Cursor::new(bytes)).unwrap();
+        let rgb = noise(pixels * 3);
+        let lzw = (Compression::Lzw, Predictor::Horizontal);
+        for (rows, turn) in [(1, 1), (7, 6), (61, 1), (1000, 8)] {
+            let tiff = tiff_strips::<RGB8>(sides, &rgb, rows, lzw, turn);
+            assert!(
+                chunked(&tiff),
+                "RGB in strips of {rows} is read by its chunks"
+            );
+            regions_are_the_whole_cut(&tiff, &format!("RGB in strips of {rows}, turned by {turn}"));
+        }
+        let deflated = (
+            Compression::Deflate(DeflateLevel::Fast),
+            Predictor::Horizontal,
+        );
+        let tiff = tiff_strips::<RGBA16>(sides, &wide(noise(pixels * 8)), 5, deflated, 3);
+        assert!(chunked(&tiff));
+        regions_are_the_whole_cut(&tiff, "RGBA, 16 bits");
+        let grey = noise(pixels);
+        let tiff =
+            tiff_strips::<Gray8>(sides, &grey, 9, (Compression::Packbits, Predictor::None), 1);
+        assert!(chunked(&tiff));
+        regions_are_the_whole_cut(&tiff, "grey, packed bits");
+        let floats: Vec<f32> = noise(pixels * 3)
+            .into_iter()
+            .map(|byte| f32::from(byte) / 200.)
+            .collect();
+        let deflated = (Compression::Deflate(DeflateLevel::Fast), Predictor::None);
+        let tiff = tiff_strips::<RGB32Float>(sides, &floats, 4, deflated, 1);
+        assert!(chunked(&tiff));
+        regions_are_the_whole_cut(&tiff, "floats");
+        for (channels, turn) in [(3, 1), (4, 5), (3, 6)] {
+            let samples = noise(pixels * usize::from(channels));
+            let tiff = tiff_tiles(sides, channels, &samples, (16, turn));
+            assert!(chunked(&tiff), "tiles are read by their chunks");
+            regions_are_the_whole_cut(
+                &tiff,
+                &format!("tiles of {channels} samples, turned by {turn}"),
+            );
+        }
+        let tiff = tiff_strips::<CMYK8>(sides, &noise(pixels * 4), 7, lzw, 6);
+        assert!(!chunked(&tiff), "CMYK is decoded whole");
+        regions_are_the_whole_cut(&tiff, "CMYK");
+    }
+
+    /// A region reads what it needs of a file: a PNG's rows down to it, a
+    /// TIFF's strips or tiles it meets, a fraction of the file, counted as
+    /// it is read.
+    #[test]
+    fn a_region_reads_what_it_needs() {
+        use std::cell::Cell;
+        use std::io::Read;
+        struct Counted<'a> {
+            bytes: Cursor<&'a [u8]>,
+            read: &'a Cell<u64>,
+        }
+        impl Read for Counted<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let read = self.bytes.read(buf)?;
+                self.read.set(self.read.get() + read as u64);
+                Ok(read)
+            }
+        }
+        impl Seek for Counted<'_> {
+            fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+                self.bytes.seek(to)
+            }
+        }
+        let sides = (300, 2000);
+        let reads = |bytes: &[u8], format, region| {
+            let count = Cell::new(0);
+            let counted = Counted {
+                bytes: Cursor::new(bytes),
+                read: &count,
+            };
+            let reader = ImageReader::with_format(BufReader::new(counted), format);
+            let cut = decode_region(reader, sides, region, 2000, Threads::Caller).unwrap();
+            assert_eq!((cut.width(), cut.height()), (region[2], region[3]));
+            let read = count.get();
+            assert!(
+                read * 4 < bytes.len() as u64,
+                "{format:?}, {region:?}: {read} of {} bytes read",
+                bytes.len()
+            );
+        };
+        let rgb = noise(300 * 2000 * 3);
+        let png = png_of(
+            sides,
+            (png::ColorType::Rgb, png::BitDepth::Eight),
+            png::Filter::Adaptive,
+            &rgb,
+            None,
+        );
+        reads(&png, ImageFormat::Png, [100, 50, 100, 100]);
+        let lzw = (tiff::encoder::Compression::Lzw, tiff::tags::Predictor::None);
+        let tiff = tiff_strips::<tiff::encoder::colortype::RGB8>(sides, &rgb, 16, lzw, 1);
+        reads(&tiff, ImageFormat::Tiff, [100, 1000, 100, 100]);
+        // Tiles of 64: `tiff` inflates each through a buffer of 32 KiB,
+        // read whole past a smaller tile's end.
+        let tiff = tiff_tiles(sides, 3, &rgb, (64, 1));
+        reads(&tiff, ImageFormat::Tiff, [100, 1000, 50, 50]);
+    }
+
+    /// What a region of an 8000 × 6000 PNG or TIFF takes, against the
+    /// whole: its time, and what the decode held at most beyond what the
+    /// process held before it (Linux's peak resident memory, set back
+    /// before it). One case a process, as `SKWIR_REGION_CASE` says
+    /// (`png`, `strips` or `tiles`, then `whole`, `top`, `middle` or
+    /// `bottom`: `tiles:middle`): memory a decode let go of is the next
+    /// one's, unseen.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "measures 48-megapixel pictures; run alone with --run-ignored only --no-capture"]
+    fn a_large_region_measured() {
+        fn kib(key: &str) -> u64 {
+            let status = std::fs::read_to_string("/proc/self/status").unwrap();
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(key))
+                .and_then(|value| value.trim().strip_suffix(" kB"))
+                .and_then(|kb| kb.trim().parse::<u64>().ok())
+                .unwrap()
+        }
+        let case = std::env::var("SKWIR_REGION_CASE").unwrap_or_else(|_| "png:middle".into());
+        let (format, part) = case.split_once(':').expect("a format and a part");
+        let (width, height) = (8000, 6000);
+        let bytes = {
+            // A photo's smoothness, and some grain.
+            let grain = noise(width as usize * height as usize);
+            let pixels = image::RgbImage::from_fn(width, height, |x, y| {
+                let grain = grain[(y * width + x) as usize] & 15;
+                image::Rgb([
+                    (x / 32).to_le_bytes()[0].wrapping_add(grain),
+                    (y / 24).to_le_bytes()[0].wrapping_add(grain),
+                    ((x + y) / 56).to_le_bytes()[0].wrapping_add(grain),
+                ])
+            });
+            let deflated = (
+                tiff::encoder::Compression::Deflate(tiff::encoder::compression::DeflateLevel::Fast),
+                tiff::tags::Predictor::Horizontal,
+            );
+            match format {
+                "png" => png_of(
+                    (width, height),
+                    (png::ColorType::Rgb, png::BitDepth::Eight),
+                    png::Filter::Adaptive,
+                    pixels.as_raw(),
+                    None,
+                ),
+                "strips" => tiff_strips::<tiff::encoder::colortype::RGB8>(
+                    (width, height),
+                    pixels.as_raw(),
+                    16,
+                    deflated,
+                    1,
+                ),
+                "tiles" => tiff_tiles((width, height), 3, pixels.as_raw(), (256, 1)),
+                other => panic!("no such format: {other}"),
+            }
+        };
+        let region = match part {
+            "whole" => None,
+            "top" => Some([3000, 0, 2000, 1600]),
+            "middle" => Some([3000, 2200, 2000, 1600]),
+            "bottom" => Some([3000, 4400, 2000, 1600]),
+            other => panic!("no such part: {other}"),
+        };
+        std::fs::write("/proc/self/clear_refs", "5").unwrap();
+        let before = kib("VmRSS:");
+        let started = std::time::Instant::now();
+        let decoded = match region {
+            None => decode(reader(&bytes), image::Limits::default()),
+            Some(region) => decode_region(
+                reader(&bytes),
+                (width, height),
+                region,
+                width,
+                Threads::Caller,
+            ),
+        }
+        .unwrap();
+        let took = started.elapsed().as_millis();
+        let held = kib("VmHWM:").saturating_sub(before) / 1024;
+        eprintln!(
+            "{format} of {} MB, {part} ({} × {}): {took} ms, {held} MiB held at most",
+            bytes.len() / 1_000_000,
+            decoded.width(),
+            decoded.height()
+        );
     }
 
     /// A JPEG XL picture is read where any picture is (ADR-148): its size

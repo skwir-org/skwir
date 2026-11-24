@@ -85,6 +85,7 @@ pub mod os_release;
 pub mod package;
 pub mod picture;
 pub mod places;
+mod png_rows;
 #[cfg(target_os = "linux")]
 pub mod portals;
 pub mod preview;
@@ -102,6 +103,7 @@ pub mod system_icons;
 pub mod system_thumbs;
 pub mod thumb_providers;
 pub mod thumbnails;
+mod tiff_chunks;
 pub mod trash;
 pub mod tree_sitter;
 pub mod uri;

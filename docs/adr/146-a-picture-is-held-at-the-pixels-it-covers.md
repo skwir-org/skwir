@@ -102,8 +102,9 @@ Measured in release on synthetic photos of about three bits a pixel
    0006): those above are entropy-decoded and never transformed, those
    below never read, so a region at the top of a 45-megapixel photo holds
    its rows, never the 134 MB of the whole. A JPEG XL's groups and a
-   HEIF's tiles are read for it alone (ADR-148 amended); any other
-   picture is decoded whole for it.
+   HEIF's tiles are read for it alone (ADR-148 amended); a PNG's rows
+   down to it, its columns alone kept, and a TIFF's strips or tiles it
+   meets (amended 2026-11-24); any other picture is decoded whole for it.
 6. **Something sooner**: a progressive JPEG shows its eighth first (its
    DC scans, 9 to 17 ms for 24 to 45 megapixels), as the stand-in a
    thumbnail is; while stepping, a picture whose cheaper scale is at most

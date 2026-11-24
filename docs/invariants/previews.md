@@ -311,7 +311,11 @@ A name that says nothing is not a binary file.
   the region covers as stored alone (`picture::jpeg_band`,
   `jpeg_decoder::Decoder::set_rows`, which returns exactly the rows a
   whole decode draws), a JPEG XL's groups and a HEIF's tiles it covers
-  alone (`picture::Regional`, ADR-148 amended), any other picture whole;
+  alone (`picture::Regional`, ADR-148 amended), a PNG's rows down to it,
+  its columns alone (`png_rows`; interlaced, whole), a TIFF's strips or
+  tiles it meets (`tiff_chunks`; CMYK, one bit, planes apart or a palette,
+  whole), any other picture whole (a WebP: `image-webp` decodes a frame
+  only whole);
   the region alone cut, turned and
   shrunk) and drawn over the whole in its place (`preview::Detail`,
   `picture`). Over a picture that lets what is behind it through (its

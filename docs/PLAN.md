@@ -1451,10 +1451,18 @@ asks in a turn of its own, the eighth of a picture read ahead shown when
 a step takes it; checked at two device pixels a pixel and memory
 measured while browsing. Left: a JPEG region's columns (a band is the
 picture's whole width), a progressive JPEG's coefficients for the whole
-picture while its band decodes, a PNG's, WebP's or TIFF's region
-(decoded whole), a zoom's first step (the whole again at the held bound,
+picture while its band decodes, a zoom's first step (the whole again at the held bound,
 decoded whole for a JPEG at no reduced scale); no 4K screen of its own
-size tried (Xvfb's 1600 × 1000 at twice the scale). After the reviews of
+size tried (Xvfb's 1600 × 1000 at twice the scale). Built 2026-11-24
+(ADR-146 amended): a PNG's region read from its rows down to it, its
+columns alone kept (`png_rows`), a TIFF's from the strips or tiles it
+meets (`tiff_chunks`): a 2000 × 1600 region of 48 megapixels holds 20 to
+25 MiB where the whole held 140 to 276. Left of those: an interlaced PNG,
+and a TIFF in CMYK, one bit, planes apart, a palette or one strip,
+decoded whole; a PNG region's time grows with its bottom; a WebP decoded
+whole (`image-webp` decodes a frame only whole); a lossless JPEG still
+has no preview (jpeg-decoder says no precision: a vendored patch
+first). After the reviews of
 2026-11-23: a picture kept for a step back (`KeptPicture`) shown in
 another place than it was kept from (peek, the whole screen) is
 sharpened as a zoom (`Cover::Side`), not decoded for that room; a page

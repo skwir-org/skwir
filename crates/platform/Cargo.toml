@@ -33,6 +33,9 @@ jxl-frame.workspace = true
 jxl-oxide-common.workspace = true
 jxl-vardct.workspace = true
 png.workspace = true
+# A TIFF's strips or tiles read by their index, for a region alone
+# (`tiff_chunks`, ADR-146 amended): the version `image` already links.
+tiff = "0.11"
 parking_lot.workspace = true
 globset.workspace = true
 # Tree-sitter grammars found: their descriptions and first-line patterns

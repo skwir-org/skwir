@@ -9791,6 +9791,7 @@ dependencies = [
  "skwir-core",
  "syntect",
  "tempfile",
+ "tiff",
  "tokio",
  "tokio-rustls",
  "toml 1.2.2+spec-1.1.0",

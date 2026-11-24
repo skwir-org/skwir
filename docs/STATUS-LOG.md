@@ -23587,3 +23587,35 @@ local page logging each drop.
 - **Left for the user:** the checks of the night's summary (whether the
   drag's picture follows over Brave, another program's drag, Brave's
   ozone mode, a core dump, Hyprland's drag log).
+
+## 2026-11-24: a PNG's and a TIFF's region read alone (ADR-146 amended)
+
+A leftover of ADR-146, built by an agent tonight. A zoom past what is
+held of a picture decodes its region alone; a PNG, a TIFF and a WebP
+were decoded whole for it.
+
+- **PNG** (`png_rows`): rows read only down to the region's bottom, its
+  columns alone kept (the region and one row held). Interlaced (Adam7)
+  stays whole: no row is complete before the stream's end.
+- **TIFF** (`tiff_chunks`, `tiff` 0.11 now a direct dependency of the
+  platform, the version `image` links): the strips or tiles the region
+  meets read one at a time, for one plane of 8- or 16-bit grey, grey and
+  alpha, RGB or RGBA, and 32-bit float RGB(A); CMYK, one bit, planar,
+  palette and YCbCr stay whole.
+- `region_alone` now cuts where the region lies as stored, by the
+  decoder's orientation (unchanged for JPEG XL and HEIF).
+- **WebP:** `image-webp` 0.2.4 decodes a frame only whole: left whole,
+  said in a comment. **Lossless JPEG:** not done (zune-jpeg refuses its
+  header for every JPEG path; jpeg-decoder says no precision).
+- **Checked:** a region's pixels equal the whole cut, across the six
+  PNG filters, 16-bit, grey, palettes with transparency, orientations 3,
+  6 and 8, interlaced files; TIFF strips of 1 to 1,000 rows, LZW,
+  Deflate, PackBits, 16-bit, floats, tiles past the edges, CMYK going
+  whole; a counting reader shows a region reads under a quarter of the
+  file. Measured, debug build, 8000 × 6000, a 2000 × 1600 region, load
+  10 to 15: PNG whole 8.1 s and 140 MiB, a region 20 MiB (1.8 s at the
+  top, 6.3 s in the middle); TIFF strips whole 18.1 s and 276 MiB, a
+  region 24 MiB and 1.9 to 3.1 s; TIFF tiles whole 7.2 s and 275 MiB, a
+  region 24 MiB and 0.4 to 1.1 s. On HEAD with this work alone: clippy on
+  the platform and the binary, the platform's 606 tests; Windows clippy
+  of the platform.
