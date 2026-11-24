@@ -653,9 +653,9 @@ struct Scope {
     /// A count or a check of it runs.
     running: bool,
     /// Counted or checked since skwir started, under what walks left out
-    /// then (`LeftOut::fingerprint`): what the index says of it holds
-    /// while they leave out the same.
-    done: Option<u64>,
+    /// and what notes were read then (`index::Under`): what the index says
+    /// of it holds while they are the same.
+    done: Option<crate::index::Under>,
     /// A plan changed something under it while its count ran: what the
     /// count read before may be older than what the index learned from
     /// the plan, so it is checked again once the count ends (cheaply: by
@@ -726,8 +726,9 @@ impl Places {
         let Some(app) = self.app.upgrade() else {
             return;
         };
-        // Another list of folders left out: counted again.
-        let now = app.left_out().fingerprint();
+        // Another list of folders left out, or other stores read: counted
+        // again.
+        let now = self.index.under();
         {
             let mut scopes = self.scopes.lock();
             let scope = scopes.entry(root.to_path_buf()).or_default();
@@ -747,9 +748,11 @@ impl Places {
                 let Some(app) = this.app.upgrade() else {
                     return;
                 };
-                // What walks leave out, read once before the coverage (which
-                // the index drops when it changed): the count is of it.
+                // What walks leave out and what notes are read, taken once
+                // before the coverage (which the index drops when either
+                // changed): the count is of them.
                 let rule = app.left_out();
+                let under = this.index.under();
                 let last = this.index.covering(&root);
                 let covered = last.as_ref().map(Covered::since);
                 // What a names index's journal says changed since the last
@@ -780,7 +783,7 @@ impl Places {
                 // is not what they leave out now (a folder no longer left
                 // out was never entered, and a journal from its mark would
                 // never name it), so it covers nothing and is counted again.
-                let ruled = app.left_out().fingerprint() == rule.fingerprint();
+                let mut ruled = app.left_out().fingerprint() == rule.fingerprint();
                 // `None`: cancelled, nothing ended.
                 let ended = match result {
                     Ok(Some((since, dirs, counted))) => {
@@ -793,8 +796,13 @@ impl Places {
                             "tags: counted for a tag location"
                         );
                         if ruled {
-                            this.index
-                                .cover(&root, since, &dirs, followed.map(|f| f.mark));
+                            ruled = this.index.cover(
+                                &root,
+                                since,
+                                &dirs,
+                                followed.map(|f| f.mark),
+                                under,
+                            );
                         }
                         true
                     }
@@ -809,7 +817,7 @@ impl Places {
                 let again = this.scopes.lock().get_mut(&root).is_some_and(|scope| {
                     scope.running = false;
                     if ended {
-                        scope.done = Some(rule.fingerprint());
+                        scope.done = Some(under);
                     }
                     std::mem::take(&mut scope.touched) || !ruled
                 });
@@ -843,11 +851,11 @@ impl Places {
     /// started: what the index says of them holds. A tag location of it
     /// is complete then; until, it shows what the index knew, checking.
     fn done(&self, root: &Path) -> bool {
-        let rule = self.app.upgrade().map(|app| app.left_out().fingerprint());
+        let under = self.index.under();
         self.scopes
             .lock()
             .get(root)
-            .is_some_and(|s| s.done.is_some() && s.done == rule)
+            .is_some_and(|s| s.done == Some(under))
     }
 
     /// `tags.counted`: whether `root`'s tags are being counted, and as of

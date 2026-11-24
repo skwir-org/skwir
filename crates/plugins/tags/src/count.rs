@@ -773,7 +773,7 @@ mod tests {
             "node_modules, the trash, the cache: {counted:?}"
         );
         assert!(index.is_cache(&root.join("built")));
-        index.cover(&root, since, &dirs, None);
+        index.cover(&root, since, &dirs, None, index.under());
 
         // The cache no longer says so: read whole at the next check.
         std::fs::remove_file(root.join("built/CACHEDIR.TAG")).unwrap();
@@ -837,7 +837,7 @@ mod tests {
             "a, b, sub and sub/c"
         );
         assert_eq!(tally(&index), owned(&[("trip", 1), ("work", 1)]));
-        index.cover(&root, since, &dirs, None);
+        index.cover(&root, since, &dirs, None, index.under());
         // Nothing stored without a cache: the folders seen are handed back.
         let known: std::collections::HashSet<u64> = dirs.iter().copied().collect();
 
@@ -916,13 +916,13 @@ mod tests {
             crate::index::TagIndex::new(Some(cache.namespace("tags")), &app, CancelToken::new());
         let cancel = CancelToken::new();
         let (since, dirs, _) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
-        index.cover(&root, since, &dirs, None);
+        index.cover(&root, since, &dirs, None, index.under());
         // Tagged by another application, then the folder above counted
         // (later still: its count covers what changed before).
         tag(&root.join("b"), "trip");
         let (_, dirs, _) = run(&app, &index, &above, None, &cancel).unwrap().unwrap();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        index.cover(&above, later, &dirs, None);
+        index.cover(&above, later, &dirs, None, index.under());
         // Checked as its tag location checks it.
         let covered = index.covering(&root).map(|c| c.since());
         assert_eq!(covered, Some(later));
@@ -1070,7 +1070,7 @@ mod tests {
         let index = crate::index::TagIndex::new(Some(slot), &app, CancelToken::new());
         let cancel = CancelToken::new();
         let (since, dirs, _) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
-        index.cover(&root, since, &dirs, None);
+        index.cover(&root, since, &dirs, None, index.under());
         let last = index.covering(&root).unwrap();
 
         // Since: a file tagged, a folder moved in, a folder removed.
@@ -1165,7 +1165,7 @@ mod tests {
         let index = crate::index::TagIndex::new(Some(slot), &app, CancelToken::new());
         let cancel = CancelToken::new();
         let (since, dirs, _) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
-        index.cover(&root, since, &dirs, None);
+        index.cover(&root, since, &dirs, None, index.under());
         let last = index.covering(&root).unwrap();
 
         tag(&root.join("trips/rome"), "trip");
@@ -1239,7 +1239,7 @@ mod tests {
         let index = crate::index::TagIndex::new(Some(slot), &app, CancelToken::new());
         let cancel = CancelToken::new();
         let (since, dirs, _) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
-        index.cover(&root, since, &dirs, None);
+        index.cover(&root, since, &dirs, None, index.under());
         assert!(index.files_under(&root, None).is_empty());
         let known = index.dirs(&root);
         let changed = |p: &std::path::Path| {

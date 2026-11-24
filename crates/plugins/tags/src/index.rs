@@ -80,6 +80,32 @@ impl Covered {
     }
 }
 
+/// What a count is of: what walks leave out (`LeftOut::fingerprint`) and
+/// what notes it reads (`reads_of`). A folder covered under another is
+/// counted again: a check reads only what changed since, so a store or a
+/// companion turned on since would leave what it holds unread.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Under {
+    pub rule: u64,
+    pub reads: u64,
+}
+
+/// The stores a count reads notes from and the companions it knows, as a
+/// hash the same in every build.
+pub fn reads_of(app: &App) -> u64 {
+    let mut stores = app.notes.policy().read;
+    stores.sort_unstable();
+    let mut companions = app.companions.ids();
+    companions.sort_unstable();
+    let parts: Vec<&[u8]> = stores
+        .iter()
+        .map(String::as_bytes)
+        .chain(std::iter::once(&b"\0companions"[..]))
+        .chain(companions.iter().map(|c| c.as_bytes()))
+        .collect();
+    stable_hash(&parts)
+}
+
 /// A path's 64-bit FNV-1a hash: the same in every build, so what was
 /// stored with one is read by the next.
 pub fn stable_hash(parts: &[&[u8]]) -> u64 {
@@ -296,6 +322,10 @@ struct Meta {
     /// again and every folder is counted again.
     #[serde(default)]
     rule: u64,
+    /// What notes those counts read (`reads_of`); none from an index made
+    /// before it was kept, taken as what is read now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reads: Option<u64>,
     /// The folders found holding a signed `CACHEDIR.TAG`, which no walk
     /// below them enters: what they hold is left out when asked.
     #[serde(default)]
@@ -330,6 +360,8 @@ struct State {
     /// What walks leave out, as the home counts and the folders covered
     /// were made under it.
     rule: Arc<LeftOut>,
+    /// What notes the folders covered were read from (`reads_of`).
+    reads: u64,
     /// The folders found to be caches (`Meta::caches`).
     caches: std::collections::BTreeSet<PathBuf>,
     refused: bool,
@@ -745,6 +777,8 @@ pub struct TagIndex {
     /// What walks leave out now (`App::left_out`): asked each time the
     /// index is, for a plugin is not told when it changes.
     rule: Box<dyn Fn() -> Arc<LeftOut> + Send + Sync>,
+    /// What notes are read now (`reads_of`), asked as `rule` is.
+    reads: Box<dyn Fn() -> u64 + Send + Sync>,
 }
 
 impl TagIndex {
@@ -766,6 +800,10 @@ impl TagIndex {
                     app.upgrade()
                         .map_or_else(|| Arc::new(LeftOut::none()), |app| app.left_out())
                 })
+            },
+            reads: {
+                let app = app.weak();
+                Box::new(move || app.upgrade().map_or(0, |app| reads_of(&app)))
             },
         });
         index.set_limit(
@@ -797,18 +835,37 @@ impl TagIndex {
 
     /// The index, what is known between pieces read from the cache the
     /// first time a worker needs it, never at startup; counted again from
-    /// its pieces when what walks leave out changed.
+    /// its pieces when what walks leave out changed, every folder counted
+    /// again when what notes are read changed.
     fn state(&self) -> MutexGuard<'_, State> {
-        // Asked before the lock: it takes the settings'.
+        // Asked before the lock: they take the settings' and the
+        // registries'.
         let rule = (self.rule)();
+        let reads = (self.reads)();
         let mut state = self.state.lock();
-        if !state.read {
-            self.read(&mut state, rule);
-        } else if state.rule.fingerprint() != rule.fingerprint() {
-            state.rule = rule;
-            self.ruled_anew(&mut state);
+        if state.read {
+            if state.rule.fingerprint() != rule.fingerprint() {
+                state.rule = rule;
+                self.ruled_anew(&mut state);
+            }
+            if state.reads != reads {
+                state.reads = reads;
+                state.covered.clear();
+                state.changed();
+            }
+        } else {
+            self.read(&mut state, rule, reads);
         }
         state
+    }
+
+    /// What a count begun now is of: given back to [`cover`](Self::cover),
+    /// which covers nothing where the index is under another since.
+    pub fn under(&self) -> Under {
+        Under {
+            rule: (self.rule)().fingerprint(),
+            reads: (self.reads)(),
+        }
     }
 
     /// What walks leave out is not what the counts were made under: the
@@ -821,9 +878,10 @@ impl TagIndex {
         state.covered.clear();
     }
 
-    fn read(&self, state: &mut State, rule: Arc<LeftOut>) {
+    fn read(&self, state: &mut State, rule: Arc<LeftOut>, reads: u64) {
         state.read = true;
         state.rule = rule;
+        state.reads = reads;
         state.pieces = (0..BUCKETS).map(|_| Piece::default()).collect();
         state.bytes = vec![0; BUCKETS];
         let home = std::env::home_dir();
@@ -872,8 +930,9 @@ impl TagIndex {
                 state.count_home();
             }
         }
-        if !ruled {
-            // Folders covered under another rule are counted again.
+        // Folders covered under another rule, or of other stores or
+        // companions, are counted again.
+        if !ruled || meta.reads.is_some_and(|r| r != reads) {
             state.covered.clear();
             state.changed();
         }
@@ -1225,29 +1284,37 @@ impl TagIndex {
     /// `root` is covered as of `since`, a count having seen `dirs` (the
     /// folders' [`stable_hash`]es), which the next check compares with;
     /// `mark`, where a names index's journal of it stood as the count
-    /// began.
+    /// began; `under`, what the count was of ([`under`](Self::under),
+    /// taken before it read anything). False where the index is under
+    /// another now: the count covers nothing and is to be made again.
     pub fn cover(
         self: &Arc<Self>,
         root: &Path,
         since: SystemTime,
         dirs: &[u64],
         mark: Option<skwir_core::names::Mark>,
-    ) {
+        under: Under,
+    ) -> bool {
         let Ok(since) = since.duration_since(UNIX_EPOCH) else {
-            return;
+            return true;
         };
         if self.is_full() {
-            return;
+            return true;
         }
         if let Some(slot) = &self.slot {
             let bytes: Vec<u8> = dirs.iter().flat_map(|d| d.to_le_bytes()).collect();
             if let Err(error) = slot.put(&dirs_key(root), &bytes) {
                 tracing::debug!(%error, "tags: the folders counted were not written");
-                return;
+                return true;
             }
         }
         {
             let mut state = self.state();
+            // Decided under the lock that a change of rule or stores takes
+            // (`state`): one after this drops what is pushed here.
+            if state.rule.fingerprint() != under.rule || state.reads != under.reads {
+                return false;
+            }
             state.covered.retain(|c| !c.root.starts_with(root));
             state.covered.push(Covered {
                 root: root.to_path_buf(),
@@ -1257,6 +1324,7 @@ impl TagIndex {
             state.changed();
         }
         self.write_soon();
+        true
     }
 
     /// The folders a count found holding a signed `CACHEDIR.TAG`
@@ -1626,6 +1694,7 @@ impl TagIndex {
                     home: state.home.clone(),
                     home_visible: Some(state.home_counts.iter().map(|(t, n)| (*t, *n)).collect()),
                     rule: state.rule.fingerprint(),
+                    reads: Some(state.reads),
                     caches: state.caches.iter().cloned().collect(),
                     refused: state.refused,
                 })

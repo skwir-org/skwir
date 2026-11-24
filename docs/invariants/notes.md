@@ -152,9 +152,14 @@ registered in `App::notes` by its plugin); all share one model,
   folder was live all along; ADR-150, 15): each count keeps the
   journal's mark taken before it read anything (`Covered::mark`), and
   the next reads only the folders the journal names, as a walk reads
-  each: a folder holding what changed alone (a companions' folder is its
-  folder's), one made or moved in and what the index does not cover
-  whole; a folder removed is taken off the folders seen. Following asks
+  each: the folder holding each entry named, where that entry's own
+  notes are read (a folder's too: a tag set on a folder moves its change
+  time alone; a companions' folder is its folder's), a folder changed
+  itself too, one made or moved in and what the index does not cover
+  whole, each once, in path order (`count::nearest_kept`); a folder
+  removed is taken off the folders seen. A folder's own notes kept
+  inside it (TagSpaces' `.ts/tsm.json`) are read again in its folder
+  when its companions' folder changed, by a walk and a journal alike. Following asks
   only what already runs (`NameIndex::follow`): a tag place opened
   starts no engine. Elsewhere, too old, or the mark another folder's
   (a folder above's covered it), the check walks.
@@ -174,7 +179,14 @@ registered in `App::notes` by its plugin); all share one model,
   coverage (`Meta::rule`): read under another (another list, 0.3.1's dot
   rule), the home counts are made again from the pieces and every folder
   is counted again: a check would not read a file it skipped before in a
-  folder it walked. A place's per-run memo keys on it too.
+  folder it walked. What notes are read (the stores read and the
+  companions registered, `index::reads_of`, `Meta::reads`) is kept so
+  too: another, and every folder is counted again, as a check reads only
+  what changed and would leave a store turned on unread. A place's
+  per-run memo keys on both (`index::Under`). A count is of what was read
+  before its coverage (`TagIndex::under`): one ending under another
+  covers nothing (`cover` says so, under the index's lock) and is
+  counted again.
 - **The sidebar's suggestions** are the home folder's tags as its tag
   places count them (`TagIndex::top`): none from what walks leave out
   below it. Its counts are kept between pieces, without what the rules

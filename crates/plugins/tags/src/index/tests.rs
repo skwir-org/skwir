@@ -45,6 +45,16 @@ fn index(slot: Option<CacheSlot>, megabytes: u64) -> Arc<TagIndex> {
 
 /// [`index`], walks leaving out what `rule` holds when asked.
 fn ruled(slot: Option<CacheSlot>, megabytes: u64, rule: Arc<Mutex<Arc<LeftOut>>>) -> Arc<TagIndex> {
+    ruled_reading(slot, megabytes, rule, Arc::new(AtomicU64::new(0)))
+}
+
+/// [`ruled`], notes read from what `reads` says (`index::reads_of`).
+fn ruled_reading(
+    slot: Option<CacheSlot>,
+    megabytes: u64,
+    rule: Arc<Mutex<Arc<LeftOut>>>,
+    reads: Arc<AtomicU64>,
+) -> Arc<TagIndex> {
     Arc::new_cyclic(|me| TagIndex {
         state: Mutex::default(),
         slot,
@@ -57,6 +67,7 @@ fn ruled(slot: Option<CacheSlot>, megabytes: u64, rule: Arc<Mutex<Arc<LeftOut>>>
         nudge: crossbeam_channel::bounded(1),
         me: me.clone(),
         rule: Box::new(move || Arc::clone(&rule.lock())),
+        reads: Box::new(move || reads.load(Ordering::Relaxed)),
     })
 }
 
@@ -163,8 +174,8 @@ fn a_check_relies_on_the_deepest_count_covering_it() {
     let index = index(None, 64);
     let above = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
     let below = above + Duration::from_secs(60);
-    index.cover(Path::new("/r"), above, &[1, 2, 3], None);
-    index.cover(Path::new("/r/l'été"), below, &[3], None);
+    index.cover(Path::new("/r"), above, &[1, 2, 3], None, index.under());
+    index.cover(Path::new("/r/l'été"), below, &[3], None, index.under());
     let covered = index.covering(Path::new("/r/l'été/sous")).unwrap();
     assert_eq!(
         (covered.root.as_path(), covered.since()),
@@ -178,6 +189,7 @@ fn a_check_relies_on_the_deepest_count_covering_it() {
         below + Duration::from_secs(60),
         &[1, 2, 3],
         None,
+        index.under(),
     );
     let covered = index.covering(Path::new("/r/l'été")).unwrap();
     assert_eq!(covered.root.as_path(), Path::new("/r"));
@@ -207,7 +219,7 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
         1
     );
     let since = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-    first.cover(Path::new("/r"), since, &[7, 9], None);
+    first.cover(Path::new("/r"), since, &[7, 9], None, first.under());
     first.write();
     let room = first.state().total();
 
@@ -494,6 +506,7 @@ fn home_counts_kept_under_another_rule_are_counted_again() {
         UNIX_EPOCH + Duration::from_secs(1_700_000_000),
         &[1],
         None,
+        again.under(),
     );
     assert!(again.covering(&home).is_some());
     *rule.lock() = Arc::new(LeftOut::listed([".skwir-test hidden"]));
@@ -640,4 +653,52 @@ fn a_hint_names_what_the_index_knows_and_reads_nothing() {
     // `files_with` stats them, and forgets those gone.
     assert!(index.files_with("places", root).is_empty());
     assert!(index.candidates_with("places", root).is_empty());
+}
+
+/// A count is of what walks left out and what notes were read as it
+/// began: ending under another rule or other stores, it covers nothing;
+/// a store turned on since a count drops what it covered, as kept
+/// between runs too, while an index kept before the stores were recorded
+/// keeps what it covered.
+#[test]
+fn a_count_of_other_stores_or_rules_covers_nothing() {
+    let tmp = home_tempdir();
+    let slot = || Some(skwir_core::cache::Cache::new(tmp.path()).namespace("tags"));
+    let root = Path::new("/r/l'été");
+    let since = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let rule = Arc::new(Mutex::new(Arc::new(LeftOut::listed(NAMES.iter().copied()))));
+    let reads = Arc::new(AtomicU64::new(1));
+    let index = ruled_reading(slot(), 64, Arc::clone(&rule), Arc::clone(&reads));
+
+    // Another store read while it counted.
+    let under = index.under();
+    reads.store(2, Ordering::Relaxed);
+    assert!(!index.cover(root, since, &[1], None, under));
+    assert!(index.covering(root).is_none());
+    // Another rule while it counted.
+    let under = index.under();
+    *rule.lock() = Arc::new(LeftOut::listed([".skwir-test other"]));
+    assert!(!index.cover(root, since, &[1], None, under));
+    assert!(index.covering(root).is_none());
+    // Of what is read now: covered, until a store is turned on.
+    assert!(index.cover(root, since, &[1], None, index.under()));
+    assert!(index.covering(root).is_some());
+    reads.store(3, Ordering::Relaxed);
+    assert!(index.covering(root).is_none());
+
+    // Kept between runs: read under other stores, nothing covered.
+    assert!(index.cover(root, since, &[1], None, index.under()));
+    index.write();
+    let other = ruled_reading(slot(), 64, Arc::clone(&rule), Arc::new(AtomicU64::new(4)));
+    assert!(other.covering(root).is_none());
+    let same = ruled_reading(slot(), 64, Arc::clone(&rule), Arc::new(AtomicU64::new(3)));
+    assert!(same.covering(root).is_some());
+
+    // An index kept before its stores were: what it covered stands.
+    let slot = slot().unwrap();
+    let mut meta: serde_json::Value = serde_json::from_slice(&slot.get(META).unwrap()).unwrap();
+    meta.as_object_mut().unwrap().remove("reads").unwrap();
+    slot.put(META, &serde_json::to_vec(&meta).unwrap()).unwrap();
+    let older = ruled_reading(Some(slot), 64, rule, Arc::new(AtomicU64::new(9)));
+    assert!(older.covering(root).is_some());
 }
