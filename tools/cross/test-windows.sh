@@ -16,6 +16,26 @@ scratch="$HOME/.cache/skwir-tests/wine"
 mkdir -p "$scratch"
 export WINEPREFIX="$scratch/prefix"
 . tools/cross/wine-env.sh
+# Several runs may share the prefix and the target folder (agents, two
+# terminals): what this one puts there is put in place at once, by a
+# rename, and only when it changed, so a run already testing never reads
+# a file or a folder half made.
+#
+# Windows keeps its fonts in its Fonts folder, where a program that reads
+# their files finds them (printing does, ADR-111); Wine keeps its own in
+# its data folder, leaving the prefix's empty. Its TrueType faces (Tahoma
+# among them, as Windows has) are put where Windows keeps them.
+wine_fonts="$(dirname "$(readlink -f "$(command -v wine)")")/../share/wine/fonts"
+fonts="$WINEPREFIX/drive_c/windows/Fonts"
+mkdir -p "$fonts"
+for font in "$wine_fonts"/*.ttf; do
+    [ -f "$font" ] || continue
+    name="$(basename "$font")"
+    if ! cmp -s "$font" "$fonts/$name"; then
+        cp "$font" "$fonts/.$name.$$"
+        mv -f "$fonts/.$name.$$" "$fonts/$name"
+    fi
+done
 unset DISPLAY WAYLAND_DISPLAY
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine
 # Tests that need what Wine lacks (its shell does not trash) skip, saying so.
@@ -28,8 +48,19 @@ if rclone="$(tools/test/rclone-windows.sh)"; then
 fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target/cross}"
 # The type database a package carries, where it puts it, beside the
-# program (ADR-037): in `share` above the test programs.
-tools/package/mime-database.sh "$CARGO_TARGET_DIR/x86_64-pc-windows-gnu/debug/share/mime" >/dev/null
+# program (ADR-037): in `share` above the test programs. Made aside, then
+# renamed into place, or exchanged with the one there (a rename too).
+share="$CARGO_TARGET_DIR/x86_64-pc-windows-gnu/debug/share"
+mkdir -p "$share"
+made="$(mktemp -d "$share/.mime.XXXXXX")"
+trap 'rm -rf "${made:?}"' EXIT
+tools/package/mime-database.sh "$made/mime" >/dev/null
+if ! diff -rq "$made/mime" "$share/mime" >/dev/null 2>&1; then
+    mv -T "$made/mime" "$share/mime" 2>/dev/null ||
+        mv -T --exchange "$made/mime" "$share/mime"
+fi
+rm -rf "${made:?}"
+trap - EXIT
 # Not incremental, as `just check-cross`: its caches only fill the disk.
 export CARGO_INCREMENTAL=0
 REAL_CARGO="$(command -v cargo)"
