@@ -13,6 +13,12 @@
 //! notices is told the volume of each watch made or ended
 //! ([`Kept::follow_volumes`]).
 //!
+//! A watch let go of tells nothing more: what it gathered and did not tell
+//! yet (a name still being written) would have a worker read the drive
+//! while its removal waits. Its start is given a token of its own
+//! ([`Held::own`]), cancelled before it is let go of; what it missed, the
+//! rescan it is told once watched again covers.
+//!
 //! Locks: the state's is never held while a watch's own is taken, so a
 //! let-go waits for a watch being started or ended, never the reverse.
 
@@ -35,8 +41,27 @@ pub(super) struct Live {
     pub(super) ended: Receiver<()>,
 }
 
-/// How the system watches a folder.
+/// How the system watches a folder: it tells nothing once the token it is
+/// given is cancelled.
 pub(super) type Start = fn(&Path, Duration, &CancelToken, &Deliver) -> std::io::Result<Live>;
+
+/// A system's watch kept, and what tells it to tell nothing more.
+struct Held {
+    live: Live,
+    /// What its start was given: the watch's own, a child of its owner's
+    /// (`Slot::cancel`), cancelled as it is let go of.
+    own: CancelToken,
+}
+
+impl Held {
+    /// Let go of, telling nothing more: what says once the system let go
+    /// of its folder.
+    fn let_go(self) -> Receiver<()> {
+        self.own.cancel();
+        drop(self.live.watch);
+        self.live.ended
+    }
+}
 
 /// What is told the volume of each watch made or ended.
 pub(super) type Told = Arc<dyn Fn(&Path) + Send + Sync>;
@@ -52,12 +77,19 @@ struct Slot {
     deliver: Deliver,
     /// The system's watch, `None` while let go of. Held while it is
     /// started or ended, so a let-go begun meanwhile waits for it.
-    live: Mutex<Option<Live>>,
+    live: Mutex<Option<Held>>,
 }
 
 impl Slot {
     fn on(&self, volume: &Path) -> bool {
         self.volume.as_deref() == Some(volume)
+    }
+
+    /// Its folder watched as the system does, with a token of its own.
+    fn started(&self, start: Start) -> std::io::Result<Held> {
+        let own = self.cancel.child();
+        let live = start(&self.dir, self.window, &own, &self.deliver)?;
+        Ok(Held { live, own })
     }
 }
 
@@ -102,7 +134,9 @@ impl Drop for Unkeep {
         let Some(slot) = slot else {
             return;
         };
-        drop(slot.live.lock().take());
+        // No one listens any more: it tells nothing, as Linux's.
+        let held = slot.live.lock().take();
+        drop(held.map(Held::let_go));
         if let (Some(told), Some(volume)) = (told, slot.volume.as_deref()) {
             told(volume);
         }
@@ -155,7 +189,7 @@ impl Kept {
             id,
         };
         if !waits {
-            match (self.start)(dir, window, cancel, &slot.deliver) {
+            match slot.started(self.start) {
                 Ok(watched) => *live = Some(watched),
                 Err(error) => {
                     // Its own lock let go of first: what unkeeps it takes it.
@@ -191,9 +225,8 @@ impl Kept {
         for slot in &slots {
             match slot.live.try_lock_until(deadline) {
                 Some(mut live) => {
-                    if let Some(Live { watch, ended }) = live.take() {
-                        drop(watch);
-                        ending.push(ended);
+                    if let Some(held) = live.take() {
+                        ending.push(held.let_go());
                     }
                 }
                 // Still being started (a drive waking): it holds the folder.
@@ -224,7 +257,7 @@ impl Kept {
             if live.is_some() || slot.cancel.is_cancelled() || self.letting_go(volume) {
                 continue;
             }
-            let changes = match (self.start)(&slot.dir, slot.window, &slot.cancel, &slot.deliver) {
+            let changes = match slot.started(self.start) {
                 Ok(watched) => {
                     *live = Some(watched);
                     Changes {
@@ -252,7 +285,8 @@ impl Kept {
             state.on(volume)
         };
         for slot in slots {
-            drop(slot.live.lock().take());
+            let held = slot.live.lock().take();
+            drop(held.map(Held::let_go));
             if !slot.cancel.is_cancelled() {
                 (slot.deliver)(Changes {
                     deleted: true,
@@ -263,8 +297,10 @@ impl Kept {
         }
     }
 
-    /// Whether `volume` is being let go of.
-    fn letting_go(&self, volume: &Path) -> bool {
+    /// Whether `volume` is being let go of: from [`let_go_on`](Self::let_go_on)
+    /// until [`watch_again_on`](Self::watch_again_on) or
+    /// [`gone_on`](Self::gone_on) begin, before they tell anything.
+    pub(super) fn letting_go(&self, volume: &Path) -> bool {
         self.state.lock().letting_go.iter().any(|v| v == volume)
     }
 
@@ -437,6 +473,93 @@ mod tests {
         assert!(told.iter().any(|c| c.deleted), "the folder that went");
         drop(told);
         drop((waits, gone));
+    }
+
+    /// One of the stand-in's watches holding a name it gathered and did not
+    /// tell yet: dropped, it tells it, as notify's thread would once its
+    /// watcher drops, unless the token it was given says not to.
+    struct Gathering {
+        cancel: CancelToken,
+        deliver: Deliver,
+        _ends: crossbeam_channel::Sender<()>,
+    }
+
+    impl Drop for Gathering {
+        fn drop(&mut self) {
+            if !self.cancel.is_cancelled() {
+                (self.deliver)(Changes {
+                    names: [std::ffi::OsString::from("still being written")].into(),
+                    ..Changes::default()
+                });
+            }
+        }
+    }
+
+    // A `Start`, which may fail; this one never does.
+    #[allow(clippy::unnecessary_wraps)]
+    fn gathering(
+        _: &Path,
+        _: Duration,
+        cancel: &CancelToken,
+        deliver: &Deliver,
+    ) -> std::io::Result<Live> {
+        let (ends, ended) = crossbeam_channel::bounded(0);
+        Ok(Live {
+            watch: Box::new(Gathering {
+                cancel: cancel.clone(),
+                deliver: Arc::clone(deliver),
+                _ends: ends,
+            }),
+            ended,
+        })
+    }
+
+    /// A watch let go of tells nothing of what it gathered, which a worker
+    /// would read on the drive while its removal waits; nor once its drive
+    /// went, nor once its handle dropped. Watched again, it is told a
+    /// rescan alone; its owner's token is never cancelled for it.
+    #[test]
+    fn a_watch_let_go_of_tells_nothing_more() {
+        let kept = Kept::new(gathering, volume_of);
+        let cancel = CancelToken::new();
+        let (deliver, changes) = told();
+        let watched = kept
+            .watch(
+                Path::new("/l/a"),
+                Duration::ZERO,
+                &cancel,
+                Arc::clone(&deliver),
+            )
+            .unwrap();
+        assert!(kept.let_go_on(Path::new("/l"), Duration::from_secs(5)));
+        assert!(changes.lock().is_empty(), "nothing told as it is let go of");
+        assert!(kept.letting_go(Path::new("/l")) && !kept.letting_go(Path::new("/n")));
+        kept.watch_again_on(Path::new("/l"));
+        assert!(
+            !kept.letting_go(Path::new("/l")),
+            "ended as the rescan is told"
+        );
+        assert_eq!(changes.lock().len(), 1);
+        assert!(changes.lock()[0].rescan && changes.lock()[0].names.is_empty());
+        assert!(!cancel.is_cancelled());
+        assert!(kept.let_go_on(Path::new("/l"), Duration::from_secs(5)));
+        kept.gone_on(Path::new("/l"));
+        assert!(
+            changes.lock()[1..]
+                .iter()
+                .all(|c| c.deleted && c.names.is_empty())
+        );
+        drop(watched);
+        let ended = kept
+            .watch(Path::new("/m/a"), Duration::ZERO, &cancel, deliver)
+            .unwrap();
+        let before = changes.lock().len();
+        drop(ended);
+        assert_eq!(
+            changes.lock().len(),
+            before,
+            "a handle dropped: no one listens"
+        );
     }
 
     /// Gone, its watches end and are told their folders went with it, the

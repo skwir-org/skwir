@@ -132,6 +132,23 @@ pub fn let_go_on(volume: &Path, at_most: Duration) -> bool {
     }
 }
 
+/// Whether the watches on the volume `path` is on are let go of now:
+/// from [`let_go_on`] until [`watch_again_on`] or [`gone_on`], which end it
+/// before they tell each watch its rescan or its folder gone. What reads
+/// there meanwhile would hold the drive Windows is to remove. From memory,
+/// nothing of `path` read. Never on Linux, whose watches hold nothing.
+pub fn letting_go(path: &Path) -> bool {
+    #[cfg(not(target_os = "linux"))]
+    {
+        crate::fs::reach::volume_of(path).is_some_and(|volume| imp::kept().letting_go(&volume))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = path;
+        false
+    }
+}
+
 /// Watch again what [`let_go_on`] let go of on `volume`, which stays (its
 /// removal refused or cancelled): each told to read its folder again, as
 /// what changed meanwhile was not told, or that the folder went where it
@@ -876,17 +893,12 @@ mod imp {
                 Some(due) => match raw.recv_deadline(due) {
                     Ok(ev) => Some(ev),
                     Err(RecvTimeoutError::Timeout) => None,
-                    // The watcher dropped, its sender with it: what was
-                    // gathered is told, and it ends.
-                    Err(RecvTimeoutError::Disconnected) => {
-                        let far = Instant::now() + WRITTEN_WINDOW + window;
-                        if let Some(changes) = gathered.take(far)
-                            && !cancel.is_cancelled()
-                        {
-                            deliver(changes);
-                        }
-                        return;
-                    }
+                    // The watcher dropped, its sender with it: it ends,
+                    // telling nothing more. It was let go of (`Kept`): no
+                    // one listens, or its volume is to be removed, where a
+                    // name told would be read on the drive, and the rescan
+                    // it is told once watched again covers what it missed.
+                    Err(RecvTimeoutError::Disconnected) => return,
                 },
                 None => match raw.recv() {
                     Ok(ev) => Some(ev),
