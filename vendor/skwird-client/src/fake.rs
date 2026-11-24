@@ -38,6 +38,8 @@ pub struct Script {
     /// children it says and sums the rest in the done, as an engine does
     /// (`skwird_protocol::largest`); a folder not given is not a folder.
     pub totals: Vec<(PathBuf, Vec<Child>, TotalsDone)>,
+    /// What its hello says it does beyond its version (`Welcome::features`).
+    pub features: Vec<String>,
 }
 
 /// A fake engine serving until dropped.
@@ -102,6 +104,7 @@ mod imp {
                 scope: wire::Scope::User,
                 engine: "skwird-client's fake engine".into(),
                 roots: script.roots.iter().map(|r| WirePath::of(r)).collect(),
+                features: script.features.clone(),
             })),
             Ask::Coverage { root } | Ask::Sync { root } => {
                 say(Answer::Coverage(coverage(script, &root.to_path())))
@@ -345,6 +348,7 @@ mod tests {
             watching: None,
             changes: None,
             totals: Vec::new(),
+            features: vec!["names-both-forms".into()],
         };
         let fake = Fake::start(dir.join("socket"), script).unwrap();
         let mut c = Client::connect(&Find {
@@ -354,6 +358,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(c.welcome().roots, vec![WirePath(b"/home/user".to_vec())]);
+        assert_eq!(c.welcome().features, ["names-both-forms"]);
         assert_eq!(
             c.coverage(std::path::Path::new("/home/user/a")).unwrap(),
             checked

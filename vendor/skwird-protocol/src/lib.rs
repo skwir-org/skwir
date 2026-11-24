@@ -350,6 +350,12 @@ pub struct Welcome {
     pub scope: Scope,
     pub engine: String,
     pub roots: Vec<WirePath>,
+    /// What this engine does beyond the version it speaks, a word each
+    /// (`docs/DESIGN.md`, Protocol, `hello`): absent or empty, nothing. A
+    /// client takes a word it does not know as absent, and an engine
+    /// says none it does not do. None so far.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -750,6 +756,22 @@ pub fn read<R: BufRead, T: DeserializeOwned>(from: &mut R) -> std::io::Result<Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An engine says what it does beyond its version in its hello, a word
+    /// each: an older engine's hello says nothing, read as none; none is
+    /// sent as nothing; a word a client does not know is kept, for it to
+    /// pass over.
+    #[test]
+    fn a_hello_says_its_features_or_none() {
+        let plain =
+            r#"{"version":0,"scope":"user","engine":"skwird 0.1.0","roots":["/home/user"]}"#;
+        let welcome: Welcome = serde_json::from_str(plain).unwrap();
+        assert_eq!(welcome.features, Vec::<String>::new());
+        assert_eq!(serde_json::to_string(&welcome).unwrap(), plain);
+        let more = r#"{"version":0,"scope":"user","engine":"skwird 0.2.0","roots":[],"features":["names-both-forms","unknown"]}"#;
+        let welcome: Welcome = serde_json::from_str(more).unwrap();
+        assert_eq!(welcome.features, ["names-both-forms", "unknown"]);
+    }
 
     /// Every line of the transcripts reads as a request (`>`) or an
     /// answer (`<`), and writes back as the same JSON: a client writing

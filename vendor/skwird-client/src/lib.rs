@@ -516,6 +516,7 @@ impl Client {
                 scope: protocol::Scope::User,
                 engine: String::new(),
                 roots: Vec::new(),
+                features: Vec::new(),
             },
             silence,
             stop: Arc::clone(stop),
