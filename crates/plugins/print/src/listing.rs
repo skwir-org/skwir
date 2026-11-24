@@ -234,9 +234,13 @@ fn row(entry: &Entry, depth: usize, path: Option<&Path>, columns: Columns) -> Ve
         )
         .say_plain()
     } else {
+        // Where the system names its type not, by its extension, as the
+        // window's Type column says it (`mime::unnamed`), never blank.
         skwir_platform::mime::of_entry(entry)
             .and_then(|mime| mime.description())
-            .unwrap_or_default()
+            .unwrap_or_else(|| {
+                skwir_platform::mime::unnamed(&entry.type_name().to_string_lossy()).say_plain()
+            })
     };
     let size = match entry.metadata.value(keys::SIZE).and_then(Value::as_u64) {
         Some(size) if !entry.is_dir() => skwir_platform::inspection::size(size),
@@ -300,6 +304,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("drafts")).unwrap();
         std::fs::write(dir.join("b note.txt"), "hello").unwrap();
         std::fs::write(dir.join("a ünïcode.md"), "# Title\n").unwrap();
+        std::fs::write(dir.join("c data.zqx9"), "?").unwrap();
         let app = app(tmp.path());
         let navigate = Invocation::with_args(
             "navigate",
@@ -335,6 +340,11 @@ mod tests {
         assert_eq!(row("drafts/")[2], "", "a folder's size is not said");
         assert_eq!(row("b note.txt")[2], "5\u{a0}B");
         assert!(!row("b note.txt")[1].is_empty(), "its kind");
+        assert_eq!(
+            row("c data.zqx9")[1],
+            "ZQX9 file",
+            "a type named not, as the Type column says it"
+        );
         assert!(
             !row("a ünïcode.md")[3].is_empty(),
             "when it was modified, as the window writes dates"
