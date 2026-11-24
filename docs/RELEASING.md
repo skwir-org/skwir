@@ -348,6 +348,16 @@ After the GitHub release is published:
   files beside its bundle (`target/releases/v0.1.0-winget`). Submit them
   as a pull request to `microsoft/winget-pkgs` (by hand, `wingetcreate
   submit` or `komac submit`); its checks install the release's installer.
+- **Homebrew's cask.** `just cask v0.1.0` writes `Casks/skwir.rb` into a
+  checkout of `skwir-org/homebrew-tap` (`../homebrew-tap` by default, or
+  `just cask v0.1.0 <folder>`): the release's version and its macOS zip's
+  SHA-256, from the bundle's manifest. Review it (`git -C ../homebrew-tap
+  diff`), then commit and push it once the release is published: the
+  tap's workflow installs the zip from the release's page, checks that
+  it is still quarantined and that Homebrew's Caskroom holds it (what a
+  copy reads to stay quiet about new versions, ADR-142), and uninstalls
+  it. A copy of 0.6.1 or before does not read the Caskroom, and would be
+  told of its own updates: the tap holds no cask of one.
 
 **The repositories' key, once.** Make it where releases are made, with a
 passphrase, and keep its secret part off the site's host (a backup apart):

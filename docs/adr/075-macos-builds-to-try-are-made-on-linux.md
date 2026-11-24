@@ -109,3 +109,21 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
 - 2026-11-11 (ADR-129): the formulas' helper is in the bundle, beside
   skwir, as in Windows' package: one bundle, no way to add it apart.
   Built and looked over (arm64, signed); never run. Mermaid's stays out.
+- 2026-11-24 (ADR-142, amended): a Homebrew cask, `skwir` in
+  skwir-org/homebrew-tap (the user agreed, through skwird's session).
+  - It installs the release's zip as it is (`app "skwir.app"`) and puts
+    `skwir` on the PATH, for Apple silicon and macOS 12 and later, as the
+    bundle says.
+  - Homebrew quarantines what it downloads, as a browser does, and the
+    cask never takes that off: no `xattr`, no postflight. macOS asks
+    before the first start, as of the zip downloaded by hand.
+  - Its caveats say so (Open Anyway, in Privacy & Security), and that
+    Homebrew loads the tap's casks once it is trusted (`brew trust
+    skwir-org/tap`, which Homebrew asks of every tap but its own).
+  - `just cask <tag>` writes it at each release (`tools/package/cask.py`,
+    from the bundle's manifest). The tap's workflow installs it on
+    GitHub's macOS runner and checks the seal, the quarantine and
+    Homebrew's Caskroom, which keeps the copy quiet about new versions
+    (ADR-142). Then it uninstalls it.
+  - Still not notarized.
+

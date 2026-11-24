@@ -1574,14 +1574,19 @@ ends; none of it was tried on a remote's lane or on Windows. The Trash
 needed nothing.
 
 **A Homebrew cask** (the user agreed, 2026-11-24, relayed by skwird's
-session): `Casks/skwir.rb` in skwir-org/homebrew-tap, taking the macOS
-zip, once Skwir tells a cask's copy from one downloaded (ADR-142: its
-update notice stays quiet for a package manager's copy, and the cask
-installs the release's own bytes) and ADR-040, 075 and 142 are amended.
-Its caveats say the app is ad hoc signed and not notarized (Open Anyway
-in Privacy & Security) and that `brew trust skwir-org/tap` comes first;
-it never takes the quarantine off. The tap's workflow would gain a
-cask's step (brew style, `brew audit --cask`, install, uninstall).
+session; built 2026-11-24, ADR-142 and ADR-075 amended). A `macos` copy
+where Homebrew's Caskroom holds `skwir` never checks for a new version,
+read again at each look. `just cask <tag>` writes `Casks/skwir.rb` into
+a checkout of skwir-org/homebrew-tap: the release's zip as it is,
+quarantined as Homebrew downloads it, its caveats saying Open Anyway and
+`brew trust skwir-org/tap`. The tap's workflow gains a `skwir` job
+(style, `audit --cask --strict --online`, install, the seal, the
+quarantine and the Caskroom checked, uninstall), on the tap's local
+branch `cask/skwir`. Left: pushed by the user with the first release
+after 0.6.1, never before (0.6.1's copy does not read the Caskroom);
+nothing run on a Mac, and `brew style` and `brew audit` not run here
+(the tap's workflow runs them once pushed); the site's download page
+does not name the cask yet.
 
 **From the review of 2026-11-24** (45 findings on the night's work, all
 fixed but these). Usage from an index: a file of several names that

@@ -62,7 +62,10 @@ beside Windows' on each release's page: `skwir-<version>-macos-arm64.dmg`, a dis
 `skwir.app` from to Applications, or the same in a zip,
 `skwir-<version>-macos-arm64.zip`; for macOS 12 or later. It is signed ad hoc but not notarized, so macOS refuses
 it at first: open it once from System Settings, Privacy & Security ("Open
-Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. It reads PDFs,
+Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. From the
+release after 0.6.1, Homebrew installs the same zip and updates it:
+`brew tap skwir-org/tap`, `brew trust skwir-org/tap`, then `brew install
+--cask skwir-org/tap/skwir` (macOS still asks, as above). It reads PDFs,
 DjVu, 3D models and archives and plays audio and video; the Poppler and
 MuPDF readers are not in it yet. It has never run anywhere: everything below is
 new. Intel Macs have no build yet.

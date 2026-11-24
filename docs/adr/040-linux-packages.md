@@ -112,3 +112,9 @@ and the folders it manages unless all are granted, and bubblewrap
   the site gives, adds them, never these packages. Each package writes
   how it came in `share/skwir/channel` (`deb`, `rpm`; none for the
   AUR's). Copr and OBS were weighed and not taken.
+- 2026-11-24 (ADR-075, ADR-142): beside the AUR's bases, one package
+  manager outside Linux, Homebrew. The Mac app's cask in skwir-org's tap
+  is written at each release (`just cask <tag>`) and published by the
+  user, as the AUR's bases are (`docs/RELEASING.md`). A copy it installs
+  is Homebrew's, and never checks for a new version.
+

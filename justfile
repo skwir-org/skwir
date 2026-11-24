@@ -378,6 +378,12 @@ repository-check bundle="":
 winget tag:
     python3 tools/package/winget.py target/releases/{{quote(tag)}}
 
+# For the user to push once the release is published, into a checkout of
+# skwir-org/homebrew-tap (../homebrew-tap by default): a verified
+# release's Homebrew cask, Casks/skwir.rb (ADR-075, ADR-142).
+cask tag tap="../homebrew-tap":
+    python3 tools/package/cask.py target/releases/{{quote(tag)}} --tap {{quote(tap)}}
+
 # A Linux package built in a distribution's own root and installed in a
 # fresh one, from any Linux with bubblewrap (ADR-040): debian, ubuntu, fedora,
 # arch. With SKWIR_RPM_KEY (the repositories' public key file, as
