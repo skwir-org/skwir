@@ -23929,3 +23929,44 @@ set), and the count of reads they no longer need is gone.
   not asked within 10 s by a rating's order. A test timing 100,000
   renames (`every_entry_re_keyed_finds_its_alias_by_its_target`) failed
   once while a release build ran beside it.
+
+## 2026-11-24: every location keeps the later-begun read
+
+The audit of the morning found that searches, search within a place,
+tag places, the shelf and recent files could each show a ghost row,
+lose one, or keep old metadata when a late hydration landed. The user
+asked for them fixed before the release.
+- **Core** (b198c8f3): the folder provider's rule became a type every
+  location shares: `fs::Newest`, keyed by a name, a path or an id, with
+  `fs::Tickets` and the guard `fs::Reading`. `fs::read_paths_newest`
+  reads as `read_paths` does and hands each answer back with its ticket,
+  for the location to apply and send under its own lock.
+- **Tag places** (0744bdd0), **searches** (8d98fbce), **the shelf**
+  (6d191c9c), **recent files** (4b623475): each was moved onto it by a
+  fixer of its own. Search within a place sends under its lock. The
+  rule is in the locations' rules and AGENTS.md (6ad9b3a8).
+- **A review of the whole** found one medium bug and six low ones, all
+  fixed:
+  - the medium one (f443bcd3): since a refresh's listing takes a ticket,
+    a hydration held between its stats and its decision was left out
+    behind it, and its row stayed bare: the view asks for a row once.
+    An answer left out behind a read that told less is now read again;
+  - a search sent once per folder, and F5 could leave rows the pane
+    waited on bare; a recheck noted before it knew it could read
+    (8f685157);
+  - an item shelved again lost its hydration; forgetting rebuilt the
+    shelf's whole index; two refreshes of recent files could take out a
+    row the later one listed (c9247e82, 44078746).
+
+- **Checked:** each fix's test fails without it, proved on a copy. Also:
+  `lint-all` (check-cross included); the workspace's tests (4,384); and
+  the bench budgets for listings, searches and tags (`name_search_us`,
+  `tag_search_us`, `walk_parallel_us`, `stream_complete_us`,
+  `folder_whole_us`, `first_batch_us`, `tags_forget_us`), all met.
+  Under load (load average 11 to 28) `stream_complete_us` read 69 to
+  110 ms between runs, against 38 ms that morning. Alternated five times
+  with a build of 4b935ab4, from before the listing's ticket, under the
+  same load, it read 53 to 69 ms old and 54 to 70 ms new: no regression,
+  the load's.
+- **Not checked:** a remote's lane; Windows and macOS (compiled only);
+  the window.

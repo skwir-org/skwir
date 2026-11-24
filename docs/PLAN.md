@@ -1561,39 +1561,27 @@ in ranges, a copy refused at the process's own file size limit is told
 by its length alone. The FAT32 test (ignored) passed again on
 2026-11-24, the partial kept.
 
-**Two reads of an entry** (2026-11-24): the folder provider keeps the
-later begun, whatever each found (`Names::newest`, `Names::applies`,
-the watcher's inserts and removals included, and a refresh's or a
-rescan's listing, its names under one ticket). The other locations were
-audited the same day, by reading only; none is fixed yet. Every
-hydration but the folder provider's goes through `fs::hydrate_paths`,
-which sends what it found under the ids it was given, with no ticket and
-no look at whether the location still holds them. `Listing::upsert`
-drops an `Updated` for an id not listed, so the harm is a late `Added`
-or `Renamed` (a ghost), or a late `Removed` once the same id is back (a
-rename undone, a trashed file restored):
-- searches: a hydration outlives F5 and a plan's recheck (its token is
-  the location's, not the walk's), and a filled answer from before
-  stands over the new stat, the row never asked again; a hydration's
-  late `Removed` takes out a file renamed and renamed back; a walk's
-  batch waiting for the next match is published after a plan moved
-  what it holds;
-- search within a place (`within.rs`): a check sends after it lets go of
-  `shown`, so a `Removed` told meanwhile comes first and its `Added`
-  stays, a ghost until the search is opened again;
-- tag places: of two hydrations of a file, the older told last leaves
-  its tags as they were; a late `Removed` after a relist added the file
-  back leaves `sent.files` holding it, so no relist shows it again;
-- the shelf: `hydrate_paths` sends `Removed` before the shelf looks
-  whether the item moved, so a rename undone takes it off the shelf, and
-  that look walks the items for each gone id (the Scale rule);
-- `recent:` as searches' first; the Trash has none (its reads are
-  numbered, the latest alone published, a gone item told unreadable).
+**Two reads of an entry** (2026-11-24): every location that reads on
+workers keeps the later begun (`docs/invariants/locations.md`): the
+folder provider, its listings included, through `fs::Newest`; searches,
+search within a place, tag places, the shelf and recent files through
+`fs::read_paths_newest`, applied under their own locks. An answer left
+out behind a read that told less is read again, and a search keeps the
+rows asked of it across F5. Left: a shelf item's re-stat that finds
+nothing leaves its row bare (a stat by path does not tell gone from
+unreadable); a search keeps the ids asked of it until its next walk
+ends; none of it was tried on a remote's lane or on Windows. The Trash
+needed nothing.
 
-The fix proposed: the folder provider's machinery (`Names::applies`,
-`Told`, `Reading`, the tickets) as a core type keyed by an id or a path,
-`hydrate_paths` answering its caller, who keeps the newest under its own
-lock and sends them; within a place, its sends under `shown`.
+**A Homebrew cask** (the user agreed, 2026-11-24, relayed by skwird's
+session): `Casks/skwir.rb` in skwir-org/homebrew-tap, taking the macOS
+zip, once Skwir tells a cask's copy from one downloaded (ADR-142: its
+update notice stays quiet for a package manager's copy, and the cask
+installs the release's own bytes) and ADR-040, 075 and 142 are amended.
+Its caveats say the app is ad hoc signed and not notarized (Open Anyway
+in Privacy & Security) and that `brew trust skwir-org/tap` comes first;
+it never takes the quarantine off. The tap's workflow would gain a
+cask's step (brew style, `brew audit --cask`, install, uninstall).
 
 **From the review of 2026-11-24** (45 findings on the night's work, all
 fixed but these). Usage from an index: a file of several names that
