@@ -3801,8 +3801,10 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     leaves out scanned and added, caches found by name, the nested levels
     summed, kept current by the journal; the same fixture measured both
     ways agrees folder by folder against a real engine (names counted as
-    Usage counts them: skwird 03014bc, asked for it). Not checked: in a
-    window on a real home, nor a large tree's timing against the scan.
+    Usage counts them: skwird 03014bc, asked for it); in a window
+    (`just skwird-check`) on 50,003 files, 29 to 61 ms from the index
+    against 117 to 307 ms by its own scan, warm, skwird optimized. Not
+    checked: cold, a real home, a large tree's memory.
   - **D4, the tags index's checks** through skwird's journal: *built
     2026-11-23* (ADR-150, 15): a count keeps the journal's mark, the next
     check reads only the folders the journal names where it is every

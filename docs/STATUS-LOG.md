@@ -23461,3 +23461,29 @@ it measured and kept each current by a watch of its own.
   (58), `plugins_toggle`, `dialogs_offer`; clippy; `check-cross`.
 - **Not checked:** in a window on a real home, or a large tree's timing
   against the scan.
+
+## 2026-11-24: the skwird arc checked in a window (ADR-150, 13 to 16; ADR-125, 15)
+
+`tools/test/skwird_window.py` (run by `just skwird-check`) gained the
+arc's steps:
+- the address field's first row for `/` shows its search as typed where
+  plocate answers it (`ui.suggest`), and a search reading the files
+  still waits;
+- Usage of a 50,003-file fixture measured from the engine's totals and
+  again by its own scan with skwird turned off, the same figures folder
+  by folder, no folder read from the index;
+- the Exclusions page listing Kernel filesystems and Nix store.
+
+The harness now waits until the engine has read its root before the
+window starts (a first search of a root still being read walked it, and
+one run's footer still showed the folder after 20 s).
+
+- **Run:** HEAD e1a330ae's release build, from a copy of the tree with
+  its own target, on Xvfb (an X display of its own), against skwird 6e061fe
+  built optimized in a scratch copy (its debug build answered more
+  slowly than Usage's own warm scan: 297 ms against 200 ms). Five
+  runs, the last three after the wait was added: all passed. Usage
+  measured from the index took 29 to 61 ms and by its own scan 117 to
+  307 ms, warm, on the 50,003 files and 254 folders. Screenshots of
+  Usage and the Exclusions page looked right.
+- **Not checked:** a cold measure, a real home, a large tree's memory.

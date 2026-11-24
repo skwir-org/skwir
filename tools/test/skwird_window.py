@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """A search in the real window through a real skwird engine (ADR-150,
 11): the footer heard over AT-SPI as a screen reader reads it, and what
-`entries` says. Run by `just skwird-check`.
+`entries` says; the whole disk shown as typed where plocate answers it
+(13); Usage measured from the engine's folder totals as its own scan
+measures it, and both timed (16); the two categories of what indexes
+leave out on the Exclusions page (ADR-125, 15). Run by `just skwird-check`.
 
 The window is the a11y harness's (tools/test/a11y.py): an X display from :90
 up, a D-Bus session of its own, every XDG folder and HOME under
@@ -52,6 +55,12 @@ class Checked(Window):
         (self.files / "extra").mkdir()
         for name in ["report 2026.txt", "docs/q3 report.pdf", "notes.txt"]:
             (self.files / name).write_text("fixture\n")
+        # A tree for Usage to measure: 250 folders of 200 files.
+        for folder in range(250):
+            where = self.files / "tree" / f"part {folder:03}"
+            where.mkdir(parents=True)
+            for n in range(200):
+                (where / f"f{n:03}.dat").write_bytes(b"x" * (n * 37 % 5000))
         self.runtime.mkdir(mode=0o700)
         config = self.root / "config" / "skwir"
         config.mkdir(parents=True)
@@ -89,6 +98,15 @@ class Checked(Window):
                    "skwird.log")
         if not until(socket.exists, 30):
             fail(f"no engine; see {self.root / 'skwird.log'}")
+
+        # Until its root is read: a root being read is not covered
+        # ("unread"), and the first search would walk it.
+        def read():
+            said = subprocess.run([self.args.skwird, "coverage", str(self.files)],
+                                  env=self.env(), capture_output=True, text=True, timeout=60)
+            return said.returncode == 0 and "unread" not in said.stdout.lower()
+        if not until(read, 60):
+            fail(f"the engine never read its root; see {self.root / 'skwird.log'}")
         self.spawn([self.args.skwir, str(self.files)], "skwir.log")
         os.environ["DBUS_SESSION_BUS_ADDRESS"] = self.bus
         os.environ.pop("AT_SPI_BUS_ADDRESS", None)
@@ -199,6 +217,69 @@ def run(w):
           (answer.get("as_of") or {}).get("updated") == UPDATED
           and (answer.get("index") or {}).get("proof") == "as_of")
     w.shot("3-as-of")
+
+    # The whole disk as typed (ADR-150, 13): plocate answers `/` at once,
+    # so the address field's first row shows its search as typed.
+    offered = w.answer("ui.suggest", {"text": "report", "scope": "/"})
+    first = (offered.get("rows") or [{}])[0]
+    check("the address field shows a search of / as typed where plocate answers it",
+          first.get("live") is not None or print("  first row:", first))
+    offered = w.answer("ui.suggest", {"text": "content:report", "scope": "/"})
+    first = (offered.get("rows") or [{}])[0]
+    check("one that reads the files still waits for Enter",
+          first.get("live") is None or print("  first row:", first))
+
+    # Usage from the engine's folder totals (ADR-150, 16), the fixture kept
+    # live above, against its own scan of the disk with skwird turned off.
+    w.cmd("navigate", {"location": str(files)})
+    w.cmd("ui.view", {"id": "usage"})
+    w.cmd("usage.scan", {"path": str(files)})
+
+    def measured(accept=lambda s: True):
+        found = []
+
+        def done():
+            s = w.answer("usage.status")
+            if not s.get("scanning") and s.get("tree") and accept(s):
+                found.append(s)
+                return True
+            return False
+        until(done, 60)
+        return found[0] if found else None
+
+    indexed = measured()
+    check("Usage measured the fixture", indexed is not None)
+    w.shot("3b-usage-indexed")
+    w.cmd("plugins.set_enabled", {"id": "skwird", "enabled": False})
+    w.cmd("usage.scan", {"path": str(files), "force": True})
+    # The scan's own answer, not the index's still shown.
+    scanned = measured(lambda s: s.get("scanned_dirs", 0) > 0)
+    check("Usage measured the fixture again, by its own scan", scanned is not None)
+    w.cmd("plugins.set_enabled", {"id": "skwird", "enabled": True})
+
+    def facts(node):
+        rows = [(node["name"], node["size"], node["alloc"], node["files"], node["dirs"],
+                 node["modified"])]
+        rows += sorted((c["name"], c["size"], c["alloc"], c["files"], c["dirs"], c["modified"])
+                       for c in node.get("children", []))
+        return rows
+
+    print(f"  from the index: {indexed['elapsed_ms']} ms, {indexed['scanned_dirs']} folders read;"
+          f" its own scan: {scanned['elapsed_ms']} ms, {scanned['scanned_dirs']} folders read")
+    check("the index's figures are the scan's, folder by folder",
+          facts(indexed["tree"]) == facts(scanned["tree"])
+          or print("  index:", facts(indexed["tree"])[:6], "\n  scan:", facts(scanned["tree"])[:6]))
+    check("from the index, no folder was read", indexed["scanned_dirs"] == 0)
+    check("its own scan read every folder", scanned["scanned_dirs"] >= 250)
+    w.cmd("ui.view", {"id": "list"})
+
+    # What indexes leave out, left out of searches too (ADR-125, 15).
+    w.cmd("ui.settings", {"page": "exclusions"})
+    check("the Exclusions page lists the kernel's filesystems and the Nix store",
+          until(lambda: says(w, "Kernel filesystems") and says(w, "Nix store"), 30)
+          or print("  read:", sorted({n for _, n in named(w) if n})[:60]))
+    w.shot("3c-exclusions")
+    w.cmd("ui.settings_close")
 
     # The Index page (ADR-150, 6 and 8): Kept live's groups, their
     # switches, its rows ticked and saying what skwird says, the share.
