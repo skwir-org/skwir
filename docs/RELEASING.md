@@ -141,7 +141,9 @@ just release-verify v0.1.0
 Windows/macOS cross checks, and each crate's catalogs as its code says
 them with the languages offered, `just words --release`), `deny`,
 `notices-check` (the packages' notices
-in `tools/package/notices` are current, ADR-063), `test-all`, `smoke`,
+in `tools/package/notices` are current, ADR-063), `test-all`,
+`test-windows` (the Windows build's tests under Wine, every crate's,
+one at a time: ADR-053 amended), `smoke`,
 `a11y-check` (what a screen reader hears, ADR-065), `poppler-check`, `mupdf-check`, `djvu-check`, `bench-check` and
 `release-tools-check`. There is no skip
 checks option. These checks are also useful before committing a change;

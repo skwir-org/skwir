@@ -25,8 +25,8 @@ with open('target/just-calls', 'a') as stream:
     stream.write(json.dumps(args) + '\n')
 if args == ['release-check']:
     sys.exit(1 if os.getenv('FAIL_CHECK') else 0)
-if len(args) == 1 and args[0] in ['lint-all', 'deny', 'notices-check', 'test-all', 'smoke',
-                                 'a11y-check', 'poppler-check', 'mupdf-check', 'djvu-check',
+if len(args) == 1 and args[0] in ['lint-all', 'deny', 'notices-check', 'test-all', 'test-windows',
+                                 'smoke', 'a11y-check', 'poppler-check', 'mupdf-check', 'djvu-check',
                                  'bench-check', 'release-tools-check']:
     sys.exit(1 if os.getenv('FAIL_RECIPE') == args[0] else 0)
 out = pathlib.Path(os.environ['SKWIR_PACKAGE_OUT'])
@@ -567,7 +567,7 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
         (self.root / "target/just-calls").unlink()
         self.cli("check", tag=None)
         self.assertEqual(self.calls("just"), [[r] for r in
-                         ["lint-all", "deny", "notices-check", "test-all", "smoke",
+                         ["lint-all", "deny", "notices-check", "test-all", "test-windows", "smoke",
                           "a11y-check", "poppler-check", "mupdf-check", "djvu-check", "bench-check",
                           "release-tools-check"]])
 

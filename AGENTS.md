@@ -728,7 +728,8 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 ```
 
 - **Done means the full checks are green:** `just release-check` runs
-  `lint-all`, `deny`, `notices-check`, `test-all`, `smoke`, `a11y-check`,
+  `lint-all`, `deny`, `notices-check`, `test-all`, `test-windows` (every
+  crate's tests under Wine, one crate at a time), `smoke`, `a11y-check`,
   `poppler-check`, `mupdf-check`, `djvu-check`, `bench-check` and
   `release-tools-check`.
   Routine GitHub CI runs only `ci-check`; the full suite and Linux

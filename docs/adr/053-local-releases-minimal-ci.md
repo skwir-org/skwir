@@ -1,7 +1,8 @@
 # ADR-053: Local Linux releases and minimal routine CI
 
 Status: accepted, 2026-10-11 (the user chose local releases after hosted
-CI and repeated package builds took too long).
+CI and repeated package builds took too long). Amended 2026-11-24: the
+full gate runs the Windows build's tests under Wine.
 
 ## Context
 
@@ -48,3 +49,17 @@ conventional Linux packages possible there without a container daemon.
 - AUR publication, native installers and signing remain separate work.
 
 The workflow and commands are described in [Releasing](../RELEASING.md).
+
+## Amendments
+
+- 2026-11-24 (the user's choice): **`release-check` runs the Windows
+  build's tests under Wine** (`just test-windows`, ADR-035), after
+  `test-all`. Run by hand only, they last passed whole on 2026-10-25,
+  and a run on 2026-11-24 found 62 failures in ten crates that had come
+  in unseen since. Given no arguments, `test-windows` runs each default
+  member's tests in turn (`tools/cross/test-windows-each.sh`). The build
+  is made once, but each crate's tests are listed and run alone: listing
+  every test program at once starts a Wine for each, which a busy
+  machine's memory did not hold. It adds about half an hour. Wine
+  answers for the logic, never for Windows itself (ADR-035).
+

@@ -21,7 +21,7 @@ from urllib.parse import quote, unquote
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKS = ["lint-all", "deny", "notices-check", "test-all", "smoke", "a11y-check",
+CHECKS = ["lint-all", "deny", "notices-check", "test-all", "test-windows", "smoke", "a11y-check",
           "poppler-check", "mupdf-check", "djvu-check", "bench-check", "release-tools-check"]
 PACKAGES = [("appimage", ["package-appimage"]),
             *[(d, ["package-try", d]) for d in ("debian", "ubuntu", "fedora", "arch")],

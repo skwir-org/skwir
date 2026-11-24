@@ -66,7 +66,7 @@ them by topic.
 | [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | plocate's answer dated (2026-10-20); skwird's client copied (2026-11-23); coverage and the provider not built; amended by 089 and 150 |
 | [051](051-text-is-read-where-it-is-shown.md) | Text is read where it is shown; colors hold it back 100 ms at most, and its rows are counted in that time where they can be, the gutter never narrowing (amended 2026-11-09, 2026-11-10) | built |
 | [052](052-portable-appimage.md) | A portable AppImage built in a distribution root, and its tree as a tarball | built and tried on x86-64 Linux; amended 2026-11-22 (ADR-148): libheif and libde265 built for the HEIF helper |
-| [053](053-local-releases-minimal-ci.md) | Local Linux releases; minimal routine GitHub CI | implemented; upload tested with a fake GitHub CLI |
+| [053](053-local-releases-minimal-ci.md) | Local Linux releases; minimal routine GitHub CI; the full gate runs the Windows tests under Wine (2026-11-24) | implemented; upload tested with a fake GitHub CLI |
 | [054](054-a-name-already-taken.md) | A name already taken: keep both, replace, skip or merge, asked once | built; on Windows a replace undone restores the latest item |
 | [055](055-the-settings-file-is-shared.md) | The settings file is shared: saves merge, outside changes are taken in, Home Manager merges | built |
 | [056](056-the-window-s-state-is-not-a-setting.md) | The window's state is not a setting: a file of its own, read-only settings, settings checked by skwir | built |
