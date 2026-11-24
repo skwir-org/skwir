@@ -102,6 +102,11 @@ struct Shared {
     /// tests count.
     #[cfg(test)]
     opens: std::sync::atomic::AtomicUsize,
+    /// Called as a listing is about to read the folder (`None`), then with
+    /// the first name it read (its first names read with it): where a test
+    /// holds it while names move.
+    #[cfg(test)]
+    listing_at: Mutex<Option<ListingAt>>,
     /// Whether it was lost, and how: [`LISTED`] not, [`HANDED_ON`],
     /// [`LOST_MISSING`] or [`LOST_LEFT`] (its volume let go of, which a
     /// deletion told after does not say over). Changed only under the
@@ -141,6 +146,10 @@ impl std::ops::Deref for Opened {
         }
     }
 }
+
+/// Where a test holds a listing (`Shared::listing_at`).
+#[cfg(test)]
+type ListingAt = Box<dyn FnMut(Option<&OsStr>) + Send>;
 
 /// A folder listed, not lost ([`Shared::lost`]).
 const LISTED: u8 = 0;
@@ -193,21 +202,22 @@ struct Names {
     /// read once it is listed, every id a hydration is given being
     /// answered.
     early: Vec<(Vec<EntryId>, Priority, Needs)>,
-    /// Of each name stat-ed while another read of the folder was under way
-    /// (`reading`), the ticket of the newest stat applied to the names,
-    /// whatever it found (the file, none, one unread): one begun before
-    /// it, applied after, is left out (`Names::applies`), so of two stats
-    /// of a name the one begun later stands, gone or unread too. Forgotten
-    /// once no read under way may hold a stat begun before it
+    /// Of each name read while another read of the folder begun before it
+    /// was under way (`reading`), the ticket of the newest read applied to
+    /// the names, whatever it found (the file, none, one unread): one begun
+    /// before it, applied after, is left out (`Names::applies`), so of two
+    /// reads of a name the one begun later stands, gone or unread too. A
+    /// read is a stat, or a listing's, whose names all take its one ticket.
+    /// Forgotten once no read under way may hold one begun before it
     /// (`Names::read_ended`): empty while one reads alone.
     applied: hashing::Map<OsString, u64>,
-    /// `applied` by ticket, oldest first: what is forgotten next.
-    applied_by_ticket: std::collections::BTreeMap<u64, OsString>,
-    /// The reads of stats under way (a hydration's batch, the watcher's
-    /// changes), by the ticket their first stat takes at least, counted
-    /// (`Shared::reading`), and how many in all.
+    /// `applied` by ticket, oldest first: what is forgotten next. One entry
+    /// a name, as in `applied`.
+    applied_by_ticket: std::collections::BTreeSet<(u64, OsString)>,
+    /// The reads under way (a hydration's batch, the watcher's changes, a
+    /// listing), by the ticket their first read takes at least, counted
+    /// (`Shared::reading`).
     reading: std::collections::BTreeMap<u64, u32>,
-    reads: u32,
     /// Ids a hydration re-keyed to (a provisional id, a file another took
     /// the place of) whose rename is not told yet, with the id their row
     /// is still told under: whatever tells one of them first tells it
@@ -260,7 +270,6 @@ impl Names {
     /// ([`Shared::reading`]).
     fn read_begins(&mut self, floor: u64) {
         *self.reading.entry(floor).or_default() += 1;
-        self.reads += 1;
     }
 
     /// The read begun at `floor` ended: what only a stat begun before the
@@ -272,41 +281,49 @@ impl Names {
             if *count == 0 {
                 self.reading.remove(&floor);
             }
-            self.reads -= 1;
         }
         let Some(&oldest) = self.reading.keys().next() else {
             self.applied.clear();
             self.applied_by_ticket.clear();
             return;
         };
-        while let Some(first) = self.applied_by_ticket.first_entry() {
-            if *first.key() > oldest {
+        while self
+            .applied_by_ticket
+            .first()
+            .is_some_and(|(ticket, _)| *ticket <= oldest)
+        {
+            let Some((ticket, name)) = self.applied_by_ticket.pop_first() else {
                 break;
-            }
-            let (ticket, name) = first.remove_entry();
+            };
             if self.applied.get(&name) == Some(&ticket) {
                 self.applied.remove(&name);
             }
         }
     }
 
-    /// Whether what the stat of `name` that took `ticket` found is applied
-    /// to the names: no stat of it begun later was. Noted as applied where
-    /// another read is under way, which may hold a stat begun before it,
-    /// in the place of the stat of it noted before: one entry a name, in
-    /// both maps, however often it is stat-ed while a read stays under way
-    /// (a hydration held by a server that stopped answering).
+    /// Whether what the read of `name` that took `ticket` found (a stat,
+    /// or a listing's) is applied to the names: no read of it begun later
+    /// was. Noted as applied where another read begun no later is under
+    /// way, which may hold a read of it begun before (one begun after
+    /// holds none), in the place of the read of it noted before: one entry
+    /// a name, in both maps, however often it is stat-ed while a read stays
+    /// under way (a hydration held by a server that stopped answering). A
+    /// listing's names are noted only while a read begun before it is under
+    /// way, never for the rows' hydrations it starts.
     fn applies(&mut self, name: &OsStr, ticket: u64) -> bool {
         if self.applied.get(name).is_some_and(|&newer| newer > ticket) {
             return false;
         }
-        if self.reads > 1 {
-            if let Some(older) = self.applied.insert(name.to_os_string(), ticket)
+        // Each read under way counted by its floor: its own among them.
+        let before: u32 = self.reading.range(..=ticket).map(|(_, &n)| n).sum();
+        if before > 1 {
+            let name = name.to_os_string();
+            if let Some(older) = self.applied.insert(name.clone(), ticket)
                 && older != ticket
             {
-                self.applied_by_ticket.remove(&older);
+                self.applied_by_ticket.remove(&(older, name.clone()));
             }
-            self.applied_by_ticket.insert(ticket, name.to_os_string());
+            self.applied_by_ticket.insert((ticket, name));
         }
         true
     }
@@ -676,6 +693,8 @@ fn open_folder(
         tickets: std::sync::atomic::AtomicU64::new(0),
         #[cfg(test)]
         opens: std::sync::atomic::AtomicUsize::new(0),
+        #[cfg(test)]
+        listing_at: Mutex::new(None),
         lost: std::sync::atomic::AtomicU8::new(LISTED),
     });
     // Watched before it is listed, so nothing changed
@@ -1040,6 +1059,17 @@ impl Shared {
         self.dir.read().clone()
     }
 
+    /// What a test does where a listing reads (`listing_at`), taken out
+    /// while it runs: it may wait for what the watcher applies.
+    #[cfg(test)]
+    fn at_listing(&self, name: Option<&OsStr>) {
+        let hook = self.listing_at.lock().take();
+        if let Some(mut hook) = hook {
+            hook(name);
+            *self.listing_at.lock() = Some(hook);
+        }
+    }
+
     /// Its listing failed with `error`. What was handed on to it to take
     /// out (`taken`: rows of the folder it was opened again in place of,
     /// `reopen`) goes first, those it did not list again, never shown
@@ -1077,6 +1107,16 @@ impl Shared {
                 return;
             }
         };
+        // A read of every name, as a stat is of one (`Names::applies`): its
+        // one ticket taken before the folder is read, so a stat of a name
+        // begun after it, the watcher's or a hydration's, told already,
+        // stands over what this read finds of the name, and this read over
+        // a stat begun before it, told after. Dropped once what it found is
+        // applied.
+        let reading = self.reading();
+        let ticket = self.ticket();
+        #[cfg(test)]
+        self.at_listing(None);
         let mut dir = match folder.read() {
             Ok(d) => d,
             Err(e) => {
@@ -1091,6 +1131,8 @@ impl Shared {
         let mut replaced: Vec<EntryId> = Vec::new();
         // What tells the folder's made-up numbers apart, as its stats do.
         let mount = folder.mount().unwrap_or(0);
+        #[cfg(test)]
+        let mut first_read = true;
         while !cancel.is_cancelled() {
             let Some(ent) = dir.next() else {
                 break;
@@ -1107,8 +1149,19 @@ impl Shared {
                     return;
                 }
             };
+            #[cfg(test)]
+            if std::mem::take(&mut first_read) {
+                self.at_listing(Some(&ent.name));
+            }
             let id = {
                 let mut names = self.names.lock();
+                // A read of the name begun after this one told already (a
+                // rename, `mv f g; mv g f`, told while a long listing ran):
+                // what it found stands, the file it found there kept.
+                if !names.applies(&ent.name, ticket) {
+                    seen.extend(names.by_name.get(&ent.name).copied());
+                    continue;
+                }
                 // Provisional: the stat names it (`stat_entry`).
                 let file = FileId::new(self.id.dev, super::stat::on_mount(ent.ino, mount));
                 let id = names.listing_id(EntryId::in_folder(file, self.id, &ent.name));
@@ -1160,12 +1213,24 @@ impl Shared {
         }
         if !gone.is_empty() {
             let mut names = self.names.lock();
+            // A row this read did not see, whose name a read begun after it
+            // found there since: it stays, as found.
+            let gone: Vec<EntryId> = gone
+                .into_iter()
+                .filter(|id| match names.by_id.get(id).cloned() {
+                    Some(name) => names.applies(&name, ticket),
+                    None => true,
+                })
+                .collect();
             for id in &gone {
                 names.remove_id(*id);
             }
             drop(names);
-            self.send(ListingEvent::Removed(gone));
+            if !gone.is_empty() {
+                self.send(ListingEvent::Removed(gone));
+            }
         }
+        drop(reading);
         // Every name known now: what was asked before it was is read.
         let early = {
             let mut names = self.names.lock();
@@ -2665,7 +2730,7 @@ mod tests {
         assert_eq!(names.applied.get(name), Some(&4));
         names.read_ended(3);
         assert!(names.applied.is_empty() && names.applied_by_ticket.is_empty());
-        assert_eq!(names.reads, 0);
+        assert!(names.reading.is_empty());
         // A read alone notes nothing: no stat begun before it is under way.
         names.read_begins(7);
         assert!(names.applies(name, 7));
@@ -2885,6 +2950,113 @@ mod tests {
         let row = listing.iter().find(|e| e.name == name).unwrap();
         assert!(!marked(row), "marked no more");
         assert_eq!(size(row), last, "at its last size");
+        open.close();
+    }
+
+    /// A listing's names share its one ticket: each is noted while a read
+    /// begun before it is under way, never for reads begun after it (the
+    /// rows' hydrations it starts), and all are forgotten once none older
+    /// is left.
+    #[test]
+    fn a_listing_s_names_are_noted_by_its_one_ticket() {
+        let mut names = Names::default();
+        // A hydration under way (from 1), then a listing (its ticket 5).
+        names.read_begins(1);
+        names.read_begins(5);
+        let listed = ["it's a", "it's b, été", "it's c"].map(OsStr::new);
+        for name in listed {
+            assert!(names.applies(name, 5));
+        }
+        assert_eq!(names.applied.len(), 3);
+        assert_eq!(names.applied_by_ticket.len(), 3, "one entry a name");
+        // The hydration's stat, begun before the listing, is left out.
+        assert!(!names.applies(listed[1], 2));
+        // It ends: the listing is the oldest read, and nothing older can
+        // overtake what it found.
+        names.read_ended(1);
+        assert!(names.applied.is_empty() && names.applied_by_ticket.is_empty());
+        // A hydration begun after the listing (from 6): what the listing
+        // reads now is noted by nobody, what the hydration finds is.
+        names.read_begins(6);
+        assert!(names.applies(OsStr::new("it's d"), 5));
+        assert!(names.applied.is_empty());
+        assert!(names.applies(listed[0], 7));
+        assert_eq!(names.applied.get(listed[0]), Some(&7));
+        assert!(!names.applies(listed[0], 5), "the listing's, from before");
+        names.read_ended(6);
+        names.read_ended(5);
+        assert!(names.applied.is_empty() && names.reading.is_empty());
+    }
+
+    /// A refresh read while a name moves away and back (F5 during `mv b
+    /// b2; mv b2 b`, told by the watcher meanwhile) shows what the watcher
+    /// found since: the name it read, gone since, is not shown, and the row
+    /// it did not see, back since, stays.
+    #[test]
+    fn a_refresh_keeps_what_was_found_of_a_name_since_it_began() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("l'été, moving");
+        std::fs::create_dir(&dir).unwrap();
+        let (a, b, c, moved) = ("it's a", "it's b, été", "it's c", "it's b, moved");
+        for name in [a, b, c] {
+            std::fs::write(dir.join(name), name).unwrap();
+        }
+        let app = crate::App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let scheduler = crate::scheduler::Scheduler::new(4);
+        let open = opened_on(&app, scheduler.clone(), &dir, Needs::Nothing);
+        let mut listing = crate::Listing::default();
+        for event in events_until(&open.rx, |e| matches!(e, ListingEvent::Complete)) {
+            listing.apply(event);
+        }
+        let shown = |listing: &crate::Listing| -> Vec<String> {
+            let mut names: Vec<String> = listing
+                .iter()
+                .map(|e| e.name.to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        // Applies what comes until the names shown are `want`.
+        let until = |listing: &mut crate::Listing, want: &[&str]| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            while shown(listing) != want {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                listing.apply(open.rx.recv_timeout(left).expect("told"));
+            }
+        };
+        until(&mut listing, &[a, b, c]);
+        // The refresh held where it reads, the watcher applying meanwhile.
+        let (at, on_at) = std::sync::mpsc::channel::<Option<OsString>>();
+        let (go, on_go) = std::sync::mpsc::channel::<()>();
+        let shared = open.shared.lock().clone().expect("listed");
+        *shared.listing_at.lock() = Some(Box::new(move |name| {
+            at.send(name.map(OsStr::to_os_string)).unwrap();
+            on_go.recv_timeout(Duration::from_secs(20)).expect("let go");
+        }));
+        open.refresh();
+        // About to read the folder: the name moves away, told.
+        assert_eq!(on_at.recv_timeout(Duration::from_secs(20)).unwrap(), None);
+        std::fs::rename(dir.join(b), dir.join(moved)).unwrap();
+        until(&mut listing, &[a, moved, c]);
+        go.send(()).unwrap();
+        // Read as it was then (the name moved), then moved back, told.
+        assert!(
+            on_at
+                .recv_timeout(Duration::from_secs(20))
+                .unwrap()
+                .is_some()
+        );
+        std::fs::rename(dir.join(moved), dir.join(b)).unwrap();
+        until(&mut listing, &[a, b, c]);
+        go.send(()).unwrap();
+        for event in events_until(&open.rx, |e| matches!(e, ListingEvent::Complete)) {
+            listing.apply(event);
+        }
+        assert!(scheduler.wait_idle(Duration::from_secs(20)));
+        for event in open.rx.try_iter() {
+            listing.apply(event);
+        }
+        assert_eq!(shown(&listing), [a, b, c], "as the watcher found them");
         open.close();
     }
 
