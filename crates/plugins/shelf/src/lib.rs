@@ -8,16 +8,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use crossbeam_channel::Receiver;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
+use skwir_core::CancelToken;
 use skwir_core::app::{App, PaneArg};
 use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
 use skwir_core::entry::{Entry, EntryId, EntryKind};
-use skwir_core::fs::hydrate_paths;
 use skwir_core::fs::stat::stat_path;
+use skwir_core::fs::{Newest, Read, Reading, Tickets, read_paths_newest};
+use skwir_core::hashing;
 use skwir_core::location::{
     EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
     Tool, ToolPane, Verb, Verbs,
 };
+use skwir_core::metadata::MetadataProviders;
 use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, Trash};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem, Place};
@@ -63,16 +66,243 @@ impl ShelfItem {
     }
 }
 
+/// What a hydration's answers are told at least this many at a time, as
+/// its folders are read: the window applies them in slices.
+const SENT_EVERY: usize = 256;
+
+/// The shelf: its items, and the tickets of the reads of them.
+#[derive(Default)]
+struct Shelf {
+    state: Mutex<State>,
+    /// Taken by each read of an item just before it reads (a hydration's
+    /// stat, a follow's), and by each change trusted as it is applied (a
+    /// plan's, an item shelved): of two, the one begun later stands
+    /// (`State::newest`).
+    tickets: Tickets,
+}
+
+impl Shelf {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock()
+    }
+
+    /// Ask whether each item `moved` kept its identity where a plan put
+    /// it (a move to another device gives it a new inode), and read it
+    /// there as a hydration does, filled by the providers, since a row
+    /// the plan renamed is told bare. Worker-only: this is I/O, in the
+    /// lane of the paths.
+    fn restat(&self, moved: Vec<(EntryId, PathBuf)>, metadata: &MetadataProviders) {
+        // Dropped last, after what it found is told.
+        let _reading = Reading::begin(&self.state, |s| &mut s.newest, &self.tickets);
+        let mut found: Vec<(EntryId, PathBuf, Option<Entry>, u64)> = moved
+            .into_iter()
+            .map(|(id, path)| {
+                let ticket = self.tickets.take();
+                let entry = stat_path(&path);
+                (id, path, entry, ticket)
+            })
+            .collect();
+        // Each folder's filled at once, as a hydration's are.
+        let mut by_dir: HashMap<PathBuf, Vec<usize>> = HashMap::new();
+        for (n, (_, path, entry, _)) in found.iter().enumerate() {
+            if let (Some(_), Some(dir)) = (entry, path.parent()) {
+                by_dir.entry(dir.to_path_buf()).or_default().push(n);
+            }
+        }
+        for (dir, at) in by_dir {
+            let mut entries: Vec<Entry> = at.iter().filter_map(|&n| found[n].2.take()).collect();
+            metadata.fill(&dir, &mut entries);
+            for (n, entry) in at.into_iter().zip(entries) {
+                found[n].2 = Some(entry);
+            }
+        }
+        let mut s = self.lock();
+        let s = &mut *s;
+        let (mut renamed, mut updated, mut lost) = (Vec::new(), Vec::new(), Vec::new());
+        for (old, path, entry, ticket) in found {
+            // Only items still on the shelf, still at that path; what
+            // could not be read there says nothing.
+            let (Some(n), Some(entry)) = (s.at_path(old, &path), entry) else {
+                continue;
+            };
+            if entry.id == old {
+                // Its file under its name still (a rename undone before
+                // this was asked): told, unless a read begun later was.
+                if s.newest.applies(&old, ticket) {
+                    updated.push(entry);
+                }
+                continue;
+            }
+            if s.at.contains_key(&entry.id) {
+                // Now the same file as another item: keep that one.
+                lost.push(old);
+                continue;
+            }
+            // What it is now, whatever was told of what it was: noted
+            // under the id it takes, so a read of that begun before (a
+            // hydration of the name an undo gives back) is left out.
+            s.newest.applies(&entry.id, ticket);
+            s.rekey(n, entry.id);
+            s.items[n].kind = entry.kind;
+            renamed.push((old, entry));
+        }
+        // Renamed, so a row keeps its place and its selection.
+        if !renamed.is_empty() {
+            s.broadcast(&ListingEvent::Renamed(renamed));
+        }
+        if !updated.is_empty() {
+            s.broadcast(&ListingEvent::Updated(updated));
+        }
+        s.forget(&lost);
+    }
+
+    /// Hydrate `items` for the listing of `sink`: stat-ed and filled one
+    /// folder at a time, each answer told under the shelf's lock only
+    /// where the shelf holds it still where it was looked for and no read
+    /// of it begun later was told (`State::newest`). Worker-only: this is
+    /// I/O, in the lane of the paths.
+    fn hydrate_now(
+        &self,
+        items: &[(EntryId, PathBuf)],
+        metadata: &MetadataProviders,
+        sink: &EventSink,
+        cancel: &CancelToken,
+    ) {
+        // Dropped last, after its answers are told.
+        let _reading = Reading::begin(&self.state, |s| &mut s.newest, &self.tickets);
+        let asked: hashing::Map<EntryId, &Path> = items
+            .iter()
+            .map(|(id, path)| (*id, path.as_path()))
+            .collect();
+        let (mut reads, mut held) = (Vec::new(), 0);
+        read_paths_newest(items, metadata, cancel, &self.tickets, |read| {
+            held += read.found.len() + read.gone.len() + read.unread.len();
+            reads.push(read);
+            if held >= SENT_EVERY {
+                self.answer(std::mem::take(&mut reads), &asked, sink, cancel);
+                held = 0;
+            }
+        });
+        self.answer(reads, &asked, sink, cancel);
+    }
+
+    /// Tell what `reads` found, `asked` where each was looked for. Moved
+    /// or gone is decided here, under the lock, before anything is told:
+    /// gone from where it was looked for, it leaves the shelf; moved
+    /// meanwhile, or moved and moved back (a rename undone), the follow's
+    /// read of it stands.
+    fn answer(
+        &self,
+        reads: Vec<Read>,
+        asked: &hashing::Map<EntryId, &Path>,
+        sink: &EventSink,
+        cancel: &CancelToken,
+    ) {
+        let mut s = self.lock();
+        if cancel.is_cancelled() {
+            return;
+        }
+        let s = &mut *s;
+        let stands = |s: &mut State, id: EntryId, ticket: u64| {
+            asked
+                .get(&id)
+                .is_some_and(|path| s.at_path(id, path).is_some())
+                && s.newest.applies(&id, ticket)
+        };
+        let (mut updated, mut gone, mut unread) = (Vec::new(), Vec::new(), Vec::new());
+        for read in reads {
+            for (e, ticket) in read.found {
+                if stands(s, e.id, ticket) {
+                    updated.push(e);
+                }
+            }
+            for (id, ticket) in read.gone {
+                if stands(s, id, ticket) {
+                    gone.push(id);
+                }
+            }
+            for (id, ticket) in read.unread {
+                if stands(s, id, ticket) {
+                    unread.push(id);
+                }
+            }
+        }
+        if !updated.is_empty() {
+            sink.send(ListingEvent::Updated(updated));
+        }
+        // Off the shelf, and out of every listing of it.
+        s.forget(&gone);
+        if !unread.is_empty() {
+            sink.send(ListingEvent::Unreadable(unread));
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     items: Vec<ShelfItem>,
+    /// Where each item is in `items`, by its id: what a read of one, a
+    /// plan's change and `path_of` ask, on a shelf that may hold a
+    /// folder's hundred thousand.
+    at: hashing::Map<EntryId, usize>,
     /// Open `shelf:` listings to keep live.
     sinks: Vec<EventSink>,
     /// Where the item count is published; empty while disabled.
     app: Weak<App>,
+    /// Which read of each item was told last, while another read that
+    /// may hold an older one is under way (`fs::Newest`): what a read
+    /// begun before it found is left out, whatever each found, gone
+    /// included.
+    newest: Newest<EntryId>,
 }
 
 impl State {
+    /// Where the item `id` is in `items`, if it is still at `path`.
+    fn at_path(&self, id: EntryId, path: &Path) -> Option<usize> {
+        self.at
+            .get(&id)
+            .copied()
+            .filter(|&n| self.items[n].path == path)
+    }
+
+    fn push(&mut self, item: ShelfItem) {
+        self.at.entry(item.id).or_insert(self.items.len());
+        self.items.push(item);
+    }
+
+    /// `at` made again, after items left.
+    fn reindex(&mut self) {
+        self.at.clear();
+        for (n, i) in self.items.iter().enumerate() {
+            self.at.entry(i.id).or_insert(n);
+        }
+    }
+
+    /// The item at `n` is the entry `id` now.
+    fn rekey(&mut self, n: usize, id: EntryId) {
+        let old = std::mem::replace(&mut self.items[n].id, id);
+        if self.at.get(&old) == Some(&n) {
+            self.at.remove(&old);
+        }
+        self.at.insert(id, n);
+    }
+
+    /// `ids` are as a change trusted without a stat says (a plan's, an
+    /// item shelved as its listing knew it), as of now: what a read of one
+    /// begun before found, told after, is left out.
+    fn changed(&mut self, ids: impl IntoIterator<Item = EntryId>, tickets: &Tickets) {
+        // No read under way: none begun before can be told after.
+        if self.newest.is_idle() {
+            return;
+        }
+        let floor = self.newest.begin(tickets);
+        let ticket = tickets.take();
+        for id in ids {
+            self.newest.applies(&id, ticket);
+        }
+        self.newest.read_ended(floor);
+    }
+
     fn broadcast(&mut self, event: &ListingEvent) {
         self.sinks.retain(|s| s.send(event.clone()));
     }
@@ -94,8 +324,11 @@ impl State {
 
     /// Drop `ids` from the shelf and from every open listing of it.
     fn forget(&mut self, ids: &[EntryId]) -> usize {
+        if ids.is_empty() {
+            return 0;
+        }
         // Asked of every item: a set, as Clear asks them all.
-        let ids: HashSet<EntryId> = ids.iter().copied().collect();
+        let ids: hashing::Set<EntryId> = ids.iter().copied().collect();
         let mut removed = Vec::new();
         self.items.retain(|i| {
             let gone = ids.contains(&i.id);
@@ -105,6 +338,7 @@ impl State {
             !gone
         });
         if !removed.is_empty() {
+            self.reindex();
             self.broadcast(&ListingEvent::Removed(removed.clone()));
             self.publish_count();
         }
@@ -115,7 +349,7 @@ impl State {
 /// The shelf plugin.
 #[derive(Default)]
 pub struct ShelfPlugin {
-    state: Arc<Mutex<State>>,
+    state: Arc<Shelf>,
 }
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
@@ -149,7 +383,7 @@ impl ShelfPlugin {
 
     /// Shelve `new` with the entries their listing already holds, so
     /// nothing is stat-ed here: this runs on the dispatching thread.
-    fn add(state: &Mutex<State>, new: Vec<(ShelfItem, Option<Entry>)>) -> usize {
+    fn add(state: &Shelf, new: Vec<(ShelfItem, Option<Entry>)>) -> usize {
         let mut s = state.lock();
         // A name shelved once, however it came: two names of one file are
         // two items (ADR-049). Asked of a set of the paths shelved: a
@@ -164,22 +398,25 @@ impl ShelfPlugin {
         for ((item, entry), fresh) in new.into_iter().zip(fresh) {
             if fresh {
                 added.push(entry.unwrap_or_else(|| item.entry()));
-                s.items.push(item);
+                s.push(item);
             }
         }
         let n = added.len();
         if n > 0 {
+            // As its listing knew it: what a read begun before found (a
+            // hydration of one shelved again) is left out.
+            s.changed(added.iter().map(|e| e.id), &state.tickets);
             s.broadcast(&ListingEvent::Added(added));
             s.publish_count();
         }
         n
     }
 
-    fn remove(state: &Mutex<State>, ids: &[EntryId]) -> usize {
+    fn remove(state: &Shelf, ids: &[EntryId]) -> usize {
         state.lock().forget(ids)
     }
 
-    fn clear(state: &Mutex<State>) {
+    fn clear(state: &Shelf) {
         let mut s = state.lock();
         let ids: Vec<EntryId> = s.items.iter().map(|i| i.id).collect();
         s.forget(&ids);
@@ -190,7 +427,7 @@ impl ShelfPlugin {
 /// leaves the shelf, a moved or renamed one follows at once (no I/O), and
 /// a worker then asks whether it kept its identity: a move to another
 /// device gives it a new inode.
-fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
+fn follow(state: &Arc<Shelf>, changes: &[Change], app: &App) {
     let mut s = state.lock();
     let mut gone = Vec::new();
     let mut renamed = Vec::new();
@@ -210,6 +447,10 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
             moved.push((item.id, path));
         }
     }
+    // Where the plan put them, as of now: what a hydration read where they
+    // were, told after (once a rename is undone, where they are again), is
+    // left out.
+    s.changed(moved.iter().map(|(id, _)| *id), &state.tickets);
     s.forget(&gone);
     if !renamed.is_empty() {
         s.broadcast(&ListingEvent::Added(renamed));
@@ -222,58 +463,13 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
     // holds its own items' job, never the others'.
     for (lane, moved) in skwir_core::fs::reach::by_lane(moved, |(_, path)| path) {
         let state = Arc::clone(state);
+        let metadata = Arc::clone(&app.metadata);
         app.scheduler.spawn_in(
             lane,
             Priority::Normal,
             "shelf.follow",
             app.lifetime().child(),
-            move || {
-                let found: Vec<(EntryId, PathBuf, Option<Entry>)> = moved
-                    .into_iter()
-                    .map(|(id, path)| {
-                        let entry = stat_path(&path);
-                        (id, path, entry)
-                    })
-                    .collect();
-                let mut s = state.lock();
-                let mut removed = Vec::new();
-                let mut added = Vec::new();
-                let mut lost = Vec::new();
-                // Where each item is, by its id (one item an id): asked for
-                // each file moved.
-                let mut at: HashMap<EntryId, usize> = HashMap::new();
-                for (n, i) in s.items.iter().enumerate() {
-                    at.entry(i.id).or_insert(n);
-                }
-                for (old, path, entry) in found {
-                    // Only items still on the shelf, still at that path.
-                    let Some(&n) = at.get(&old).filter(|&&n| s.items[n].path == path) else {
-                        continue;
-                    };
-                    let Some(entry) = entry.filter(|e| e.id != old) else {
-                        continue;
-                    };
-                    if at.contains_key(&entry.id) {
-                        // Now the same file as another item: keep that one.
-                        lost.push(old);
-                        continue;
-                    }
-                    at.remove(&old);
-                    at.insert(entry.id, n);
-                    let item = &mut s.items[n];
-                    item.id = entry.id;
-                    item.kind = entry.kind;
-                    removed.push(old);
-                    added.push(entry);
-                }
-                if !removed.is_empty() {
-                    s.broadcast(&ListingEvent::Removed(removed));
-                }
-                if !added.is_empty() {
-                    s.broadcast(&ListingEvent::Added(added));
-                }
-                s.forget(&lost);
-            },
+            move || state.restat(moved, &metadata),
         );
     }
 }
@@ -393,21 +589,17 @@ struct ShelfLocation {
     location: Location,
     rx: Receiver<ListingEvent>,
     ctx: OpenContext,
-    state: Arc<Mutex<State>>,
+    state: Arc<Shelf>,
     sink: EventSink,
 }
 
 impl ShelfLocation {
     /// What the shelf holds, as its listings last knew it; hydration stats
-    /// them on a worker.
+    /// them on a worker. Told under the shelf's lock, as what changes them
+    /// is: never after a rename it did not see.
     fn list(&self) {
-        let entries: Vec<Entry> = self
-            .state
-            .lock()
-            .items
-            .iter()
-            .map(ShelfItem::entry)
-            .collect();
+        let s = self.state.lock();
+        let entries: Vec<Entry> = s.items.iter().map(ShelfItem::entry).collect();
         if !entries.is_empty() {
             self.sink.send(ListingEvent::Added(entries));
         }
@@ -425,15 +617,12 @@ impl OpenLocation for ShelfLocation {
     }
 
     fn hydrate(&self, ids: &[EntryId], priority: Priority) {
-        let wanted: HashSet<EntryId> = ids.iter().copied().collect();
-        let items: Vec<(EntryId, PathBuf)> = self
-            .state
-            .lock()
-            .items
-            .iter()
-            .filter(|i| wanted.contains(&i.id))
-            .map(|i| (i.id, i.path.clone()))
-            .collect();
+        let items: Vec<(EntryId, PathBuf)> = {
+            let s = self.state.lock();
+            ids.iter()
+                .filter_map(|id| Some((*id, s.items[*s.at.get(id)?].path.clone())))
+                .collect()
+        };
         if items.is_empty() {
             return;
         }
@@ -451,37 +640,15 @@ impl OpenLocation for ShelfLocation {
                     priority,
                     "shelf.stat",
                     cancel.clone(),
-                    move || {
-                        let gone = hydrate_paths(&items, &metadata, &sink, &cancel);
-                        if gone.is_empty() {
-                            return;
-                        }
-                        // Gone from where it was looked for, unless a change
-                        // moved it meanwhile: then the next hydration looks there.
-                        let mut s = state.lock();
-                        let vanished: Vec<EntryId> = gone
-                            .into_iter()
-                            .filter(|id| {
-                                let asked = items.iter().find(|(i, _)| i == id).map(|(_, p)| p);
-                                s.items
-                                    .iter()
-                                    .any(|i| i.id == *id && Some(&i.path) == asked)
-                            })
-                            .collect();
-                        s.forget(&vanished);
-                    },
+                    move || state.hydrate_now(&items, &metadata, &sink, &cancel),
                 );
             }
         }
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
-        self.state
-            .lock()
-            .items
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| i.path.clone())
+        let s = self.state.lock();
+        s.at.get(&id).map(|&n| s.items[n].path.clone())
     }
 
     fn refresh(&self) {
@@ -494,7 +661,7 @@ impl OpenLocation for ShelfLocation {
 }
 
 struct ShelfProvider {
-    state: Arc<Mutex<State>>,
+    state: Arc<Shelf>,
 }
 
 impl LocationProvider for ShelfProvider {
@@ -820,6 +987,7 @@ impl Plugin for ShelfPlugin {
     fn on_disable(&self, _app: &App) {
         let mut s = self.state.lock();
         s.items.clear();
+        s.at.clear();
         s.sinks.clear();
         s.app = Weak::new();
     }
@@ -907,7 +1075,7 @@ mod tests {
     #[test]
     fn a_large_selection_is_shelved_once_taken_off_and_cleared() {
         const N: u64 = 50_000;
-        let state = Mutex::new(State::default());
+        let state = Shelf::default();
         let items = || -> Vec<(ShelfItem, Option<Entry>)> {
             (0..N)
                 .map(|i| {
@@ -1110,6 +1278,201 @@ mod tests {
         let ev = open.events().recv_timeout(Duration::from_secs(2)).unwrap();
         listing.apply(ev);
         assert!(listing.is_empty());
+    }
+
+    /// A metadata provider that holds the first batch naming `name` until
+    /// let go: a hydration held after its stats, before it is told.
+    struct Hold {
+        name: OsString,
+        once: Mutex<Option<(crossbeam_channel::Sender<()>, Receiver<()>)>>,
+    }
+
+    impl skwir_core::metadata::MetadataProvider for Hold {
+        fn id(&self) -> &'static str {
+            "test.hold"
+        }
+
+        fn fill(&self, _dir: &Path, entries: &mut [Entry]) {
+            if !entries.iter().any(|e| e.name == self.name) {
+                return;
+            }
+            let Some((held, go)) = self.once.lock().take() else {
+                return;
+            };
+            let _ = held.send(());
+            // Let go, or the test gone.
+            let _ = go.recv_timeout(Duration::from_secs(30));
+        }
+    }
+
+    /// Hold the first batch read naming `name`: what is returned is told
+    /// once it is held, and lets it go.
+    fn hold(app: &App, name: &str) -> (Receiver<()>, crossbeam_channel::Sender<()>) {
+        let (held, is_held) = crossbeam_channel::bounded(1);
+        let (go, gone) = crossbeam_channel::bounded(1);
+        app.metadata.register(
+            "test",
+            Arc::new(Hold {
+                name: name.into(),
+                once: Mutex::new(Some((held, gone))),
+            }),
+        );
+        (is_held, go)
+    }
+
+    /// Apply what `open` sends to `listing` until `done` holds of it.
+    fn until(
+        open: &dyn OpenLocation,
+        listing: &mut skwir_core::Listing,
+        what: &str,
+        done: impl Fn(&skwir_core::Listing) -> bool,
+    ) {
+        until_within(open, listing, what, Duration::from_secs(10), done);
+    }
+
+    /// [`until`], failing after `within`.
+    fn until_within(
+        open: &dyn OpenLocation,
+        listing: &mut skwir_core::Listing,
+        what: &str,
+        within: Duration,
+        done: impl Fn(&skwir_core::Listing) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + within;
+        while !done(listing) {
+            let Ok(event) = open.events().recv_deadline(deadline) else {
+                panic!("never {what}");
+            };
+            listing.apply(event);
+        }
+    }
+
+    fn home_tempdir() -> tempfile::TempDir {
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::tempdir_in(base).unwrap()
+    }
+
+    /// A plan renames a shelved file and its undo names it back while a
+    /// hydration that found it gone at its name is held: told after both
+    /// follows, that read is older than theirs, and the file stays on the
+    /// shelf with its row.
+    #[test]
+    fn a_rename_undone_while_a_hydration_is_held_leaves_the_item_shelved() {
+        let tmp = home_tempdir();
+        let src = tmp.path().join("l'été, à l'ombre");
+        std::fs::create_dir(&src).unwrap();
+        let (name, kept) = ("it's ☂ here.txt", "keep me, s'il vous plaît.txt");
+        let (here, there) = (src.join(name), src.join("it's ☂ there.txt"));
+        std::fs::write(&here, b"shelved").unwrap();
+        std::fs::write(src.join(kept), b"kept").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = Arc::new(ShelfPlugin::default());
+        let shelf = Arc::clone(&plugin.state);
+        app.plugins.add(plugin, &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&src)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        select(&app, pane, &[name, kept]);
+        app.dispatch(&Invocation::new("shelf.add")).unwrap();
+        let id_of = |path: &Path| {
+            let s = shelf.lock();
+            s.items.iter().find(|i| i.path == path).map(|i| i.id)
+        };
+        let (x, k) = (id_of(&here).unwrap(), id_of(&src.join(kept)).unwrap());
+        let open = app.open_location(&Location::parse("shelf:")).unwrap();
+        let mut listing = skwir_core::Listing::default();
+        until(
+            &*open,
+            &mut listing,
+            "listed",
+            skwir_core::Listing::is_complete,
+        );
+        let (held, go) = hold(&app, kept);
+        // The plan's rename is made, its observers not told yet: the
+        // hydration finds the file gone at its name, and is held.
+        std::fs::rename(&here, &there).unwrap();
+        open.hydrate(&[x, k], Priority::Visible);
+        held.recv_timeout(Duration::from_secs(10)).expect("held");
+        let rename = |from: &Path, to: &Path| Change::Rename {
+            from: from.to_path_buf(),
+            to: to.to_path_buf(),
+        };
+        follow(&shelf, &[rename(&here, &there)], &app);
+        until(&*open, &mut listing, "renamed", |l| {
+            l.get(x).is_none() && l.iter().any(|e| e.name == "it's ☂ there.txt")
+        });
+        // Undone: named back, its observers told, its file found again.
+        std::fs::rename(&there, &here).unwrap();
+        follow(&shelf, &[rename(&there, &here)], &app);
+        until(&*open, &mut listing, "named back", |l| {
+            l.get(x).is_some_and(|e| e.name == name)
+        });
+        // The hydration let go: what it found is told after the follows'.
+        go.send(()).unwrap();
+        until(&*open, &mut listing, "answered", |l| {
+            l.get(k).is_some_and(|e| e.metadata.is_filled())
+        });
+        assert!(app.scheduler.wait_idle_here(Duration::from_secs(10)));
+        for event in open.events().try_iter() {
+            listing.apply(event);
+        }
+        let items = shelf.lock().items.clone();
+        assert!(
+            items.iter().any(|i| i.id == x && i.path == here),
+            "still shelved where it is: {items:?}"
+        );
+        assert_eq!(items.len(), 2);
+        assert_eq!(listing.get(x).map(|e| e.name.clone()), Some(name.into()));
+        assert_eq!(listing.len(), 2);
+    }
+
+    /// A hydration of a shelf of a folder's worth of files, all gone (their
+    /// folder never made), takes them all off: each answer asked of a map
+    /// of the items, at a size where asking each of every item would not
+    /// end.
+    #[test]
+    fn a_large_shelf_found_gone_is_taken_off_at_once() {
+        const N: u64 = 50_000;
+        let tmp = home_tempdir();
+        let gone = tmp.path().join("never made, l'été");
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = Arc::new(ShelfPlugin::default());
+        let shelf = Arc::clone(&plugin.state);
+        app.plugins.add(plugin, &app);
+        let items: Vec<(ShelfItem, Option<Entry>)> = (0..N)
+            .map(|i| {
+                let name = OsString::from(format!("file {i} ☂.txt"));
+                let path = gone.join(&name);
+                let id = EntryId::at_path(skwir_core::FileId::new(1, i), &path);
+                let item = ShelfItem {
+                    id,
+                    path,
+                    name,
+                    kind: EntryKind::File,
+                };
+                (item, None)
+            })
+            .collect();
+        assert_eq!(ShelfPlugin::add(&shelf, items), N as usize);
+        let open = app.open_location(&Location::parse("shelf:")).unwrap();
+        let mut listing = skwir_core::Listing::default();
+        until(&*open, &mut listing, "listed", |l| {
+            l.is_complete() && l.len() == N as usize
+        });
+        let ids: Vec<EntryId> = listing.ids().collect();
+        open.hydrate(&ids, Priority::Normal);
+        // A bound on a loaded machine's debug build, not a measure: asked
+        // of every item for each answer, this took minutes.
+        until_within(
+            &*open,
+            &mut listing,
+            "taken off",
+            Duration::from_secs(60),
+            skwir_core::Listing::is_empty,
+        );
+        assert!(shelf.lock().items.is_empty());
+        assert_eq!(app.tallies.get(TALLY), Some(0));
     }
 
     #[test]
