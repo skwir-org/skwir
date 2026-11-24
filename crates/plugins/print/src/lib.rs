@@ -1626,9 +1626,10 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
 /// What the PDF of `location`'s listing is named: after the folder, a
 /// folder without a name of its own (the root, a drive) after what it is,
 /// never its path; any other place after its name (`named`), a separator
-/// a dash and control characters left out, else, a name this system
-/// refuses, after what it is. Cut to what a folder takes, as a copy's
-/// name is (`kept_name`).
+/// and what this system keeps from names (Windows' `: * ? " < > |`, which
+/// a search's terms and a filter hold) a dash, control characters left
+/// out, else, a name this system refuses still, after what it is. Cut to
+/// what a folder takes, as a copy's name is (`kept_name`).
 fn listing_name(location: &Location, named: &str) -> OsString {
     let plain = || OsString::from("Listing.pdf");
     let own = if let Some(folder) = location.path() {
@@ -1641,7 +1642,7 @@ fn listing_name(location: &Location, named: &str) -> OsString {
             .chars()
             .filter(|c| !c.is_control())
             .map(|c| {
-                if c == '/' || std::path::is_separator(c) {
+                if c == '/' || std::path::is_separator(c) || kept_from_names(c) {
                     '-'
                 } else {
                     c
@@ -1660,6 +1661,13 @@ fn listing_name(location: &Location, named: &str) -> OsString {
         return plain();
     }
     name
+}
+
+/// Whether this system keeps `c` from a file's name, beside its
+/// separators and control characters: Windows' `: * ? " < > |`
+/// (`op::valid_file_name`).
+fn kept_from_names(c: char) -> bool {
+    cfg!(windows) && matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')
 }
 
 /// What the PDF of `path` is named: its name with `.pdf` for its own
@@ -2563,8 +2571,20 @@ mod tests {
         );
         let tag = Location::new("tags", "/Places/France");
         let named = listing_name(&tag, "Places/France, filtered by kind:image");
-        assert_eq!(named, "Places-France, filtered by kind:image (listing).pdf");
+        // What Windows keeps from names (a filter's `:`) is a dash there.
+        let term = if cfg!(windows) {
+            "kind-image"
+        } else {
+            "kind:image"
+        };
+        assert_eq!(
+            named.to_string_lossy(),
+            format!("Places-France, filtered by {term} (listing).pdf")
+        );
         assert!(op::valid_file_name(&named).is_ok());
+        let typed = listing_name(&tag, r#"name:"a*" <b> | c?"#);
+        assert!(op::valid_file_name(&typed).is_ok(), "{typed:?}");
+        assert_ne!(typed, "Listing.pdf", "named after what it lists");
         assert_eq!(listing_name(&tag, " / "), "- (listing).pdf");
         assert_eq!(listing_name(&tag, "two\nlines"), "twolines (listing).pdf");
         let long = listing_name(&tag, &"x".repeat(300));
