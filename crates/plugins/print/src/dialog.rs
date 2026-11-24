@@ -1340,6 +1340,17 @@ mod tests {
         values
     }
 
+    /// `text`, an example's path written from `/` with `/` between its
+    /// names, as this system writes a whole path: on Windows from a
+    /// drive, `\\` between them, as a user there types one.
+    fn ex(text: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", text.replace('/', "\\"))
+        } else {
+            text.to_owned()
+        }
+    }
+
     /// The dialog for `offers`, as a first dialog opens.
     fn opened(offers: &Offers) -> Form {
         super::form(offers, &Remembered::default())
@@ -1354,11 +1365,11 @@ mod tests {
             bound: Some(Bound::Left),
             subject: Subject::One,
             saved: Saved {
-                folder: Some(PathBuf::from("/example/notes")),
+                folder: Some(PathBuf::from(ex("/example/notes"))),
                 said: Words::as_written("Beside it"),
                 beside: Words::as_written("Beside it"),
-                other: Some(PathBuf::from("/example/other")),
-                documents: Some(PathBuf::from("/example/Documents")),
+                other: Some(PathBuf::from(ex("/example/other"))),
+                documents: Some(PathBuf::from(ex("/example/Documents"))),
                 opens: None,
                 recent: Vec::new(),
                 places: Vec::new(),
@@ -1778,7 +1789,7 @@ mod tests {
         let field = form.fields.iter().find(|f| f.key == SAVE_AS).unwrap();
         assert!(field.shown_with(&values(&[(TO, "pdf")])));
         assert!(!field.shown_with(&values(&[(TO, "printer")])));
-        assert_eq!(field.value, "/example/notes/", "the folder alone");
+        assert_eq!(field.value, ex("/example/notes/"), "the folder alone");
         let Kind::Save {
             folders, ending, ..
         } = &field.kind
@@ -1799,7 +1810,7 @@ mod tests {
             [
                 ("notes", "Beside it", ""),
                 ("other", "The other pane", ""),
-                ("Documents", "/example/Documents", "Places")
+                ("Documents", ex("/example/Documents").as_str(), "Places")
             ],
             "Documents, the sidebar listing none"
         );
@@ -1815,12 +1826,12 @@ mod tests {
             .map(|c| (c.dest, c.name))
         };
         let shown = |text: &str| read("as_shown", text, &offers);
-        assert_eq!(shown("/example/notes/notes.pdf"), Ok((None, None)));
-        assert_eq!(shown("/example/notes/"), Ok((None, None)));
+        assert_eq!(shown(&ex("/example/notes/notes.pdf")), Ok((None, None)));
+        assert_eq!(shown(&ex("/example/notes/")), Ok((None, None)));
         assert_eq!(
-            shown("/example/other/ma liste"),
+            shown(&ex("/example/other/ma liste")),
             Ok((
-                Some(PathBuf::from("/example/other")),
+                Some(PathBuf::from(ex("/example/other"))),
                 Some(OsString::from("ma liste.pdf"))
             ))
         );
@@ -1841,9 +1852,9 @@ mod tests {
         }
         // `..` read as the window reads it, by the names written.
         assert_eq!(
-            shown("/example/gone/../other/x.pdf"),
+            shown(&ex("/example/gone/../other/x.pdf")),
             Ok((
-                Some(PathBuf::from("/example/other")),
+                Some(PathBuf::from(ex("/example/other"))),
                 Some(OsString::from("x.pdf"))
             ))
         );
@@ -1854,7 +1865,11 @@ mod tests {
                 .starts_with("Save as")
         );
         assert_eq!(
-            read("booklet", "/example/notes/notes (booklet).pdf", &offers),
+            read(
+                "booklet",
+                &ex("/example/notes/notes (booklet).pdf"),
+                &offers
+            ),
             Ok((None, None))
         );
         // Printed, nothing is read.
@@ -1893,8 +1908,8 @@ mod tests {
             .map(|c| (c.dest, c.name))
         };
         assert_eq!(
-            each_in("/example/a b"),
-            Ok((Some(PathBuf::from("/example/a b")), None))
+            each_in(&ex("/example/a b")),
+            Ok((Some(PathBuf::from(ex("/example/a b"))), None))
         );
         assert_eq!(each_in(""), Ok((None, None)));
         assert_eq!(
@@ -1916,35 +1931,42 @@ mod tests {
             )
             .unwrap()
         };
-        let folders = |path: &Path| match path.to_str() {
-            Some("/example/notes/drafts" | "/example/other") => Some(true),
-            Some("/example/slow") => None,
-            _ => Some(false),
+        let folders = |path: &Path| {
+            if [ex("/example/notes/drafts"), ex("/example/other")]
+                .iter()
+                .any(|folder| path == Path::new(folder))
+            {
+                Some(true)
+            } else if path == Path::new(&ex("/example/slow")) {
+                None
+            } else {
+                Some(false)
+            }
         };
         let into = |text: &str| {
             into_folder(chosen(text), text, &offers.saved, &folders).map(|c| (c.dest, c.name))
         };
         assert_eq!(
-            into("/example/notes/drafts"),
-            Ok((Some(PathBuf::from("/example/notes/drafts")), None))
+            into(&ex("/example/notes/drafts")),
+            Ok((Some(PathBuf::from(ex("/example/notes/drafts"))), None))
         );
         assert_eq!(
-            into("/example/other/x"),
+            into(&ex("/example/other/x")),
             Ok((
-                Some(PathBuf::from("/example/other")),
+                Some(PathBuf::from(ex("/example/other"))),
                 Some(OsString::from("x.pdf"))
             ))
         );
         assert!(
-            into("/example/gone/x")
+            into(&ex("/example/gone/x"))
                 .unwrap_err()
                 .english()
                 .starts_with("Save as: there is no folder")
         );
         assert_eq!(
-            into("/example/slow/x"),
+            into(&ex("/example/slow/x")),
             Ok((
-                Some(PathBuf::from("/example/slow")),
+                Some(PathBuf::from(ex("/example/slow"))),
                 Some(OsString::from("x.pdf"))
             ))
         );
@@ -1967,17 +1989,25 @@ mod tests {
             "/example/d",
             "/example/l'été",
         ] {
-            keep_chosen(&app, Path::new(folder));
+            keep_chosen(&app, Path::new(&ex(folder)));
         }
         let kept = chosen_folders(&app);
         let recent: Vec<&str> = kept.iter().filter_map(|p| p.to_str()).collect();
         assert_eq!(
             recent,
-            ["/example/l'été", "/example/d", "/example/c", "/example/a"]
+            [
+                ex("/example/l'été"),
+                ex("/example/d"),
+                ex("/example/c"),
+                ex("/example/a")
+            ]
         );
         assert_eq!(
-            with_chosen(&kept, Path::new("/example/c"))[..2],
-            [PathBuf::from("/example/c"), PathBuf::from("/example/l'été")]
+            with_chosen(&kept, Path::new(&ex("/example/c")))[..2],
+            [
+                PathBuf::from(ex("/example/c")),
+                PathBuf::from(ex("/example/l'été"))
+            ]
         );
 
         // The folder chosen last opens the next Save as, printing in
@@ -1985,12 +2015,16 @@ mod tests {
         // the next there.
         let offers = offers();
         let pdf = |text: &str| values(&[(TO, "pdf"), (LAYOUT, "as_shown"), (SAVE_AS, text)]);
-        let chosen = super::chosen(&pdf("/example/e/x.pdf"), &offers).unwrap();
-        let mut last = remembered(&pdf("/example/e/x.pdf"), &chosen, &Remembered::default());
+        let chosen = super::chosen(&pdf(&ex("/example/e/x.pdf")), &offers).unwrap();
+        let mut last = remembered(
+            &pdf(&ex("/example/e/x.pdf")),
+            &chosen,
+            &Remembered::default(),
+        );
         let printed = values(&[(TO, "printer")]);
         let chosen = super::chosen(&printed, &offers).unwrap();
         last = remembered(&printed, &chosen, &last);
-        assert_eq!(last.dest, Some(PathBuf::from("/example/e")));
+        assert_eq!(last.dest, Some(PathBuf::from(ex("/example/e"))));
 
         // Offered under their headings, said by their paths, each once:
         // the sidebar's places after those chosen before.
@@ -1999,15 +2033,15 @@ mod tests {
                 opens,
                 recent: kept.clone(),
                 places: vec![
-                    ("Home".to_owned(), PathBuf::from("/example")),
-                    ("Mine".to_owned(), PathBuf::from("/example/c")),
+                    ("Home".to_owned(), PathBuf::from(ex("/example"))),
+                    ("Mine".to_owned(), PathBuf::from(ex("/example/c"))),
                 ],
                 ..offers.saved.clone()
             },
             ..offers.clone()
         };
         let field = super::save_as(&offered(last.dest.clone()));
-        assert_eq!(field.value, "/example/e/");
+        assert_eq!(field.value, ex("/example/e/"));
         let Kind::Save { folders, .. } = &field.kind else {
             panic!("a file to write");
         };
@@ -2024,16 +2058,19 @@ mod tests {
             [
                 ("notes", "Beside it", ""),
                 ("other", "The other pane", ""),
-                ("l'été", "/example/l'été", "Chosen before"),
-                ("d", "/example/d", "Chosen before"),
-                ("c", "/example/c", "Chosen before"),
-                ("a", "/example/a", "Chosen before"),
-                ("Home", "/example", "Places"),
+                ("l'été", ex("/example/l'été").as_str(), "Chosen before"),
+                ("d", ex("/example/d").as_str(), "Chosen before"),
+                ("c", ex("/example/c").as_str(), "Chosen before"),
+                ("a", ex("/example/a").as_str(), "Chosen before"),
+                ("Home", ex("/example").as_str(), "Places"),
             ]
         );
-        let back = super::chosen(&pdf("/example/notes/notes.pdf"), &offers).unwrap();
+        let back = super::chosen(&pdf(&ex("/example/notes/notes.pdf")), &offers).unwrap();
         let last = remembered(&pdf(""), &back, &last);
         assert_eq!(last.dest, None);
-        assert_eq!(super::save_as(&offered(last.dest)).value, "/example/notes/");
+        assert_eq!(
+            super::save_as(&offered(last.dest)).value,
+            ex("/example/notes/")
+        );
     }
 }
