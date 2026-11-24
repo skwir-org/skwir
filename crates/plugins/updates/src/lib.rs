@@ -3,8 +3,9 @@
 //!
 //! A copy says how it came (`skwir_platform::channel`): only one downloaded
 //! from the release (the `AppImage`, the tarball, Windows' installer and
-//! zip, the Mac app, a `.deb` or `.rpm` on a system without Skwir's
-//! repository) is ever checked, and only once its user said yes, asked
+//! zip, the Mac app where Homebrew's cask is not installed, a `.deb` or
+//! `.rpm` on a system without Skwir's repository) is ever checked, and
+//! only once its user said yes, asked
 //! once in a toast that stays (`App::ask_quietly`) two days after the copy
 //! was first seen. Then at the first look of each calendar day
 //! (`Plugin::on_looked_at`) a thread of its own asks the site for
@@ -85,8 +86,10 @@ enum Asked {
 pub struct Here {
     /// The word its package wrote, if skwir's own package wrote one.
     pub channel: Option<Channel>,
-    /// Whether the system has Skwir's repository for it.
-    pub repository: bool,
+    /// Whether a package manager of the system updates it: Skwir's
+    /// repository added for a `.deb` or an `.rpm`, Homebrew's cask
+    /// installed for the Mac app (`skwir_platform::channel::managed`).
+    pub managed: bool,
 }
 
 impl Here {
@@ -95,15 +98,15 @@ impl Here {
         let channel = skwir_platform::channel::of_this_program();
         Here {
             channel,
-            repository: channel.is_some_and(skwir_platform::channel::repository_added),
+            managed: channel.is_some_and(skwir_platform::channel::managed),
         }
     }
 
     /// The channel of a copy nothing else updates: one skwir's package
-    /// wrote, not on a system whose package manager has its repository.
+    /// wrote, which no package manager of the system updates.
     pub fn downloaded(self) -> Option<Channel> {
         self.channel
-            .filter(|channel| !(channel.has_repository() && self.repository))
+            .filter(|channel| !(channel.may_be_managed() && self.managed))
     }
 }
 
@@ -456,7 +459,7 @@ fn not_checked(here: Here, tells: bool) -> Option<Words> {
         return Some(words!(
             updates_managed =
                 "This copy of Skwir is not checked: whatever installed it tells of new versions",
-            note = "Why a check for a new version was not made: a package manager (the AUR, Nix, a distribution, Skwir's repository) or a build from source."
+            note = "Why a check for a new version was not made: a package manager (the AUR, Nix, a distribution, Skwir's repository, Homebrew) or a build from source."
         ));
     }
     (!tells).then(|| {
@@ -547,7 +550,8 @@ impl Inner {
     /// How the copy came (`Setup::here`), read as the plugin starts and
     /// again at each look of a copy its system may come to update (a
     /// `.deb` or an `.rpm`, whose repository may be added or removed
-    /// since): what a downloaded copy alone has follows it, the setting
+    /// since, or the Mac app, whose cask may be installed or uninstalled):
+    /// what a downloaded copy alone has follows it, the setting
     /// and `updates.check`, offered while it is downloaded and withdrawn
     /// once the system updates it (the setting; the command stays, and
     /// says so), with what About says. Taken only by
@@ -648,7 +652,8 @@ impl Inner {
     /// plugin host's lock): the look is a job of its own (`looked_at`),
     /// started only where it may do something: at a run's first look
     /// (What's new), and for a copy downloaded or one its system may stop
-    /// updating (a `.deb` or an `.rpm`, read again at each look). A copy
+    /// updating (a `.deb`, an `.rpm` or the Mac app, read again at each
+    /// look). A copy
     /// something else updates does nothing more once looked at. Only a
     /// look at a window of the user's own counts (`App::looked_at_own`):
     /// all the plugin says unasked (What's new, the question, a version
@@ -662,7 +667,7 @@ impl Inner {
                 return;
             };
             let follows = run.here.is_some_and(|here| {
-                here.downloaded().is_some() || here.channel.is_some_and(Channel::has_repository)
+                here.downloaded().is_some() || here.channel.is_some_and(Channel::may_be_managed)
             });
             if !app.looked_at_own() || run.looked_for_whats_new && !follows {
                 drop(run);
@@ -702,17 +707,18 @@ impl Inner {
         }
     }
 
-    /// How the copy came, as it is now: a `.deb` or an `.rpm`, whose
-    /// system may have come to update it (or no longer does), read again
-    /// (a stat: on a worker) and taken (`take_here`); `None` while not
-    /// read yet. `Ended` once the run of `lifetime` ended.
+    /// How the copy came, as it is now: a `.deb`, an `.rpm` or the Mac
+    /// app, whose system may have come to update it (Skwir's repository
+    /// added, Homebrew's cask installed) or no longer does, read again (a
+    /// stat: on a worker) and taken (`take_here`); `None` while not read
+    /// yet. `Ended` once the run of `lifetime` ended.
     fn here_now(
         self: &Arc<Self>,
         app: &App,
         lifetime: &CancelToken,
     ) -> Result<Option<Here>, Ended> {
         match self.here() {
-            Some(known) if known.channel.is_some_and(Channel::has_repository) => {
+            Some(known) if known.channel.is_some_and(Channel::may_be_managed) => {
                 let now = (self.setup.here)();
                 if self.take_here(app, now, lifetime) {
                     Ok(Some(now))
@@ -1082,7 +1088,7 @@ impl Inner {
             };
             let unknown = Here {
                 channel: None,
-                repository: false,
+                managed: false,
             };
             if let Some(why) = not_checked(here.unwrap_or(unknown), tells(&app)) {
                 let asked = {

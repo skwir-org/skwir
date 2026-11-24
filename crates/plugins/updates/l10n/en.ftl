@@ -34,7 +34,7 @@ updates_latest = What the last check found
 
 updates_latest_description = How this copy came, whether it is told of new versions, and the newest version the last check found, from memory
 
-# Why a check for a new version was not made: a package manager (the AUR, Nix, a distribution, Skwir's repository) or a build from source.
+# Why a check for a new version was not made: a package manager (the AUR, Nix, a distribution, Skwir's repository, Homebrew) or a build from source.
 updates_managed = This copy of Skwir is not checked: whatever installed it tells of new versions
 
 # Why a check for a new version was not made: just started, Skwir has not read yet how it was installed.

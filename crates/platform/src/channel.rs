@@ -4,7 +4,10 @@
 //! (`tools/package`). A build from source has none, nor a package
 //! manager's (the AUR's `skwir` and `skwir-git`, Nix's, a distribution's),
 //! and `skwir-bin` removes the tarball's: what a package manager updates
-//! is never told of a new version by skwir.
+//! is never told of a new version by skwir. A package manager that
+//! installs a release's own bytes is asked of the system instead
+//! ([`managed`]): Skwir's repository for a `.deb` or an `.rpm`, Homebrew's
+//! cask for the Mac app.
 
 use std::path::Path;
 
@@ -17,6 +20,15 @@ pub const APT_SOURCES: &str = "/etc/apt/sources.list.d/skwir.sources";
 /// Where Skwir's repository is said to dnf, as `skwir-repository`
 /// installs it.
 pub const DNF_REPO: &str = "/etc/yum.repos.d/skwir.repo";
+
+/// Where Homebrew keeps what each cask installed, under each prefix it
+/// installs in: Apple silicon's, then Intel's (any other prefix Homebrew
+/// does not support). A cask's folder there is there while the cask is
+/// installed, whatever folder its app was put in (`--appdir`), and goes
+/// with `brew uninstall`.
+pub const CASKROOMS: [&str; 2] = ["/opt/homebrew/Caskroom", "/usr/local/Caskroom"];
+/// Skwir's cask, in skwir-org's tap (`Casks/skwir.rb`, ADR-075).
+pub const CASK: &str = "skwir";
 
 /// The longest file read: one word and its line's end.
 const LONGEST: u64 = 64;
@@ -78,6 +90,15 @@ impl Channel {
     pub fn has_repository(self) -> bool {
         matches!(self, Channel::Deb | Channel::Rpm)
     }
+
+    /// Whether a package manager may install such a copy, the release's
+    /// own bytes, and update it ([`managed`]): a `.deb` or an `.rpm` from
+    /// Skwir's repository, the Mac app from Homebrew's cask. Asked again as
+    /// the system changes: the repository added or removed, the cask
+    /// installed or uninstalled.
+    pub fn may_be_managed(self) -> bool {
+        self.has_repository() || self == Channel::MacOs
+    }
 }
 
 /// How the running program came, by the word its package wrote; none for
@@ -99,21 +120,32 @@ pub fn of_program_in(bin: &Path) -> Option<Channel> {
     }
 }
 
-/// Whether the system has Skwir's repository for `channel`, so its
-/// package manager updates this copy: the file `skwir-repository`
-/// installs is there. Linux's alone (no other system has a `.deb` or an
-/// `.rpm`). Reads the disk: on a worker.
-pub fn repository_added(channel: Channel) -> bool {
+/// Whether a package manager of the system updates a copy that came by
+/// `channel` ([`Channel::may_be_managed`]): for a `.deb` or an `.rpm`, the
+/// file `skwir-repository` installs is there (Linux's alone: no other
+/// system has one); for the Mac app, Homebrew's cask is installed. Reads
+/// the disk: on a worker.
+pub fn managed(channel: Channel) -> bool {
     match channel {
         Channel::Deb => Path::new(APT_SOURCES).is_file(),
         Channel::Rpm => Path::new(DNF_REPO).is_file(),
+        Channel::MacOs => cask_installed(&CASKROOMS.map(Path::new)),
         _ => false,
     }
 }
 
+/// Whether Skwir's cask is installed under one of `caskrooms`: its folder
+/// there ([`CASK`]). The copy running need not be the cask's (one
+/// downloaded beside it is told nothing either), as a `.deb` installed by
+/// hand where the repository is added is updated by the system all the
+/// same.
+fn cask_installed(caskrooms: &[&Path]) -> bool {
+    caskrooms.iter().any(|room| room.join(CASK).is_dir())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Channel, of_program_in};
+    use super::{Channel, cask_installed, of_program_in};
 
     #[test]
     fn each_word_names_its_channel_and_no_other_word_does() {
@@ -158,5 +190,36 @@ mod tests {
         std::fs::create_dir_all(other.join("bin")).unwrap();
         write(&other.join("share/skwir"), "aur");
         assert_eq!(of_program_in(&other.join("bin")), None, "a word not known");
+    }
+
+    /// Only a `.deb`, an `.rpm` and the Mac app may be a package manager's
+    /// copy; the Mac app is Homebrew's while its cask's folder is in a
+    /// Caskroom, any Caskroom of those asked, and no longer once it went.
+    #[test]
+    fn the_mac_app_is_homebrews_while_its_cask_is_installed() {
+        let managed: Vec<Channel> = Channel::ALL
+            .into_iter()
+            .filter(|channel| channel.may_be_managed())
+            .collect();
+        assert_eq!(managed, [Channel::MacOs, Channel::Deb, Channel::Rpm]);
+
+        let root = tempfile::tempdir().unwrap();
+        let silicon = root.path().join("opt/homebrew/Caskroom");
+        let intel = root.path().join("usr/local/Caskroom");
+        let rooms = [silicon.as_path(), intel.as_path()];
+        assert!(!cask_installed(&rooms), "no Homebrew");
+        std::fs::create_dir_all(silicon.join("skwird")).unwrap();
+        std::fs::create_dir_all(silicon.join("skwir-nightly")).unwrap();
+        assert!(!cask_installed(&rooms), "another cask");
+        std::fs::write(silicon.join("skwir"), "").unwrap();
+        assert!(!cask_installed(&rooms), "a file of that name");
+        std::fs::remove_file(silicon.join("skwir")).unwrap();
+        std::fs::create_dir_all(intel.join("skwir/0.7.0")).unwrap();
+        assert!(cask_installed(&rooms), "Intel's prefix");
+        std::fs::remove_dir_all(intel.join("skwir")).unwrap();
+        std::fs::create_dir_all(silicon.join("skwir/0.7.0")).unwrap();
+        assert!(cask_installed(&rooms), "Apple silicon's");
+        std::fs::remove_dir_all(silicon.join("skwir")).unwrap();
+        assert!(!cask_installed(&rooms), "uninstalled");
     }
 }

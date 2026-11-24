@@ -8,7 +8,8 @@ a mark for an important release; What's new after an update, with a
 setting that turns it off. Built 2026-11-19 on Linux (the plugin and the
 platform's parts compiled for Windows and macOS), amended as built
 (Amendments); amended 2026-11-20, on the user's choice: each `.rpm` is
-signed, and dnf checks it. Amends ADR-020 (a second plugin makes requests, and HTTP
+signed, and dnf checks it; amended 2026-11-24, on the user's agreement
+to a Homebrew cask: a Mac app whose cask is installed never checks. Amends ADR-020 (a second plugin makes requests, and HTTP
 moves to `skwir-platform`) and ADR-040 (signed repositories for the
 `.deb` and the `.rpm`).
 
@@ -550,3 +551,40 @@ it trusts a package by its signed index. The user chose signing.
   `Settings::kept_on_disk`. What stops the question is a stored
   `updates.tell` (`Settings::stored`: a value held, the default aside),
   whoever wrote it, whatever the state file lost.
+
+### 2026-11-24: Homebrew's cask
+
+The user agreed (2026-11-24, through skwird's session) to a cask of the
+Mac app in skwir-org's tap (ADR-075, amended), on two conditions: the
+copy it installs says nothing of new versions itself, and the cask
+leaves Gatekeeper's question to macOS.
+
+- **A cask's copy is Homebrew's.** The cask installs the release's own
+  zip as it is: its channel says `macos`, as a zip downloaded by hand
+  says, and nothing in the bundle can change without breaking its seal.
+  So, as decision 2 asks a `.deb`'s system for Skwir's repository, a
+  `macos` copy asks for Homebrew's cask. Where `Caskroom/skwir` is a
+  folder under Homebrew's prefix, `/opt/homebrew` (Apple silicon's) or
+  `/usr/local` (Intel's; Homebrew supports no other), the copy never
+  checks (`skwir_platform::channel::managed`, `Channel::may_be_managed`).
+  - It is read as the repository is: on a worker as the plugin starts,
+    and again at each look, so a cask installed or uninstalled while
+    skwir runs is followed.
+  - The folder is there while the cask is installed, whatever folder its
+    app went to (`--appdir`), and goes with `brew uninstall`.
+  - A copy downloaded beside the cask's is quiet too, as a `.deb`
+    installed by hand where the repository is added.
+- **The question's link** stays the `.deb`'s and the `.rpm`'s. A Mac app
+  downloaded is asked Yes or No alone.
+- **What's new** is said after a cask's update too, as on every channel
+  (decision 8).
+- **The cask, `Casks/skwir.rb`,** is written at each release by `just
+  cask <tag>` from the bundle's manifest, into a checkout of the tap. The
+  user pushes it once the release is published (`docs/RELEASING.md`).
+  Copies of 0.6.1 and before do not read the Caskroom, so the tap holds
+  no cask of one.
+- **Tried:** the plugin's tests (a `macos` copy with its cask is never
+  checked; one whose cask comes and goes stops checking, then checks
+  again) and the check itself on Caskrooms made in a test's folder.
+  Never on a Mac; the tap's workflow installs the cask on GitHub's macOS
+  runner once it is pushed.

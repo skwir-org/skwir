@@ -266,7 +266,7 @@ impl Fixture {
 
 const DOWNLOADED: Here = Here {
     channel: Some(Channel::AppImage),
-    repository: false,
+    managed: false,
 };
 
 fn file(latest: &str) -> String {
@@ -578,20 +578,25 @@ fn a_question_closed_unanswered_comes_back_three_days_at_most() {
     assert!(site.heads().is_empty());
 }
 
-/// A copy a package manager updates (no channel written, or a `.deb` on
-/// a system with Skwir's repository) asks nothing, is asked nothing, and
-/// has no setting for it; a `.deb` without the repository is offered it.
+/// A copy a package manager updates (no channel written, a `.deb` on a
+/// system with Skwir's repository, the Mac app where Homebrew's cask is
+/// installed) asks nothing, is asked nothing, and has no setting for it;
+/// a `.deb` without the repository is offered it.
 #[test]
 fn a_copy_something_else_updates_is_never_checked() {
     let site = Site::new(&file("0.6.2"));
     for here in [
         Here {
             channel: None,
-            repository: false,
+            managed: false,
         },
         Here {
             channel: Some(Channel::Deb),
-            repository: true,
+            managed: true,
+        },
+        Here {
+            channel: Some(Channel::MacOs),
+            managed: true,
         },
     ] {
         let f = Fixture::new(&site.address, Version(0, 5, 1), here);
@@ -620,7 +625,7 @@ fn a_copy_something_else_updates_is_never_checked() {
         Version(0, 5, 1),
         Here {
             channel: Some(Channel::Deb),
-            repository: false,
+            managed: false,
         },
     );
     *f.family.lock() = Some(Family::Ubuntu);
@@ -738,7 +743,7 @@ fn what_is_new_is_said_once_after_an_update() {
     let site = Site::new(&file("0.6.2"));
     let managed = Here {
         channel: None,
-        repository: false,
+        managed: false,
     };
     let f = Fixture::new(&site.address, Version(0, 5, 1), managed);
     f.look_on(20_000);
@@ -815,11 +820,18 @@ fn a_check_that_fails_says_nothing_and_is_made_again_an_hour_later() {
     assert_eq!(site.heads().len(), 3, "the day's check was made");
 }
 
-/// A `.deb` copy whose system comes to have Skwir's repository is asked
-/// again at each look: from then on it checks no more, offers no setting,
-/// and About says nothing of a version, until the repository goes again.
+/// A `.deb` copy whose system comes to have Skwir's repository, or a Mac
+/// app whose cask comes to be installed, is asked again at each look:
+/// from then on it checks no more, offers no setting, and About says
+/// nothing of a version, until the repository or the cask goes again.
 #[test]
 fn a_copy_the_system_comes_to_update_is_checked_no_more() {
+    for channel in [Channel::Deb, Channel::MacOs] {
+        the_system_comes_to_update(channel);
+    }
+}
+
+fn the_system_comes_to_update(channel: Channel) {
     let site = Site::new(&file("0.6.2"));
     let repository = Arc::new(AtomicBool::new(false));
     let added = Arc::clone(&repository);
@@ -827,8 +839,8 @@ fn a_copy_the_system_comes_to_update_is_checked_no_more() {
         &site.address,
         Version(0, 5, 1),
         Arc::new(move || Here {
-            channel: Some(Channel::Deb),
-            repository: added.load(Ordering::SeqCst),
+            channel: Some(channel),
+            managed: added.load(Ordering::SeqCst),
         }),
     );
     assert!(
@@ -1025,7 +1037,7 @@ fn deb_copy(site: &Site) -> (Fixture, Arc<AtomicBool>, Notification) {
         Version(0, 5, 1),
         Arc::new(move || Here {
             channel: Some(Channel::Deb),
-            repository: added.load(Ordering::SeqCst),
+            managed: added.load(Ordering::SeqCst),
         }),
     );
     f.look_on(20_000);
