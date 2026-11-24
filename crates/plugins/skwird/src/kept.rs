@@ -355,7 +355,14 @@ pub(crate) type Reader = Box<dyn Fn() -> Offered + Send + Sync>;
 pub(crate) struct Refreshing {
     pub running: bool,
     again: bool,
+    /// When a listing of the page last asked one (`LISTED_EVERY`).
+    listed: Option<std::time::Instant>,
 }
+
+/// How often a listing of the Index page asks skwird again: what it says
+/// moves while it reads a folder just kept, each answer that differs
+/// wakes the window, and the page listed again would ask again at once.
+const LISTED_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The list's keeper: what the user chose, what the sources offer, what
 /// skwird said, and the list on the Index page.
@@ -539,6 +546,22 @@ impl Kept {
         );
     }
 
+    /// [`refresh`](Self::refresh), for a listing of the page: once every
+    /// `LISTED_EVERY` at most. An edit refreshes at once.
+    fn refresh_listed(self: &Arc<Self>) {
+        {
+            let mut refreshing = self.refreshing.lock();
+            if refreshing
+                .listed
+                .is_some_and(|at| at.elapsed() < LISTED_EVERY)
+            {
+                return;
+            }
+            refreshing.listed = Some(std::time::Instant::now());
+        }
+        self.refresh();
+    }
+
     /// What a running engine keeps, the list sent to it: what is asked
     /// stopped once `cancel` is (the program ending).
     fn ask_engine(&self, cancel: &CancelToken) {
@@ -615,7 +638,7 @@ impl Kept {
         let offered = self.offered.lock().clone();
         let said = self.said.lock().clone();
         // What skwird says now, and the sources, for the next listing.
-        self.refresh();
+        self.refresh_listed();
         let records: Vec<serde_json::Value> = rows(&chosen, &offered)
             .iter()
             .map(|row| {
@@ -1380,6 +1403,21 @@ mod tests {
         }
         until(|| !f.kept.refreshing.lock().running);
         assert_eq!(f.reads.load(Ordering::Relaxed), 2, "once, then once more");
+    }
+
+    /// Listing the page asks skwird once every `LISTED_EVERY` at most:
+    /// an answer that differs wakes the window, which lists again.
+    #[test]
+    fn a_listing_asks_skwird_at_most_every_few_seconds() {
+        let f = fixture(Engines::None);
+        for _ in 0..3 {
+            let _ = f.kept.list(&f.app);
+            until(|| !f.kept.refreshing.lock().running);
+        }
+        assert_eq!(f.reads.load(Ordering::Relaxed), 1, "asked once");
+        f.kept.refresh();
+        until(|| !f.kept.refreshing.lock().running);
+        assert_eq!(f.reads.load(Ordering::Relaxed), 2, "an edit's at once");
     }
 
     /// Registering asks nothing of skwird (ADR-150, 3), and the menu's

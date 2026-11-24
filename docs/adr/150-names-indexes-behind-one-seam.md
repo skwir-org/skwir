@@ -118,10 +118,13 @@ ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
    twice); the share's use below, once skwird says it (asked of its
    session, 2026-11-23). When the share is tight, the order is added,
    then your folders, then bookmarks in the sidebar's order, as the page
-   says. Changes are sent as differences; at each connection Skwir takes
-   back what skwird lists for it and the settings no longer name. With
-   the system service, the list is dimmed and says that every local
-   folder is live. A command (palette, scripts, agents) and the folder's
+   says. The page asks skwird as it is listed, once every 5 s at most
+   (what it says moves while it reads a folder just kept, and each
+   answer that differs wakes the window, which lists again); an edit
+   asks at once. Changes are sent as differences; at each connection
+   Skwir takes back what skwird lists for it and the settings no longer
+   name. With the system service, the list is dimmed and says that every
+   local folder is live. A command (palette, scripts, agents) and the folder's
    context menu (`Keep live for searches`, in the 1xx group beside the
    bookmarks, ADR-099) add or take off a folder.
 7. **Tests:** the client's fake engine (`skwird_client::fake`) in the
