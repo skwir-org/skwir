@@ -23888,3 +23888,44 @@ Wine); they name a drive's path there.
   really stopped by a signal (a socket that answers nothing stands for
   it); the window check of `skwird-check`, whose recipe builds
   `target/release`, left alone while the user tests from it.
+
+## 2026-11-24: a refresh read while names move, and what was left to check
+
+A refresh's or a rescan's listing read the folder with no ticket. During
+a long one, a name moved away and back (`mv b b2; mv b2 b`) and told by
+the watcher meanwhile left two wrong rows: the name read as it was
+before (`b2`), gone since, shown again, and the row the listing did not
+see (`b`), there again since, taken out. Neither was told again. Now a
+listing is a read like a stat (`Shared::list`): it takes a ticket of
+its own, for all its names, before it reads the folder. A name it read
+is left out where a read of it begun later was told already (the file
+found there kept, as found), and a row it did not see stays where such a
+read found it. Its names are noted (`Names::applies`) only while a read
+begun before it is under way, never for the hydrations it starts. The
+notes now hold several names under one ticket (`applied_by_ticket`, a
+set), and the count of reads they no longer need is gone.
+
+- **Checked:** a test holds a refresh before it reads the folder, then
+  after its first name, while the watcher tells the name moved away and
+  back. Without the fix it shows `it's b, moved` and not `it's b, été`.
+  It passed 30 runs in a row with the fix. Also: a test of the notes'
+  one ticket; core's tests (1,060 passed); clippy; `just check-cross`.
+- **The FAT32 test** (`on_fat32_a_file_too_large_is_refused_and_a_full_drive_let_go_of`,
+  ignored) on a 6 GiB image mounted by udisks: passed in 26 s. Nothing
+  was left on the volume, and its unmount and the loop's removal went
+  through.
+- **skwird's window check**, skipped earlier: passed. It used a release
+  build made in a folder of its own (`target/release` copied by reflink,
+  then built there) and skwird built at be46cd7.
+- **The other locations**, audited by reading only (PLAN, "Two reads of
+  an entry"): searches, search within a place, tag places, the shelf and
+  `recent:` can each show a ghost row, lose one, or keep old metadata
+  when a late hydration lands. None of it is fixed yet. The Trash has no
+  such race.
+- **Found, not fixed:** core's
+  `a_folder_sorted_by_date_waits_for_no_provider` fails about one run in
+  four with every core busy (15 runs with 24 busy loops beside the
+  listing tests: 4 failures before the change, 2 after), the providers
+  not asked within 10 s by a rating's order. A test timing 100,000
+  renames (`every_entry_re_keyed_finds_its_alias_by_its_target`) failed
+  once while a release build ran beside it.

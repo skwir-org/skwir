@@ -1558,34 +1558,65 @@ as Wine calls no routine (its fallback, reopening the file, tried under
 Wine, which keeps no write cache), so whether it and the folders'
 flushes hold under "Better performance" is not known; on a mount read
 in ranges, a copy refused at the process's own file size limit is told
-by its length alone; the FAT32 test (ignored) not run since the partial
-is kept.
+by its length alone. The FAT32 test (ignored) passed again on
+2026-11-24, the partial kept.
 
-**Two stats of an entry** (2026-11-24): the folder provider keeps the
+**Two reads of an entry** (2026-11-24): the folder provider keeps the
 later begun, whatever each found (`Names::newest`, `Names::applies`,
-the watcher's inserts and removals included); other locations that stat
-on a worker while watched (searches, the trash, tag places, the shelf)
-were not checked for the same race.
+the watcher's inserts and removals included, and a refresh's or a
+rescan's listing, its names under one ticket). The other locations were
+audited the same day, by reading only; none is fixed yet. Every
+hydration but the folder provider's goes through `fs::hydrate_paths`,
+which sends what it found under the ids it was given, with no ticket and
+no look at whether the location still holds them. `Listing::upsert`
+drops an `Updated` for an id not listed, so the harm is a late `Added`
+or `Renamed` (a ghost), or a late `Removed` once the same id is back (a
+rename undone, a trashed file restored):
+- searches: a hydration outlives F5 and a plan's recheck (its token is
+  the location's, not the walk's), and a filled answer from before
+  stands over the new stat, the row never asked again; a hydration's
+  late `Removed` takes out a file renamed and renamed back; a walk's
+  batch waiting for the next match is published after a plan moved
+  what it holds;
+- search within a place (`within.rs`): a check sends after it lets go of
+  `shown`, so a `Removed` told meanwhile comes first and its `Added`
+  stays, a ghost until the search is opened again;
+- tag places: of two hydrations of a file, the older told last leaves
+  its tags as they were; a late `Removed` after a relist added the file
+  back leaves `sent.files` holding it, so no relist shows it again;
+- the shelf: `hydrate_paths` sends `Removed` before the shelf looks
+  whether the item moved, so a rename undone takes it off the shelf, and
+  that look walks the items for each gone id (the Scale rule);
+- `recent:` as searches' first; the Trash has none (its reads are
+  numbered, the latest alone published, a gone item told unreadable).
+
+The fix proposed: the folder provider's machinery (`Names::applies`,
+`Told`, `Reading`, the tickets) as a core type keyed by an id or a path,
+`hydrate_paths` answering its caller, who keeps the newest under its own
+lock and sends them; within a place, its sends under `shown`.
 
 **From the review of 2026-11-24** (45 findings on the night's work, all
-fixed but these). Usage from an index: a file of several names that takes no room says one. A
-drive Windows is letting go of reads nothing (`watch::letting_go`): its
-rows answered unread then stay so after a refused removal until read
-again; tried under Wine, never with a drive. Drive registration after
-the places plugin returns: compiled only (Wine has no display). From the
-second review: a stalled engine (stopped, not gone) holds Usage's worker
-five seconds at each navigation, its hello's time (it was the client's
-60 s silence until skwird's stoppable connect, 2026-11-24), as its
-journals are asked under the worker's lifetime, not a pane's; one that
-stalls after its hello still holds it the whole silence; where only plocate answers at once, a search shown
-as typed and a lens's folders rest on its database, so a file made since
-`updatedb` is not found (as before without skwird; with skwird and no
-engine running, an engine used to be started); Windows' Eject: a folder
-opened there or refreshed meanwhile is still read (`list` does not ask
+fixed but these). Usage from an index: a file of several names that
+takes no room says one. A drive Windows is letting go of reads nothing
+(`watch::letting_go`): its rows answered unread then stay so after a
+refused removal until read again; tried under Wine, never with a drive.
+Drive registration after the places plugin returns: compiled only (Wine
+has no display). From the second review: a stalled engine (stopped, not
+gone) holds Usage's worker five seconds at each navigation, its hello's
+time (it was the client's 60 s silence until skwird's stoppable connect,
+2026-11-24), as its journals are asked under the worker's lifetime, not
+a pane's; one that stalls after its hello still holds it the whole
+silence; where only plocate answers at once, a search shown as typed and
+a lens's folders rest on its database, so a file made since `updatedb`
+is not found (as before without skwird; with skwird and no engine
+running, an engine used to be started); Windows' Eject: a folder opened
+there or refreshed meanwhile is still read (`list` does not ask
 `watch::letting_go`), and a hydration under way as the let-go begins
-keeps its handle until it ends; a refresh's or rescan's readdir is
-applied without the stats' tickets, so `mv f g; mv g f` during a long
-one may leave a ghost row until the next change.
+keeps its handle until it ends. Core's
+`a_folder_sorted_by_date_waits_for_no_provider` fails about one run in
+four with every core busy (24 busy loops beside the 36 listing tests),
+the providers not asked within 10 s by a rating's order, before the
+listing's tickets as after; not looked into.
 
 **Scratch folders of killed processes** (built 2026-11-24): each
 process holds a lock file of its own for its life, and names its
