@@ -29,6 +29,11 @@ fn entry(path: &Path, kind: protocol::Kind) -> protocol::Entry {
 /// A fake engine covering `root` checked, with a denied hole, and naming
 /// three entries below it.
 fn engine(dir: &Path, root: &Path, silent: bool) -> Fake {
+    engine_saying(dir, root, silent, Vec::new())
+}
+
+/// [`engine`], its hello saying `features`.
+fn engine_saying(dir: &Path, root: &Path, silent: bool, features: Vec<String>) -> Fake {
     let script = Script {
         roots: vec![root.to_path_buf()],
         coverage: vec![(
@@ -48,6 +53,7 @@ fn engine(dir: &Path, root: &Path, silent: bool) -> Fake {
             entry(&root.join("docs/Report.pdf"), protocol::Kind::File),
         ],
         silent,
+        features,
         ..Script::default()
     };
     Fake::start(dir.join("socket"), script).unwrap()
@@ -196,6 +202,68 @@ fn a_search_is_answered_as_skwird_covers_it() {
             truncated: false
         }
     );
+}
+
+/// An engine is taken as matching a term in both its forms only where
+/// the hello of the connection asked says `names-both-forms`: a session
+/// opened or followed says what its own hello said, a word not known is
+/// none, and the probe for a term whose forms differ answers nothing from
+/// an engine that matches one form.
+#[test]
+fn an_engine_matches_both_forms_only_where_its_hello_says_so() {
+    let words = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+    for (features, says) in [
+        (words(&[]), false),
+        (words(&["names-both-forms"]), true),
+        (words(&["volumes", "names-both-forms"]), true),
+        (words(&["names-both-form", "names"]), false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = PathBuf::from("/fixture/root");
+        let fake = engine_saying(tmp.path(), &root, false, features.clone());
+        let index = index(Engines::At(fake.socket.clone()));
+        let cancel = CancelToken::new();
+        let opened = index.open(&root, &cancel).expect("the fake answers");
+        assert_eq!(opened.session.both_forms(), says, "opened: {features:?}");
+        let followed = index.follow(&root, &cancel).expect("the fake answers");
+        assert_eq!(
+            followed.session.both_forms(),
+            says,
+            "followed: {features:?}"
+        );
+        let typed = |text: &str| Query {
+            root: root.clone(),
+            names: vec![NameTerm {
+                text: text.into(),
+                case_sensitive: false,
+            }],
+            kinds: None,
+            size: None,
+            modified: None,
+            whole: true,
+        };
+        let two_forms = typed("caf\u{e9}");
+        assert!(!two_forms.as_written());
+        assert_eq!(
+            two_forms.answered_by(&*opened.session),
+            says,
+            "{features:?}"
+        );
+        assert!(
+            index.covers(&two_forms, &cancel).is_some(),
+            "asked as written"
+        );
+        assert_eq!(
+            index.covers_both_forms(&two_forms, &cancel).is_some(),
+            says,
+            "the probe: {features:?}"
+        );
+        let ascii = typed("report");
+        assert!(
+            ascii.answered_by(&*opened.session),
+            "every engine: {features:?}"
+        );
+    }
 }
 
 #[test]

@@ -266,6 +266,26 @@ impl Index {
     }
 }
 
+impl Index {
+    /// What a running engine says of `q.root` (`NameIndex::covers`): no
+    /// engine started, nothing sent but the question, given up on past a
+    /// round trip; none, where `both_forms`, from an engine whose hello
+    /// says it matches one form.
+    fn probe(&self, q: &Query, cancel: &CancelToken, both_forms: bool) -> Option<Coverage> {
+        let mut find = find(&self.engines, false)?;
+        find.silence = Some(PROBE_SILENCE);
+        if cancel.is_cancelled() {
+            return None;
+        }
+        // Its hello waited for no longer than the probe's silence.
+        let (mut client, _stop) = connect(&find, cancel, PROBE_SILENCE).ok()?;
+        if both_forms && !says_both_forms(&client) {
+            return None;
+        }
+        client.coverage(&q.root).ok().map(coverage_of)
+    }
+}
+
 impl NameIndex for Index {
     fn id(&self) -> &'static str {
         ID
@@ -296,25 +316,20 @@ impl NameIndex for Index {
             .ok()?;
         Some(Opened {
             coverage: coverage_of(coverage),
-            session: Box::new(Asking {
-                client,
-                root: root.to_path_buf(),
-                _stop: stop,
-            }),
+            session: Box::new(Asking::new(client, root, stop)),
         })
     }
 
     /// What a running engine says of `q.root`: no engine started, nothing
     /// sent but the question, given up on past a round trip.
     fn covers(&self, q: &Query, cancel: &CancelToken) -> Option<Coverage> {
-        let mut find = find(&self.engines, false)?;
-        find.silence = Some(PROBE_SILENCE);
-        if cancel.is_cancelled() {
-            return None;
-        }
-        // Its hello waited for no longer than the probe's silence.
-        let (mut client, _stop) = connect(&find, cancel, PROBE_SILENCE).ok()?;
-        client.coverage(&q.root).ok().map(coverage_of)
+        self.probe(q, cancel, false)
+    }
+
+    /// [`covers`](Self::covers), where the engine asked now says it matches
+    /// both forms ([`BOTH_FORMS`]); none where it does not.
+    fn covers_both_forms(&self, q: &Query, cancel: &CancelToken) -> Option<Coverage> {
+        self.probe(q, cancel, true)
     }
 
     /// A session on an engine already running, nothing started nor sent
@@ -333,24 +348,53 @@ impl NameIndex for Index {
             .ok()?;
         Some(Opened {
             coverage: coverage_of(coverage),
-            session: Box::new(Asking {
-                client,
-                root: root.to_path_buf(),
-                _stop: stop,
-            }),
+            session: Box::new(Asking::new(client, root, stop)),
         })
     }
+}
+
+/// The word an engine's hello says once it matches a name term in both
+/// its forms, composed and decomposed, as Skwir's search does (skwird's
+/// 0.2; `Session::both_forms`).
+const BOTH_FORMS: &str = "names-both-forms";
+
+/// Whether the engine `client` talks to said, in this connection's hello,
+/// that it matches a name term in both its forms: never kept from an
+/// earlier connection, since an engine replaced by an older one says less.
+fn says_both_forms(client: &Client) -> bool {
+    client
+        .welcome()
+        .features
+        .iter()
+        .any(|word| word == BOTH_FORMS)
 }
 
 /// One search's connection.
 struct Asking {
     client: Client,
     root: PathBuf,
+    /// Whether its engine said it matches both forms ([`says_both_forms`]).
+    both_forms: bool,
     /// Stops the connection's call once the search is given up on.
     _stop: OnCancel,
 }
 
+impl Asking {
+    fn new(client: Client, root: &Path, stop: OnCancel) -> Asking {
+        Asking {
+            both_forms: says_both_forms(&client),
+            client,
+            root: root.to_path_buf(),
+            _stop: stop,
+        }
+    }
+}
+
 impl Session for Asking {
+    fn both_forms(&self) -> bool {
+        self.both_forms
+    }
+
     fn sync(&mut self) -> Option<Coverage> {
         self.client
             .sync(&self.root)
