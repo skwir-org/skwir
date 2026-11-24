@@ -14,6 +14,9 @@ skwird_keep_live_menu = Keep Live in the Menu
 
 skwird_keep_live_menu_description = The menu's entry keeping a folder live: only once a search found a user's engine of skwird's, which keeps folders live
 
+# An error of the command keeping a folder live, asked with no folder named and none or several selected.
+skwird_keep_live_one = Select one folder to keep live
+
 # The button adding a folder to the folders kept live.
 skwird_kept_add = Add Folder…
 
@@ -57,6 +60,9 @@ skwird_kept_live = { $folder } · live
 skwird_kept_missing = { $folder } · no folder there
 
 skwird_kept_name = Folder
+
+# An error of the command following a source of the folders kept live: source is what was asked, as written; own and bookmarks are the values it takes, as written.
+skwird_kept_no_source = { $source } is no source of folders kept live: own or bookmarks
 
 # Under a folder's name in the list of folders kept live: unticked, or its group switched off. folder: where it is.
 skwird_kept_not = { $folder } · not kept live

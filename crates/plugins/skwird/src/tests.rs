@@ -62,6 +62,88 @@ fn index(engines: Engines) -> Index {
     }
 }
 
+/// What a client asks an engine, heard on its way: a socket of the test's
+/// own in front of `fake`, each line read as the request it is and passed
+/// on, the fake's answers passed back as they come.
+struct Heard {
+    socket: PathBuf,
+    asked: Arc<Mutex<Vec<protocol::Ask>>>,
+}
+
+impl Heard {
+    fn before(fake: &Fake, dir: &Path) -> Heard {
+        use std::io::{BufRead, Write};
+        use std::net::Shutdown;
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let socket = dir.join("heard");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let asked: Arc<Mutex<Vec<protocol::Ask>>> = Arc::default();
+        let (engine_at, record) = (fake.socket.clone(), Arc::clone(&asked));
+        std::thread::spawn(move || {
+            for client in listener.incoming() {
+                let (Ok(client), Ok(mut engine)) = (client, UnixStream::connect(&engine_at)) else {
+                    return;
+                };
+                let (mut answers, mut back) =
+                    (engine.try_clone().unwrap(), client.try_clone().unwrap());
+                std::thread::spawn(move || {
+                    let _ = std::io::copy(&mut answers, &mut back);
+                    let _ = back.shutdown(Shutdown::Both);
+                });
+                let record = Arc::clone(&record);
+                std::thread::spawn(move || {
+                    let mut asking = std::io::BufReader::new(client);
+                    let mut line = Vec::new();
+                    while asking.read_until(b'\n', &mut line).is_ok_and(|n| n > 0) {
+                        if let Ok(request) = serde_json::from_slice::<protocol::Request>(&line) {
+                            record.lock().push(request.ask);
+                        }
+                        if engine.write_all(&line).is_err() {
+                            break;
+                        }
+                        line.clear();
+                    }
+                    let _ = engine.shutdown(Shutdown::Both);
+                });
+            }
+        });
+        Heard { socket, asked }
+    }
+
+    /// What was asked so far, hellos left out.
+    fn asked(&self) -> Vec<protocol::Ask> {
+        self.asked
+            .lock()
+            .iter()
+            .filter(|ask| !matches!(ask, protocol::Ask::Hello(_)))
+            .cloned()
+            .collect()
+    }
+
+    /// The `watch` asked, each its folders added and taken back.
+    fn watches(&self) -> Vec<(Vec<PathBuf>, Vec<PathBuf>)> {
+        let paths = |list: &[protocol::WirePath]| -> Vec<PathBuf> {
+            list.iter().map(protocol::WirePath::to_path).collect()
+        };
+        self.asked()
+            .iter()
+            .filter_map(|ask| match ask {
+                protocol::Ask::Watch { add, remove } => Some((paths(add), paths(remove))),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// Until `done`, under a deadline for a hang.
+fn until(done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "never done");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn a_search_is_answered_as_skwird_covers_it() {
     let tmp = tempfile::tempdir().unwrap();
@@ -233,6 +315,34 @@ fn a_search_given_up_on_stops_its_call() {
     );
 }
 
+/// Where skwird's live sizes and times are not proven (Windows, as yet),
+/// its coverage says them checked, as its journal says them incomplete: a
+/// dated search, Usage and a tag set's follower stat for themselves.
+#[test]
+fn live_times_are_said_checked_where_they_are_not_proven() {
+    let live = protocol::Coverage {
+        names: protocol::Proof::Live(instant()),
+        attrs: protocol::Proof::Live(instant()),
+        holes: Vec::new(),
+    };
+    assert_eq!(
+        coverage_in(live.clone(), true).attrs,
+        Proof::Live { since: at() }
+    );
+    let unproven = coverage_in(live.clone(), false);
+    assert_eq!(unproven.attrs, Proof::Checked { at: at() });
+    assert_eq!(
+        unproven.names,
+        Proof::Live { since: at() },
+        "names stay live"
+    );
+    assert_eq!(
+        matches!(coverage_of(live).attrs, Proof::Live { .. }),
+        !cfg!(windows),
+        "as the journal says them"
+    );
+}
+
 #[test]
 fn instants_are_the_system_s_before_1970_too() {
     assert_eq!(time_of(instant()), at());
@@ -261,12 +371,21 @@ fn what_is_kept_out_is_sent_to_the_engine() {
     let tmp = tempfile::tempdir().unwrap();
     let root = PathBuf::from("/fixture/root");
     let fake = engine(tmp.path(), &root, false);
-    let mut client = Client::at(&fake.socket, CLIENT).unwrap();
+    let heard = Heard::before(&fake, tmp.path());
+    let mut client = Client::at(&heard.socket, CLIENT).unwrap();
     let folders = vec![
         PathBuf::from("/fixture/keys"),
         PathBuf::from("/fixture/vault"),
     ];
     assert!(keep_out(&mut client, &folders));
+    assert_eq!(
+        heard.asked(),
+        [protocol::Ask::Exclude {
+            add: folders.iter().map(|p| protocol::WirePath::of(p)).collect(),
+            remove: Vec::new(),
+        }],
+        "the folders asked kept out, nothing taken back"
+    );
 }
 
 /// A root skwird is still reading (a first build) says so at once, and is
@@ -291,12 +410,150 @@ fn a_root_being_read_is_walked_and_never_synced() {
         },
     )
     .unwrap();
+    let heard = Heard::before(&fake, tmp.path());
     let indexes = skwir_core::names::NameIndexes::default();
-    indexes.register(ID, Arc::new(index(Engines::At(fake.socket.clone()))));
+    indexes.register(ID, Arc::new(index(Engines::At(heard.socket.clone()))));
     assert!(
         indexes.open(&root, &CancelToken::new()).is_empty(),
         "not covered: the search walks"
     );
+    let asked = heard.asked();
+    assert!(
+        asked
+            .iter()
+            .any(|ask| matches!(ask, protocol::Ask::Coverage { root: r } if r.to_path() == root)),
+        "its coverage asked: {asked:?}"
+    );
+    assert!(
+        !asked
+            .iter()
+            .any(|ask| matches!(ask, protocol::Ask::Sync { .. } | protocol::Ask::Query(_))),
+        "never synced nor queried: {asked:?}"
+    );
+}
+
+/// An app whose Kept live asks the engine `heard` stands before, the
+/// user's folders offering Documents.
+fn kept_app(dir: &Path, heard: &Heard) -> (Arc<App>, Arc<kept::Kept>) {
+    let app = App::new(skwir_core::app::AppConfig::ephemeral(dir.join("app"))).unwrap();
+    let kept = kept::Kept::reading(
+        app.weak(),
+        Engines::At(heard.socket.clone()),
+        Box::new(|| kept::Offered {
+            own: vec![("Documents".into(), PathBuf::from("/fixture/Documents"))],
+            bookmarks: Vec::new(),
+        }),
+    );
+    kept::register(&kept, &app);
+    (app, kept)
+}
+
+/// Kept live sends a user's engine its list as differences (ADR-150, 6):
+/// asked what it keeps, then what it lacks added, in the share's order
+/// (what the user added, then their folders); once it keeps them, a
+/// folder unticked is taken back alone. What it says is kept, and the
+/// menu's entry shows from then on.
+#[test]
+fn what_is_kept_live_is_sent_as_differences() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = PathBuf::from("/fixture");
+    let fake = engine(tmp.path(), &root, false);
+    let heard = Heard::before(&fake, tmp.path());
+    let (app, kept) = kept_app(tmp.path(), &heard);
+    let (projects, documents) = (
+        PathBuf::from("/data/projects"),
+        PathBuf::from("/fixture/Documents"),
+    );
+    app.dispatch(&skwir_core::command::Invocation::with_args(
+        "skwird.kept_add",
+        &serde_json::json!({ "path": projects }),
+    ))
+    .unwrap();
+    until(|| !kept.refreshing.lock().running);
+    assert_eq!(
+        heard.watches(),
+        [
+            (Vec::new(), Vec::new()),
+            (vec![projects.clone(), documents.clone()], Vec::new())
+        ]
+    );
+    assert!(kept.user_engine(), "a user's engine found");
+    assert!(matches!(
+        kept.said.lock().folders.get(&documents).map(|k| k.state),
+        Some(protocol::Keeping::Live(_))
+    ));
+
+    // An engine that keeps both: unticking Documents takes it back alone.
+    let live = |path: &Path| protocol::Kept {
+        path: protocol::WirePath::of(path),
+        state: protocol::Keeping::Live(instant()),
+        folders: Some(1),
+        within: None,
+    };
+    let keeping = Fake::start(
+        tmp.path().join("keeping"),
+        Script {
+            watching: Some(protocol::Watching {
+                folders: vec![live(&projects), live(&documents)],
+                share: Some(protocol::Share { used: 2, size: 100 }),
+            }),
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    let second = tmp.path().join("second");
+    std::fs::create_dir(&second).unwrap();
+    let heard = Heard::before(&keeping, &second);
+    let (app, kept) = kept_app(&second, &heard);
+    app.dispatch(&skwir_core::command::Invocation::with_args(
+        "skwird.kept_add",
+        &serde_json::json!({ "path": projects }),
+    ))
+    .unwrap();
+    until(|| !kept.refreshing.lock().running);
+    assert_eq!(
+        heard.watches(),
+        [(Vec::new(), Vec::new())],
+        "nothing sent where the order holds"
+    );
+    let id = kept::id_of(&documents);
+    app.dispatch(&skwir_core::command::Invocation::with_args(
+        "skwird.kept_tick",
+        &serde_json::json!({ "id": id, "on": false }),
+    ))
+    .unwrap();
+    until(|| !kept.refreshing.lock().running);
+    assert_eq!(
+        heard.watches()[1..],
+        [(Vec::new(), Vec::new()), (Vec::new(), vec![documents])]
+    );
+}
+
+/// Once an engine this run was a user's, the menu's entry stays, whatever
+/// a later ask finds: none running (ADR-150, 10).
+#[test]
+fn the_menu_s_entry_stays_once_a_user_s_engine_was_found() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = engine(tmp.path(), Path::new("/fixture"), false);
+    let heard = Heard::before(&fake, tmp.path());
+    let (app, kept) = kept_app(tmp.path(), &heard);
+    kept.refresh();
+    until(|| !kept.refreshing.lock().running);
+    assert!(kept.user_engine());
+    drop(fake);
+    kept.refresh();
+    until(|| !kept.refreshing.lock().running);
+    assert_eq!(kept.said.lock().scope, None, "none answers now");
+    let menu = app
+        .dispatch(&skwir_core::command::Invocation::with_args(
+            "skwird.keep_live_menu",
+            &serde_json::json!({ "path": "/fixture/Documents" }),
+        ))
+        .unwrap();
+    let skwir_core::command::Outcome::Value(menu) = menu else {
+        panic!("an answer");
+    };
+    assert_eq!(menu["items"].as_array().map(Vec::len), Some(1), "{menu}");
 }
 
 /// A root's journal followed through the client, from a running engine,

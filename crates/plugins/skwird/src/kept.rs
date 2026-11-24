@@ -12,6 +12,14 @@
 //! the user added, then their folders, then their bookmarks. Only to a
 //! user's engine: the system service hears every folder. A change, or the
 //! list asked, never starts an engine: the next search that does sends it.
+//! Nothing is asked of skwird at start (ADR-150, 3): what it says is asked
+//! when the list is (the Index page, an agent), after a change, and at
+//! each search's connection.
+//!
+//! Edits are the user's data, written off the window's thread in the order
+//! made (`docs/invariants/settings.md`): queued where they are asked, kept
+//! together by one at a time, the window woken once they are, as it is
+//! whenever what skwird says changes.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -21,7 +29,9 @@ use std::sync::{Arc, Weak};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use skwir_core::app::{App, NotifyLevel};
+use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
+use skwir_core::os_path::PathArg;
 use skwir_core::registry::{MenuItem, MenuSource};
 use skwir_core::settings::{RecordField, RecordSource, SettingSpec, page, section};
 use skwir_core::words::Words;
@@ -37,14 +47,39 @@ pub(crate) const LIST: &str = "skwird.kept_live";
 pub(crate) const CHOSEN: &str = "skwird.kept";
 
 /// What the user chose: whether their folders and their bookmarks are
-/// followed, the folders they added, and those they unticked.
+/// followed, the folders they added, and those they unticked. A folder
+/// whose name is not UTF-8 is kept whole (`os_path::PathArg`'s form).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Chosen {
     pub own: bool,
     pub bookmarks: bool,
+    #[serde(with = "paths")]
     pub added: Vec<PathBuf>,
+    #[serde(with = "paths")]
     pub off: Vec<PathBuf>,
+}
+
+/// Folders written as `os_path::PathArg` writes a path: text where it is,
+/// else its bytes, so that every name is kept (serde's own refuses a path
+/// that is not UTF-8).
+mod paths {
+    use std::path::PathBuf;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+    use skwir_core::os_path::PathArg;
+
+    #[allow(clippy::ptr_arg)] // serde's `with` hands the field as it is
+    pub fn serialize<S: Serializer>(paths: &Vec<PathBuf>, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(paths.iter().map(|path| PathArg::from(path.as_path())))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PathBuf>, D::Error> {
+        Ok(Vec::<PathArg>::deserialize(d)?
+            .into_iter()
+            .map(PathArg::into_inner)
+            .collect())
+    }
 }
 
 impl Default for Chosen {
@@ -105,7 +140,7 @@ pub(crate) struct Offered {
 
 impl Offered {
     /// Read from the desktop's files (on a worker).
-    fn read() -> Offered {
+    pub(crate) fn read() -> Offered {
         Offered {
             own: skwir_platform::places::user_dirs()
                 .into_iter()
@@ -117,6 +152,58 @@ impl Offered {
                 .collect(),
         }
     }
+
+    /// Whether a source the user follows offers `path`: one not followed
+    /// offers nothing (its rows are listed, dimmed, and kept by none).
+    fn follows(&self, chosen: &Chosen, path: &Path) -> bool {
+        let offers = |folders: &[(String, PathBuf)]| folders.iter().any(|(_, p)| p == path);
+        (chosen.own && offers(&self.own)) || (chosen.bookmarks && offers(&self.bookmarks))
+    }
+}
+
+/// Whether `path` is kept live: not unticked, and added or offered by a
+/// source followed (`rows`' `kept`).
+fn is_kept(chosen: &Chosen, offered: &Offered, path: &Path) -> bool {
+    !chosen.off.iter().any(|p| p == path)
+        && (chosen.added.iter().any(|p| p == path) || offered.follows(chosen, path))
+}
+
+/// What a folder of the list is known by (a record's `id`, what its tick
+/// and Remove send back): its path where it is text, else its bytes
+/// (`OsStr::as_encoded_bytes`) in hex after `bytes:`, which no absolute
+/// path begins with. `path_of_id` reads it back whole.
+const BYTES: &str = "bytes:";
+
+pub(crate) fn id_of(path: &Path) -> String {
+    use std::fmt::Write;
+    if let Some(text) = path.to_str() {
+        return text.to_owned();
+    }
+    let mut id = String::from(BYTES);
+    for byte in path.as_os_str().as_encoded_bytes() {
+        let _ = write!(id, "{byte:02x}");
+    }
+    id
+}
+
+/// The folder `id_of` gave `id`: absolute, or refused.
+pub(crate) fn path_of_id(id: &str) -> anyhow::Result<PathBuf> {
+    let bytes = id.strip_prefix(BYTES).and_then(|hex| {
+        (hex.len() % 2 == 0)
+            .then(|| {
+                (0..hex.len())
+                    .step_by(2)
+                    .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+                    .collect::<Option<Vec<u8>>>()
+            })
+            .flatten()
+    });
+    let path = match bytes {
+        Some(bytes) => PathBuf::from(skwir_core::os_path::from_bytes(bytes)),
+        None => PathBuf::from(id),
+    };
+    skwir_core::os_path::absolute(&path)?;
+    Ok(path)
 }
 
 /// The list in the order the share fills in, each folder once, where it
@@ -196,61 +283,78 @@ pub(crate) struct Said {
 /// An edit of what the user chose.
 #[derive(Clone, Debug)]
 pub(crate) enum Edit {
-    /// A folder added; one of a source, ticked again.
+    /// A folder added by the user (Add Folder…, an agent), ticked: kept
+    /// under Added by you whatever source offers it too, so that it stays
+    /// once that source no longer does.
     Add(PathBuf),
     /// A folder the user added, taken off the list.
     Remove(PathBuf),
     Tick(PathBuf, bool),
     Follow(Source, bool),
-    /// Kept if it is not, not if it is (the menu's).
+    /// Kept if it is not, not if it is (the menu's): on, a folder a source
+    /// followed offers ticked again, any other added; off, one the user
+    /// added taken off the list, one a source followed offers unticked.
     Toggle(PathBuf),
 }
 
 impl Edit {
     /// Apply it, whether it changed anything.
-    fn apply(&self, chosen: &mut Chosen, offered: &Offered) -> bool {
+    pub(crate) fn apply(&self, chosen: &mut Chosen, offered: &Offered) -> bool {
         let before = chosen.clone();
-        let offers = |path: &Path| {
-            offered
-                .own
-                .iter()
-                .chain(&offered.bookmarks)
-                .any(|(_, p)| p == path)
+        let tick = |chosen: &mut Chosen, path: &PathBuf, on: bool| {
+            let unticked = chosen.off.contains(path);
+            if on {
+                chosen.off.retain(|p| p != path);
+            } else if !unticked {
+                chosen.off.push(path.clone());
+            }
+        };
+        let add = |chosen: &mut Chosen, path: &PathBuf| {
+            if !chosen.added.contains(path) {
+                chosen.added.push(path.clone());
+            }
         };
         match self {
             Edit::Add(path) => {
-                chosen.off.retain(|p| p != path);
-                if !chosen.added.contains(path) && !offers(path) {
-                    chosen.added.push(path.clone());
-                }
+                tick(chosen, path, true);
+                add(chosen, path);
             }
             Edit::Remove(path) => {
                 chosen.added.retain(|p| p != path);
                 chosen.off.retain(|p| p != path);
             }
-            Edit::Tick(path, true) => chosen.off.retain(|p| p != path),
-            Edit::Tick(path, false) => {
-                if !chosen.off.contains(path) {
-                    chosen.off.push(path.clone());
-                }
-            }
+            Edit::Tick(path, on) => tick(chosen, path, *on),
             Edit::Follow(Source::Own, on) => chosen.own = *on,
             Edit::Follow(Source::Bookmarks, on) => chosen.bookmarks = *on,
             Edit::Follow(Source::Added, _) => {}
             Edit::Toggle(path) => {
-                let kept = rows(chosen, offered)
-                    .iter()
-                    .any(|row| row.kept && &row.path == path);
-                let edit = match (kept, chosen.added.contains(path)) {
-                    (true, true) => Edit::Remove(path.clone()),
-                    (true, false) => Edit::Tick(path.clone(), false),
-                    (false, _) => Edit::Add(path.clone()),
-                };
-                edit.apply(chosen, offered);
+                let followed = offered.follows(chosen, path);
+                if is_kept(chosen, offered, path) {
+                    chosen.added.retain(|p| p != path);
+                    if followed {
+                        tick(chosen, path, false);
+                    }
+                } else {
+                    tick(chosen, path, true);
+                    if !followed {
+                        add(chosen, path);
+                    }
+                }
             }
         }
         *chosen != before
     }
+}
+
+/// Reads what the user's own folders and bookmarks offer (`Offered::read`;
+/// a test's own).
+pub(crate) type Reader = Box<dyn Fn() -> Offered + Send + Sync>;
+
+/// Whether a refresh runs, and whether another was asked while it did.
+#[derive(Default)]
+pub(crate) struct Refreshing {
+    pub running: bool,
+    again: bool,
 }
 
 /// The list's keeper: what the user chose, what the sources offer, what
@@ -259,16 +363,27 @@ pub(crate) struct Kept {
     pub source: RecordSource,
     app: Weak<App>,
     engines: Engines,
-    offered: Mutex<Offered>,
-    said: Mutex<Said>,
-    /// Edits run one at a time.
-    saving: Mutex<()>,
-    /// A refresh asked and not done.
-    asking: AtomicBool,
+    read: Reader,
+    pub(crate) offered: Mutex<Offered>,
+    pub(crate) said: Mutex<Said>,
+    /// Whether an engine this run said it was a user's (ADR-150, 10): the
+    /// menu's entry stays once one did, whatever a later ask finds.
+    found_user: AtomicBool,
+    /// The edits asked and not kept yet, in the order asked.
+    pub(crate) edits: Mutex<Vec<Edit>>,
+    /// One keeps the edits at a time: what the user chose, read and written
+    /// by two at once, would lose one's edit.
+    pub(crate) keeping: Mutex<()>,
+    pub(crate) refreshing: Mutex<Refreshing>,
 }
 
 impl Kept {
     pub(crate) fn new(app: Weak<App>, engines: Engines) -> Arc<Kept> {
+        Kept::reading(app, engines, Box::new(Offered::read))
+    }
+
+    /// The keeper, what the sources offer read by `read`.
+    pub(crate) fn reading(app: Weak<App>, engines: Engines, read: Reader) -> Arc<Kept> {
         Arc::new(Kept {
             source: RecordSource::new(
                 "skwird.kept_list",
@@ -279,27 +394,36 @@ impl Kept {
             .adding_folders(),
             app,
             engines,
+            read,
             offered: Mutex::default(),
             said: Mutex::default(),
-            saving: Mutex::default(),
-            asking: AtomicBool::new(false),
+            found_user: AtomicBool::new(false),
+            edits: Mutex::default(),
+            keeping: Mutex::default(),
+            refreshing: Mutex::default(),
         })
     }
 
-    /// Whether a search found a user's engine, which keeps folders live:
+    /// Whether an engine this run was a user's, which keeps folders live:
     /// where the menu's entry does something.
-    fn user_engine(&self) -> bool {
-        self.said.lock().scope == Some(protocol::Scope::User)
+    pub(crate) fn user_engine(&self) -> bool {
+        self.found_user.load(Ordering::Acquire)
     }
 
     /// Whether `path` is kept live.
     fn keeps(&self, app: &App, path: &Path) -> bool {
-        rows(&Chosen::of(app), &self.offered.lock())
-            .iter()
-            .any(|row| row.kept && row.path == path)
+        is_kept(&Chosen::of(app), &self.offered.lock(), path)
     }
 
-    fn said(&self, said: Said, offered: Option<Offered>) {
+    /// Say that the list changed: the dialog asks again, woken.
+    fn changed(&self) {
+        self.source.changed();
+        if let Some(app) = self.app.upgrade() {
+            app.wake();
+        }
+    }
+
+    pub(crate) fn said(&self, said: Said, offered: Option<Offered>) {
         let mut changed = false;
         if let Some(offered) = offered {
             let mut held = self.offered.lock();
@@ -312,7 +436,7 @@ impl Kept {
             *held = said;
         }
         if changed {
-            self.source.changed();
+            self.changed();
         }
     }
 
@@ -321,7 +445,10 @@ impl Kept {
     /// a worker.
     pub(crate) fn reconcile(&self, client: &mut Client) {
         let scope = client.welcome().scope;
-        let offered = Offered::read();
+        let offered = (self.read)();
+        if scope == protocol::Scope::User {
+            self.found_user.store(true, Ordering::Release);
+        }
         if scope != protocol::Scope::User {
             self.said(
                 Said {
@@ -376,72 +503,110 @@ impl Kept {
     }
 
     /// Ask a running engine what it keeps, and send it the list, on a
-    /// worker: never starting one. Once at a time.
+    /// worker: never starting one. One at a time: one asked while another
+    /// runs makes it go once more, so that what was asked after it began
+    /// (a folder added meanwhile) is sent.
     pub(crate) fn refresh(self: &Arc<Self>) {
-        if self.asking.swap(true, Ordering::AcqRel) {
-            return;
+        {
+            let mut refreshing = self.refreshing.lock();
+            if refreshing.running {
+                refreshing.again = true;
+                return;
+            }
+            refreshing.running = true;
         }
         let Some(app) = self.app.upgrade() else {
-            self.asking.store(false, Ordering::Release);
+            self.refreshing.lock().running = false;
             return;
         };
         let this = Arc::clone(self);
+        let cancel = app.lifetime().child();
+        let stop = cancel.clone();
         app.scheduler.spawn(
             skwir_core::scheduler::Priority::Background,
             "skwird.kept",
-            app.lifetime().child(),
+            cancel,
             move || {
-                match crate::find(&this.engines, false).map(|find| Client::connect(&find)) {
-                    Some(Ok(mut client)) => this.reconcile(&mut client),
-                    _ => this.said(Said::default(), Some(Offered::read())),
+                loop {
+                    this.ask_engine(&stop);
+                    let mut refreshing = this.refreshing.lock();
+                    if !std::mem::take(&mut refreshing.again) || stop.is_cancelled() {
+                        refreshing.running = false;
+                        return;
+                    }
                 }
-                this.asking.store(false, Ordering::Release);
             },
         );
     }
 
-    /// Apply `edit` to what the user chose and save it, off the window's
-    /// thread, then send the list.
-    fn edit(self: &Arc<Self>, edit: Edit) {
-        let this = Arc::clone(self);
-        let run = move || {
-            let Some(app) = this.app.upgrade() else {
+    /// What a running engine keeps, the list sent to it: what is asked
+    /// stopped once `cancel` is (the program ending).
+    fn ask_engine(&self, cancel: &CancelToken) {
+        let client = crate::find(&self.engines, false).and_then(|find| Client::connect(&find).ok());
+        let Some(mut client) = client else {
+            self.said(Said::default(), Some((self.read)()));
+            return;
+        };
+        let _stop = client
+            .stopper()
+            .ok()
+            .map(|stopper| cancel.on_cancel(move || stopper.stop()));
+        self.reconcile(&mut client);
+    }
+
+    /// Queue `edit` of what the user chose, in the order asked, and keep
+    /// what is queued: on a worker when asked from the window, where asked
+    /// otherwise (an agent's call, a script's).
+    pub(crate) fn edit(self: &Arc<Self>, edit: Edit) {
+        self.edits.lock().push(edit);
+        match self.app.upgrade() {
+            Some(app) if skwir_core::scheduler::on_window_thread() => {
+                let this = Arc::clone(self);
+                app.scheduler.spawn(
+                    skwir_core::scheduler::Priority::Normal,
+                    "skwird.kept_edit",
+                    app.lifetime().child(),
+                    move || this.keep_edits(),
+                );
+            }
+            _ => self.keep_edits(),
+        }
+    }
+
+    /// Apply the edits queued to what the user chose, in order, save it,
+    /// wake the window, then send the list. What the sources offer is read
+    /// again first: an edit before any search is judged against them.
+    fn keep_edits(self: &Arc<Self>) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        {
+            let _keeping = self.keeping.lock();
+            let edits = std::mem::take(&mut *self.edits.lock());
+            if edits.is_empty() {
                 return;
-            };
-            {
-                let _saving = this.saving.lock();
-                let mut chosen = Chosen::of(&app);
-                if !edit.apply(&mut chosen, &this.offered.lock()) {
-                    return;
-                }
-                let Ok(value) = toml::Value::try_from(&chosen) else {
-                    return;
-                };
-                app.settings.set(CHOSEN, value);
-                if let Err(error) = app.settings.save() {
-                    app.notify(
-                        NotifyLevel::Error,
-                        skwir_core::words!(
-                            skwird_kept_not_saved =
-                                "The folders kept live were not saved: { $error }",
-                            error = error,
-                            note = "error: why the settings' file could not be written."
-                        ),
-                    );
+            }
+            let offered = (self.read)();
+            let before = Chosen::of(&app);
+            let mut chosen = before.clone();
+            for edit in &edits {
+                edit.apply(&mut chosen, &offered);
+            }
+            *self.offered.lock() = offered;
+            if chosen != before {
+                match toml::Value::try_from(&chosen) {
+                    Ok(value) => {
+                        app.settings.set(CHOSEN, value);
+                        if let Err(error) = app.settings.save() {
+                            not_saved(&app, error);
+                        }
+                    }
+                    Err(error) => not_saved(&app, error.into()),
                 }
             }
-            this.source.changed();
-            this.refresh();
-        };
-        match self.app.upgrade() {
-            Some(app) if skwir_core::scheduler::on_window_thread() => app.scheduler.spawn(
-                skwir_core::scheduler::Priority::Normal,
-                "skwird.kept_edit",
-                app.lifetime().child(),
-                run,
-            ),
-            _ => run(),
+            self.changed();
         }
+        self.refresh();
     }
 
     /// The list as the Index page draws it (`RecordSource`): from memory.
@@ -454,7 +619,7 @@ impl Kept {
         let records: Vec<serde_json::Value> = rows(&chosen, &offered)
             .iter()
             .map(|row| {
-                let id = row.path.to_string_lossy();
+                let id = id_of(&row.path);
                 serde_json::json!({
                     "id": id,
                     "name": Words::as_written(row.name.clone()).to_data(),
@@ -505,8 +670,23 @@ impl Kept {
                 },
             ],
             "note": note(&said, app.settings.get::<bool>(START).unwrap_or(true)).to_data(),
+            // The system service hears every folder: the list does nothing
+            // there (ADR-150, 6), as its note says.
+            "dimmed": said.scope == Some(protocol::Scope::System),
         })
     }
+}
+
+/// Say that what the user chose of the folders kept live was not saved.
+fn not_saved(app: &App, error: anyhow::Error) {
+    app.notify(
+        NotifyLevel::Error,
+        skwir_core::words!(
+            skwird_kept_not_saved = "The folders kept live were not saved: { $error }",
+            error = error,
+            note = "error: why the settings' file could not be written."
+        ),
+    );
 }
 
 /// What a row says under its name: its folder, and how skwird keeps it.
@@ -623,12 +803,14 @@ fn note(said: &Said, starts: bool) -> Words {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct IdArgs {
-    /// A folder of the list, as it names it.
+    /// A folder of the list, by its `id` there (its path, or `bytes:` and
+    /// its bytes in hex where its name is not UTF-8).
     id: String,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct TickArgs {
+    /// A folder of the list, by its `id` there.
     id: String,
     /// Kept live or not.
     on: bool,
@@ -644,14 +826,14 @@ struct FollowArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 struct PathArgs {
     /// A folder, absolute.
-    path: PathBuf,
+    path: PathArg,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct KeepArgs {
     /// A folder; none, the one selected in `pane`.
     #[serde(default)]
-    path: Option<PathBuf>,
+    path: Option<PathArg>,
     #[serde(default)]
     pane: Option<skwir_core::workspace::PaneId>,
 }
@@ -659,21 +841,21 @@ struct KeepArgs {
 /// The folder a command is about: given, else the one selected.
 fn folder_of(
     app: &App,
-    path: Option<PathBuf>,
+    path: Option<PathArg>,
     pane: Option<skwir_core::workspace::PaneId>,
 ) -> anyhow::Result<PathBuf> {
     if let Some(path) = path {
-        anyhow::ensure!(
-            path.is_absolute(),
-            "{} is not an absolute path",
-            path.display()
-        );
-        return Ok(path);
+        skwir_core::os_path::absolute(&path)?;
+        return Ok(path.into_inner());
     }
     let targets = app.targets(pane, Vec::new())?;
     match targets.as_slice() {
         [one] => Ok(one.path.clone()),
-        _ => anyhow::bail!("one folder is to be selected"),
+        _ => Err(skwir_core::words!(
+            skwird_keep_live_one = "Select one folder to keep live",
+            note = "An error of the command keeping a folder live, asked with no folder named and none or several selected."
+        )
+        .into()),
     }
 }
 
@@ -776,12 +958,8 @@ pub(crate) fn register(kept: &Arc<Kept>, app: &App) {
                     "Add a folder to those skwird keeps live for searches"
             ),
             move |args, _| {
-                anyhow::ensure!(
-                    args.path.is_absolute(),
-                    "{} is not an absolute path",
-                    args.path.display()
-                );
-                k.edit(Edit::Add(args.path));
+                skwir_core::os_path::absolute(&args.path)?;
+                k.edit(Edit::Add(args.path.into_inner()));
                 Ok(Outcome::Done)
             },
         )
@@ -798,7 +976,7 @@ pub(crate) fn register(kept: &Arc<Kept>, app: &App) {
                     "Take a folder you added off those skwird keeps live"
             ),
             move |args, _| {
-                k.edit(Edit::Remove(PathBuf::from(args.id)));
+                k.edit(Edit::Remove(path_of_id(&args.id)?));
                 Ok(Outcome::Done)
             },
         )
@@ -815,7 +993,7 @@ pub(crate) fn register(kept: &Arc<Kept>, app: &App) {
                     "Keep a folder of the list live, or not, as its tick says"
             ),
             move |args, _| {
-                k.edit(Edit::Tick(PathBuf::from(args.id), args.on));
+                k.edit(Edit::Tick(path_of_id(&args.id)?, args.on));
                 Ok(Outcome::Done)
             },
         )
@@ -834,7 +1012,15 @@ pub(crate) fn register(kept: &Arc<Kept>, app: &App) {
                 let source = match args.source.as_str() {
                     "own" => Source::Own,
                     "bookmarks" => Source::Bookmarks,
-                    other => anyhow::bail!("no source {other}: own or bookmarks"),
+                    other => {
+                        return Err(skwir_core::words!(
+                            skwird_kept_no_source =
+                                "{ $source } is no source of folders kept live: own or bookmarks",
+                            source = skwir_core::words::Name(other.to_owned()),
+                            note = "An error of the command following a source of the folders kept live: source is what was asked, as written; own and bookmarks are the values it takes, as written."
+                        )
+                        .into());
+                    }
                 };
                 k.edit(Edit::Follow(source, args.on));
                 Ok(Outcome::Done)
@@ -880,7 +1066,11 @@ pub(crate) fn register(kept: &Arc<Kept>, app: &App) {
                                 ),
                                 "eye",
                                 165,
-                                Invocation::with_args("skwird.keep_live", &serde_json::json!({ "path": path })),
+                                // A name that is not UTF-8 written whole.
+                                Invocation::with_args(
+                                    "skwird.keep_live",
+                                    &serde_json::json!({ "path": PathArg::from(path.as_path()) }),
+                                ),
                             )
                             .checked(on),
                         ]
@@ -901,8 +1091,8 @@ pub(crate) fn register(kept: &Arc<Kept>, app: &App) {
             replaces: Vec::new(),
         },
     );
-    // What skwird says now, for the list and the menu.
-    kept.refresh();
+    // Nothing is asked of skwird here (ADR-150, 3): the list asks when it
+    // is listed, a search at its connection.
 }
 
 #[cfg(test)]
@@ -1001,10 +1191,6 @@ mod tests {
             !Edit::Add(PathBuf::from("/data/x")).apply(&mut chosen, &offered),
             "once"
         );
-        assert!(
-            !Edit::Add(PathBuf::from("/h/Documents")).apply(&mut chosen, &offered),
-            "a source's folder is not added again"
-        );
         assert!(Edit::Tick(PathBuf::from("/h/Documents"), false).apply(&mut chosen, &offered));
         assert_eq!(chosen.off, [PathBuf::from("/h/Documents")]);
         // Added back from the menu: ticked again, not added.
@@ -1020,5 +1206,260 @@ mod tests {
         assert!(Edit::Add(PathBuf::from("/data/y")).apply(&mut chosen, &offered));
         assert!(Edit::Remove(PathBuf::from("/data/y")).apply(&mut chosen, &offered));
         assert!(chosen.added.is_empty());
+    }
+
+    /// A source switched off offers nothing: its folder kept from the menu
+    /// is added, and off again taken off the list. One added by the user
+    /// that a source offers too is kept under Added by you, so that it
+    /// stays once the source no longer offers it; off from the menu, it is
+    /// unticked under its source as well.
+    #[test]
+    fn a_folder_of_a_source_not_followed_is_added_and_an_explicit_add_is_kept() {
+        let offered = offered();
+        let wip = PathBuf::from("/h/wip");
+        let mut chosen = Chosen {
+            bookmarks: false,
+            ..Chosen::default()
+        };
+        assert!(!is_kept(&chosen, &offered, &wip));
+        assert!(Edit::Toggle(wip.clone()).apply(&mut chosen, &offered));
+        assert_eq!(chosen.added, std::slice::from_ref(&wip));
+        assert!(is_kept(&chosen, &offered, &wip), "kept, as the menu said");
+        assert!(Edit::Toggle(wip.clone()).apply(&mut chosen, &offered));
+        assert!(chosen.added.is_empty() && chosen.off.is_empty());
+        assert!(!is_kept(&chosen, &offered, &wip));
+
+        let mut chosen = Chosen::default();
+        let documents = PathBuf::from("/h/Documents");
+        assert!(Edit::Add(documents.clone()).apply(&mut chosen, &offered));
+        assert_eq!(chosen.added, std::slice::from_ref(&documents), "recorded");
+        let listed = rows(&chosen, &offered);
+        assert_eq!(
+            listed.iter().filter(|row| row.path == documents).count(),
+            1,
+            "listed once"
+        );
+        assert_eq!(listed[0].source, Source::Added);
+        let gone = Offered::default();
+        assert!(
+            is_kept(&chosen, &gone, &documents),
+            "kept once no source offers it"
+        );
+        assert!(Edit::Toggle(documents.clone()).apply(&mut chosen, &offered));
+        assert!(chosen.added.is_empty() && chosen.off == [documents.clone()]);
+        assert!(!is_kept(&chosen, &offered, &documents));
+    }
+
+    /// A folder's id names it whole, a name that is not UTF-8 too, and what
+    /// the user chose is saved so.
+    #[test]
+    fn every_folder_is_named_and_kept_whole() {
+        let plain = PathBuf::from("/h/Documents");
+        assert_eq!(id_of(&plain), "/h/Documents");
+        assert_eq!(path_of_id(&id_of(&plain)).unwrap(), plain);
+        assert!(path_of_id("relative/folder").is_err(), "absolute only");
+        assert!(
+            path_of_id("bytes:zz").is_err(),
+            "no bytes: read as a relative path"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let odd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/h/caf\xe9 \xff"));
+            let id = id_of(&odd);
+            assert!(id.starts_with(BYTES), "{id}");
+            assert_eq!(path_of_id(&id).unwrap(), odd);
+            let chosen = Chosen {
+                added: vec![odd.clone(), plain.clone()],
+                off: vec![odd.clone()],
+                ..Chosen::default()
+            };
+            let saved = toml::Value::try_from(&chosen).expect("saved whole");
+            assert_eq!(saved.try_into::<Chosen>().unwrap(), chosen);
+        }
+        // What was saved before, paths as text, is read as it was.
+        let before: Chosen = toml::from_str("added = [\"/data/x\"]\nown = false\n").unwrap();
+        assert_eq!(before.added, [PathBuf::from("/data/x")]);
+        assert!(!before.own && before.bookmarks);
+    }
+
+    /// An app with Kept live registered, what the sources offer read by a
+    /// counter, and the window's wakes counted.
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        app: Arc<App>,
+        kept: Arc<Kept>,
+        reads: Arc<std::sync::atomic::AtomicUsize>,
+        wakes: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    fn fixture(engines: Engines) -> Fixture {
+        use std::sync::atomic::AtomicUsize;
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(dir.path())).unwrap();
+        let reads = Arc::new(AtomicUsize::new(0));
+        let kept = Kept::reading(
+            app.weak(),
+            engines,
+            Box::new({
+                let reads = Arc::clone(&reads);
+                move || {
+                    reads.fetch_add(1, Ordering::Relaxed);
+                    offered()
+                }
+            }),
+        );
+        register(&kept, &app);
+        let wakes = Arc::new(AtomicUsize::new(0));
+        app.set_waker(Some({
+            let wakes = Arc::clone(&wakes);
+            Arc::new(move || {
+                wakes.fetch_add(1, Ordering::Relaxed);
+            })
+        }));
+        Fixture {
+            _dir: dir,
+            app,
+            kept,
+            reads,
+            wakes,
+        }
+    }
+
+    /// Until `done`, under a deadline for a hang.
+    fn until(done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "never done");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// Ticks pressed in the window faster than they are saved are kept in
+    /// the order pressed, on a worker, and the window is woken to show them.
+    #[test]
+    fn edits_from_the_window_are_kept_in_the_order_made_and_wake_it() {
+        let f = fixture(Engines::None);
+        skwir_core::scheduler::mark_window_thread(&f.app.scheduler);
+        {
+            // Asked while another keeps edits: they wait, then are kept.
+            let _keeping = f.kept.keeping.lock();
+            for n in 0..21 {
+                let args = serde_json::json!({ "id": "/h/Documents", "on": n % 2 == 1 });
+                f.app
+                    .dispatch(&Invocation::with_args("skwird.kept_tick", &args))
+                    .unwrap();
+            }
+            assert_eq!(f.kept.edits.lock().len(), 21, "queued, none kept here");
+        }
+        until(|| f.kept.edits.lock().is_empty());
+        drop(f.kept.keeping.lock());
+        assert_eq!(
+            Chosen::of(&f.app).off,
+            [PathBuf::from("/h/Documents")],
+            "the last pressed holds"
+        );
+        assert!(
+            f.wakes.load(Ordering::Relaxed) > 0,
+            "the window is woken once they are kept"
+        );
+        assert!(f.kept.source.revision() > 0, "the list asked again");
+    }
+
+    /// A refresh asked while one runs (a folder added meanwhile) makes it
+    /// go once more, however many were asked.
+    #[test]
+    fn a_refresh_asked_while_one_runs_goes_once_more() {
+        let f = fixture(Engines::None);
+        {
+            // Held, the refresh cannot say what it found until let go.
+            let _said = f.kept.said.lock();
+            for _ in 0..3 {
+                f.kept.refresh();
+            }
+        }
+        until(|| !f.kept.refreshing.lock().running);
+        assert_eq!(f.reads.load(Ordering::Relaxed), 2, "once, then once more");
+    }
+
+    /// Registering asks nothing of skwird (ADR-150, 3), and the menu's
+    /// entry waits for a user's engine (10).
+    #[test]
+    fn nothing_is_asked_of_skwird_at_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = fixture(Engines::At(dir.path().join("socket")));
+        assert!(!f.kept.refreshing.lock().running, "no refresh");
+        assert_eq!(f.reads.load(Ordering::Relaxed), 0, "no source read");
+        assert!(!f.kept.user_engine());
+        let menu = f
+            .app
+            .dispatch(&Invocation::with_args(
+                "skwird.keep_live_menu",
+                &serde_json::json!({ "path": "/h/Documents" }),
+            ))
+            .unwrap();
+        let Outcome::Value(menu) = menu else {
+            panic!("an answer");
+        };
+        assert_eq!(menu["items"], serde_json::json!([]));
+    }
+
+    /// Under the system service, which hears every folder, the list is
+    /// dimmed (ADR-150, 6); under a user's engine, not.
+    #[test]
+    fn the_list_is_dimmed_under_the_system_service() {
+        let f = fixture(Engines::None);
+        f.kept.said(
+            Said {
+                scope: Some(protocol::Scope::System),
+                ..Said::default()
+            },
+            None,
+        );
+        assert_eq!(f.kept.list(&f.app)["dimmed"], true);
+        f.kept.said(
+            Said {
+                scope: Some(protocol::Scope::User),
+                ..Said::default()
+            },
+            None,
+        );
+        assert_eq!(f.kept.list(&f.app)["dimmed"], false);
+    }
+
+    /// The commands' errors are words, in the reader's language.
+    #[test]
+    fn what_a_command_refuses_is_said_in_words() {
+        let f = fixture(Engines::None);
+        for (command, args) in [
+            (
+                "skwird.kept_follow",
+                serde_json::json!({ "source": "nope", "on": true }),
+            ),
+            ("skwird.kept_add", serde_json::json!({ "path": "relative" })),
+            (
+                "skwird.kept_tick",
+                serde_json::json!({ "id": "relative", "on": true }),
+            ),
+            (
+                "skwird.kept_remove",
+                serde_json::json!({ "id": "relative" }),
+            ),
+            (
+                "skwird.keep_live",
+                serde_json::json!({ "path": "relative" }),
+            ),
+        ] {
+            let error = f
+                .app
+                .dispatch(&Invocation::with_args(command, &args))
+                .expect_err(command);
+            assert!(
+                error
+                    .chain()
+                    .any(|link| link.downcast_ref::<Words>().is_some()),
+                "{command}: {error:#}"
+            );
+        }
     }
 }

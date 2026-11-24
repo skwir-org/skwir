@@ -113,6 +113,10 @@ class Checked(Window):
         Atspi.init()
         if not until(lambda: self.find_app() is not None, 60):
             fail(f"the window never came on the bus; see {self.root / 'skwir.log'}")
+        # A `skwir cmd` before the window listens runs headless, doing
+        # nothing in it: a debug build comes on the bus before it listens.
+        if not until((self.runtime / "skwir" / "control.sock").exists, 60):
+            fail(f"the window never listened for scripts; see {self.root / 'skwir.log'}")
 
     def answer(self, command, args=None):
         """What a command answers, as a script reads it."""
@@ -299,6 +303,54 @@ def run(w):
     w.shot("4b-index-note")
     roles = {(role, name) for role, name in named(w)}
     print("  switches and ticks:", sorted(r for r in roles if r[0] in ("check box", "toggle button", "switch")))
+
+    # A tick pressed as a user presses it: the box shows what it is at
+    # once, its keeper waking the window once the change is kept, and
+    # pressed again it is back (ADR-150, 6; settings.md: the changes
+    # queued in the order made).
+    def docs_tick():
+        boxes = [n for n in a11y.nodes_of(w, "check box")
+                 if (n.get_description() or "").startswith("~/files/docs ·")]
+        return boxes[0] if boxes else None
+
+    def ticked():
+        box = docs_tick()
+        return None if box is None else a11y.has(box, "checked")
+
+    def press(node):
+        # gpui says where a node is in its window, whatever the coordinates
+        # asked: the window's place on the display is X's.
+        box = node.get_extents(Atspi.CoordType.WINDOW)
+        xdotool = w.args.xdotool
+        wid = subprocess.run([xdotool, "search", "--name", "skwir$"], env=w.env(),
+                             capture_output=True, text=True).stdout.split()[0]
+        at = dict(line.split("=", 1) for line in subprocess.run(
+            [xdotool, "getwindowgeometry", "--shell", wid], env=w.env(),
+            capture_output=True, text=True, check=True).stdout.split())
+        x = int(at["X"]) + box.x + box.width // 2
+        y = int(at["Y"]) + box.y + box.height // 2
+        subprocess.run([xdotool, "mousemove", str(x), str(y)], env=w.env(), check=True)
+        # Held: a press and its release within a frame may be lost.
+        subprocess.run([xdotool, "mousedown", "1"], env=w.env(), check=True)
+        time.sleep(0.3)
+        subprocess.run([xdotool, "mouseup", "1"], env=w.env(), check=True)
+
+    def kept_docs():
+        listed = w.answer("skwird.kept_list")["records"]
+        return [r["tick"]["on"] for r in listed if r["id"] == str(files / "docs")]
+
+    check("the desktop's Documents is ticked", until(lambda: ticked() is True, 30)
+          or print("  ticks:", [(n.get_name(), n.get_description())
+                                for n in a11y.nodes_of(w, "check box")]))
+    press(docs_tick())
+    check("pressed, its box shows it unticked, nothing else asked to draw",
+          until(lambda: ticked() is False, 10) or print("  ticked:", ticked()))
+    check("its keeper says it unticked", kept_docs() == [False] or print("  said:", kept_docs()))
+    w.shot("4c-index-unticked")
+    press(docs_tick())
+    check("pressed again, ticked again", until(lambda: ticked() is True, 10)
+          or print("  ticked:", ticked()))
+    check("its keeper says it ticked", kept_docs() == [True] or print("  said:", kept_docs()))
     w.cmd("skwird.kept_add", {"path": str(files / "extra")})
     check("a folder added shows under Added by you",
           until(lambda: says(w, "Added by you") and says(w, "~/files/extra"), 30)

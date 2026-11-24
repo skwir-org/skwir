@@ -19,6 +19,9 @@ skwird_keep_live_menu = 菜单中的实时跟踪
 skwird_keep_live_menu_description = 实时跟踪文件夹的菜单项：仅当某次搜索找到了由用户运行的 skwird 引擎后才出现，该引擎会实时跟踪文件夹
 
 # draft
+skwird_keep_live_one = 请选择一个要实时跟踪的文件夹
+
+# draft
 skwird_kept_add = 添加文件夹…
 
 # draft
@@ -68,6 +71,9 @@ skwird_kept_missing = { $folder } · 该处没有文件夹
 
 # draft
 skwird_kept_name = 文件夹
+
+# draft
+skwird_kept_no_source = { $source }不是实时跟踪文件夹的来源：own 或 bookmarks
 
 # draft
 skwird_kept_not = { $folder } · 未实时跟踪

@@ -181,7 +181,10 @@ pub(crate) fn find(engines: &Engines, start: bool) -> Option<Find> {
     find.runtime = skwir_core::xdg::runtime_dir();
     find.state = skwir_core::xdg::state_home();
     match engines {
-        Engines::Machine if start => {}
+        // Where the Plugins page finds it (`requirements`): on macOS an
+        // application's `PATH` lacks Homebrew's folders, which the client,
+        // given a bare name, would not look in.
+        Engines::Machine if start => find.start = skwir_core::os_path::find_program("skwird"),
         Engines::Machine => find.start = None,
         Engines::At(socket) => {
             find.socket = Some(socket.clone());
@@ -421,11 +424,16 @@ fn totals_of(totals: &protocol::Totals) -> Totals {
     }
 }
 
+/// Whether skwird's live sizes and times are proven here. Not on Windows
+/// yet: skwird's live reread takes times from a folder's listing there,
+/// updated when the file is closed, so a file being written is behind.
+/// There a journal's `attrs` is never said complete (`journal_of`), nor a
+/// coverage's `attrs` live (`coverage_of`): a dated search, Usage's totals
+/// and a tag set's follower stat for themselves.
+const ATTRS_LIVE: bool = !cfg!(windows);
+
 /// A journal in core's words, how far it is every change as skwird says
-/// it. A change of what a stat says alone is not proven on Windows yet
-/// (skwird's live reread takes times from a folder's listing there,
-/// updated when the file is closed): there `attrs` is never said
-/// complete.
+/// it, its `attrs` as `ATTRS_LIVE` says.
 fn journal_of(changes: protocol::Changes) -> Journal {
     let noted = |entry: protocol::Entry| Noted {
         path: entry.path.to_path(),
@@ -451,7 +459,7 @@ fn journal_of(changes: protocol::Changes) -> Journal {
             token: changes.token,
         },
         names: changes.complete.names,
-        attrs: changes.complete.attrs && !cfg!(windows),
+        attrs: changes.complete.attrs && ATTRS_LIVE,
         holes: changes
             .holes
             .into_iter()
@@ -584,10 +592,22 @@ fn kind_of(kind: EntryKind) -> protocol::Kind {
     }
 }
 
+/// A coverage in core's words, its `attrs` as `ATTRS_LIVE` says.
 fn coverage_of(coverage: protocol::Coverage) -> Coverage {
+    coverage_in(coverage, ATTRS_LIVE)
+}
+
+/// A coverage in core's words; live sizes and times said checked where
+/// they are not proven (`attrs_live`): as of the full read live began at,
+/// which proves names and kinds alone (`Proof::Checked`).
+fn coverage_in(coverage: protocol::Coverage, attrs_live: bool) -> Coverage {
+    let attrs = match proof_of(coverage.attrs) {
+        Proof::Live { since } if !attrs_live => Proof::Checked { at: since },
+        proof => proof,
+    };
     Coverage {
         names: proof_of(coverage.names),
-        attrs: proof_of(coverage.attrs),
+        attrs,
         holes: coverage
             .holes
             .into_iter()

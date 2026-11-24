@@ -19,6 +19,9 @@ skwird_keep_live_menu = Proposer « Suivre en direct pour les recherches » 
 skwird_keep_live_menu_description = L’élément du menu qui suit un dossier en direct : seulement une fois qu’une recherche a trouvé un moteur de skwird propre à l’utilisateur, qui suit les dossiers en direct
 
 # draft
+skwird_keep_live_one = Sélectionnez un seul dossier à suivre en direct
+
+# draft
 skwird_kept_add = Ajouter un dossier…
 
 # draft
@@ -68,6 +71,9 @@ skwird_kept_missing = { $folder } · aucun dossier à cet endroit
 
 # draft
 skwird_kept_name = Dossier
+
+# draft
+skwird_kept_no_source = { $source } n’est pas une source de dossiers suivis en direct : own ou bookmarks
 
 # draft
 skwird_kept_not = { $folder } · pas suivi en direct

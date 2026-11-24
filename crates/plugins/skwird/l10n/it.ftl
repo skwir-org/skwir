@@ -19,6 +19,9 @@ skwird_keep_live_menu = Segui in tempo reale nel menu
 skwird_keep_live_menu_description = La voce del menu per seguire in tempo reale una cartella: solo dopo che una ricerca ha trovato un motore di skwird dell’utente, che segue le cartelle in tempo reale
 
 # draft
+skwird_keep_live_one = Seleziona una sola cartella da seguire in tempo reale
+
+# draft
 skwird_kept_add = Aggiungi cartella…
 
 # draft
@@ -68,6 +71,9 @@ skwird_kept_missing = { $folder } · nessuna cartella lì
 
 # draft
 skwird_kept_name = Cartella
+
+# draft
+skwird_kept_no_source = { $source } non è una fonte di cartelle seguite in tempo reale: own o bookmarks
 
 # draft
 skwird_kept_not = { $folder } · non seguita in tempo reale
