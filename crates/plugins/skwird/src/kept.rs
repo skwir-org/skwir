@@ -565,15 +565,12 @@ impl Kept {
     /// What a running engine keeps, the list sent to it: what is asked
     /// stopped once `cancel` is (the program ending).
     fn ask_engine(&self, cancel: &CancelToken) {
-        let client = crate::find(&self.engines, false).and_then(|find| Client::connect(&find).ok());
-        let Some(mut client) = client else {
+        let client = crate::find(&self.engines, false)
+            .and_then(|find| crate::connect(&find, cancel, crate::HELLO).ok());
+        let Some((mut client, _stop)) = client else {
             self.said(Said::default(), Some((self.read)()));
             return;
         };
-        let _stop = client
-            .stopper()
-            .ok()
-            .map(|stopper| cancel.on_cancel(move || stopper.stop()));
         self.reconcile(&mut client);
     }
 

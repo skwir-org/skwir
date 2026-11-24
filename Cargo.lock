@@ -10607,6 +10607,7 @@ dependencies = [
 name = "skwird-client"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "skwird-protocol",
  "windows-sys 0.61.2",
 ]

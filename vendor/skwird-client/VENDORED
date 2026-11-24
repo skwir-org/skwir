@@ -1,5 +1,5 @@
 A copy of skwird's skwird-client, made by skwird's tools/vendor-client from
-6e061fedcd375f75581eddd12c3c3a14efdc241a.
+be46cd7d8f62dbcf8f5171e98db01f0a07f2120c.
 
 Do not change it here: change skwird, and copy it again. It depends on
 serde and serde_json (and the client on the protocol's copy beside it,

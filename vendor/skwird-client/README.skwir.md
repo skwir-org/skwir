@@ -31,4 +31,12 @@ skwird commit it was copied from.
   anything, and starts an engine without a console (ADR-074), through
   windows-sys (its only dependency there, from Skwir's lockfile). No
   engine serves on Windows yet (skwird's phase 4), so it finds none. On
-  macOS it finds no engine and starts none that answers (phase 5).
+  macOS it looks for the system service at `/var/run/skwird/socket` and
+  for the user's engine in the user's own temporary folder, as the engine
+  serves there (macOS sets no `XDG_RUNTIME_DIR`; libc's `confstr`, its
+  only dependency there). skwird's phase 5 builds a user's engine on
+  GitHub's macOS runners; Skwir has never asked one.
+- **Stopped.** A connect is stopped with a `Stopper` made before it
+  (`Client::connect_stopped`): its hello and a started engine's wait end
+  at once. Skwir's plugin stops it from the search's token and after a
+  few seconds without a hello, by a timer of its own (`alarm.rs`).

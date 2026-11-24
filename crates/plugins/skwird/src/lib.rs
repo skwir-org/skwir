@@ -6,14 +6,16 @@
 //!
 //! Each search opens a connection of its own, at its first ask and never
 //! at start (ADR-128, ADR-141), and gives it up through the client's
-//! `Stopper` once the search's token is cancelled; none is kept between
-//! searches, so an engine started on demand ends a minute after the last
+//! `Stopper` once the search's token is cancelled, its connect included,
+//! or once its engine says no hello within `HELLO` (`connect`); none is
+//! kept between searches, so an engine started on demand ends a minute after the last
 //! one. Every error is no engine, and the search walks. The Secrets folders
 //! (ADR-125) are kept out of the index through `exclude`, once a run and
 //! again once the exclusions change. Where none runs, the first search
 //! starts one unless the Index page's switch says not (`skwird.start`).
 //! What the user keeps live is `kept`'s (ADR-150, 6).
 
+mod alarm;
 mod kept;
 
 use std::collections::HashSet;
@@ -35,7 +37,7 @@ use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::plugin::{Category, Plugin, Requirement};
 use skwir_core::words::Words;
 use skwird_client::protocol;
-use skwird_client::{Client, Error, Find};
+use skwird_client::{Client, Error, Find, Stopper};
 
 pub const ID: &str = "skwird";
 
@@ -52,6 +54,12 @@ const SILENCE: Duration = Duration::from_secs(60);
 /// each key is typed (`NameIndex::covers`): a round trip, its hello
 /// included; one busier than that is not counted on.
 const PROBE_SILENCE: Duration = Duration::from_millis(500);
+
+/// The longest an engine may take to say hello, a started one's wait
+/// besides (`connect`): an engine answers it at once, a first build under
+/// way included. One that takes the connection and says nothing (stopped,
+/// not gone) is not waited for past it, its whole `SILENCE`.
+const HELLO: Duration = Duration::from_secs(5);
 
 /// What answered, said where the answer is (`RestsOn::by`).
 pub fn by() -> Words {
@@ -135,6 +143,7 @@ impl Plugin for SkwirdPlugin {
                 engines,
                 secrets: Mutex::default(),
                 kept,
+                hello: HELLO,
             }),
         );
     }
@@ -161,6 +170,8 @@ struct Index {
     secrets: Mutex<Option<Secrets>>,
     /// What the user keeps live, sent at each connection.
     kept: Arc<kept::Kept>,
+    /// How long a connect waits for a hello: `HELLO`, or a test's.
+    hello: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,6 +204,30 @@ pub(crate) fn find(engines: &Engines, start: bool) -> Option<Find> {
         Engines::None => return None,
     }
     Some(find)
+}
+
+/// A connection made as `find` says, given up on once `cancel` is, its
+/// connect included, and once its engine says no hello within `hello` (a
+/// started engine's wait besides): what keeps the stop is held as long as
+/// the connection.
+pub(crate) fn connect(
+    find: &Find,
+    cancel: &CancelToken,
+    hello: Duration,
+) -> Result<(Client, OnCancel), Error> {
+    let stopper = Stopper::new();
+    let stop = cancel.on_cancel({
+        let stopper = stopper.clone();
+        move || stopper.stop()
+    });
+    let time = if find.start.is_some() {
+        hello + find.wait
+    } else {
+        hello
+    };
+    let client = alarm::within(time, &stopper, || Client::connect_stopped(find, &stopper))
+        .unwrap_or(Err(Error::Stopped))?;
+    Ok((client, stop))
 }
 
 impl Index {
@@ -249,11 +284,9 @@ impl NameIndex for Index {
         if cancel.is_cancelled() {
             return None;
         }
-        let mut client = Client::connect(&find)
+        let (mut client, stop) = connect(&find, cancel, self.hello)
             .map_err(|e| said("connect", &e))
             .ok()?;
-        let stopper = client.stopper().map_err(|e| said("stopper", &e)).ok()?;
-        let stop = cancel.on_cancel(move || stopper.stop());
         self.keep_secrets_out(&mut client);
         // What the user keeps live, sent as differences (a user's engine).
         self.kept.reconcile(&mut client);
@@ -279,9 +312,8 @@ impl NameIndex for Index {
         if cancel.is_cancelled() {
             return None;
         }
-        let mut client = Client::connect(&find).ok()?;
-        let stopper = client.stopper().ok()?;
-        let _stop = cancel.on_cancel(move || stopper.stop());
+        // Its hello waited for no longer than the probe's silence.
+        let (mut client, _stop) = connect(&find, cancel, PROBE_SILENCE).ok()?;
         client.coverage(&q.root).ok().map(coverage_of)
     }
 
@@ -292,11 +324,9 @@ impl NameIndex for Index {
         if cancel.is_cancelled() {
             return None;
         }
-        let mut client = Client::connect(&find)
+        let (mut client, stop) = connect(&find, cancel, self.hello)
             .map_err(|e| said("connect", &e))
             .ok()?;
-        let stopper = client.stopper().map_err(|e| said("stopper", &e)).ok()?;
-        let stop = cancel.on_cancel(move || stopper.stop());
         let coverage = client
             .coverage(root)
             .map_err(|e| said("coverage", &e))

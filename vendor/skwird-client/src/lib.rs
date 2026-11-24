@@ -12,7 +12,9 @@
 //! own, its server checked to run as the user.
 //!
 //! Every call can be given up on: after a silence of the engine's
-//! ([`Find::silence`]), or from another thread ([`Client::stopper`]).
+//! ([`Find::silence`]), or from another thread ([`Client::stopper`]). So
+//! can a connect, its hello and a started engine's wait included, with a
+//! stopper made before it ([`Client::connect_stopped`]).
 //!
 //! [`fake`] is an engine of a test's making, for clients' tests.
 //!
@@ -22,10 +24,8 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-#[cfg(any(unix, windows))]
-use std::sync::Arc;
-#[cfg(any(unix, windows))]
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 pub use skwird_protocol as protocol;
@@ -34,6 +34,8 @@ use skwird_protocol::Request;
 use skwird_protocol::{Answer, Ask, Changes, Coverage, Done, Entry, Query, Welcome, WirePath};
 
 pub mod fake;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 pub mod pipe;
 
@@ -123,12 +125,10 @@ impl Find {
         }
     }
 
-    /// The user's runtime folder: as given, or `XDG_RUNTIME_DIR`.
+    /// The user's runtime folder: as given, or [`runtime_folder`].
     #[cfg(unix)]
     fn runtime(&self) -> Option<PathBuf> {
-        self.runtime
-            .clone()
-            .or_else(|| absolute(std::env::var_os("XDG_RUNTIME_DIR")))
+        self.runtime.clone().or_else(runtime_folder)
     }
 
     /// Where to look for an engine, in turn, where no socket is given.
@@ -157,9 +157,10 @@ impl Find {
     fn started(&self) -> Result<PathBuf, Error> {
         match &self.socket {
             Some(s) => Ok(s.clone()),
-            None => self.runtime().map(|r| socket_in(&r)).ok_or_else(|| {
-                Error::NoEngine("XDG_RUNTIME_DIR is not set, or not absolute".into())
-            }),
+            None => self
+                .runtime()
+                .map(|r| socket_in(&r))
+                .ok_or_else(|| Error::NoEngine(NO_RUNTIME.into())),
         }
     }
 
@@ -184,22 +185,47 @@ fn absolute(value: Option<OsString>) -> Option<PathBuf> {
 }
 
 /// The system service's socket (phase 3); on Windows, its pipe (phase 4,
-/// step 7).
+/// step 7); on macOS, which has no `/run`, in `/var/run`, where its
+/// system's runtime files are.
 pub fn system_socket() -> PathBuf {
     if cfg!(windows) {
         PathBuf::from(r"\\.\pipe\skwird")
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from("/var/run/skwird/socket")
     } else {
         PathBuf::from("/run/skwird/socket")
     }
 }
 
 /// The user's engine's socket, where the user has a runtime folder
-/// (`XDG_RUNTIME_DIR`, absolute); on Windows, the user's pipe.
+/// ([`runtime_folder`]); on Windows, the user's pipe.
 pub fn user_socket() -> Option<PathBuf> {
     #[cfg(windows)]
     return pipe::user_pipe();
     #[cfg(not(windows))]
-    absolute(std::env::var_os("XDG_RUNTIME_DIR")).map(|r| socket_in(&r))
+    runtime_folder().map(|r| socket_in(&r))
+}
+
+/// What a client says where it finds no runtime folder.
+#[cfg(unix)]
+const NO_RUNTIME: &str = if cfg!(target_os = "macos") {
+    "no runtime folder: XDG_RUNTIME_DIR is not absolute, and the system gives no temporary folder of yours"
+} else {
+    "XDG_RUNTIME_DIR is not set, or not absolute"
+};
+
+/// The user's runtime folder, where their engine's socket is: the one
+/// `XDG_RUNTIME_DIR` names (absolute), on every Unix. macOS sets none:
+/// there, the user's own temporary folder (`/var/folders/…/T/`, as the
+/// system gives it for their user, whatever `TMPDIR` says), theirs alone
+/// and on the machine's own disk. The engine reads it so (`skwird::dirs`):
+/// a client and its engine must agree, or a user would have two.
+#[cfg(unix)]
+pub fn runtime_folder() -> Option<PathBuf> {
+    let named = absolute(std::env::var_os("XDG_RUNTIME_DIR"));
+    #[cfg(target_os = "macos")]
+    let named = named.or_else(macos::user_temp);
+    named
 }
 
 #[cfg(not(windows))]
@@ -213,9 +239,14 @@ pub(crate) type Conn = std::os::unix::net::UnixStream;
 #[cfg(windows)]
 pub(crate) type Conn = pipe::Stream;
 
+/// No connection is made on this system (rule 7): a [`Stopper`] holds
+/// none.
+#[cfg(not(any(unix, windows)))]
+pub(crate) type Conn = std::convert::Infallible;
+
 /// A connection to `at`, each read and write waited for at most `silence`.
 #[cfg(unix)]
-fn connect_to(at: &Path, silence: Option<Duration>) -> std::io::Result<Conn> {
+fn connect_to(at: &Path, silence: Option<Duration>, _: &Stop) -> std::io::Result<Conn> {
     let stream = std::os::unix::net::UnixStream::connect(at)?;
     // The socket's own, so its clone's too.
     stream.set_read_timeout(silence)?;
@@ -224,13 +255,24 @@ fn connect_to(at: &Path, silence: Option<Duration>) -> std::io::Result<Conn> {
 }
 
 /// A connection to the pipe `at`, each read and write waited for at most
-/// `silence`; a free instance of it, as long, or 5 s.
+/// `silence`; a free instance of it, as long, or 5 s, unless stopped
+/// meanwhile: waited for a little at a time, as a stop cannot end the
+/// system's wait for one.
 #[cfg(windows)]
-fn connect_to(at: &Path, silence: Option<Duration>) -> std::io::Result<Conn> {
-    let busy = silence.unwrap_or(Duration::from_secs(5));
-    let mut stream = pipe::Stream::connect(at.as_os_str(), Some(busy))?;
-    stream.set_timeout(silence);
-    Ok(stream)
+fn connect_to(at: &Path, silence: Option<Duration>, stop: &Stop) -> std::io::Result<Conn> {
+    let busy = i32::try_from(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY).ok();
+    let deadline = std::time::Instant::now() + silence.unwrap_or(Duration::from_secs(5));
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match pipe::Stream::connect(at.as_os_str(), Some(left.min(Duration::from_millis(100)))) {
+            Ok(mut stream) => {
+                stream.set_timeout(silence);
+                return Ok(stream);
+            }
+            Err(e) if e.raw_os_error() == busy && !left.is_zero() && !stop.stopped() => {}
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Stop every read and write on the connection, from any thread.
@@ -244,6 +286,11 @@ fn shut(conn: &Conn) {
     conn.shutdown();
 }
 
+#[cfg(not(any(unix, windows)))]
+fn shut(conn: &Conn) {
+    match *conn {}
+}
+
 /// A connection to an engine.
 #[cfg(any(unix, windows))]
 pub struct Client {
@@ -252,8 +299,8 @@ pub struct Client {
     next: u64,
     welcome: Welcome,
     silence: Option<Duration>,
-    /// Set by a [`Stopper`].
-    stopped: Arc<AtomicBool>,
+    /// What its [`Stopper`] stops.
+    stop: Arc<Stop>,
     /// Set once the engine said nothing for `silence`: what it says after
     /// would be read from the middle of a message, so the connection is
     /// closed.
@@ -267,18 +314,68 @@ pub struct Client {
     never: std::convert::Infallible,
 }
 
-/// What stops a connection's calls from another thread, taken from it
-/// with [`Client::stopper`]: a call waiting on the engine returns at once
-/// with [`Error::Stopped`], and so does every call after. A search given
-/// up on stops so, whatever the engine is doing.
-#[derive(Clone)]
+/// What stops a connection's calls from another thread: taken from it
+/// with [`Client::stopper`], or made before it ([`Stopper::new`]) and
+/// given to [`Client::connect_stopped`], whose connect it stops too. A
+/// call waiting on the engine returns at once with [`Error::Stopped`],
+/// and so does every call after, and every connect given it after. A
+/// search given up on stops so, whatever the engine is doing. One stopper
+/// is for one connection: clones of it stop the same.
+#[derive(Clone, Default)]
 pub struct Stopper {
+    stop: Arc<Stop>,
+}
+
+/// What a [`Stopper`] stops, shared with the connection it stops.
+#[derive(Default)]
+struct Stop {
+    stopped: AtomicBool,
+    /// The connection being made, or made, while its client keeps it: the
+    /// one a stop closes.
+    conn: Mutex<Option<Conn>>,
+    /// Woken by a stop, so that a started engine's wait ends at once.
+    woken: Condvar,
+}
+
+impl Stop {
+    fn stopped(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
+    }
+
+    fn held(&self) -> MutexGuard<'_, Option<Conn>> {
+        // What is held is set or taken whole: a thread that panicked
+        // holding it left nothing half done.
+        self.conn.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hold `conn` as the connection a stop closes, refused (`conn`
+    /// closed) if one came already. Checked under the lock a stop takes to
+    /// close it: either the stop is seen here, or `conn` is held before it
+    /// is closed.
     #[cfg(any(unix, windows))]
-    conn: Arc<Conn>,
+    fn hold(&self, conn: Conn) -> Result<(), Error> {
+        let mut held = self.held();
+        if self.stopped() {
+            return Err(Error::Stopped);
+        }
+        *held = Some(conn);
+        Ok(())
+    }
+
+    /// Wait `pause`, or less if a stop comes: whether one came.
     #[cfg(any(unix, windows))]
-    stopped: Arc<AtomicBool>,
-    #[cfg(not(any(unix, windows)))]
-    never: std::convert::Infallible,
+    fn pause(&self, pause: Duration) -> bool {
+        let held = self.held();
+        if self.stopped() {
+            return true;
+        }
+        drop(
+            self.woken
+                .wait_timeout(held, pause)
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        self.stopped()
+    }
 }
 
 impl std::fmt::Debug for Stopper {
@@ -288,34 +385,58 @@ impl std::fmt::Debug for Stopper {
 }
 
 impl Stopper {
-    /// Stop the connection's call, and every call after: the connection is
-    /// closed.
-    #[cfg(any(unix, windows))]
-    pub fn stop(&self) {
-        self.stopped.store(true, Ordering::Release);
-        shut(&self.conn);
+    /// A stopper for a connection still to be made: given to
+    /// [`Client::connect_stopped`], it stops the connect, then the
+    /// connection's calls.
+    pub fn new() -> Stopper {
+        Stopper::default()
     }
 
-    /// Stop the connection's call, and every call after.
-    #[cfg(not(any(unix, windows)))]
+    /// Stop the connection's call, and every call after, and the connect
+    /// still making it: the connection is closed. An engine still to be
+    /// started is not.
     pub fn stop(&self) {
-        match self.never {}
+        self.stop.stopped.store(true, Ordering::Release);
+        if let Some(conn) = self.stop.held().as_ref() {
+            shut(conn);
+        }
+        self.stop.woken.notify_all();
+    }
+}
+
+/// A connection let go of is closed, its stopper kept or not: the clone
+/// a stop closes is let go of with it.
+#[cfg(any(unix, windows))]
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.stop.held().take();
     }
 }
 
 impl Client {
     /// The first engine that answers as `find` says, started if none does
     /// and `find` says so.
-    #[cfg(any(unix, windows))]
     pub fn connect(find: &Find) -> Result<Client, Error> {
+        Client::connect_stopped(find, &Stopper::new())
+    }
+
+    /// The first engine that answers as `find` says, started if none does
+    /// and `find` says so, unless `stopper` stops it first, from another
+    /// thread: [`Error::Stopped`], at once, wherever the connect waits (a
+    /// hello, a started engine's wait; on Windows, a busy pipe's within
+    /// 100 ms). The client made is stopped by `stopper` too
+    /// ([`Client::stopper`] gives it again).
+    #[cfg(any(unix, windows))]
+    pub fn connect_stopped(find: &Find, stopper: &Stopper) -> Result<Client, Error> {
+        let stop = &stopper.stop;
         let sockets: Vec<PathBuf> = match &find.socket {
             Some(s) => vec![s.clone()],
             None => find.sockets(),
         };
         for socket in &sockets {
-            match Client::open(socket, &find.client, find.silence) {
+            match Client::open(socket, &find.client, find.silence, stop) {
                 Ok(client) => return Ok(client),
-                Err(Error::Version) => return Err(Error::Version),
+                Err(e @ (Error::Version | Error::Stopped)) => return Err(e),
                 Err(_) => {}
             }
         }
@@ -323,17 +444,23 @@ impl Client {
             return Err(Error::NoEngine("none answers".into()));
         };
         let socket = find.started()?;
+        // No engine started for a search given up on.
+        if stop.stopped() {
+            return Err(Error::Stopped);
+        }
         start(program, find)?;
         // Until the engine binds its socket: a start's wait, not a loop
         // that idles.
         let deadline = std::time::Instant::now() + find.wait;
         let mut pause = Duration::from_millis(10);
         loop {
-            match Client::open(&socket, &find.client, find.silence) {
+            match Client::open(&socket, &find.client, find.silence, stop) {
                 Ok(client) => return Ok(client),
-                Err(Error::Version) => return Err(Error::Version),
+                Err(e @ (Error::Version | Error::Stopped)) => return Err(e),
                 Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(pause);
+                    if stop.pause(pause) {
+                        return Err(Error::Stopped);
+                    }
                     pause = (pause * 2).min(Duration::from_millis(200));
                 }
                 Err(e) => return Err(Error::NoEngine(format!("started, it did not answer: {e}"))),
@@ -343,7 +470,7 @@ impl Client {
 
     /// No engine runs on this system (rule 7).
     #[cfg(not(any(unix, windows)))]
-    pub fn connect(_: &Find) -> Result<Client, Error> {
+    pub fn connect_stopped(_: &Find, _: &Stopper) -> Result<Client, Error> {
         Err(Error::NoEngine(
             "skwird runs on Linux, macOS and Windows alone".into(),
         ))
@@ -353,17 +480,33 @@ impl Client {
     /// takes.
     #[cfg(any(unix, windows))]
     pub fn at(socket: &Path, client: &str) -> Result<Client, Error> {
-        Client::open(socket, client, None)
+        Client::open(socket, client, None, &Arc::default())
     }
 
     /// The engine at `socket`, said hello to, each call given up on after
-    /// `silence` without a word from it.
+    /// `silence` without a word from it, and all of it, the hello
+    /// included, when `stop` stops it.
     #[cfg(any(unix, windows))]
-    fn open(socket: &Path, client: &str, silence: Option<Duration>) -> Result<Client, Error> {
+    fn open(
+        socket: &Path,
+        client: &str,
+        silence: Option<Duration>,
+        stop: &Arc<Stop>,
+    ) -> Result<Client, Error> {
+        if stop.stopped() {
+            return Err(Error::Stopped);
+        }
         // A timeout of zero is refused: the shortest there is, instead.
         let silence = silence.map(|d| d.max(Duration::from_millis(1)));
-        let stream = connect_to(socket, silence)?;
+        let stream = connect_to(socket, silence, stop).map_err(|e| {
+            if stop.stopped() {
+                Error::Stopped
+            } else {
+                Error::Io(e)
+            }
+        })?;
         let writer = stream.try_clone()?;
+        stop.hold(writer.try_clone()?)?;
         let mut c = Client {
             reader: std::io::BufReader::new(stream),
             writer,
@@ -375,7 +518,7 @@ impl Client {
                 roots: Vec::new(),
             },
             silence,
-            stopped: Arc::new(AtomicBool::new(false)),
+            stop: Arc::clone(stop),
             silent: false,
         };
         let id = c.ask(Ask::Hello(protocol::Hello {
@@ -404,12 +547,15 @@ impl Client {
         match self.never {}
     }
 
-    /// What stops this connection's calls from another thread.
+    /// What stops this connection's calls from another thread: the
+    /// stopper it was connected with, if it was given one. It fails no
+    /// more, the connection's clone made as it is connected.
     #[cfg(any(unix, windows))]
+    // Its result as before, for the clients that keep a copy of this.
+    #[allow(clippy::unnecessary_wraps)]
     pub fn stopper(&self) -> Result<Stopper, Error> {
         Ok(Stopper {
-            conn: Arc::new(self.writer.try_clone()?),
-            stopped: Arc::clone(&self.stopped),
+            stop: Arc::clone(&self.stop),
         })
     }
 
@@ -422,7 +568,7 @@ impl Client {
     /// Why no call can be made on this connection any more, if none can.
     #[cfg(any(unix, windows))]
     fn closed(&self) -> Option<Error> {
-        if self.stopped.load(Ordering::Acquire) {
+        if self.stop.stopped() {
             Some(Error::Stopped)
         } else if self.silent {
             Some(Error::Silent(self.silence.unwrap_or_default()))
@@ -435,7 +581,7 @@ impl Client {
     /// silence (the connection closed), or the error itself.
     #[cfg(any(unix, windows))]
     fn failed(&mut self, e: std::io::Error) -> Error {
-        if self.stopped.load(Ordering::Acquire) {
+        if self.stop.stopped() {
             return Error::Stopped;
         }
         match (e.kind(), self.silence) {

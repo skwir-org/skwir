@@ -23846,3 +23846,45 @@ review of 2026-11-24".
   as on af3f9d9f, no dependency changed since.
 - **Not checked:** real Windows (Windows' flush in `CopyFileExW`'s
   routine never ran: Wine calls no routine); macOS.
+
+## 2026-11-24: skwird's stoppable connect, copied (ADR-150)
+
+skwird's main took be46cd7 with the user's go-ahead, relayed by skwird's
+session, so its client and protocol are copied again
+(`tools/vendor-client`, from a clone at be46cd7, which `VENDORED`
+names). What changed for Skwir: a connect can be stopped with a
+`Stopper` made before it (`Stopper::new`, `Client::connect_stopped`),
+its hello and a started engine's wait included. On macOS the client
+looks for the system service at `/var/run/skwird/socket` and for the
+user's engine in the user's own temporary folder, where the engine
+serves (libc's `confstr`, the copy's one dependency there). Nothing
+else changes on Linux or Windows.
+
+The skwird plugin connects through one helper (`connect`) for every
+asker (a search, a journal's follower, a probe, the Index page). The stop
+is held on the asker's token before the connect begins, so a search given
+up on stops it wherever it waits. A timer of the plugin's own
+(`alarm.rs`: one thread while a connect waits, ended once none does)
+stops a connect whose engine says no hello within 5 s (`HELLO`, plus a
+started engine's 5 s wait). An engine stopped by a signal, whose socket
+still takes connections, cost a search, Usage at each navigation and the
+Index page the client's 60 s silence; it costs 5 s now. One that stalls
+after its hello still costs the silence.
+
+On the way, two tests the copy does not touch failed in the gate.
+Core's `a_lane_never_takes_every_worker` counted the lane's job before
+that job had begun, and read 0 once under load; it now waits for the
+job with a deadline. Kept live's tests named `/h/Documents` for commands
+that take an absolute path, which it is not on Windows (two failed under
+Wine); they name a drive's path there.
+
+- **Checked:** `lint-all` (check-cross included), `deny`,
+  `notices-check`, `test-all` (4,364 passed), the six real-engine tests
+  against skwird built at be46cd7, and the plugin's tests under Wine (12
+  passed, the timer's among them). The new test fails without the timer:
+  a socket that takes connections and answers nothing held `open` the
+  whole 60 s silence. The scheduler test passed 30 runs in a row.
+- **Not checked:** macOS (compiled only, by check-cross); an engine
+  really stopped by a signal (a socket that answers nothing stands for
+  it); the window check of `skwird-check`, whose recipe builds
+  `target/release`, left alone while the user tests from it.

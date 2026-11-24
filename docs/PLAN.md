@@ -1568,20 +1568,16 @@ on a worker while watched (searches, the trash, tag places, the shelf)
 were not checked for the same race.
 
 **From the review of 2026-11-24** (45 findings on the night's work, all
-fixed but these). skwird's connect and its hello wait up to its 60 s
-silence with nothing to stop them, a search given up on included:
-skwird be46cd7 (`Stopper::new`, `Client::connect_stopped`) stops them,
-on a branch of skwird's until its main takes it; then skwir's copy of
-the client, and a hello of a few seconds by skwir's own timer. Usage
-from an index: a file of several names that takes no room says one. A
+fixed but these). Usage from an index: a file of several names that takes no room says one. A
 drive Windows is letting go of reads nothing (`watch::letting_go`): its
 rows answered unread then stay so after a refused removal until read
 again; tried under Wine, never with a drive. Drive registration after
 the places plugin returns: compiled only (Wine has no display). From the
 second review: a stalled engine (stopped, not gone) holds Usage's worker
-up to the client's 60 s silence at each navigation, as its journals are
-asked under the worker's lifetime, not a pane's (the stoppable connect
-above would end it); where only plocate answers at once, a search shown
+five seconds at each navigation, its hello's time (it was the client's
+60 s silence until skwird's stoppable connect, 2026-11-24), as its
+journals are asked under the worker's lifetime, not a pane's; one that
+stalls after its hello still holds it the whole silence; where only plocate answers at once, a search shown
 as typed and a lens's folders rest on its database, so a file made since
 `updatedb` is not found (as before without skwird; with skwird and no
 engine running, an engine used to be started); Windows' Eject: a folder

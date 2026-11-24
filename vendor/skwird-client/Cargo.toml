@@ -13,6 +13,9 @@ description = "skwird's client: finds or starts an engine, and asks it; and a fa
 [dependencies]
 skwird-protocol = { path = "../skwird-protocol", version = "0.1.0" }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.189"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",

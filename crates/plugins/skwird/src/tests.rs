@@ -59,6 +59,7 @@ fn index(engines: Engines) -> Index {
         kept: kept::Kept::new(Weak::new(), engines.clone()),
         engines,
         secrets: Mutex::default(),
+        hello: HELLO,
     }
 }
 
@@ -311,6 +312,60 @@ fn a_search_given_up_on_stops_its_call() {
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "stopped, not waited out: {:?}",
+        started.elapsed()
+    );
+}
+
+/// An engine that takes the connection and says no hello (stopped, not
+/// gone: the system still takes its connections) is given up on once the
+/// hello's time is up, not its whole silence, and so is a connect given up
+/// on before it answers, whichever asks: a search, a journal's follower.
+#[test]
+fn an_engine_saying_no_hello_is_not_waited_for() {
+    use std::os::unix::net::UnixListener;
+    let tmp = tempfile::tempdir().unwrap();
+    let socket = tmp.path().join("stalled");
+    let listener = UnixListener::bind(&socket).unwrap();
+    // Every connection taken and held, never read nor answered.
+    std::thread::spawn(move || {
+        let held: Vec<_> = listener.incoming().map_while(Result::ok).collect();
+        drop(held);
+    });
+    let mut stalled = index(Engines::At(socket));
+    stalled.hello = Duration::from_millis(200);
+    let root = Path::new("/fixture/root");
+    let cancel = CancelToken::new();
+    for ask in ["open", "follow"] {
+        let started = std::time::Instant::now();
+        let answered = match ask {
+            "open" => stalled.open(root, &cancel).is_some(),
+            _ => stalled.follow(root, &cancel).is_some(),
+        };
+        assert!(!answered, "{ask}: no engine");
+        let took = started.elapsed();
+        assert!(
+            took >= stalled.hello && took < Duration::from_secs(10),
+            "{ask}: the hello's time, not the silence: {took:?}"
+        );
+    }
+
+    // A connect given up on before its hello's time ends at once.
+    let stalled = Arc::new({
+        stalled.hello = Duration::from_secs(30);
+        stalled
+    });
+    let cancel = CancelToken::new();
+    let started = std::time::Instant::now();
+    let asking = std::thread::spawn({
+        let (stalled, cancel) = (Arc::clone(&stalled), cancel.clone());
+        move || stalled.open(Path::new("/fixture/root"), &cancel).is_some()
+    });
+    std::thread::sleep(Duration::from_millis(200));
+    cancel.cancel();
+    assert!(!asking.join().unwrap(), "given up on");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "stopped in its connect: {:?}",
         started.elapsed()
     );
 }

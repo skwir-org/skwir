@@ -71,8 +71,10 @@ ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 3. **skwird's provider is a plugin of its own, `skwird`,** holding what
    is not the search's: its connection (made at the first search, never
    at start, ADR-128 and ADR-141; one per search, stopped through the
-   client's `Stopper` from the search's cancel token, the engine's
-   silence a backstop longer than a first build; none kept while idle,
+   client's `Stopper` from the search's cancel token, its connect
+   included, the engine's hello waited for a few seconds by Skwir's own
+   timer and its silence a backstop longer than a first build; none kept
+   while idle,
    so an engine started on demand ends); its registrations (the folders
    of the Secrets entries, ADR-125, through `exclude`; the folders kept
    live, 6); its settings (`skwird.*`); its switch, which leaves every
