@@ -278,12 +278,12 @@ fn a_search_groups_by_the_folder_each_file_is_in() {
     assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
     run(&app, "group", &serde_json::json!({ "by": "folder" }));
     assert!(pump_until(&app, pane, settled), "grouped");
+    // Joined name by name, as the system writes a path.
     let folder = |dir: &str| {
-        let path = if dir.is_empty() {
-            root.clone()
-        } else {
-            root.join(dir)
-        };
+        let path = dir
+            .split('/')
+            .filter(|name| !name.is_empty())
+            .fold(root.clone(), |path, name| path.join(name));
         skwir_core::os_path::from_home(&path)
     };
     assert_eq!(
