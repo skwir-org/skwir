@@ -20,8 +20,8 @@ use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::command::{Invocation, Outcome, Topic};
-use skwir_core::entry::EntryId;
-use skwir_core::fs::hydrate_paths;
+use skwir_core::entry::{Entry, EntryId};
+use skwir_core::fs::{Newest, Read, Reading, Tickets, read_paths_newest};
 use skwir_core::location::{
     EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
 };
@@ -681,36 +681,86 @@ impl LocationProvider for RecentProvider {
 
 struct RecentLocation {
     location: Location,
-    ctx: OpenContext,
-    tx: EventSink,
     rx: Receiver<ListingEvent>,
-    paths: Arc<Mutex<HashMap<EntryId, PathBuf>>>,
+    recent: Arc<Recent>,
 }
 
 impl RecentLocation {
     fn open(location: Location, ctx: OpenContext) -> Arc<dyn OpenLocation> {
         let (tx, rx) = ctx.channel();
-        let this = Arc::new(RecentLocation {
-            location,
+        let recent = Arc::new(Recent {
             ctx,
             tx,
-            rx,
-            paths: Arc::new(Mutex::new(HashMap::new())),
+            known: Mutex::default(),
+            tickets: Tickets::default(),
         });
-        this.list();
-        this
+        recent.list();
+        Arc::new(RecentLocation {
+            location,
+            rx,
+            recent,
+        })
     }
+}
 
+/// What hydration's answers are told at least this many at a time, as its
+/// folders are read: the window applies them in slices.
+const SENT_EVERY: usize = 256;
+
+/// An open `recent:`, shared by its jobs: a listing's (F5's), a
+/// hydration's. It has no watcher: what it lists is as its last reads
+/// found it, and of two reads of a file, the one begun later stands,
+/// whichever is told last (`Known::newest`).
+struct Recent {
+    ctx: OpenContext,
+    tx: EventSink,
+    /// What it lists, changed under this lock, its events sent under it:
+    /// they leave in the order decided.
+    known: Mutex<Known>,
+    /// Taken by each read of a file just before it reads (a listing's
+    /// stat, a hydration's).
+    tickets: Tickets,
+}
+
+#[derive(Default)]
+struct Known {
+    /// The files listed, by id.
+    rows: HashMap<EntryId, Row>,
+    /// Which read of each file was told last, while another read that may
+    /// hold an older one is under way (`fs::Newest`).
+    newest: Newest<EntryId>,
+}
+
+/// A file listed.
+struct Row {
+    path: PathBuf,
+    /// Whether its row was told what the metadata providers say of it,
+    /// which it keeps under a stat alone (`Listing::upsert`): what a filled
+    /// read left out behind a stat alone begun later is read again where
+    /// it was not, or the row would stay unfilled for good.
+    filled: bool,
+}
+
+/// The row of `id` in `rows`, if it is listed still where it was looked for
+/// (`asked`).
+fn listed<'a>(
+    rows: &'a mut HashMap<EntryId, Row>,
+    asked: &HashMap<EntryId, &Path>,
+    id: EntryId,
+) -> Option<&'a mut Row> {
+    let asked = asked.get(&id)?;
+    rows.get_mut(&id).filter(|row| row.path.as_path() == *asked)
+}
+
+impl Recent {
     /// List the recent files: stat-ed to be listed by their identity, each
     /// remote's in its lane (ADR-077), so a server that stops answering
     /// holds its own files, never the listing of the others: what is on
     /// this machine is listed, then complete; a remote's come as its
     /// server answers. What is gone is left out.
-    fn list(&self) {
-        let tx = self.tx.clone();
-        let paths = Arc::clone(&self.paths);
+    fn list(self: &Arc<Self>) {
+        let recent = Arc::clone(self);
         let cancel = self.ctx.cancel.child();
-        let batch_size = self.ctx.batch_size.max(1);
         let scheduler = self.ctx.scheduler.clone();
         self.ctx.scheduler.spawn(
             Priority::Visible,
@@ -723,11 +773,9 @@ impl RecentLocation {
                 let wanted: std::collections::HashSet<PathBuf> =
                     items.iter().map(|r| r.path.clone()).collect();
                 let listing = Listed {
-                    tx,
-                    paths,
+                    recent: Arc::clone(&recent),
                     seen: Arc::default(),
                     cancel: cancel.clone(),
-                    batch_size,
                 };
                 let mut here = Vec::new();
                 for (lane, items) in skwir_core::fs::reach::by_lane(items, |r| &r.path) {
@@ -747,86 +795,239 @@ impl RecentLocation {
                 }
                 listing.stat(&here);
                 // What was listed before and no longer is recent.
-                let prev: Vec<EntryId> = {
-                    let mut p = listing.paths.lock();
-                    let prev: Vec<EntryId> = p
-                        .iter()
-                        .filter(|(_, path)| !wanted.contains(*path))
-                        .map(|(id, _)| *id)
-                        .collect();
-                    for id in &prev {
-                        p.remove(id);
-                    }
-                    prev
-                };
+                let mut known = recent.known.lock();
                 if cancel.is_cancelled() {
                     return;
                 }
-                if !prev.is_empty() {
-                    listing.tx.send(ListingEvent::Removed(prev));
+                let prev: Vec<EntryId> = known
+                    .rows
+                    .iter()
+                    .filter(|(_, row)| !wanted.contains(&row.path))
+                    .map(|(id, _)| *id)
+                    .collect();
+                for id in &prev {
+                    known.rows.remove(id);
                 }
-                listing.tx.send(ListingEvent::Complete);
+                if !prev.is_empty() {
+                    recent.tx.send(ListingEvent::Removed(prev));
+                }
+                recent.tx.send(ListingEvent::Complete);
             },
         );
+    }
+
+    fn hydrate(self: &Arc<Self>, ids: &[EntryId], priority: Priority) {
+        let wanted: Vec<(EntryId, PathBuf)> = {
+            let known = self.known.lock();
+            ids.iter()
+                .filter_map(|id| known.rows.get(id).map(|row| (*id, row.path.clone())))
+                .collect()
+        };
+        if wanted.is_empty() {
+            return;
+        }
+        // A job for each slice, side by side on the workers, each remote's
+        // in its lane.
+        for (lane, wanted) in skwir_core::fs::reach::by_lane(wanted, |(_, path)| path) {
+            for wanted in wanted.chunks(skwir_core::fs::HYDRATE_JOB) {
+                let wanted = wanted.to_vec();
+                let recent = Arc::clone(self);
+                let cancel = self.ctx.cancel.child();
+                self.ctx.scheduler.spawn_in(
+                    lane,
+                    priority,
+                    "recent.stat",
+                    cancel.clone(),
+                    move || recent.hydrate_now(&wanted, priority, &cancel),
+                );
+            }
+        }
+    }
+
+    /// Stat `items` and fill them, one folder at a time, each answer told
+    /// under the lock where no read of it begun later was; what a read
+    /// begun later told less of (a stat alone, F5's) than this found is
+    /// asked again. Worker-only: this is I/O, in the lane of the paths.
+    fn hydrate_now(
+        self: &Arc<Self>,
+        items: &[(EntryId, PathBuf)],
+        priority: Priority,
+        cancel: &CancelToken,
+    ) {
+        let again = {
+            // Dropped once its answers are told, before what is read
+            // again is asked.
+            let _reading = Reading::begin(&self.known, |k| &mut k.newest, &self.tickets);
+            let asked: HashMap<EntryId, &Path> = items
+                .iter()
+                .map(|(id, path)| (*id, path.as_path()))
+                .collect();
+            let (mut reads, mut held, mut again) = (Vec::new(), 0, Vec::new());
+            read_paths_newest(items, &self.ctx.metadata, cancel, &self.tickets, |read| {
+                held += read.found.len() + read.gone.len() + read.unread.len();
+                reads.push(read);
+                if held >= SENT_EVERY {
+                    again.extend(self.answer(std::mem::take(&mut reads), &asked, cancel));
+                    held = 0;
+                }
+            });
+            again.extend(self.answer(reads, &asked, cancel));
+            again
+        };
+        if !again.is_empty() && !cancel.is_cancelled() {
+            self.hydrate(&again, priority);
+        }
+    }
+
+    /// Tell what `reads` found, `asked` where each was looked for: only
+    /// where it is listed still at that path and no read of it begun later
+    /// was told (a refresh's stat of a file grown, of one named back), gone
+    /// included. Returns what is to be read again: filled here, and left
+    /// out behind a stat alone where its row was never filled.
+    fn answer(
+        &self,
+        reads: Vec<Read>,
+        asked: &HashMap<EntryId, &Path>,
+        cancel: &CancelToken,
+    ) -> Vec<EntryId> {
+        let mut known = self.known.lock();
+        if cancel.is_cancelled() {
+            return Vec::new();
+        }
+        let Known { rows, newest } = &mut *known;
+        let (mut updated, mut gone, mut unread, mut again) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for read in reads {
+            for (e, ticket) in read.found {
+                let Some(row) = listed(rows, asked, e.id) else {
+                    continue;
+                };
+                let filled = e.metadata.is_filled();
+                if newest.applies(&e.id, ticket) {
+                    row.filled |= filled;
+                    updated.push(e);
+                } else if filled && !row.filled {
+                    again.push(e.id);
+                }
+            }
+            for (id, ticket) in read.gone {
+                if listed(rows, asked, id).is_some() && newest.applies(&id, ticket) {
+                    gone.push(id);
+                }
+            }
+            for (id, ticket) in read.unread {
+                if listed(rows, asked, id).is_some() && newest.applies(&id, ticket) {
+                    unread.push(id);
+                }
+            }
+        }
+        for id in &gone {
+            rows.remove(id);
+        }
+        if !updated.is_empty() {
+            self.tx.send(ListingEvent::Updated(updated));
+        }
+        if !gone.is_empty() {
+            self.tx.send(ListingEvent::Removed(gone));
+        }
+        if !unread.is_empty() {
+            self.tx.send(ListingEvent::Unreadable(unread));
+        }
+        again
     }
 }
 
 /// One listing of the recent files, shared by its lanes' jobs.
 #[derive(Clone)]
 struct Listed {
-    tx: EventSink,
-    paths: Arc<Mutex<HashMap<EntryId, PathBuf>>>,
+    recent: Arc<Recent>,
     /// The files listed, once each: two names of one file are one row.
     seen: Arc<Mutex<std::collections::HashSet<EntryId>>>,
     cancel: CancelToken,
-    batch_size: usize,
 }
 
 impl Listed {
     /// Stat `items` and send them, in batches; what was listed at their
     /// paths before and is not now (gone, or another file there) is taken
-    /// out.
+    /// out. Each stat takes a ticket just before it reads, and what it
+    /// found is told only where no read of the file begun later was (a
+    /// hydration's, asked meanwhile).
     fn stat(&self, items: &[PathBuf]) {
+        let recent = &*self.recent;
+        // Dropped last, after what it found is told.
+        let _reading = Reading::begin(&recent.known, |k| &mut k.newest, &recent.tickets);
+        let batch_size = recent.ctx.batch_size.max(1);
+        // Each path asked, with its stat's ticket.
+        let mut asked: HashMap<&Path, u64> = HashMap::with_capacity(items.len());
         let mut batch = Vec::new();
         for path in items {
             if self.cancel.is_cancelled() {
                 return;
             }
+            let ticket = recent.tickets.take();
+            asked.insert(path.as_path(), ticket);
             let Some(e) = skwir_core::fs::stat::stat_path(path) else {
                 continue;
             };
             if !self.seen.lock().insert(e.id) {
                 continue;
             }
-            self.paths.lock().insert(e.id, path.clone());
-            batch.push(e);
-            if batch.len() >= self.batch_size {
-                self.tx
-                    .send(ListingEvent::Added(std::mem::take(&mut batch)));
+            batch.push((e, path.clone(), ticket));
+            if batch.len() >= batch_size {
+                let mut known = recent.known.lock();
+                if self.cancel.is_cancelled() {
+                    return;
+                }
+                self.tell(&mut known, std::mem::take(&mut batch));
             }
         }
-        let asked: std::collections::HashSet<&PathBuf> = items.iter().collect();
-        let removed: Vec<EntryId> = {
-            let seen = self.seen.lock();
-            let mut p = self.paths.lock();
-            let removed: Vec<EntryId> = p
-                .iter()
-                .filter(|(id, path)| asked.contains(path) && !seen.contains(*id))
-                .map(|(id, _)| *id)
-                .collect();
-            for id in &removed {
-                p.remove(id);
-            }
-            removed
-        };
+        let mut known = recent.known.lock();
         if self.cancel.is_cancelled() {
             return;
         }
-        if !batch.is_empty() {
-            self.tx.send(ListingEvent::Added(batch));
+        self.tell(&mut known, batch);
+        let Known { rows, newest } = &mut *known;
+        let left: Vec<(EntryId, u64)> = {
+            let seen = self.seen.lock();
+            rows.iter()
+                .filter(|(id, _)| !seen.contains(*id))
+                .filter_map(|(id, row)| Some((*id, *asked.get(row.path.as_path())?)))
+                .collect()
+        };
+        // Unless a read begun later found it there.
+        let removed: Vec<EntryId> = left
+            .into_iter()
+            .filter(|(id, ticket)| newest.applies(id, *ticket))
+            .map(|(id, _)| id)
+            .collect();
+        for id in &removed {
+            rows.remove(id);
         }
         if !removed.is_empty() {
-            self.tx.send(ListingEvent::Removed(removed));
+            recent.tx.send(ListingEvent::Removed(removed));
+        }
+    }
+
+    /// Tell what stats found, under the lock it is decided by: what a read
+    /// begun later told already is left out.
+    fn tell(&self, known: &mut Known, batch: Vec<(Entry, PathBuf, u64)>) {
+        let mut added = Vec::with_capacity(batch.len());
+        for (e, path, ticket) in batch {
+            if !known.newest.applies(&e.id, ticket) {
+                continue;
+            }
+            known
+                .rows
+                .entry(e.id)
+                .or_insert_with(|| Row {
+                    path: PathBuf::new(),
+                    filled: false,
+                })
+                .path = path;
+            added.push(e);
+        }
+        if !added.is_empty() {
+            self.recent.tx.send(ListingEvent::Added(added));
         }
     }
 }
@@ -839,48 +1040,17 @@ impl OpenLocation for RecentLocation {
         &self.rx
     }
     fn hydrate(&self, ids: &[EntryId], priority: Priority) {
-        let wanted: Vec<(EntryId, PathBuf)> = {
-            let p = self.paths.lock();
-            ids.iter()
-                .filter_map(|id| p.get(id).map(|path| (*id, path.clone())))
-                .collect()
-        };
-        if wanted.is_empty() {
-            return;
-        }
-        // A job for each slice, side by side on the workers, each remote's
-        // in its lane.
-        for (lane, wanted) in skwir_core::fs::reach::by_lane(wanted, |(_, path)| path) {
-            for wanted in wanted.chunks(skwir_core::fs::HYDRATE_JOB) {
-                let wanted = wanted.to_vec();
-                let tx = self.tx.clone();
-                let metadata = Arc::clone(&self.ctx.metadata);
-                let paths = Arc::clone(&self.paths);
-                let cancel = self.ctx.cancel.child();
-                self.ctx.scheduler.spawn_in(
-                    lane,
-                    priority,
-                    "recent.stat",
-                    cancel.clone(),
-                    move || {
-                        let gone = hydrate_paths(&wanted, &metadata, &tx, &cancel);
-                        let mut paths = paths.lock();
-                        for id in gone {
-                            paths.remove(&id);
-                        }
-                    },
-                );
-            }
-        }
+        self.recent.hydrate(ids, priority);
     }
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
-        self.paths.lock().get(&id).cloned()
+        let known = self.recent.known.lock();
+        known.rows.get(&id).map(|row| row.path.clone())
     }
     fn refresh(&self) {
-        self.list();
+        self.recent.list();
     }
     fn close(&self) {
-        self.ctx.cancel.cancel();
+        self.recent.ctx.cancel.cancel();
     }
 }
 
@@ -1084,6 +1254,140 @@ mod tests {
         app.plugins.set_enabled(ID, false, &app);
         app.plugins.set_enabled(ID, true, &app);
         assert!(app.commands.get("jump.candidates").is_some());
+    }
+
+    /// A metadata provider that holds the first batch naming `name` until
+    /// let go: a hydration held after its stats, before it is told.
+    struct Hold {
+        name: std::ffi::OsString,
+        once: Mutex<Option<(crossbeam_channel::Sender<()>, Receiver<()>)>>,
+    }
+
+    impl skwir_core::metadata::MetadataProvider for Hold {
+        fn id(&self) -> &'static str {
+            "test.hold"
+        }
+
+        fn fill(&self, _dir: &Path, entries: &mut [Entry]) {
+            if !entries.iter().any(|e| e.name == self.name) {
+                return;
+            }
+            let Some((held, go)) = self.once.lock().take() else {
+                return;
+            };
+            let _ = held.send(());
+            // Let go, or the test gone.
+            let _ = go.recv_timeout(Duration::from_secs(30));
+        }
+    }
+
+    /// Apply what `open` sends to `listing` until `done` holds of it.
+    fn until(
+        open: &dyn OpenLocation,
+        listing: &mut skwir_core::Listing,
+        what: &str,
+        done: impl Fn(&skwir_core::Listing) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done(listing) {
+            let Ok(event) = open.events().recv_deadline(deadline) else {
+                panic!("never {what}");
+            };
+            listing.apply(event);
+        }
+    }
+
+    fn size_of(listing: &skwir_core::Listing, id: EntryId) -> Option<u64> {
+        let e = listing.get(id)?;
+        e.metadata
+            .value(skwir_core::entry::keys::SIZE)
+            .and_then(skwir_core::entry::Value::as_u64)
+    }
+
+    /// F5 while a hydration is held: one file grew and another was named
+    /// away and back since the hydration read them. What the refresh
+    /// found, begun later, stands over what the hydration found, told
+    /// after: the new size (filled once read again), and the file named
+    /// back still listed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_refresh_while_a_hydration_is_held_stands_over_what_it_found() {
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let data = tmp.path().join("data");
+        let dir = tmp.path().join("l'été, à l'ombre");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir(&dir).unwrap();
+        let (grown, named) = ("it's ☂ grown.txt", "named back, s'il vous plaît.txt");
+        let (grown_at, named_at, away) = (
+            dir.join(grown),
+            dir.join(named),
+            dir.join("named away ☂.txt"),
+        );
+        std::fs::write(&grown_at, b"ten bytes!").unwrap();
+        std::fs::write(&named_at, b"named").unwrap();
+        let xbel = format!(
+            r#"<?xml version="1.0"?><xbel version="1.0"><bookmark href="{}" visited="2026-01-01T00:00:00Z"/><bookmark href="{}" visited="2026-01-02T00:00:00Z"/></xbel>"#,
+            skwir_platform::uri::file_uri(&grown_at),
+            skwir_platform::uri::file_uri(&named_at),
+        );
+        std::fs::write(data.join("recently-used.xbel"), xbel).unwrap();
+        // SAFETY: nextest runs each test in a process of its own, and no
+        // thread has started yet that reads the environment.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", &data);
+        }
+        let app = app(tmp.path());
+        app.plugins.add(Arc::new(JumpPlugin::default()), &app);
+        let open = app.open_location(&Location::parse("recent:")).unwrap();
+        let mut listing = skwir_core::Listing::default();
+        until(&*open, &mut listing, "listed", |l| {
+            l.is_complete() && l.len() == 2
+        });
+        let id_of = |l: &skwir_core::Listing, name: &str| {
+            l.find_by_name(std::ffi::OsStr::new(name)).unwrap().id
+        };
+        let (g, n) = (id_of(&listing, grown), id_of(&listing, named));
+        assert_eq!(size_of(&listing, g), Some(10));
+        let (held, go) = (crossbeam_channel::bounded(1), crossbeam_channel::bounded(1));
+        app.metadata.register(
+            "test",
+            Arc::new(Hold {
+                name: grown.into(),
+                once: Mutex::new(Some((held.0, go.1))),
+            }),
+        );
+        // Named away: the hydration finds it gone, and the other as it was,
+        // and is held.
+        std::fs::rename(&named_at, &away).unwrap();
+        open.hydrate(&[g, n], Priority::Visible);
+        held.1.recv_timeout(Duration::from_secs(10)).expect("held");
+        // Meanwhile one grows, the other is named back, and F5 lists them
+        // again.
+        std::fs::write(&grown_at, b"twenty bytes, grown!").unwrap();
+        std::fs::rename(&away, &named_at).unwrap();
+        open.refresh();
+        until(&*open, &mut listing, "listed again", |l| {
+            size_of(l, g) == Some(20)
+        });
+        // The hydration let go: what it found is told after F5's.
+        go.0.send(()).unwrap();
+        until(&*open, &mut listing, "filled", |l| {
+            l.get(g).is_some_and(|e| e.metadata.is_filled())
+        });
+        assert!(app.scheduler.wait_idle_here(Duration::from_secs(10)));
+        for event in open.events().try_iter() {
+            listing.apply(event);
+        }
+        // The newer size, and the file named back still listed.
+        assert_eq!(
+            (size_of(&listing, g), listing.get(n).is_some()),
+            (Some(20), true)
+        );
+        assert!(listing.get(g).unwrap().metadata.is_filled());
+        assert_eq!(open.path_of(n), Some(named_at));
     }
 
     // The free desktops' recent files (step E, ADR-035).
