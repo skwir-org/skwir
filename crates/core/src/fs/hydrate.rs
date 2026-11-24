@@ -12,6 +12,7 @@ use crate::location::{EventSink, ListingEvent};
 use crate::metadata::MetadataProviders;
 
 use super::dir::Dir;
+use super::newest::Tickets;
 use super::stat::{Stated, stat_entry_as, stat_path};
 
 /// One path read as a listing reads its entries: stat-ed, then filled by
@@ -119,21 +120,61 @@ pub fn read_paths(
     cancel: &CancelToken,
     mut read: impl FnMut(Vec<Entry>, Vec<EntryId>),
 ) -> bool {
+    read_paths_newest(items, metadata, cancel, &Tickets::default(), |r| {
+        if !r.found.is_empty() || !r.gone.is_empty() {
+            read(
+                r.found.into_iter().map(|(e, _)| e).collect(),
+                r.gone.into_iter().map(|(id, _)| id).collect(),
+            );
+        }
+    })
+}
+
+/// What [`read_paths_newest`] read of one folder's items, each with the
+/// ticket its read took.
+#[derive(Debug, Default)]
+pub struct Read {
+    /// Found, under the ids given, filled by the metadata providers.
+    pub found: Vec<(Entry, u64)>,
+    /// Gone, or never there (a path in no folder).
+    pub gone: Vec<(EntryId, u64)>,
+    /// There and unread (its folder cannot be opened, its stat was
+    /// refused): what was known of it stands.
+    pub unread: Vec<(EntryId, u64)>,
+}
+
+/// [`read_paths`], each item's read taking a ticket of `tickets` just
+/// before it reads (a folder that cannot be opened, one for its items):
+/// for a location that keeps the newest read of each entry
+/// ([`Newest`](super::Newest)), which applies what `read` is handed under
+/// its own lock, the one it sends under, only where no read of the entry
+/// begun later was applied, its read counted under way meanwhile
+/// ([`Reading`](super::newest::Reading)). Every item is handed once,
+/// found, gone or unread. False once `cancel` fires: nothing more is read.
+/// Worker-only: this is I/O, in the lane of the items' paths.
+pub fn read_paths_newest(
+    items: &[(EntryId, PathBuf)],
+    metadata: &MetadataProviders,
+    cancel: &CancelToken,
+    tickets: &Tickets,
+    mut read: impl FnMut(Read),
+) -> bool {
     let mut by_dir: HashMap<&Path, Vec<(EntryId, OsString)>> = HashMap::new();
-    let mut gone = Vec::new();
+    let mut nowhere = Vec::new();
     for (id, path) in items {
         match (path.parent(), path.file_name()) {
             (Some(dir), Some(name)) => by_dir
                 .entry(dir)
                 .or_default()
                 .push((*id, name.to_os_string())),
-            _ => gone.push(*id),
+            _ => nowhere.push(*id),
         }
     }
     for (dir, names) in by_dir {
         if cancel.is_cancelled() {
             return false;
         }
+        let opening = tickets.take();
         let folder = match Dir::open(dir) {
             Ok(folder) => folder,
             Err(error)
@@ -142,31 +183,48 @@ pub fn read_paths(
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) =>
             {
-                gone.extend(names.into_iter().map(|(id, _)| id));
+                read(Read {
+                    gone: names.into_iter().map(|(id, _)| (id, opening)).collect(),
+                    ..Read::default()
+                });
                 continue;
             }
             // A folder that cannot be read: what was known of its entries
             // stands.
-            Err(_) => continue,
+            Err(_) => {
+                read(Read {
+                    unread: names.into_iter().map(|(id, _)| (id, opening)).collect(),
+                    ..Read::default()
+                });
+                continue;
+            }
         };
+        let mut r = Read::default();
         let mut found = Vec::with_capacity(names.len());
         for (id, name) in names {
             let mut e = Entry::new(id, name, EntryKind::Unknown);
+            let ticket = tickets.take();
             match stat_entry_as(&folder, &mut e) {
                 Stated::Found => {
                     e.id = id;
-                    found.push(e);
+                    found.push((e, ticket));
                 }
-                Stated::Gone => gone.push(id),
+                Stated::Gone => r.gone.push((id, ticket)),
                 // There, unread: what was known of it stands.
-                Stated::Unread => {}
+                Stated::Unread => r.unread.push((id, ticket)),
             }
         }
-        metadata.fill(dir, &mut found);
-        read(found, std::mem::take(&mut gone));
+        let (mut entries, taken): (Vec<Entry>, Vec<u64>) = found.into_iter().unzip();
+        metadata.fill(dir, &mut entries);
+        r.found = entries.into_iter().zip(taken).collect();
+        read(r);
     }
-    if !gone.is_empty() {
-        read(Vec::new(), gone);
+    if !nowhere.is_empty() {
+        let ticket = tickets.take();
+        read(Read {
+            gone: nowhere.into_iter().map(|id| (id, ticket)).collect(),
+            ..Read::default()
+        });
     }
     !cancel.is_cancelled()
 }

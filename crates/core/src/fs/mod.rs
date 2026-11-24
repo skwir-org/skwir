@@ -6,6 +6,7 @@ pub mod file;
 pub mod hidden;
 mod hydrate;
 pub mod kept_open;
+mod newest;
 mod path_provider;
 pub mod reach;
 pub mod snapshot;
@@ -19,7 +20,11 @@ pub(crate) mod win;
 pub mod xattr;
 
 pub use dir::Dir;
-pub use hydrate::{HYDRATE_JOB, hydrate_path, hydrate_paths, hydrate_paths_with, read_paths};
+pub use hydrate::{
+    HYDRATE_JOB, Read, hydrate_path, hydrate_paths, hydrate_paths_with, read_paths,
+    read_paths_newest,
+};
+pub use newest::{Newest, Reading, Tickets};
 pub use path_provider::{PathProvider, wait_let_go};
 pub use stat::{Statter, content_path, stat_entry, stat_path};
 pub use watch::Settled;
