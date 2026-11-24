@@ -23487,3 +23487,39 @@ one run's footer still showed the folder after 20 s).
   307 ms, warm, on the 50,003 files and 254 folders. Screenshots of
   Usage and the Exclusions page looked right.
 - **Not checked:** a cold measure, a real home, a large tree's memory.
+
+## 2026-11-24: the "writing" pill ends by itself (ADR-135 amended)
+
+The user saw photos keep their "en écriture" pill for good after
+removing their location. Found by an agent with a raw inotify probe: the
+geo plugin writes with exiftool (in place, closed for writing), then
+puts the modification time back with `File::set_modified`, which inotify
+tells as `IN_MODIFY` after the last `IN_CLOSE_WRITE`, with only
+`IN_CLOSE_NOWRITE` after it; inotifywait confirms a time given alone is
+a modify, both times an attribute change. Linux's mark ended only at a
+close.
+
+- **Watch** (`fs/watch.rs`, Linux): a name's last write kept; one written
+  no more for `QUIET` (2 s) is told again unmarked, looked at at most
+  four times a `QUIET` and only while one is open; a close ends it at
+  once; a rename onto a name ends its mark. `QUIET` is now every
+  system's.
+- **Geo** (`geotag.rs`): the modification and access times put back
+  together, told as attributes; on Windows the file opened for writing,
+  as `SetFileTime` needs (compiled only).
+- **Other writers looked at:** copies land by rename; notes, sidecars,
+  settings and thumbnails replace by `file::take_place`; attributes and
+  renames for tags and ratings; extraction gives both times: none was
+  affected. Other programs setting a time alone are now bounded by
+  `QUIET`.
+- **Checked:** new watch tests (a time given alone, by a read-only
+  descriptor and by path; a file written all along keeps its mark past
+  `QUIET`; a name another file took), `crates/core/tests/written.rs`
+  (eight files rewritten in place in a pane), the geo plugin's
+  `pictures_whose_location_was_removed_are_written_no_more` (six JPEGs,
+  real exiftool, through the command path); the three targeted tests
+  fail with the watch fix taken out. On HEAD with this change alone:
+  clippy on core and geo, 70 tests of watch, written, geotag.
+- **Left:** a race in the folder provider (a hydration's stat deciding
+  the mark, sent after a change cleared it) can still leave a mark or a
+  size stale: given to the folders track tonight.

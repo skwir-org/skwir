@@ -158,8 +158,9 @@ title naming the folder), the follow-ups and the limits found are built:
   between counted to the name it is in (`rsync::Writing`).
 - **What another program writes** (a download, a copy in a terminal) is
   marked as it comes: the watcher tells which names it tells are still
-  written (`Changes::writing`: written to and not closed since on Linux,
-  written in the last `QUIET`, 2 s, elsewhere, then told again), the
+  written (`Changes::writing`: written in the last `QUIET`, 2 s, and on
+  Linux not closed since, then told again: every mark ends by itself,
+  amended 2026-11-24), the
   folder's provider marks the entry (`keys::WRITING`), and the views draw
   a "writing" pill beside its size, never dimmed; no name is taken for a
   download's by its suffix.
@@ -239,3 +240,18 @@ A folder's row fills by its files' sum.
   batch first says from its start, and as each run's says as it takes
   it. Where none tells each (Windows' followers, Skwir's own batch copy),
   the batch's share stays.
+
+## Amended 2026-11-24: every writing mark ends by itself
+
+The user saw photos keep their "writing" pill for good after their
+location was removed. inotify tells a modification time given alone
+(`File::set_modified`, or `utimensat` leaving the access time) as a
+write (`IN_MODIFY`), and nothing that gives it closes a file it wrote
+with: Linux's mark, ended only by a close, stayed. Now a name written no
+more for `QUIET` (2 s) is told again unmarked on Linux too, a close
+ending it sooner, and a name another file took by a rename is written no
+more. The geo plugin puts a picture's times back together, told as
+attributes, so its own writes mark nothing. A download that pauses
+longer than 2 s on Linux loses its pill until it writes again, as on
+macOS and Windows.
+

@@ -490,11 +490,16 @@ working in an area, also read that area's rules (see
   at each window; any other change of it, its close after writing
   included, is told at once with what waited. macOS and Windows report
   no close: there a written file is told within the second. What is told
-  says which names are still being written (`Changes::writing`: not
-  closed since on Linux, written in the last `watch::QUIET` elsewhere,
-  then told again), which the entry carries (`keys::WRITING`), a stat of
-  it meanwhile too (a row hydrated: the folder's provider keeps what was
-  last told); a rescan, which says nothing of it (the kernel's queue
+  says which names are still being written (`Changes::writing`: written
+  in the last `watch::QUIET`, and on Linux not closed since; a name told
+  so is told again once written no more, so every mark ends by itself),
+  which the entry carries (`keys::WRITING`). inotify tells a modification
+  time given alone (`File::set_modified`, `utimensat` leaving the access
+  time) as a write (`IN_MODIFY`) no close follows: a writer putting a
+  file's time back gives both times (`FileTimes` with the access time),
+  told as attributes. A stat of it meanwhile carries the mark too (a
+  row hydrated: the folder's provider keeps what was last told); a
+  rescan, which says nothing of it (the kernel's queue
   overflowed), tells those names again unmarked.
 - **Remote paths (ADR-077).** A path may be on a server that stops
   answering, where `stat` waits for good. Work that reads one runs in its

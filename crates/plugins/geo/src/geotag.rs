@@ -636,7 +636,7 @@ fn writable_extensions(program: &Path, cancel: &CancelToken) -> anyhow::Result<V
 /// what `to` holds. The modification time is kept, to the nanosecond: a
 /// folder sorted by date does not reorder.
 fn write(program: &Path, path: &Path, to: &Location, cancel: &CancelToken) -> anyhow::Result<()> {
-    let modified = std::fs::metadata(path)?.modified()?;
+    let times = times_of(&std::fs::metadata(path)?)?;
     // The selectors cleared, then what is written: `ExifTool` applies
     // them in that order.
     let run = |clear: &mut dyn Iterator<Item = &'static str>,
@@ -695,10 +695,34 @@ fn write(program: &Path, path: &Path, to: &Location, cancel: &CancelToken) -> an
         }
     };
     // Put the time back whatever happened: `-P` keeps whole seconds only.
-    let kept = std::fs::File::open(path).and_then(|f| f.set_modified(modified));
+    let kept = put_back(path, times);
     result?;
     kept?;
     Ok(())
+}
+
+/// The times of a file to put back after `ExifTool` wrote it: when it was
+/// modified, and when it was read where the system keeps it.
+fn times_of(meta: &std::fs::Metadata) -> std::io::Result<std::fs::FileTimes> {
+    let times = std::fs::FileTimes::new().set_modified(meta.modified()?);
+    Ok(match meta.accessed() {
+        Ok(accessed) => times.set_accessed(accessed),
+        Err(_) => times,
+    })
+}
+
+/// Give the file at `path` back `times`, both together where the system
+/// keeps both: a modification time given alone is what Linux's inotify
+/// tells as a write (`IN_MODIFY`), after `ExifTool` closed the file, and a
+/// folder shown would say it is being written a while (ADR-135,
+/// `watch::QUIET`); the two are told as attributes changed. Windows gives a
+/// file times only through a handle that may write them.
+fn put_back(path: &Path, times: std::fs::FileTimes) -> std::io::Result<()> {
+    #[cfg(windows)]
+    let file = std::fs::File::options().write(true).open(path)?;
+    #[cfg(not(windows))]
+    let file = std::fs::File::open(path)?;
+    file.set_times(times)
 }
 
 /// Tags for `ExifTool` to write back from JSON (`-json=`): on its standard
@@ -2481,6 +2505,99 @@ mod tests {
             ))
             .unwrap_err();
         assert!(format!("{error:#}").contains("Select a track"), "{error:#}");
+    }
+
+    /// Removing the position of several pictures in a folder shown marks
+    /// none of them as being written once it is done (ADR-135): `ExifTool`
+    /// writes each in place and closes it, and the time put back after
+    /// is no write.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pictures_whose_location_was_removed_are_written_no_more() {
+        let Some(program) = tool() else { return };
+        let dir = scratch();
+        let names: Vec<String> = (1..=6).map(|i| format!("Été n°{i} (l'île).jpg")).collect();
+        for name in &names {
+            let path = picture(dir.path(), name);
+            prepare(
+                &program,
+                &path,
+                &[
+                    "-GPS:GPSLatitude=10.5",
+                    "-GPS:GPSLatitudeRef=N",
+                    "-GPS:GPSLongitude=20.5",
+                    "-GPS:GPSLongitudeRef=E",
+                ],
+            );
+        }
+        let app = app(dir.path());
+        let chosen: Vec<&str> = names.iter().map(String::as_str).collect();
+        let pane = select(&app, dir.path(), &chosen);
+        let Outcome::Plan(plan) = app
+            .dispatch(&Invocation::with_args(
+                "geo.remove_location",
+                &serde_json::json!({ "pane": pane }),
+            ))
+            .unwrap()
+        else {
+            panic!("a plan")
+        };
+        assert_eq!(plan.len(), names.len());
+        let result = app.executor.execute_blocking(&plan, &CancelToken::new());
+        assert_eq!((result.applied, result.error), (names.len(), None));
+        let sizes: HashMap<String, u64> = names
+            .iter()
+            .map(|n| {
+                (
+                    n.clone(),
+                    std::fs::metadata(dir.path().join(n)).unwrap().len(),
+                )
+            })
+            .collect();
+        // What the pane shows of them: their size as written, and whether
+        // it says they are written still.
+        let shown = || {
+            let ws = app.workspace.read();
+            let listing = &ws.pane(pane).unwrap().listing;
+            names
+                .iter()
+                .map(|n| {
+                    let e = listing.iter().find(|e| e.name == n.as_str()).unwrap();
+                    (
+                        e.metadata
+                            .value(keys::SIZE)
+                            .and_then(skwir_core::Value::as_u64)
+                            == Some(sizes[n]),
+                        e.metadata.value(keys::WRITING) == Some(&skwir_core::Value::Bool(true)),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            app.pump();
+            let now = shown();
+            if now.iter().all(|(sized, writing)| *sized && !writing) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "still marked as written (sized, writing): {now:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // And stays so: nothing told later marks them again (three times
+        // the second a name only written to waits).
+        let settled = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < settled {
+            app.pump();
+            let now = shown();
+            assert!(
+                now.iter().all(|(_, writing)| !writing),
+                "marked again: {now:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]

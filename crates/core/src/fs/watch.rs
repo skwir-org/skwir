@@ -38,9 +38,9 @@ pub struct Changes {
     /// lookup.
     pub unmounted: bool,
     /// Of `names`, those still being written as they are told (ADR-135):
-    /// written to and not closed since on Linux, written to in the last
-    /// `QUIET` elsewhere, where no close is told. What another program
-    /// writes (a download, a copy in a terminal) is marked so.
+    /// written to in the last `QUIET`, and on Linux not closed since. What
+    /// another program writes (a download, a copy in a terminal) is marked
+    /// so. A name told so is told again once it is written no more.
     pub writing: HashSet<OsString>,
 }
 
@@ -62,9 +62,14 @@ impl Changes {
     }
 }
 
-/// Where no close is told (macOS, Windows), how long after its last write
-/// a name is no longer said to be written (ADR-135): told again then.
-#[cfg(not(target_os = "linux"))]
+/// How long after its last write a name is no longer said to be written
+/// (ADR-135), told again then, written no more: where no close is told
+/// (macOS, Windows), and on Linux of a write no close follows. inotify
+/// tells a modification time given alone (`File::set_modified`, or
+/// `utimensat` by its path, the access time left: no write) as it tells a
+/// write (`IN_MODIFY`), and what gives it closes nothing it wrote with, or
+/// opened nothing; a mark only a close ended would stay for good. Every
+/// mark ends by itself: a close ends it sooner.
 pub const QUIET: Duration = Duration::from_secs(2);
 
 /// What is told of a folder's changes. It is called on the watcher's own
@@ -120,7 +125,7 @@ mod imp {
     use parking_lot::Mutex;
     use rustix::event::{PollFd, PollFlags};
 
-    use super::{Changes, Deliver, WRITTEN_WINDOW, WatchHandle};
+    use super::{Changes, Deliver, QUIET, WRITTEN_WINDOW, WatchHandle};
     use crate::cancel::CancelToken;
 
     const MASK: WatchMask = WatchMask::CREATE
@@ -145,8 +150,14 @@ mod imp {
         /// they are told (`WRITTEN_WINDOW`): with `pending` when it is told
         /// first.
         written: Option<(HashSet<OsString>, Instant)>,
-        /// The names written to and not closed since (ADR-135).
-        open: HashSet<OsString>,
+        /// The names written to and not closed since (ADR-135), each with
+        /// when it last was: written no more once closed, gone, another
+        /// file in its place, or quiet for `QUIET`.
+        open: HashMap<OsString, Instant>,
+        /// When `open` is next looked at for the names gone quiet: a look
+        /// reads them all, so it comes no sooner than a quarter of `QUIET`
+        /// after the one before.
+        quiet_at: Option<Instant>,
     }
 
     impl Subscriber {
@@ -156,6 +167,39 @@ mod imp {
                 .pending
                 .get_or_insert_with(|| (Changes::default(), now + window))
                 .0
+        }
+
+        /// `name` was written to: being written until it is closed, gone,
+        /// or quiet for `QUIET`. What sets a modification time alone is
+        /// told as a write, and closes nothing it wrote with.
+        fn writes(&mut self, name: &std::ffi::OsStr, now: Instant) {
+            match self.open.get_mut(name) {
+                Some(at) => *at = now,
+                None => {
+                    self.open.insert(name.to_os_string(), now);
+                }
+            }
+            self.quiet_at.get_or_insert(now + QUIET);
+            self.written(name, now);
+        }
+
+        /// The names quiet for `QUIET` since they were last written to,
+        /// once it is time to look: written no more, to be told again.
+        fn take_quiet(&mut self, now: Instant) -> Vec<OsString> {
+            if self.quiet_at.is_none_or(|at| at > now) {
+                return Vec::new();
+            }
+            let quiet: Vec<OsString> = self
+                .open
+                .extract_if(|_, at| *at + QUIET <= now)
+                .map(|(name, _)| name)
+                .collect();
+            self.quiet_at = self
+                .open
+                .values()
+                .min()
+                .map(|at| (*at + QUIET).max(now + QUIET / 4));
+            quiet
         }
 
         /// `name` was written to, and nothing else happened to it yet: it
@@ -176,13 +220,19 @@ mod imp {
 
         /// What it tells now, if anything: what its window gathered, with
         /// the names only written to, or those alone once they waited
-        /// enough.
+        /// enough; and the names gone quiet, written no more.
         fn take_due(&mut self, now: Instant) -> Option<Changes> {
-            let mut changes = self.take_names(now)?;
+            let quiet = self.take_quiet(now);
+            let mut changes = match self.take_names(now) {
+                Some(changes) => changes,
+                None if quiet.is_empty() => return None,
+                None => Changes::default(),
+            };
+            changes.names.extend(quiet);
             changes.writing = changes
                 .names
                 .iter()
-                .filter(|name| self.open.contains(*name))
+                .filter(|name| self.open.contains_key(*name))
                 .cloned()
                 .collect();
             Some(changes)
@@ -210,7 +260,11 @@ mod imp {
         fn due(&self) -> Option<Instant> {
             let pending = self.pending.as_ref().map(|(_, at)| *at);
             let written = self.written.as_ref().map(|(_, at)| *at);
-            pending.into_iter().chain(written).min()
+            pending
+                .into_iter()
+                .chain(written)
+                .chain(self.quiet_at)
+                .min()
         }
     }
 
@@ -295,7 +349,8 @@ mod imp {
                 cancel: cancel.clone(),
                 pending: None,
                 written: None,
-                open: HashSet::new(),
+                open: HashMap::new(),
+                quiet_at: None,
             });
             (wd, id)
         });
@@ -420,6 +475,7 @@ mod imp {
                 // Its closes may be among what was lost: nothing is known
                 // to be written still until written again.
                 s.open.clear();
+                s.quiet_at = None;
             }
         }
 
@@ -444,20 +500,28 @@ mod imp {
             };
             for s in subscribers.iter_mut() {
                 // Only written to: it waits (`WRITTEN_WINDOW`), being
-                // written until closed or gone.
+                // written until closed, gone or quiet (`Subscriber::writes`).
                 if let Some(name) = name
                     && mask.difference(EventMask::ISDIR) == EventMask::MODIFY
                 {
-                    s.open.insert(name.to_os_string());
-                    s.written(name, now);
+                    s.writes(name, now);
                     continue;
                 }
+                // Written no more as it was: closed after writing, gone, or
+                // another file in its place (a rename onto its name).
                 if let Some(name) = name
                     && mask.intersects(
-                        EventMask::CLOSE_WRITE | EventMask::DELETE | EventMask::MOVED_FROM,
+                        EventMask::CLOSE_WRITE
+                            | EventMask::DELETE
+                            | EventMask::MOVED_FROM
+                            | EventMask::MOVED_TO,
                     )
                 {
                     s.open.remove(name);
+                    if s.open.is_empty() {
+                        // Nothing left to go quiet: no wake for it.
+                        s.quiet_at = None;
+                    }
                 }
                 let changes = s.gathered(now);
                 if mask.contains(EventMask::UNMOUNT) {
@@ -1011,6 +1075,140 @@ mod tests {
         }
         let seen = seen.expect("its close is told");
         assert!(seen < WRITTEN_WINDOW, "told {seen:?} after its close");
+    }
+
+    /// A folder of its own on the home filesystem (nanosecond times, and
+    /// not a tmpfs).
+    fn home_dir() -> tempfile::TempDir {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::tempdir_in(&base).unwrap()
+    }
+
+    /// Waits until `name` is told written no more, after it was told at
+    /// all: how long after `since`.
+    fn told_written_no_more(
+        rx: &mpsc::Receiver<Changes>,
+        name: &str,
+        since: std::time::Instant,
+    ) -> Duration {
+        let name = std::ffi::OsStr::new(name);
+        let deadline = since + SOON;
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match rx.recv_timeout(left) {
+                Ok(c) if c.names.contains(name) && !c.writing.contains(name) => {
+                    return since.elapsed();
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        panic!("{} still told as being written", name.display());
+    }
+
+    /// A modification time given alone is no write, though inotify tells
+    /// it as one (`IN_MODIFY`), and nothing is closed after it that wrote:
+    /// given through a descriptor opened to read (`File::set_modified`, as
+    /// a writer putting a file's time back did) or by its path
+    /// (`utimensat`, as a copy gives its time), the name is told written
+    /// no more within `QUIET` and a half.
+    #[test]
+    fn a_time_given_alone_is_written_no_more() {
+        let root = home_dir();
+        let by_descriptor = root.path().join("l'été (put back).jpg");
+        let by_path = root.path().join("l'été (touched).jpg");
+        for path in [&by_descriptor, &by_path] {
+            std::fs::write(path, b"written and closed").unwrap();
+        }
+        let (_handle, rx) = watched(root.path());
+        let past = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+
+        let since = std::time::Instant::now();
+        std::fs::File::open(&by_descriptor)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+        let took = told_written_no_more(&rx, "l'été (put back).jpg", since);
+        assert!(took < QUIET + QUIET / 2, "told {took:?} after");
+
+        let since = std::time::Instant::now();
+        let omit = rustix::fs::Timespec {
+            tv_sec: 0,
+            tv_nsec: rustix::fs::UTIME_OMIT,
+        };
+        rustix::fs::utimensat(
+            rustix::fs::CWD,
+            &by_path,
+            &rustix::fs::Timestamps {
+                last_access: omit,
+                last_modification: rustix::fs::Timespec {
+                    tv_sec: 1_700_000_000,
+                    tv_nsec: 0,
+                },
+            },
+            rustix::fs::AtFlags::empty(),
+        )
+        .unwrap();
+        let took = told_written_no_more(&rx, "l'été (touched).jpg", since);
+        assert!(took < QUIET + QUIET / 2, "told {took:?} after");
+    }
+
+    /// A file written to all along stays told as being written past
+    /// `QUIET`: only a quiet `QUIET` long ends it.
+    #[test]
+    fn a_file_written_all_along_is_written_still_past_quiet() {
+        use std::io::Write as _;
+        let root = home_dir();
+        let name = std::ffi::OsStr::new("it's coming.part");
+        let mut file = std::fs::File::create(root.path().join(name)).unwrap();
+        let (_handle, rx) = watched(root.path());
+        let until = std::time::Instant::now() + QUIET + Duration::from_millis(800);
+        let mut told = 0;
+        while std::time::Instant::now() < until {
+            file.write_all(b"x").unwrap();
+            while let Ok(c) = rx.recv_timeout(Duration::from_millis(150)) {
+                if c.names.contains(name) {
+                    told += 1;
+                    assert!(
+                        c.writing.contains(name),
+                        "told written no more as it is written"
+                    );
+                }
+            }
+        }
+        assert!(told > 0, "told as it is written");
+    }
+
+    /// A name another file took (a file renamed onto it) is not the file
+    /// written there before: told written no more at once, though the
+    /// file that was there is open still.
+    #[test]
+    fn a_name_another_file_took_is_written_no_more() {
+        use std::io::Write as _;
+        let root = home_dir();
+        let target = root.path().join("notes (Noël).txt");
+        let beside = root.path().join(".notes (Noël).txt.new");
+        let mut writer = std::fs::File::create(&target).unwrap();
+        let (_handle, rx) = watched(root.path());
+        writer.write_all(b"being written").unwrap();
+        let named = std::ffi::OsStr::new("notes (Noël).txt");
+        let deadline = std::time::Instant::now() + SOON;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let c = rx.recv_timeout(left).expect("told as being written");
+            if c.names.contains(named) {
+                assert!(c.writing.contains(named));
+                break;
+            }
+        }
+        // Written again just before: not quiet before `QUIET` from now.
+        std::fs::write(&beside, b"in its place").unwrap();
+        writer.write_all(b", still").unwrap();
+        let since = std::time::Instant::now();
+        std::fs::rename(&beside, &target).unwrap();
+        let took = told_written_no_more(&rx, "notes (Noël).txt", since);
+        assert!(took < QUIET / 2, "told {took:?} after the rename");
+        drop(writer);
     }
 
     #[test]
