@@ -9,13 +9,15 @@
 //! script's journal as it stands, or too old where it has none, each root
 //! and token asked kept for the test to read ([`Fake::changes_asked`]);
 //! `exclude` with what was asked; `watch` as the script says, or each
-//! folder asked live since the epoch, with no share. Made `silent`, it
+//! folder asked live since the epoch, with no share; `totals` with the
+//! script's children and done for the folder asked, in batches, only so
+//! many with `largest`, the rest summed. Made `silent`, it
 //! says hello and then nothing, as an engine that hangs: for a client's
 //! test of giving up on a call.
 
 use std::path::PathBuf;
 
-use skwird_protocol::{Changes, Coverage, Entry, Watching};
+use skwird_protocol::{Changes, Child, Coverage, Entry, TotalsDone, Watching};
 
 /// What the fake engine answers.
 #[derive(Clone, Debug, Default)]
@@ -31,6 +33,11 @@ pub struct Script {
     /// What every `changes` is answered, whatever its root and token: too
     /// old where none is given.
     pub changes: Option<Changes>,
+    /// What a `totals` of each folder is answered: its children, every
+    /// one, and its done. Asked with `largest`, the fake sends the
+    /// children it says and sums the rest in the done, as an engine does
+    /// (`skwird_protocol::largest`); a folder not given is not a folder.
+    pub totals: Vec<(PathBuf, Vec<Child>, TotalsDone)>,
 }
 
 /// A fake engine serving until dropped.
@@ -138,6 +145,28 @@ mod imp {
                     Some(changes) => Answer::Changes(changes.clone()),
                     None => Answer::TooOld {},
                 })
+            }
+            Ask::Totals { root, largest } => {
+                let Some((_, children, done)) =
+                    script.totals.iter().find(|(f, _, _)| *f == root.to_path())
+                else {
+                    return say(Answer::Error(wire::Failure {
+                        what: "not_a_folder".into(),
+                        message: "no folder of the index is at that path".into(),
+                    }));
+                };
+                let (sent, rest) = match largest {
+                    Some(l) => wire::largest(children.clone(), l),
+                    None => (children.clone(), None),
+                };
+                for batch in sent.chunks(512) {
+                    say(Answer::Children(batch.to_vec()))?;
+                }
+                say(Answer::TotalsDone(Box::new(wire::TotalsDone {
+                    count: sent.len() as u64,
+                    rest,
+                    ..done.clone()
+                })))
             }
             Ask::Exclude { add, .. } => say(Answer::Excluded { folders: add }),
             Ask::Watch { add, .. } => say(Answer::Watching(
@@ -315,6 +344,7 @@ mod tests {
             silent: false,
             watching: None,
             changes: None,
+            totals: Vec::new(),
         };
         let fake = Fake::start(dir.join("socket"), script).unwrap();
         let mut c = Client::connect(&Find {
@@ -426,6 +456,101 @@ mod tests {
                 (PathBuf::from("/home/user"), String::new()),
                 (PathBuf::from("/home/user"), "0000000000000001.4".to_owned()),
             ]
+        );
+        drop(fake);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `totals` through the real client: every child of the folder the
+    /// script gives, in batches of 512, then its done; with `largest`, the
+    /// heaviest alone, the rest summed in the done; a folder not given is
+    /// not a folder.
+    #[test]
+    fn the_fake_answers_the_scripts_totals_and_sums_the_rest() {
+        use skwird_protocol::{Child, Largest, Totals, TotalsDone};
+        let dir = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+            .unwrap()
+            .join("skwird-tests")
+            .join(format!("fake-totals-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let children: Vec<Child> = (0..600u64)
+            .map(|n| Child {
+                path: WirePath(format!("/home/user/file {n}").into_bytes()),
+                kind: Kind::File,
+                id: Id::default(),
+                mtime: None,
+                totals: Totals {
+                    size: n,
+                    alloc: n,
+                    files: 1,
+                    ..Totals::default()
+                },
+            })
+            .collect();
+        let mut whole = Totals::default();
+        for c in &children {
+            whole.add_child(c);
+        }
+        let done = TotalsDone {
+            mtime: None,
+            totals: whole.clone(),
+            token: "0000000000000001.9".into(),
+            coverage: Coverage {
+                names: Proof::Checked(Instant { sec: 5, nsec: 0 }),
+                attrs: Proof::Checked(Instant { sec: 5, nsec: 0 }),
+                holes: Vec::new(),
+            },
+            nlink: skwird_protocol::Nlink::Complete,
+            count: 0,
+            rest: None,
+            cancelled: false,
+        };
+        let fake = Fake::start(
+            dir.join("socket"),
+            Script {
+                roots: vec![PathBuf::from("/home/user")],
+                totals: vec![(PathBuf::from("/home/user"), children.clone(), done)],
+                ..Script::default()
+            },
+        )
+        .unwrap();
+        let mut c = Client::connect(&Find {
+            socket: Some(fake.socket.clone()),
+            start: None,
+            ..Find::new("a test")
+        })
+        .unwrap();
+        let home = std::path::Path::new("/home/user");
+        let mut batches = Vec::new();
+        let all = c
+            .totals(home, None, |b| {
+                batches.push(b.len());
+                true
+            })
+            .unwrap();
+        assert_eq!(batches, [512, 88]);
+        assert_eq!(
+            (all.count, all.rest, all.totals),
+            (600, None, whole.clone())
+        );
+        let mut got = Vec::new();
+        let few = c
+            .totals(home, Some(Largest { alloc: 2, files: 0 }), |b| {
+                got.extend(b.iter().map(|c| c.totals.alloc));
+                true
+            })
+            .unwrap();
+        assert_eq!(got, [598, 599]);
+        let rest = few.rest.unwrap();
+        assert_eq!(rest.count, 598);
+        assert_eq!(rest.totals.alloc + 598 + 599, whole.alloc);
+        let refused = c.totals(std::path::Path::new("/home/user/nowhere"), None, |_| true);
+        assert!(
+            matches!(&refused, Err(crate::Error::Engine(f)) if f.what == "not_a_folder"),
+            "{refused:?}"
         );
         drop(fake);
         let _ = std::fs::remove_dir_all(&dir);

@@ -28,7 +28,8 @@ use skwir_core::coverage::{Coverage, Hole, Proof, Why};
 use skwir_core::entry::EntryKind;
 use skwir_core::exclusions::{BUILTIN, Catalog, Role, Rule};
 use skwir_core::names::{
-    Answer, Change, Journal, Mark, NameIndex, Noted, Opened, Query, Session, Since,
+    Answer, Change, Child, Extension, Journal, Largest, Mark, NameIndex, Noted, Opened, Query,
+    Session, Since, Summed, Totals,
 };
 use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::plugin::{Category, Plugin, Requirement};
@@ -353,6 +354,69 @@ impl Session for Asking {
                 None
             }
         }
+    }
+
+    fn totals(
+        &mut self,
+        folder: &Path,
+        largest: Option<Largest>,
+        each: &mut dyn FnMut(Vec<Child>) -> bool,
+    ) -> Option<Summed> {
+        let largest = largest.map(|l| protocol::Largest {
+            alloc: l.alloc,
+            files: l.files,
+        });
+        let done = self
+            .client
+            .totals(folder, largest, |children| {
+                each(children.iter().map(child_of).collect())
+            })
+            .map_err(|e| said("totals", &e))
+            .ok()?;
+        (!done.cancelled).then(|| Summed {
+            totals: totals_of(&done.totals),
+            mtime: done.mtime.map(time_of),
+            mark: Mark {
+                by: ID.to_owned(),
+                token: done.token,
+            },
+            coverage: coverage_of(done.coverage),
+            links_known: done.nlink == protocol::Nlink::Complete,
+            count: done.count,
+            rest: done.rest.map(|rest| (rest.count, totals_of(&rest.totals))),
+        })
+    }
+}
+
+/// An entry a folder's totals name, in core's words.
+fn child_of(child: &protocol::Child) -> Child {
+    Child {
+        path: child.path.to_path(),
+        kind: entry_kind(child.kind),
+        id: Some((child.id.dev, child.id.ino)),
+        mtime: child.mtime.map(time_of),
+        totals: totals_of(&child.totals),
+    }
+}
+
+/// A subtree's totals in core's words.
+fn totals_of(totals: &protocol::Totals) -> Totals {
+    Totals {
+        size: totals.size,
+        alloc: totals.alloc,
+        files: totals.files,
+        folders: totals.folders,
+        newest_file: totals.newest_file_mtime.map(time_of),
+        by_extension: totals
+            .by_extension
+            .iter()
+            .map(|e| Extension {
+                ext: e.ext.as_ref().map(|ext| ext.to_path().into_os_string()),
+                files: e.files,
+                alloc: e.alloc,
+            })
+            .collect(),
+        shared: totals.shared,
     }
 }
 

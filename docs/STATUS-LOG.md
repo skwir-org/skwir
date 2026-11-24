@@ -23408,3 +23408,23 @@ answer counting where it `answers()`. Nothing a person sees changes: only
 a lens's folders ask it. Checked: the tags and query plugins' tests
 (233), core's hints test, `search_tags`, `plugins_toggle`; clippy on
 core, tags, query and the binary.
+
+## 2026-11-24: folder totals through the seam (ADR-150, D3, first part)
+
+skwird built `totals` on its side as agreed (5d4c5b7 the protocol and
+fake, a9fb857 the engine, dated as Usage dates at this session's ask:
+the newest file's time, and each entry's own). The seam carries it:
+`Session::totals(folder, largest, each)` gives each entry
+(`names::Child`: real path, own kind, device and inode, own time,
+`Totals`) and ends with `Summed` (the folder's totals and own time, the
+journal's mark as of them, the coverage, whether every count of names
+was known, the rest summed where `largest` limited the entries).
+skwird's plugin answers it. skwird's client copied again at a9fb857.
+
+- **Checked:** through the fake (every entry, the folder's own, the
+  mark, `largest` and the rest, a folder it does not know); against a
+  real engine (`just skwird-check`'s engine tests, now 5: sizes, counts,
+  a folder's subtree, an empty folder dated by its own time, extensions);
+  clippy; `notices-check`.
+- **Not built yet:** Usage on it (its worker's breakdowns, holes, what
+  caches hold, the nested levels, freshness by the journal).

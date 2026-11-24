@@ -13,8 +13,11 @@
 //! since a [`Mark`], and how far that is every change. Who keeps state of
 //! its own from a walk (the tags index, a harvest) follows it instead of
 //! walking again, where it is complete ([`Journal`]), on a session of what
-//! already runs ([`NameIndex::follow`]).
+//! already runs ([`NameIndex::follow`]). It may also sum what a folder
+//! holds ([`Session::totals`], D3): what Usage measures, without reading
+//! the disk.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -168,6 +171,83 @@ impl Journal {
     }
 }
 
+/// What a subtree holds, as an index sums it (ADR-150, D3): its files'
+/// bytes (every entry but folders; a folder's own bytes are not counted),
+/// how many files and folders (the subtree's own not counted), when its
+/// newest file changed, its files by extension, and what deleting it
+/// would not free. A file alone is its own.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Totals {
+    pub size: u64,
+    /// The bytes the filesystem holds for them.
+    pub alloc: u64,
+    /// Every entry but folders, a file of several names once.
+    pub files: u64,
+    pub folders: u64,
+    /// The newest modification of its files (every entry but folders):
+    /// none where it holds none, a folder then dated by its own
+    /// ([`Child::mtime`], [`Summed::mtime`]).
+    pub newest_file: Option<SystemTime>,
+    /// Its files by their names' extensions, the largest first.
+    pub by_extension: Vec<Extension>,
+    /// The bytes of its files with names outside it.
+    pub shared: u64,
+}
+
+/// Files of one extension in a subtree: the name from its last dot on,
+/// the dot left out, lowercased (`None`: no dot).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Extension {
+    pub ext: Option<OsString>,
+    pub files: u64,
+    pub alloc: u64,
+}
+
+/// An entry of a folder an index summed, with its totals: a file's own, a
+/// folder's subtree's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Child {
+    /// Its real path.
+    pub path: PathBuf,
+    /// Its own kind: a link is `Symlink`.
+    pub kind: EntryKind,
+    /// Its device and inode, as a stat says them.
+    pub id: Option<(u64, u64)>,
+    /// Its own modification time, a folder's whatever it holds.
+    pub mtime: Option<SystemTime>,
+    pub totals: Totals,
+}
+
+/// The entries an answer sends of a large folder: the heaviest by bytes,
+/// and those with the most files; the others summed ([`Summed::rest`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Largest {
+    pub alloc: u64,
+    pub files: u64,
+}
+
+/// How a folder's totals ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Summed {
+    /// The folder's own.
+    pub totals: Totals,
+    /// The folder's own modification time.
+    pub mtime: Option<SystemTime>,
+    /// Where the journal stood as they were summed: its changes since say
+    /// what moved them.
+    pub mark: Mark,
+    /// Its `attrs` proof is the totals'; its holes, what is not counted.
+    pub coverage: Coverage,
+    /// Whether every file's count of names was known: else `shared` is at
+    /// least what it says.
+    pub links_known: bool,
+    /// The entries sent.
+    pub count: u64,
+    /// The entries not sent, how many and their totals summed as the
+    /// folder's sum its entries (a folder among them counted).
+    pub rest: Option<(u64, Totals)>,
+}
+
 /// A journal asked from a mark.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Since {
@@ -196,6 +276,19 @@ pub trait Session: Send {
     /// mark to go on from (taken before a walk, nothing is lost between).
     /// `None` (the default) where it keeps no journal, or failed.
     fn changes(&mut self, _since: Option<&Mark>) -> Option<Since> {
+        None
+    }
+
+    /// What `folder` (a real path below the root) holds, each entry with
+    /// its totals, a batch at a time until `each` says to stop: all of
+    /// them, or only `largest`'s, the rest summed. `None` (the default)
+    /// where it sums none, or failed.
+    fn totals(
+        &mut self,
+        _folder: &Path,
+        _largest: Option<Largest>,
+        _each: &mut dyn FnMut(Vec<Child>) -> bool,
+    ) -> Option<Summed> {
         None
     }
 }

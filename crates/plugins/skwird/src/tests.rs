@@ -396,3 +396,115 @@ fn a_journal_is_followed_as_skwird_tells_it() {
 fn index_at_nothing(dir: &Path) -> Index {
     index(Engines::At(dir.join("no socket")))
 }
+
+/// A folder's totals through the client, in core's words (ADR-150, D3):
+/// each entry's, the folder's own, the journal's mark as of them, the
+/// coverage; asked for the largest alone, the others summed.
+#[test]
+fn a_folder_is_summed_as_skwird_sums_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = PathBuf::from("/fixture/root");
+    let file = |name: &str, alloc: u64| protocol::Child {
+        path: protocol::WirePath::of(&root.join(name)),
+        kind: protocol::Kind::File,
+        id: protocol::Id { dev: 1, ino: alloc },
+        mtime: Some(instant()),
+        totals: protocol::Totals {
+            size: alloc - 1,
+            alloc,
+            files: 1,
+            newest_file_mtime: Some(instant()),
+            by_extension: vec![protocol::Extension {
+                ext: Some(protocol::WirePath::of(Path::new("txt"))),
+                files: 1,
+                alloc,
+            }],
+            ..protocol::Totals::default()
+        },
+    };
+    let children: Vec<protocol::Child> = (1..=5)
+        .map(|n| file(&format!("f{n}.txt"), n * 10))
+        .collect();
+    let mut own = protocol::Totals::default();
+    for child in &children {
+        own.add_child(child);
+    }
+    let live = protocol::Coverage {
+        names: protocol::Proof::Live(instant()),
+        attrs: protocol::Proof::Live(instant()),
+        holes: Vec::new(),
+    };
+    let fake = Fake::start(
+        tmp.path().join("socket"),
+        Script {
+            roots: vec![root.clone()],
+            coverage: vec![(root.clone(), live.clone())],
+            totals: vec![(
+                root.clone(),
+                children,
+                protocol::TotalsDone {
+                    totals: own.clone(),
+                    mtime: Some(instant()),
+                    token: "e1.9".into(),
+                    coverage: live,
+                    nlink: protocol::Nlink::Complete,
+                    count: 5,
+                    rest: None,
+                    cancelled: false,
+                },
+            )],
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    let cancel = CancelToken::new();
+    let index = index(Engines::At(fake.socket.clone()));
+    let mut session = index
+        .follow(&root, &cancel)
+        .expect("an engine runs")
+        .session;
+    let mut sent = Vec::new();
+    let summed = session
+        .totals(&root, None, &mut |batch| {
+            sent.extend(batch);
+            true
+        })
+        .expect("summed");
+    assert_eq!(sent.len(), 5);
+    assert_eq!(sent[0].path, root.join("f1.txt"));
+    assert_eq!(sent[0].kind, EntryKind::File);
+    assert_eq!(sent[0].id, Some((1, 10)));
+    assert_eq!(sent[0].totals.newest_file, Some(at()));
+    assert_eq!(sent[0].mtime, Some(at()));
+    assert_eq!(
+        sent[0].totals.by_extension,
+        [Extension {
+            ext: Some("txt".into()),
+            files: 1,
+            alloc: 10,
+        }]
+    );
+    assert_eq!((summed.totals.alloc, summed.totals.files), (150, 5));
+    assert_eq!(summed.mtime, Some(at()));
+    assert_eq!(summed.mark.token, "e1.9");
+    assert!(summed.links_known && summed.rest.is_none());
+    assert!(matches!(summed.coverage.attrs, Proof::Live { .. }));
+    // The two heaviest and the one with the most files, the rest summed.
+    let mut largest = Vec::new();
+    let summed = session
+        .totals(&root, Some(Largest { alloc: 2, files: 0 }), &mut |batch| {
+            largest.extend(batch.into_iter().map(|c| c.totals.alloc));
+            true
+        })
+        .expect("summed");
+    largest.sort_unstable();
+    assert_eq!(largest, [40, 50]);
+    let (count, rest) = summed.rest.expect("the rest summed");
+    assert_eq!((count, rest.alloc, rest.files), (3, 60, 3));
+    // A folder it does not know is none.
+    assert!(
+        session
+            .totals(&root.join("unknown"), None, &mut |_| true)
+            .is_none()
+    );
+}

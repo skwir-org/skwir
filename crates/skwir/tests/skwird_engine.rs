@@ -313,3 +313,49 @@ fn a_real_engines_journal_tells_a_tag_set_where_the_folder_is_live() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+/// A real engine sums a folder through the plugin (ADR-150, D3): each
+/// entry's totals, a folder's subtree's, the folder's own, dated by its
+/// newest file.
+#[test]
+#[ignore = "needs a real skwird: `just skwird-check`"]
+fn a_real_engine_sums_a_folder() {
+    let (_dir, root) = fixture(&["a.txt", "docs/b.pdf", "docs/deeper/c.pdf", "empty/.keep"]);
+    std::fs::write(root.join("a.txt"), vec![b'x'; 10_000]).unwrap();
+    std::fs::remove_file(root.join("empty/.keep")).unwrap();
+    let engine = Engine::start(&root, &[]);
+    engine.watch(&root);
+    let state = tempfile::tempdir().unwrap();
+    let app = app(state.path(), &engine);
+    let cancel = skwir_core::cancel::CancelToken::new();
+    let (_, opened) = app.names.follow(&root, None, &cancel).expect("followed");
+    let mut session = opened.session;
+    let mut children = Vec::new();
+    let summed = session
+        .totals(&root, None, &mut |batch| {
+            children.extend(batch);
+            true
+        })
+        .expect("summed");
+    assert_eq!((summed.totals.files, summed.totals.folders), (3, 3));
+    assert_eq!(summed.totals.size, 10_000 + 2 * "fixture".len() as u64);
+    let named = |name: &str| {
+        children
+            .iter()
+            .find(|c| c.path == root.join(name))
+            .unwrap_or_else(|| panic!("{name} among {children:?}"))
+    };
+    assert_eq!(named("a.txt").totals.size, 10_000);
+    let docs = named("docs");
+    assert_eq!(docs.kind, skwir_core::entry::EntryKind::Directory);
+    assert_eq!((docs.totals.files, docs.totals.folders), (2, 1));
+    assert!(docs.totals.newest_file.is_some());
+    let empty = named("empty");
+    assert!(empty.totals.newest_file.is_none() && empty.mtime.is_some());
+    assert!(
+        docs.totals
+            .by_extension
+            .iter()
+            .any(|e| e.ext.as_deref() == Some(std::ffi::OsStr::new("pdf")) && e.files == 2)
+    );
+}

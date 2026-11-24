@@ -6,15 +6,20 @@
 //! - **A connection can be given up on:** every read and write is
 //!   overlapped, waited for at most the silence given, and cancelled from
 //!   another thread by [`Stream::shutdown`].
-//! - **The server is checked before anything is said:** its process runs
-//!   as this user, or the connection is refused. Any user may make a pipe
-//!   of any name first; a client that spoke to one another user made would
-//!   tell it what it searches for. The client is identified to the server,
-//!   never impersonated (`SECURITY_IDENTIFICATION`).
+//! - **The server is checked before anything is said:** the pipe's owner
+//!   is `LocalSystem` or the administrators (the system service's,
+//!   `\\.\pipe\skwird`), or its process runs as this user; otherwise the
+//!   connection is refused. Any user may make a pipe of any name first; a
+//!   client that spoke to one another user made would tell it what it
+//!   searches for. The client is identified to the server, never
+//!   impersonated (`SECURITY_IDENTIFICATION`).
 //! - **The engine's side** ([`Server`]): every instance its user's alone
 //!   (a security descriptor granting that user's SID alone), the first
 //!   made only if no other process holds the name
-//!   (`FILE_FLAG_FIRST_PIPE_INSTANCE`), remote clients refused.
+//!   (`FILE_FLAG_FIRST_PIPE_INSTANCE`), remote clients refused. The system
+//!   service's ([`Server::bind_system`]): every user who logs on may
+//!   connect, none may make an instance of it, and its owner is the
+//!   service's account.
 
 #![allow(unsafe_code)] // Windows' pipes have no safe binding; each block says why it is sound.
 
@@ -27,19 +32,21 @@ use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY,
-    ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GENERIC_WRITE, GetLastError,
-    HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_TIMEOUT,
+    ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GetLastError, HANDLE,
+    INVALID_HANDLE_VALUE, LocalFree, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
+    SE_KERNEL_OBJECT,
 };
 use windows_sys::Win32::Security::{
-    GetTokenInformation, PSECURITY_DESCRIPTOR, RevertToSelf, SECURITY_ATTRIBUTES, TOKEN_DUPLICATE,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
+    GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, RevertToSelf,
+    SECURITY_ATTRIBUTES, TOKEN_DUPLICATE, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
-    PIPE_ACCESS_DUPLEX, ReadFile, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT, WriteFile,
+    CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, FILE_WRITE_DATA,
+    OPEN_EXISTING, PIPE_ACCESS_DUPLEX, ReadFile, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
+    WriteFile,
 };
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Pipes::{
@@ -54,6 +61,11 @@ use windows_sys::Win32::System::Threading::{
 
 /// The size of each side's buffer, in bytes.
 const BUFFER: u32 = 64 * 1024;
+
+/// `LocalSystem`, which the system service runs as; the administrators,
+/// one of whom may run it by hand.
+const SYSTEM: &str = "S-1-5-18";
+const ADMINISTRATORS: &str = "S-1-5-32-544";
 
 /// A handle, closed once dropped.
 struct Handle(HANDLE);
@@ -156,17 +168,20 @@ impl Stream {
     }
 
     /// The engine at the pipe named `name`, once one of its instances is
-    /// free, waited for at most `wait`: refused unless its process runs as
-    /// this user.
+    /// free, waited for at most `wait`: refused unless its owner is
+    /// `LocalSystem` or the administrators (the system service's, which no
+    /// other user can make so), or its process runs as this user.
     pub fn connect(name: &OsStr, wait: Option<Duration>) -> std::io::Result<Stream> {
         let name = wide(name);
         loop {
             // SAFETY: a NUL-terminated name alive for the call, no security
             // attributes, no template; the handle given is ours to close.
+            // Asked to read and write the connection and read its owner,
+            // no more: what the system's pipe grants every user.
             let handle = unsafe {
                 CreateFileW(
                     name.as_ptr(),
-                    GENERIC_READ | GENERIC_WRITE,
+                    GENERIC_READ | FILE_WRITE_DATA,
                     0,
                     std::ptr::null(),
                     OPEN_EXISTING,
@@ -176,7 +191,7 @@ impl Stream {
             };
             if handle != INVALID_HANDLE_VALUE {
                 let stream = Stream::of(handle);
-                if stream.server_runs_as(&user_sid()?)? {
+                if stream.owned_by_the_system()? || stream.server_runs_as(&user_sid()?)? {
                     return Ok(stream);
                 }
                 return Err(std::io::Error::new(
@@ -196,6 +211,39 @@ impl Stream {
                 ));
             }
         }
+    }
+
+    /// Whether the pipe's owner is `LocalSystem` or the administrators: a
+    /// system service's, or an administrator's who runs it by hand. A
+    /// pipe's maker may name as its owner only itself, or a group it holds
+    /// as an owner may be (an administrator's, elevated); `LocalSystem` and
+    /// the administrators can name any.
+    fn owned_by_the_system(&self) -> std::io::Result<bool> {
+        let mut owner: PSID = std::ptr::null_mut();
+        let mut held: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        // SAFETY: this end's handle, opened to read its security; the
+        // owner points into the descriptor given, which is ours to free.
+        let failed = unsafe {
+            GetSecurityInfo(
+                self.end.handle.0,
+                SE_KERNEL_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &raw mut owner,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &raw mut held,
+            )
+        };
+        if failed != 0 {
+            return Err(std::io::Error::from_raw_os_error(
+                i32::try_from(failed).unwrap_or(i32::MAX),
+            ));
+        }
+        let held = Descriptor(held);
+        let owner = sid_text(owner);
+        drop(held);
+        Ok(owner.is_ok_and(|o| o == SYSTEM || o == ADMINISTRATORS))
     }
 
     /// Wait at most `timeout` for each read and write from now on; past it,
@@ -362,10 +410,15 @@ fn sid_of(token: HANDLE) -> std::io::Result<String> {
     }
     // SAFETY: the call wrote a TOKEN_USER at the buffer's start, aligned.
     let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
+    // The SID the structure points to, inside the buffer.
+    sid_text(user.User.Sid)
+}
+
+/// The text of the SID `sid` points to (`S-1-5-...`), valid for the call.
+fn sid_text(sid: PSID) -> std::io::Result<String> {
     let mut text: *mut u16 = std::ptr::null_mut();
-    // SAFETY: the SID the structure points to, inside the buffer; the
-    // string given is ours to free.
-    if unsafe { ConvertSidToStringSidW(user.User.Sid, &raw mut text) } == 0 {
+    // SAFETY: a SID, valid for the call; the string given is ours to free.
+    if unsafe { ConvertSidToStringSidW(sid, &raw mut text) } == 0 {
         return Err(std::io::Error::last_os_error());
     }
     // A SID's text is under 200 units.
@@ -424,19 +477,48 @@ struct Pending {
 // a time under the server's lock.
 unsafe impl Send for Pending {}
 
-/// The engine's side of a pipe: its instances, each its user's alone.
+/// The engine's side of a pipe: its instances, each its user's alone, or
+/// the system's ([`Server::bind_system`]).
 pub struct Server {
     name: Vec<u16>,
     security: Descriptor,
     pending: Mutex<Option<Pending>>,
 }
 
+/// What every user who logs on is granted on the system's pipe: to read
+/// and write a connection, and to read its security, its owner among it.
+/// Never to make an instance of it (`FILE_CREATE_PIPE_INSTANCE`, the bit
+/// a file's appending is), which `GENERIC_WRITE` would grant: any user
+/// could then answer the service's clients.
+const CONNECT: u32 = 0x0012_008B;
+
 impl Server {
-    /// The pipe named `name`, its first instance made: refused if another
-    /// process holds the name.
+    /// The pipe named `name`, its first instance made, every instance its
+    /// user's alone: refused if another process holds the name.
     pub fn bind(name: &OsStr) -> std::io::Result<Server> {
         // Full access to this user's SID alone, nothing inherited.
-        let sddl = wide(OsStr::new(&format!("D:P(A;;GA;;;{})", user_sid()?)));
+        Server::bind_as(name, &format!("D:P(A;;GA;;;{})", user_sid()?))
+    }
+
+    /// The system service's pipe named `name`, its first instance made:
+    /// refused if another process holds the name. Every user who logs on
+    /// may connect to it ([`CONNECT`]); `LocalSystem` and the
+    /// administrators may make its instances. Its owner is `LocalSystem`
+    /// where the service runs as it, the administrators where one runs it
+    /// by hand: no other user can make either a pipe's owner, which a
+    /// client checks ([`Stream::connect`]).
+    pub fn bind_system(name: &OsStr) -> std::io::Result<Server> {
+        let owner = if user_sid()? == SYSTEM { "SY" } else { "BA" };
+        Server::bind_as(
+            name,
+            &format!("O:{owner}D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;{CONNECT:#x};;;AU)"),
+        )
+    }
+
+    /// The pipe named `name`, each instance with the security descriptor
+    /// `sddl` says.
+    fn bind_as(name: &OsStr, sddl: &str) -> std::io::Result<Server> {
+        let sddl = wide(OsStr::new(sddl));
         let mut security: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
         // SAFETY: a NUL-terminated string; the descriptor given is ours to
         // free.

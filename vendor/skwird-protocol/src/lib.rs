@@ -306,6 +306,15 @@ pub enum Ask {
         root: WirePath,
         since: String,
     },
+    /// What the folder at `root` holds, each child with its totals, from
+    /// the index ([`Totals`]): [`Answer::Children`] in batches, then
+    /// [`Answer::TotalsDone`]. With `largest`, only so many children are
+    /// sent, and the rest summed whole.
+    Totals {
+        root: WirePath,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        largest: Option<Largest>,
+    },
     Exclude {
         #[serde(default)]
         add: Vec<WirePath>,
@@ -351,6 +360,182 @@ pub struct Done {
     /// More answered than the limit let through.
     #[serde(default)]
     pub truncated: bool,
+    #[serde(default)]
+    pub cancelled: bool,
+}
+
+/// How many of a folder's children a `totals` sends: the `alloc` heaviest
+/// by their alloc, and the `files` with the most files, a child among both
+/// sent once. The others are summed in [`TotalsDone::rest`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Largest {
+    pub alloc: u64,
+    pub files: u64,
+}
+
+/// What a subtree holds, the folder itself not counted, or a file alone:
+/// from the index, its sizes and times as its `attrs` proof says. `size`
+/// and `alloc` are its files' (every entry but folders), so that
+/// `by_extension` sums to them; a folder's own bytes are not counted.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Totals {
+    pub size: u64,
+    pub alloc: u64,
+    /// Files, links and others counted: every entry but folders, a file of
+    /// several names once.
+    pub files: u64,
+    /// Folders below, the subtree's own not counted.
+    pub folders: u64,
+    /// The newest modification time of its files (every entry but
+    /// folders): none where it holds none. A folder's own time is its
+    /// [`Child::mtime`], or [`TotalsDone::mtime`] for the one asked, so that
+    /// a client dates a folder holding no file by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub newest_file_mtime: Option<Instant>,
+    /// Its files by their names' extensions, the largest alloc first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_extension: Vec<Extension>,
+    /// The alloc of its files with more names than it holds: what deleting
+    /// it would not free. At least so where a count of names is not known
+    /// ([`TotalsDone::nlink`]).
+    #[serde(default)]
+    pub shared: u64,
+}
+
+/// Files of one extension in a subtree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Extension {
+    /// The name from its last dot on, the dot left out, lowercased: none
+    /// for a name with none. The client types files (rule 5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ext: Option<WirePath>,
+    pub files: u64,
+    pub alloc: u64,
+}
+
+/// A child of the folder a `totals` asked of, with its totals: a file's
+/// own, a folder's subtree's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Child {
+    pub path: WirePath,
+    pub kind: Kind,
+    pub id: Id,
+    /// Its own modification time: a file's, or a folder's own, whatever it
+    /// holds. None where the index holds no attributes for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime: Option<Instant>,
+    pub totals: Totals,
+}
+
+/// How far the counts of names `shared` took were known.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Nlink {
+    /// Every file's: `shared` is what deleting would not free.
+    #[default]
+    Complete,
+    /// Some files' are not known (Windows' listings give none): `shared`
+    /// is at least what it says.
+    Partial,
+}
+
+/// The children a `totals` did not send ([`Largest`]), summed as the
+/// folder's own totals sum its children: a folder among them counted, with
+/// what it holds; a file, as itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rest {
+    pub count: u64,
+    pub totals: Totals,
+}
+
+impl Totals {
+    /// What `child` adds to the totals of the folder holding it: a folder
+    /// with what it holds, a file as itself.
+    pub fn add_child(&mut self, child: &Child) {
+        self.add(&child.totals);
+        if child.kind == Kind::Folder {
+            self.folders += 1;
+        }
+    }
+
+    /// `other`'s totals added to these, by extension too.
+    pub fn add(&mut self, other: &Totals) {
+        self.size += other.size;
+        self.alloc += other.alloc;
+        self.files += other.files;
+        self.folders += other.folders;
+        self.shared += other.shared;
+        self.newest_file_mtime = match (self.newest_file_mtime, other.newest_file_mtime) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        for e in &other.by_extension {
+            match self.by_extension.iter_mut().find(|m| m.ext == e.ext) {
+                Some(m) => {
+                    m.files += e.files;
+                    m.alloc += e.alloc;
+                }
+                None => self.by_extension.push(e.clone()),
+            }
+        }
+        self.by_extension
+            .sort_by(|a, b| b.alloc.cmp(&a.alloc).then_with(|| a.ext.cmp(&b.ext)));
+    }
+}
+
+/// Of `children`, those [`Largest`] says to send, in their order, and the
+/// rest summed: the `alloc` heaviest by alloc and the `files` with the most
+/// files, a child among both once; ties go to the first. None for the
+/// rest where every child is sent.
+pub fn largest(children: Vec<Child>, largest: Largest) -> (Vec<Child>, Option<Rest>) {
+    let pick = |n: u64, key: &dyn Fn(&Child) -> u64| {
+        let mut order: Vec<usize> = (0..children.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(key(&children[i])));
+        order.truncate(usize::try_from(n).unwrap_or(usize::MAX));
+        order
+    };
+    let mut keep = vec![false; children.len()];
+    for i in pick(largest.alloc, &|c| c.totals.alloc)
+        .into_iter()
+        .chain(pick(largest.files, &|c| c.totals.files))
+    {
+        keep[i] = true;
+    }
+    let mut sent = Vec::new();
+    let mut rest = Rest {
+        count: 0,
+        totals: Totals::default(),
+    };
+    for (child, kept) in children.into_iter().zip(keep) {
+        if kept {
+            sent.push(child);
+        } else {
+            rest.count += 1;
+            rest.totals.add_child(&child);
+        }
+    }
+    (sent, (rest.count > 0).then_some(rest))
+}
+
+/// The end of a `totals`: the folder's own totals, and how far they hold.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TotalsDone {
+    pub totals: Totals,
+    /// The folder's own modification time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime: Option<Instant>,
+    /// The journal's token as of the snapshot answered from: `changes`
+    /// since it says what moved the totals since.
+    pub token: String,
+    /// Its `attrs` proof is the totals'; its holes, the folders not
+    /// counted, which a client shows as unknown, never as empty.
+    pub coverage: Coverage,
+    #[serde(default)]
+    pub nlink: Nlink,
+    /// The children sent.
+    pub count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest: Option<Rest>,
     #[serde(default)]
     pub cancelled: bool,
 }
@@ -422,6 +607,9 @@ pub enum Answer {
     Coverage(Coverage),
     Results(Vec<Entry>),
     Done(Done),
+    /// A batch of a `totals`' children.
+    Children(Vec<Child>),
+    TotalsDone(Box<TotalsDone>),
     Changes(Changes),
     /// The token is from before what the engine keeps: walk again.
     TooOld {},
@@ -589,6 +777,82 @@ mod tests {
             }
         }
         assert!(lines > 10, "{lines} lines");
+    }
+
+    fn child(name: &str, kind: Kind, alloc: u64, files: u64, ext: &str) -> Child {
+        Child {
+            path: WirePath(format!("/home/user/{name}").into_bytes()),
+            kind,
+            id: Id::default(),
+            mtime: None,
+            totals: Totals {
+                size: alloc,
+                alloc,
+                files,
+                folders: u64::from(kind == Kind::Folder),
+                newest_file_mtime: Some(Instant {
+                    sec: i64::try_from(alloc).unwrap(),
+                    nsec: 0,
+                }),
+                by_extension: vec![Extension {
+                    ext: Some(WirePath(ext.as_bytes().to_vec())),
+                    files,
+                    alloc,
+                }],
+                shared: 0,
+            },
+        }
+    }
+
+    /// `largest` sends the heaviest and the fullest, a child among both
+    /// once, in their order, and sums the rest as the folder's totals sum
+    /// its children: what is sent and the rest add up to the whole.
+    #[test]
+    fn largest_sends_the_heaviest_and_the_fullest_and_sums_the_rest() {
+        let children = vec![
+            child("a.txt", Kind::File, 10, 1, "txt"),
+            child("big", Kind::Folder, 900, 3, "mkv"),
+            child("full", Kind::Folder, 50, 400, "rs"),
+            child("b.txt", Kind::File, 20, 1, "txt"),
+            child("small", Kind::Folder, 5, 2, "md"),
+        ];
+        let mut whole = Totals::default();
+        for c in &children {
+            whole.add_child(c);
+        }
+        assert_eq!((whole.files, whole.folders, whole.alloc), (407, 6, 985));
+        assert_eq!(whole.by_extension[0].ext, Some(WirePath(b"mkv".to_vec())));
+        let (sent, rest) = largest(children.clone(), Largest { alloc: 1, files: 1 });
+        let names: Vec<_> = sent.iter().map(|c| c.path.to_path()).collect();
+        assert_eq!(
+            names,
+            [
+                PathBuf::from("/home/user/big"),
+                PathBuf::from("/home/user/full")
+            ]
+        );
+        let rest = rest.unwrap();
+        assert_eq!(rest.count, 3);
+        let txt = rest
+            .totals
+            .by_extension
+            .iter()
+            .find(|e| e.ext == Some(WirePath(b"txt".to_vec())))
+            .unwrap();
+        assert_eq!((txt.files, txt.alloc), (2, 30));
+        let mut again = rest.totals.clone();
+        for c in &sent {
+            again.add_child(c);
+        }
+        assert_eq!(again, whole);
+        let (all, none) = largest(
+            children.clone(),
+            Largest {
+                alloc: 10,
+                files: 0,
+            },
+        );
+        assert_eq!((all, none), (children, None));
     }
 
     /// A query's `links` is written only when asked otherwise than by a

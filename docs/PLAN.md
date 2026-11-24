@@ -3789,11 +3789,14 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     elsewhere; links asked `unfiltered` (skwird e8c14a6), stat-ed by the
     search; checked against a real engine (`just skwird-check`, a dated
     search of a root kept live, answered from the index).
-  - **D3, Usage from skwird's folder totals:** a `totals` message
-    skwird's session designs and builds after its phase 4 step 7 (shape
-    agreed 2026-11-23: each child's subtree totals, by extension, nlink
-    kept so `shared` counts as Usage does, holes by path, freshness by
-    `changes`).
+  - **D3, Usage from skwird's folder totals:** skwird's `totals` (built
+    on its side 2026-11-24, a9fb857: each entry's subtree totals, by
+    extension, nlink kept so `shared` counts as Usage does, holes by path,
+    dated by the newest file and each entry's own time, `largest` with the
+    rest summed, a journal token). *Its seam built 2026-11-24*
+    (`Session::totals`, `names::Totals`, `Summed`, `Largest`; skwird's
+    plugin answers it, checked through the fake and a real engine). Usage
+    itself not yet built on it.
   - **D4, the tags index's checks** through skwird's journal: *built
     2026-11-23* (ADR-150, 15): a count keeps the journal's mark, the next
     check reads only the folders the journal names where it is every

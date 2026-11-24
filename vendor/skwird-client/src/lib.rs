@@ -7,9 +7,9 @@
 //! error to do without, never a reason to stop. An engine that speaks no
 //! version the client speaks is done without too.
 //!
-//! On Windows, an engine is reached by a named pipe ([`pipe`]), the
-//! user's own, its server checked to run as the user. No system service
-//! runs there yet (phase 4, step 7): its pipe is not asked.
+//! On Windows, an engine is reached by a named pipe ([`pipe`]): the system
+//! service's, taken only if its owner is the system's, then the user's
+//! own, its server checked to run as the user.
 //!
 //! Every call can be given up on: after a silence of the engine's
 //! ([`Find::silence`]), or from another thread ([`Client::stopper`]).
@@ -139,14 +139,17 @@ impl Find {
             .collect()
     }
 
-    /// Where to look for an engine where no pipe is given: the user's. No
-    /// system service runs on Windows yet (phase 4, step 7), and a pipe of
-    /// its name may be anyone's: it is not asked.
+    /// Where to look for an engine where no pipe is given, in turn: the
+    /// system service's, then the user's. A pipe of the system's name may
+    /// be anyone's: it is taken only if its owner is the system's
+    /// ([`pipe::Stream::connect`]).
     #[cfg(windows)]
     // The same call as on Unix, which reads the runtime folder given.
     #[allow(clippy::unused_self)]
     fn sockets(&self) -> Vec<PathBuf> {
-        pipe::user_pipe().into_iter().collect()
+        std::iter::once(system_socket())
+            .chain(pipe::user_pipe())
+            .collect()
     }
 
     /// Where an engine started serves.
@@ -180,8 +183,8 @@ fn absolute(value: Option<OsString>) -> Option<PathBuf> {
         .filter(|p| p.is_absolute())
 }
 
-/// The system service's socket (phase 3); on Windows, its pipe, which no
-/// service makes yet.
+/// The system service's socket (phase 3); on Windows, its pipe (phase 4,
+/// step 7).
 pub fn system_socket() -> PathBuf {
     if cfg!(windows) {
         PathBuf::from(r"\\.\pipe\skwird")
@@ -523,6 +526,36 @@ impl Client {
                     }
                 }
                 Answer::Done(done) => return Ok(done),
+                _ => return Err(Error::Unexpected),
+            }
+        }
+    }
+
+    /// What the folder at `root` holds (`docs/DESIGN.md`, Protocol,
+    /// `totals`): each batch of its children, with their totals, handed to
+    /// `each` as it comes, `each` giving false cancelling the rest; then
+    /// the folder's own totals and how far they hold. With `largest`, only
+    /// so many children come, the rest summed in the answer.
+    pub fn totals(
+        &mut self,
+        root: &Path,
+        largest: Option<protocol::Largest>,
+        mut each: impl FnMut(&[protocol::Child]) -> bool,
+    ) -> Result<protocol::TotalsDone, Error> {
+        let id = self.ask(Ask::Totals {
+            root: WirePath::of(root),
+            largest,
+        })?;
+        let mut cancelled = false;
+        loop {
+            match self.answer(id)? {
+                Answer::Children(batch) => {
+                    if !cancelled && !each(&batch) {
+                        self.ask(Ask::Cancel { id })?;
+                        cancelled = true;
+                    }
+                }
+                Answer::TotalsDone(done) => return Ok(*done),
                 _ => return Err(Error::Unexpected),
             }
         }
