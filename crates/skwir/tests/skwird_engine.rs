@@ -362,25 +362,100 @@ fn a_real_engine_sums_a_folder() {
 
 /// Usage measures a folder from a real engine's totals as its own scan of
 /// the disk does (ADR-150, D3): the same bytes, files, folders and dates,
-/// folder by folder, a file of two names once, an empty folder dated by its
-/// own time; what the engine keeps out scanned, and nothing else read.
+/// kinds, names and caches, folder by folder down the levels the map opens:
+/// a file of two names once, one with a name outside said one of two and
+/// its bytes not freed with its folders, an empty folder dated by its own
+/// time, a cache inside a cache, and what is scanned inside a cache room
+/// given back with it; what the engine keeps out scanned, and nothing else
+/// read.
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "needs a real skwird: `just skwird-check`"]
 fn usage_measures_from_a_real_engine_as_its_scan_does() {
     use skwir_core::command::{Invocation, Outcome};
+    /// What a block says, then each of its blocks' by name, a level deeper.
+    fn facts(node: &serde_json::Value, depth: usize, rows: &mut Vec<String>) {
+        const SAID: [&str; 18] = [
+            "size",
+            "alloc",
+            "files",
+            "dirs",
+            "modified",
+            "kind",
+            "entry_kind",
+            "kinds",
+            "reclaim",
+            "reclaimable",
+            "nlink",
+            "shared",
+            "other_count",
+            "other_alloc",
+            "other_size",
+            "other_files",
+            "other_modified",
+            "incomplete",
+        ];
+        let said: Vec<String> = SAID
+            .iter()
+            .map(|key| {
+                format!(
+                    "{key} {}",
+                    node.get(*key).unwrap_or(&serde_json::Value::Null)
+                )
+            })
+            .collect();
+        rows.push(format!(
+            "{:width$}{} {}",
+            "",
+            node["name"],
+            said.join(" "),
+            width = depth * 2
+        ));
+        let mut children: Vec<&serde_json::Value> = node["children"]
+            .as_array()
+            .map(|c| c.iter().collect())
+            .unwrap_or_default();
+        children.sort_by_key(|c| c["name"].as_str().unwrap_or_default().to_owned());
+        for child in children {
+            facts(child, depth + 1, rows);
+        }
+    }
     let (_dir, root) = fixture(&[
         "a.txt",
         "docs/b.pdf",
         "docs/deeper/c.pdf",
         "kept out/secret.txt",
         "media/clip.mkv",
+        "build/CACHEDIR.TAG",
+        "build/obj/data.o",
+        "build/inner/CACHEDIR.TAG",
+        "build/inner/blob.bin",
+        "build/private/p.bin",
     ]);
     std::fs::write(root.join("a.txt"), vec![b'x'; 10_000]).unwrap();
     std::fs::write(root.join("media/clip.mkv"), vec![b'y'; 300_000]).unwrap();
+    std::fs::write(root.join("build/obj/data.o"), vec![b'o'; 40_000]).unwrap();
+    std::fs::write(root.join("build/inner/blob.bin"), vec![b'i'; 30_000]).unwrap();
+    std::fs::write(root.join("build/private/p.bin"), vec![b'p'; 20_000]).unwrap();
+    for cache in ["build", "build/inner"] {
+        std::fs::write(
+            root.join(cache).join("CACHEDIR.TAG"),
+            "Signature: 8a477f597d28d172789f06886806bc55\n",
+        )
+        .unwrap();
+    }
     std::fs::hard_link(root.join("docs/b.pdf"), root.join("docs/b again.pdf")).unwrap();
+    // Its other name outside the folder measured.
+    std::fs::hard_link(
+        root.join("media/clip.mkv"),
+        root.parent().unwrap().join("clip elsewhere.mkv"),
+    )
+    .unwrap();
     std::fs::create_dir(root.join("empty")).unwrap();
-    let engine = Engine::start(&root, &[&root.join("kept out")]);
+    let engine = Engine::start(
+        &root,
+        &[&root.join("kept out"), &root.join("build/private")],
+    );
     engine.watch(&root);
     let measured = |with_index: bool| {
         let state = tempfile::tempdir().unwrap();
@@ -415,34 +490,37 @@ fn usage_measures_from_a_real_engine_as_its_scan_does() {
             std::thread::sleep(Duration::from_millis(20));
         }
     };
-    let facts = |node: &serde_json::Value| {
-        let mut rows: Vec<String> = vec![format!(
-            "{} size {} alloc {} files {} dirs {} modified {}",
-            node["name"],
-            node["size"],
-            node["alloc"],
-            node["files"],
-            node["dirs"],
-            node["modified"]
-        )];
-        for child in node["children"].as_array().unwrap() {
-            rows.push(format!(
-                "  {} size {} alloc {} files {} dirs {} modified {}",
-                child["name"],
-                child["size"],
-                child["alloc"],
-                child["files"],
-                child["dirs"],
-                child["modified"]
-            ));
-        }
-        rows.sort();
+    let said = |status: &serde_json::Value| {
+        let mut rows = Vec::new();
+        facts(&status["tree"], 0, &mut rows);
         rows
     };
     let scanned = measured(false);
     let indexed = measured(true);
-    assert_eq!(facts(&indexed["tree"]), facts(&scanned["tree"]));
-    assert_eq!(indexed["scanned_dirs"], 1, "the folder kept out alone");
-    assert!(scanned["scanned_dirs"].as_u64().unwrap() >= 6);
+    assert_eq!(said(&indexed), said(&scanned));
+    let tree = &indexed["tree"];
+    let named = |node: &serde_json::Value, name: &str| -> serde_json::Value {
+        node["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in {node}"))
+            .clone()
+    };
+    // What the comparison holds, said of the index's.
+    let media = named(tree, "media");
+    assert_eq!(named(&media, "clip.mkv")["nlink"], 2);
+    assert_eq!(media["shared"], named(&media, "clip.mkv")["alloc"]);
+    let build = named(tree, "build");
+    assert_eq!(build["reclaim"], "cache");
+    assert_eq!(build["reclaimable"], build["alloc"], "private's room too");
+    assert_eq!(named(&build, "inner")["reclaim"], "cache");
+    assert_eq!(named(&build, "private")["size"], 20_000);
+    assert_eq!(
+        indexed["scanned_dirs"], 2,
+        "the folders kept out alone, one inside the cache"
+    );
+    assert!(scanned["scanned_dirs"].as_u64().unwrap() >= 10);
     assert_eq!(indexed["stale"], false);
 }

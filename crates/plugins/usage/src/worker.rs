@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use notify::{ErrorKind, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use parking_lot::Mutex;
+use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::entry::EntryKind;
 use skwir_core::words;
@@ -75,15 +76,42 @@ const VIRTUAL_FILESYSTEMS: [&str; 2] = ["/proc", "/sys"];
 /// change below one of them must reuse its unchanged siblings.
 type Key = (bool, Reverse<usize>, u64);
 
+/// What keeps a breakdown kept current.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kept {
+    /// Usage's own watches, one on each folder in it: its scan counted it.
+    Watched,
+    /// The journal of the names index it was taken from (ADR-150, D3),
+    /// followed at or above it while it is kept (`Cache::journals`).
+    Journaled,
+}
+
+/// A names index's journal followed at a folder: what keeps the
+/// breakdowns taken from it current (`Worker::journals`).
+struct Followed {
+    /// Where its changes are asked from next: never past one a breakdown
+    /// kept may not have counted.
+    mark: skwir_core::names::Mark,
+    /// The folders below not covered, as it last said: one more is a
+    /// folder whose changes it tells no more, counted again whole.
+    holes: BTreeSet<PathBuf>,
+}
+
 #[derive(Default)]
 struct Cache {
     /// Ordered by path so a folder's descendants are one range (see [`below`]).
-    dirs: BTreeMap<PathBuf, (Node, Key)>,
+    dirs: BTreeMap<PathBuf, (Node, Key, Kept)>,
     order: BTreeMap<Key, PathBuf>,
     /// Canonical paths of the active requests.
     roots: Vec<PathBuf>,
     clock: u64,
     bytes: usize,
+    /// The journals the breakdowns taken from a names index are kept
+    /// current by, by the folder each is followed at. A breakdown from an
+    /// index is never kept without one at or above it
+    /// ([`insert_journaled`](Self::insert_journaled)); one let go of takes
+    /// what it kept with it.
+    journals: BTreeMap<PathBuf, Followed>,
 }
 fn cost(n: &Node) -> usize {
     std::mem::size_of::<Node>()
@@ -107,12 +135,28 @@ impl Cache {
             self.clock,
         )
     }
+    /// A breakdown kept, to be shown as the folder measured: whatever
+    /// keeps it current.
     fn get(&mut self, path: &Path) -> Option<Node> {
-        if !self.dirs.contains_key(path) {
+        self.take_up(path, |_| true)
+    }
+    /// A breakdown kept that a scan of the disk counts with: one it
+    /// counted itself. One from an index carries no files of several names
+    /// (`Node::links`), so a folder above holding another of their names
+    /// would count them twice.
+    fn counted(&mut self, path: &Path) -> Option<Node> {
+        self.take_up(path, |kept| kept == Kept::Watched)
+    }
+    fn take_up(&mut self, path: &Path, accept: impl Fn(Kept) -> bool) -> Option<Node> {
+        if !self
+            .dirs
+            .get(path)
+            .is_some_and(|(_, _, kept)| accept(*kept))
+        {
             return None;
         }
         let key = self.key(path);
-        let (node, stamp) = self.dirs.get_mut(path)?;
+        let (node, stamp, _) = self.dirs.get_mut(path)?;
         self.order.remove(stamp);
         *stamp = key;
         self.order.insert(key, path.to_path_buf());
@@ -121,25 +165,61 @@ impl Cache {
     /// A breakdown kept, read to be shown: showing it does not make it
     /// younger, only counting with it does.
     fn peek(&self, path: &Path) -> Option<&Node> {
-        self.dirs.get(path).map(|(node, _)| node)
+        self.dirs.get(path).map(|(node, _, _)| node)
     }
+    /// Keep a breakdown a scan counted, its folders watched.
     fn insert(&mut self, node: Node) {
-        if let Some((old, stamp)) = self.dirs.remove(&node.path) {
+        self.put(node, Kept::Watched);
+    }
+    /// Keep a breakdown taken from a names index, with the journal
+    /// followed at `at` (at or above it) that keeps it current: `mark`,
+    /// where it stood as the index first summed, and the folders it did
+    /// not cover then. A journal followed at or above `at` already is kept
+    /// as it stands: its mark is older, so what changed since is told
+    /// whatever was summed after it, a breakdown kept from before included.
+    fn insert_journaled(
+        &mut self,
+        node: Node,
+        at: &Path,
+        mark: &skwir_core::names::Mark,
+        holes: &BTreeSet<PathBuf>,
+    ) {
+        if !at.ancestors().any(|a| self.journals.contains_key(a)) {
+            self.journals.insert(
+                at.to_path_buf(),
+                Followed {
+                    mark: mark.clone(),
+                    holes: holes.clone(),
+                },
+            );
+        }
+        self.put(node, Kept::Journaled);
+    }
+    fn put(&mut self, node: Node, kept: Kept) {
+        if let Some((old, stamp, _)) = self.dirs.remove(&node.path) {
             self.bytes -= cost(&old);
             self.order.remove(&stamp);
         }
         let key = self.key(&node.path);
         self.bytes += cost(&node);
         self.order.insert(key, node.path.clone());
-        self.dirs.insert(node.path.clone(), (node, key));
+        self.dirs.insert(node.path.clone(), (node, key, kept));
         while self.bytes > MAX_CACHE_BYTES || self.dirs.len() > MAX_DIRECTORIES {
             let Some((_, path)) = self.order.pop_first() else {
                 break;
             };
-            if let Some((node, _)) = self.dirs.remove(&path) {
+            if let Some((node, _, _)) = self.dirs.remove(&path) {
                 self.bytes -= cost(&node);
             }
         }
+    }
+    /// Whether a breakdown from an index is kept at or below `folder`.
+    fn journaled_below(&self, folder: &Path) -> bool {
+        use std::ops::Bound;
+        self.dirs
+            .range::<Path, _>((Bound::Included(folder), Bound::Unbounded))
+            .take_while(|(p, _)| p.starts_with(folder))
+            .any(|(_, (_, _, kept))| *kept == Kept::Journaled)
     }
     /// Drop `path` and its ancestors (their totals include it); with
     /// `descendants`, also everything below it. Lookups, not a scan: a
@@ -154,7 +234,7 @@ impl Cache {
             doomed.extend(below(&self.dirs, path).filter(|p| *p != path).cloned());
         }
         for p in doomed {
-            if let Some((node, stamp)) = self.dirs.remove(&p) {
+            if let Some((node, stamp, _)) = self.dirs.remove(&p) {
                 self.bytes -= cost(&node);
                 self.order.remove(&stamp);
             }
@@ -168,15 +248,17 @@ impl Cache {
         }
         self.roots = roots;
         self.order.clear();
-        for (path, (_, key)) in &mut self.dirs {
+        for (path, (_, key, _)) in &mut self.dirs {
             key.0 = Self::protected(&self.roots, path);
             self.order.insert(*key, path.clone());
         }
     }
+    /// Let go of every breakdown, and of the journals that kept some.
     fn clear(&mut self) {
         self.dirs.clear();
         self.order.clear();
         self.bytes = 0;
+        self.journals.clear();
     }
 }
 
@@ -765,8 +847,8 @@ impl<'a> Scanner<'a> {
     /// The root's breakdown from a names index's totals, where one sums it
     /// with its sizes live (ADR-150, D3); the folders `nest` would open kept
     /// too. `None`: the scan reads the disk. Its folders are kept current
-    /// by the index's journal, not by watches of Usage's own (the
-    /// worker's `journals`); only the root and what the index does not
+    /// by the index's journal, kept with them (`keep_indexed`), not by
+    /// watches of Usage's own; only the root and what the index does not
     /// count are watched.
     fn indexed_root(&mut self) -> anyhow::Result<Option<Node>> {
         // Not where nothing is kept: no watch, no journal either.
@@ -791,7 +873,7 @@ impl<'a> Scanner<'a> {
         if !self.watch(self.path)? {
             self.unmonitored += 1;
         }
-        let Some(mut node) = self.indexed_breakdown(self.path, 0)? else {
+        let Some((mut node, _)) = self.indexed_breakdown(self.path, 0)? else {
             return Ok(None);
         };
         let shown = &self.request.path;
@@ -801,24 +883,43 @@ impl<'a> Scanner<'a> {
             .to_string_lossy()
             .into_owned();
         self.indexed_nested(&node)?;
+        // Kept where every folder scanned of it, those of its nested
+        // breakdowns too, and the root itself are watched.
         if !node.incomplete && self.unmonitored == 0 && self.caching {
-            self.cache.insert(node.clone());
+            self.keep_indexed(node.clone());
         }
         Ok(Some(node))
     }
 
+    /// Keep a breakdown taken from the index with the journal that keeps
+    /// it current: never one without the other.
+    fn keep_indexed(&mut self, node: Node) {
+        if let Some(indexed) = &self.indexed
+            && let Some((mark, holes)) = indexed.journal()
+        {
+            self.cache
+                .insert_journaled(node, indexed.root(), mark, holes);
+        }
+    }
+
     /// `folder`'s breakdown from the index, what it does not count below
-    /// scanned and added (`indexed::add_hole`); `None` where it does not
-    /// sum it.
-    fn indexed_breakdown(&mut self, folder: &Path, depth: usize) -> anyhow::Result<Option<Node>> {
+    /// scanned and added (`indexed::add_hole`), and whether it may be kept
+    /// (complete, what was scanned of it watched, as a scan's own);
+    /// `None` where it does not sum it.
+    fn indexed_breakdown(
+        &mut self,
+        folder: &Path,
+        depth: usize,
+    ) -> anyhow::Result<Option<(Node, bool)>> {
         let Some(indexed) = self.indexed.as_mut() else {
             return Ok(None);
         };
-        let Some(mut node) = indexed.breakdown(folder, &mut self.types, &self.places) else {
+        let Some(indexed::Breakdown { mut node, holes }) =
+            indexed.breakdown(folder, &mut self.types, &self.places)
+        else {
             return Ok(None);
         };
-        let holes = indexed.holes_in(folder);
-        let errors = self.errors;
+        let (errors, unmonitored) = (self.errors, self.unmonitored);
         for hole in holes {
             self.ensure()?;
             let Ok(metadata) = std::fs::symlink_metadata(&hole) else {
@@ -832,7 +933,13 @@ impl<'a> Scanner<'a> {
                 .map_or(1, |r| r.components().count());
             let id = folder_entry(&hole, &metadata);
             match self.directory(&hole, depth + below, id, meta::modified(&metadata)) {
-                Ok(scanned) => indexed::add_hole(&mut node, scanned),
+                Ok(scanned) => {
+                    let (indexed, places) = (self.indexed.as_ref().expect("summing"), &self.places);
+                    let at = scanned.path.clone();
+                    indexed::add_hole(&mut node, scanned, &|level| {
+                        indexed.reclaimed(level, &at, places)
+                    });
+                }
                 Err(_) if self.interrupted() => anyhow::bail!("Scan interrupted"),
                 Err(_) => self.errors += 1,
             }
@@ -840,7 +947,8 @@ impl<'a> Scanner<'a> {
         trim(&mut node);
         reclaim_whole(&mut node);
         node.incomplete = self.errors != errors;
-        Ok(Some(node))
+        let keep = !node.incomplete && self.unmonitored == unmonitored;
+        Ok(Some((node, keep)))
     }
 
     /// The breakdowns `nest` opens below `tree`, from the index, kept: the
@@ -870,11 +978,11 @@ impl<'a> Scanner<'a> {
                 let node = if let Some(kept) = self.cache.peek(&folder) {
                     kept.clone()
                 } else {
-                    let Some(node) = self.indexed_breakdown(&folder, depth)? else {
+                    let Some((node, keep)) = self.indexed_breakdown(&folder, depth)? else {
                         continue;
                     };
-                    if !node.incomplete && self.caching {
-                        self.cache.insert(node.clone());
+                    if keep && self.caching {
+                        self.keep_indexed(node.clone());
                     }
                     node
                 };
@@ -1027,7 +1135,9 @@ impl<'a> Scanner<'a> {
         modified: i64,
     ) -> anyhow::Result<Node> {
         let covered = self.watch(path)?;
-        if let Some(node) = self.cache.get(path) {
+        // Only what a scan counted: one from an index would count a file
+        // of several names twice where its names meet above it.
+        if let Some(node) = self.cache.counted(path) {
             if let Some(branch) = self.preview.as_mut().and_then(|p| p.branch.as_mut()) {
                 if depth == 1 {
                     branch.id = node.id;
@@ -1331,12 +1441,6 @@ struct Active {
     /// took. The first scan of a request is not one: it reads the whole
     /// tree, where a change reads its folder and those above it again.
     recounted: Option<(Instant, Duration)>,
-    /// Where the journal of the names index its breakdowns came from stood
-    /// (ADR-150, D3): asked what changed since every `REVALIDATE` while it
-    /// is shown, its breakdowns that did summed again.
-    journal: Option<skwir_core::names::Mark>,
-    /// When the journal was last asked.
-    journal_asked: Instant,
 }
 
 impl Active {
@@ -1375,9 +1479,13 @@ struct Worker {
     stop: Option<skwir_core::cancel::CancelSignal>,
     /// Since when no view has shown a breakdown.
     idle_since: Option<Instant>,
-    /// The journal's mark of the last scan's names index, where its
-    /// breakdowns came from one.
-    scanned_mark: Option<skwir_core::names::Mark>,
+    /// When the journals the cache follows were last asked (`journals`).
+    journals_asked: Instant,
+    /// The panes a journal asked as a request came told of a change in:
+    /// counted again with the others.
+    touched: HashSet<PaneId>,
+    /// The worker's own: what a journal is asked under.
+    lifetime: CancelToken,
 }
 
 /// What the worker's wait ended with.
@@ -1409,7 +1517,9 @@ impl Worker {
             places: Places::default(),
             stop: None,
             idle_since: None,
-            scanned_mark: None,
+            journals_asked: Instant::now(),
+            touched: HashSet::new(),
+            lifetime: CancelToken::new(),
         }
     }
 
@@ -1446,76 +1556,171 @@ impl Worker {
                     let batch = std::mem::take(&mut *self.events.lock());
                     dirty.extend(self.changes(batch));
                 }
+                // Woken to ask the journals now (`journals`).
+                Message::LookedAt => {}
             }
         }
+        dirty.extend(std::mem::take(&mut self.touched));
         dirty.extend(self.journals(Instant::now()));
         self.update(&dirty, Instant::now());
         true
     }
 
-    /// Ask the journal of each shown breakdown's names index what changed
-    /// since its mark, every `REVALIDATE` (ADR-150, D3): the breakdowns
-    /// holding what changed are dropped, and their panes counted again;
-    /// one whose journal is not every change since, or cannot be followed,
-    /// is counted again whole. Returns the panes to count again.
+    /// Ask the journals that keep the breakdowns taken from a names index
+    /// current (`Cache::journals`, ADR-150, D3) what changed, every
+    /// `REVALIDATE` while a pane shows what one keeps and someone looks
+    /// (`App::looked_at`): a journal is polled, which no watch wakes. What
+    /// changed meanwhile is told as a pane is shown again (`admit`).
+    /// Returns the panes to count again.
     fn journals(&mut self, now: Instant) -> HashSet<PaneId> {
-        let mut dirty = HashSet::new();
+        if self.cache.journals.is_empty()
+            || self.active.is_empty()
+            || now.saturating_duration_since(self.journals_asked) < REVALIDATE
+        {
+            return HashSet::new();
+        }
         let Some(app) = self.shared.app.upgrade() else {
-            return dirty;
+            return HashSet::new();
         };
-        let due: Vec<PaneId> = self
+        if !app.looked_at() {
+            return HashSet::new();
+        }
+        self.journals_asked = now;
+        let shown: Vec<PathBuf> = self
             .active
-            .iter()
-            .filter(|(_, s)| {
-                s.journal.is_some() && now.duration_since(s.journal_asked) >= REVALIDATE
-            })
-            .map(|(pane, _)| *pane)
+            .values()
+            .map(|a| a.target.path.clone())
             .collect();
-        for pane in due {
-            let Some(state) = self.active.get_mut(&pane) else {
+        self.ask_journals(&app, &|at| {
+            shown
+                .iter()
+                .any(|target| target.starts_with(at) || at.starts_with(target))
+        })
+    }
+
+    /// Ask each journal followed at a folder `wanted` accepts what changed
+    /// since its mark: the breakdowns holding what changed are dropped, a
+    /// folder it covers no more whole; one whose journal is not every
+    /// change since, or cannot be followed, is let go of with everything
+    /// it kept. One that keeps nothing any more is let go of, and one
+    /// followed inside another asked after it is that one's to tell from
+    /// then on. Returns the panes showing what changed.
+    fn ask_journals(&mut self, app: &App, wanted: &dyn Fn(&Path) -> bool) -> HashSet<PaneId> {
+        use skwir_core::names::{Change, Since};
+        // Deepest first, so one inside another is asked before it.
+        let followed: Vec<PathBuf> = self.cache.journals.keys().rev().cloned().collect();
+        let mut changed: Vec<(PathBuf, bool)> = Vec::new();
+        let mut asked: BTreeSet<PathBuf> = BTreeSet::new();
+        for at in followed {
+            if !self.cache.journaled_below(&at) {
+                self.cache.journals.remove(&at);
+                continue;
+            }
+            if !wanted(&at) {
+                continue;
+            }
+            let Some(mark) = self.cache.journals.get(&at).map(|f| f.mark.clone()) else {
                 continue;
             };
-            state.journal_asked = now;
-            let Some(mark) = state.journal.take() else {
-                continue;
-            };
-            let root = state.target.path.clone();
             let told = app
                 .names
-                .follow(&root, Some(&mark.by), &state.request.cancel)
+                .follow(&at, Some(&mark.by), &self.lifetime)
                 .and_then(|(_, opened)| {
                     let mut session = opened.session;
                     session.changes(Some(&mark))
                 });
-            match told {
-                Some(skwir_core::names::Since::Journal(journal)) if journal.complete() => {
-                    if !journal.changes.is_empty() {
-                        for change in &journal.changes {
-                            let path = match change {
-                                skwir_core::names::Change::Added(n)
-                                | skwir_core::names::Change::Removed(n)
-                                | skwir_core::names::Change::Changed(n) => n.path.as_path(),
-                                skwir_core::names::Change::NotCovered(hole) => hole.path.as_path(),
-                            };
-                            if path.starts_with(&root) {
-                                // It and every folder above it.
-                                self.cache.invalidate(path, true);
-                            }
-                        }
-                        dirty.insert(pane);
-                    }
-                    if let Some(state) = self.active.get_mut(&pane) {
-                        state.journal = Some(journal.mark);
-                    }
-                }
+            let Some(Since::Journal(journal)) = told.filter(|told| match told {
+                Since::Journal(journal) => journal.complete(),
+                Since::TooOld => false,
+            }) else {
                 // Too old, not every change, or not followed: whole again.
-                _ => {
-                    self.cache.invalidate(&root, true);
-                    dirty.insert(pane);
+                self.cache.invalidate(&at, true);
+                self.cache.journals.remove(&at);
+                changed.push((at, true));
+                continue;
+            };
+            for change in &journal.changes {
+                // A folder that came, went or is covered no more takes
+                // what is below it; an entry that changed only itself and
+                // the folders above it.
+                let (path, whole) = match change {
+                    Change::Added(n) | Change::Removed(n) => {
+                        (&n.path, n.kind == EntryKind::Directory)
+                    }
+                    Change::Changed(n) => (&n.path, false),
+                    Change::NotCovered(hole) => (&hole.path, true),
+                };
+                if path.starts_with(&at) {
+                    self.cache.invalidate(path, whole);
+                    changed.push((path.clone(), whole));
+                }
+            }
+            let holes: BTreeSet<PathBuf> = journal
+                .holes
+                .iter()
+                .filter(|h| h.path.starts_with(&at))
+                .map(|h| h.path.clone())
+                .collect();
+            let Some(kept) = self.cache.journals.get_mut(&at) else {
+                continue;
+            };
+            // Not covered since, though no change said so: its changes
+            // are told no more.
+            let uncovered: Vec<PathBuf> = holes.difference(&kept.holes).cloned().collect();
+            kept.mark = journal.mark;
+            kept.holes = holes;
+            for hole in uncovered {
+                self.cache.invalidate(&hole, true);
+                changed.push((hole, true));
+            }
+            let inside: Vec<PathBuf> = asked
+                .range::<Path, _>((
+                    std::ops::Bound::Included(at.as_path()),
+                    std::ops::Bound::Unbounded,
+                ))
+                .take_while(|p| p.starts_with(&at))
+                .cloned()
+                .collect();
+            for folder in inside {
+                self.cache.journals.remove(&folder);
+                asked.remove(&folder);
+            }
+            asked.insert(at);
+        }
+        self.touched_by(&changed)
+    }
+
+    /// The panes a change at each of `paths` concerns (`true`: what is
+    /// below it too): those showing a folder holding it, and those showing
+    /// one inside it where it takes what is below it. Lookups by each
+    /// one's folders, never a pass over the panes for each path.
+    fn touched_by(&self, paths: &[(PathBuf, bool)]) -> HashSet<PaneId> {
+        let mut showing: HashMap<&Path, Vec<PaneId>> = HashMap::new();
+        for (pane, active) in &self.active {
+            showing
+                .entry(active.target.path.as_path())
+                .or_default()
+                .push(*pane);
+        }
+        let whole: HashSet<&Path> = paths
+            .iter()
+            .filter(|(_, whole)| *whole)
+            .map(|(path, _)| path.as_path())
+            .collect();
+        let mut touched = HashSet::new();
+        for (path, _) in paths {
+            for folder in path.ancestors() {
+                if let Some(panes) = showing.get(folder) {
+                    touched.extend(panes.iter().copied());
                 }
             }
         }
-        dirty
+        for (target, panes) in &showing {
+            if target.ancestors().skip(1).any(|a| whole.contains(a)) {
+                touched.extend(panes.iter().copied());
+            }
+        }
+        touched
     }
 
     /// Wait for a message, the plugin's end, or `wait` to pass (`None`:
@@ -1614,9 +1819,17 @@ impl Worker {
             pending: false,
             changed: false,
             recounted: None,
-            journal: None,
-            journal_asked: Instant::now(),
         };
+        // What a breakdown kept from an index missed while no pane asked
+        // its journal (nobody looked, or none showed it) is told before it
+        // is shown again: it may be shown from the cache at once.
+        if let Some(app) = self.shared.app.upgrade() {
+            let target = state.target.path.clone();
+            let touched = self.ask_journals(&app, &|at| {
+                target.starts_with(at) || at.starts_with(&target)
+            });
+            self.touched.extend(touched);
+        }
         self.acquire_aliases(&mut state);
         self.set_cache_roots(Some(&state.target.path));
         let coverage = self.cover(&state, Instant::now());
@@ -1783,11 +1996,6 @@ impl Worker {
                 state.coverage = coverage;
                 state.last_scan = Instant::now();
                 state.last_duration = started.elapsed();
-                // A breakdown kept from before keeps the mark it came with.
-                if let Some(mark) = self.scanned_mark.take() {
-                    state.journal = Some(mark);
-                    state.journal_asked = state.last_scan;
-                }
                 // What the scan freed, given back before the worker
                 // sleeps: it is no scheduler worker.
                 skwir_core::scheduler::release_now();
@@ -1855,9 +2063,7 @@ impl Worker {
         if scanner.yielded {
             return None;
         }
-        let mark = scanner.indexed.take().and_then(|i| i.mark);
         drop(scanner);
-        self.scanned_mark = mark;
         let coverage = if exhausted {
             self.exhaust(&target.path, Instant::now());
             Coverage::None
@@ -2087,6 +2293,7 @@ pub(super) fn run(
     .map(|watcher| Box::new(watcher) as Box<dyn Watcher>);
     let mut worker = Worker::new(shared, watcher, Some(rx.clone()), changes);
     worker.stop = Some(cancel.subscribe());
+    worker.lifetime = cancel.clone();
     while !cancel.is_cancelled() && worker.step(rx) {}
     // Watcher/cache destruction stays on this thread, including plugin disable and app shutdown.
 }
@@ -2671,7 +2878,7 @@ mod tests {
             result.children.iter().map(|n| n.alloc).sum::<u64>() + result.other_alloc,
             result.alloc
         );
-        assert!(cache.dirs.values().all(|(node, _)| !node.incomplete));
+        assert!(cache.dirs.values().all(|(node, _, _)| !node.incomplete));
         let revision = self::revision(&shared);
         assert_eq!(
             scanner(&mut cache, &request, &shared).root().unwrap().size,
@@ -3620,27 +3827,64 @@ mod tests {
         assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
     }
 
+    use skwir_core::coverage::{Hole, Why};
+    use skwir_core::names::{self, Journal, Mark, Noted, Since};
+
     /// A stand-in names index: it sums the folders it is given, names the
-    /// paths it is given, and tells the journal it is given.
+    /// paths it is given, and tells the journal it is given, else that
+    /// nothing changed; its totals say the holes below the folder they sum,
+    /// as skwird's do.
     #[derive(Clone, Default)]
     struct Summing(Arc<Mutex<Summed>>);
 
     #[derive(Default)]
     struct Summed {
         root: PathBuf,
-        holes: Vec<skwir_core::coverage::Hole>,
+        holes: Vec<Hole>,
         totals: HashMap<PathBuf, (Vec<skwir_core::names::Child>, skwir_core::names::Totals)>,
         named: Vec<PathBuf>,
-        journal: Option<skwir_core::names::Since>,
+        /// What its journal tells when next asked; else that nothing
+        /// changed.
+        journal: Option<Since>,
+        /// The tokens its journal was asked from, in order.
+        since: Vec<String>,
         /// The folders whose entries were asked, in order.
         asked: Vec<PathBuf>,
         /// The journal's token its totals are as of.
         token: String,
+        /// Whether some file's count of names is not known.
+        links_unknown: bool,
     }
 
     fn live() -> skwir_core::coverage::Proof {
         skwir_core::coverage::Proof::Live {
             since: std::time::SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    fn mark(token: &str) -> Mark {
+        Mark {
+            by: "summing".into(),
+            token: token.into(),
+        }
+    }
+
+    /// A journal telling `changes`, every change, from `token` on.
+    fn told(changes: Vec<names::Change>, token: &str, holes: Vec<Hole>) -> Since {
+        Since::Journal(Journal {
+            changes,
+            mark: mark(token),
+            names: true,
+            attrs: true,
+            holes,
+        })
+    }
+
+    fn noted(path: PathBuf, kind: EntryKind) -> Noted {
+        Noted {
+            path,
+            kind,
+            id: None,
         }
     }
 
@@ -3694,11 +3938,12 @@ mod tests {
             each(named);
             None
         }
-        fn changes(
-            &mut self,
-            _: Option<&skwir_core::names::Mark>,
-        ) -> Option<skwir_core::names::Since> {
-            self.0.lock().journal.take()
+        fn changes(&mut self, since: Option<&Mark>) -> Option<Since> {
+            let mut s = self.0.lock();
+            s.since
+                .push(since.map_or_else(String::new, |m| m.token.clone()));
+            let told = s.journal.take();
+            Some(told.unwrap_or_else(|| told_nothing(&s)))
         }
         fn totals(
             &mut self,
@@ -3718,20 +3963,27 @@ mod tests {
             Some(skwir_core::names::Summed {
                 totals,
                 mtime: None,
-                mark: skwir_core::names::Mark {
-                    by: "summing".into(),
-                    token: summed.token.clone(),
-                },
+                mark: mark(&summed.token),
                 coverage: skwir_core::coverage::Coverage {
                     names: live(),
                     attrs: live(),
-                    holes: Vec::new(),
+                    holes: summed
+                        .holes
+                        .iter()
+                        .filter(|h| h.path.starts_with(folder) && h.path != folder)
+                        .cloned()
+                        .collect(),
                 },
-                links_known: true,
+                links_known: !summed.links_unknown,
                 count: 0,
                 rest: None,
             })
         }
+    }
+
+    /// That nothing changed since, as of its token now.
+    fn told_nothing(s: &Summed) -> Since {
+        told(Vec::new(), &s.token, s.holes.clone())
     }
 
     fn totals(alloc: u64, files: u64, folders: u64) -> skwir_core::names::Totals {
@@ -3761,164 +4013,414 @@ mod tests {
         }
     }
 
+    const SIGNED: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n";
+
+    /// What a test of a measure from an index holds: the folder measured
+    /// and the folder above it, outside the index; the stand-in index
+    /// summing it; a window looked at, and a worker measuring.
+    struct Indexing {
+        _tmp: tempfile::TempDir,
+        _state: tempfile::TempDir,
+        root: PathBuf,
+        above: PathBuf,
+        index: Summing,
+        app: Arc<skwir_core::app::App>,
+        shared: Arc<Shared>,
+        worker: Worker,
+        /// The worker's time, moved on a `REVALIDATE` a round.
+        clock: Instant,
+    }
+
+    impl Indexing {
+        /// On disk: `big/part` (empty), `big/x.bin` (1000 bytes, a name
+        /// above too), `kept out/secret` (5000), `cached` and
+        /// `cached/inner` (caches, each by its tag) and
+        /// `cached/private/note` (3000). The index keeps `kept out` and
+        /// `cached/private` out, and says what the disk does not hold
+        /// elsewhere, so what is read from where shows.
+        fn new(recording: &Recording) -> Indexing {
+            let tmp = tempfile::tempdir().unwrap();
+            let above = std::fs::canonicalize(tmp.path()).unwrap();
+            let root = above.join("measured");
+            for dir in ["big/part", "kept out", "cached/inner", "cached/private"] {
+                std::fs::create_dir_all(root.join(dir)).unwrap();
+            }
+            std::fs::write(root.join("big/x.bin"), vec![b'b'; 1000]).unwrap();
+            std::fs::hard_link(root.join("big/x.bin"), above.join("x again.bin")).unwrap();
+            std::fs::write(root.join("kept out/secret"), vec![b'x'; 5000]).unwrap();
+            std::fs::write(root.join("cached/private/note"), vec![b'p'; 3000]).unwrap();
+            for cache in ["cached", "cached/inner"] {
+                std::fs::write(root.join(cache).join(marks::CACHEDIR_TAG), SIGNED).unwrap();
+            }
+            let index = Summing::default();
+            {
+                let mut s = index.0.lock();
+                s.root.clone_from(&root);
+                s.holes = vec![
+                    Hole {
+                        path: root.join("kept out"),
+                        why: Why::Excluded,
+                    },
+                    Hole {
+                        path: root.join("cached/private"),
+                        why: Why::Private,
+                    },
+                ];
+                s.totals.insert(
+                    root.clone(),
+                    (
+                        vec![
+                            entry(root.join("big"), true, totals(1_000_000, 10, 1)),
+                            entry(root.join("kept out"), true, totals(0, 0, 0)),
+                            entry(root.join("cached"), true, totals(50_000, 3, 2)),
+                        ],
+                        totals(1_050_000, 13, 6),
+                    ),
+                );
+                let mut linked = totals(100_000, 1, 0);
+                linked.shared = 100_000;
+                s.totals.insert(
+                    root.join("big"),
+                    (
+                        vec![
+                            entry(root.join("big/part"), true, totals(900_000, 9, 0)),
+                            entry(root.join("big/x.bin"), false, linked),
+                        ],
+                        totals(1_000_000, 10, 1),
+                    ),
+                );
+                s.totals.insert(
+                    root.join("cached"),
+                    (
+                        vec![entry(root.join("cached/inner"), true, totals(20_000, 1, 0))],
+                        totals(50_000, 3, 2),
+                    ),
+                );
+                s.totals.insert(
+                    root.join("cached/inner"),
+                    (Vec::new(), totals(20_000, 1, 0)),
+                );
+                s.named = vec![
+                    root.join("cached").join(marks::CACHEDIR_TAG),
+                    root.join("cached/inner").join(marks::CACHEDIR_TAG),
+                ];
+            }
+            let state = tempfile::tempdir().unwrap();
+            let app =
+                skwir_core::app::App::new(skwir_core::app::AppConfig::ephemeral(state.path()))
+                    .unwrap();
+            app.names.register("test", Arc::new(index.clone()));
+            app.set_window_focused(skwir_core::workspace::WindowId(1), true);
+            let shared = Arc::new(Shared {
+                statuses: Mutex::default(),
+                revision: Arc::default(),
+                wake: Arc::new(|| {}),
+                app: app.weak(),
+            });
+            let worker = worker(Arc::clone(&shared), Some(self::recording(recording)));
+            Indexing {
+                _tmp: tmp,
+                _state: state,
+                root,
+                above,
+                index,
+                app,
+                shared,
+                worker,
+                clock: Instant::now(),
+            }
+        }
+
+        /// Pane `pane` asked to show `path`, as its `generation`th request.
+        fn measure(&mut self, pane: u32, path: &Path, generation: u64) -> Status {
+            let mut request = request(pane, path.to_path_buf());
+            request.generation = generation;
+            register_status(&self.shared, &request);
+            self.worker.admit(request);
+            self.status(pane)
+        }
+
+        fn status(&self, pane: u32) -> Status {
+            self.shared.statuses.lock()[&PaneId(pane)].clone()
+        }
+
+        /// A round of the journals a `REVALIDATE` on, and the counts it
+        /// asked for: the panes counted again.
+        fn round(&mut self) -> HashSet<PaneId> {
+            self.clock += REVALIDATE;
+            let dirty = self.worker.journals(self.clock);
+            self.worker.update(&dirty, self.clock);
+            dirty
+        }
+
+        /// The journal tells `changes` when next asked, from `token` on.
+        fn tell(&self, changes: Vec<names::Change>, token: &str) {
+            let mut s = self.index.0.lock();
+            let holes = s.holes.clone();
+            s.journal = Some(told(changes, token, holes));
+        }
+
+        /// The index's totals of `folder`'s entry `name` and of the
+        /// folders above it to the root, `by` bytes more.
+        fn grow(&self, folder: &str, name: &str, by: u64) {
+            let mut s = self.index.0.lock();
+            let mut at = self.root.join(folder);
+            let mut child = at.join(name);
+            loop {
+                if let Some((children, own)) = s.totals.get_mut(&at) {
+                    if let Some(c) = children.iter_mut().find(|c| c.path == child) {
+                        c.totals.size += by;
+                        c.totals.alloc += by;
+                    }
+                    own.size += by;
+                    own.alloc += by;
+                }
+                if at == self.root {
+                    break;
+                }
+                child.clone_from(&at);
+                at = at.parent().unwrap().to_path_buf();
+            }
+        }
+    }
+
+    fn named<'a>(node: &'a Node, name: &str) -> &'a Node {
+        node.children
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("{name} among {:?}", node.children))
+    }
+
     /// A folder a names index sums with its sizes live is measured from it
     /// (ADR-150, D3), the disk read only where the index counts nothing: a
     /// folder it keeps out scanned and added, a cache's room asked of it by
     /// name, the folders the map opens summed too; what its journal says
-    /// changed is summed again.
+    /// changed is summed again, and its changes are asked from where it
+    /// stood before, never from where a breakdown summed after it stood.
     #[test]
     fn a_folder_an_index_sums_is_measured_from_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(tmp.path()).unwrap().join("measured");
-        for dir in ["big/part", "kept out", "cached"] {
-            std::fs::create_dir_all(root.join(dir)).unwrap();
-        }
-        // What the disk holds is not what the index says, but where it says
-        // it counts nothing.
-        std::fs::write(root.join("kept out/secret"), vec![b'x'; 5000]).unwrap();
-        std::fs::write(
-            root.join("cached").join(marks::CACHEDIR_TAG),
-            b"Signature: 8a477f597d28d172789f06886806bc55\n",
-        )
-        .unwrap();
-        let index = Summing::default();
-        {
-            let mut s = index.0.lock();
-            s.root = root.clone();
-            s.holes = vec![skwir_core::coverage::Hole {
-                path: root.join("kept out"),
-                why: skwir_core::coverage::Why::Excluded,
-            }];
-            s.totals.insert(
-                root.clone(),
-                (
-                    vec![
-                        entry(root.join("big"), true, totals(1_000_000, 10, 1)),
-                        entry(root.join("kept out"), true, totals(0, 0, 0)),
-                        entry(root.join("cached"), true, totals(50_000, 3, 0)),
-                    ],
-                    totals(1_050_000, 13, 4),
-                ),
-            );
-            s.totals.insert(
-                root.join("big"),
-                (
-                    vec![
-                        entry(root.join("big/part"), true, totals(900_000, 9, 0)),
-                        entry(root.join("big/x.bin"), false, totals(100_000, 1, 0)),
-                    ],
-                    totals(1_000_000, 10, 1),
-                ),
-            );
-            s.totals
-                .insert(root.join("cached"), (Vec::new(), totals(50_000, 3, 0)));
-            s.named = vec![root.join("cached").join(marks::CACHEDIR_TAG)];
-        }
-        let state = tempfile::tempdir().unwrap();
-        let app =
-            skwir_core::app::App::new(skwir_core::app::AppConfig::ephemeral(state.path())).unwrap();
-        app.names.register("test", Arc::new(index.clone()));
-        let shared = Arc::new(Shared {
-            statuses: Mutex::default(),
-            revision: Arc::default(),
-            wake: Arc::new(|| {}),
-            app: app.weak(),
-        });
-        let recording = Recording::default();
-        let mut worker = worker(Arc::clone(&shared), Some(self::recording(&recording)));
-        let request = request(0, root.clone());
-        register_status(&shared, &request);
-        worker.admit(request);
-        let status = shared.statuses.lock()[&PaneId(0)].clone();
-        let tree = status.tree.expect("measured");
-        let child = |name: &str| {
-            tree.children
-                .iter()
-                .find(|c| c.name == name)
-                .unwrap_or_else(|| panic!("{name}"))
-                .clone()
-        };
-        // From the index, not the disk (big holds nothing there).
-        assert_eq!(child("big").alloc, 1_000_000);
-        assert_eq!(child("big").files, 10);
+        let mut t = Indexing::new(&Recording::default());
+        let root = t.root.clone();
+        let status = t.measure(0, &root, 1);
+        let tree = status.tree.clone().expect("measured");
+        // From the index, not the disk (big holds 1000 bytes there).
+        assert_eq!(named(&tree, "big").alloc, 1_000_000);
+        assert_eq!(named(&tree, "big").files, 10);
         // Kept out of the index: scanned.
-        let kept_out = child("kept out");
+        let kept_out = named(&tree, "kept out");
         assert_eq!((kept_out.size, kept_out.files), (5000, 1));
-        assert_eq!(tree.size, 1_050_000 + 5000);
-        assert_eq!(tree.files, 14);
+        assert_eq!(tree.size, 1_050_000 + 5000 + 3000);
+        assert_eq!(tree.files, 15);
         // The cache, said so by its tag, its room asked of the index.
-        assert_eq!(child("cached").reclaim, Some(marks::Reclaim::Cache));
-        assert_eq!(child("cached").reclaimable, 50_000);
-        assert_eq!(tree.reclaimable, 50_000);
+        assert_eq!(named(&tree, "cached").reclaim, Some(marks::Reclaim::Cache));
         // Only what the index does not count was read.
-        assert_eq!(status.scanned_dirs, 1, "kept out alone");
+        assert_eq!(status.scanned_dirs, 2, "kept out and private alone");
         assert!(!status.stale, "kept current by the journal");
         // The map opens big: summed by the index too, and drawn inside.
-        let big = child("big");
-        assert!(
-            big.children
-                .iter()
-                .any(|c| c.name == "part" && c.alloc == 900_000),
-            "{:?}",
-            big.children
-        );
-        assert!(worker.active[&PaneId(0)].journal.is_some(), "its mark kept");
+        let big = named(&tree, "big");
+        assert_eq!(named(big, "part").alloc, 900_000);
+        assert!(t.worker.cache.journals.contains_key(&root), "its mark kept");
 
         // The journal says big/x.bin changed: big summed again, the rest kept.
+        t.tell(
+            vec![names::Change::Changed(noted(
+                root.join("big/x.bin"),
+                EntryKind::File,
+            ))],
+            "m2",
+        );
+        t.grow("big", "x.bin", 200_000);
         {
-            let mut s = index.0.lock();
-            s.journal = Some(skwir_core::names::Since::Journal(
-                skwir_core::names::Journal {
-                    changes: vec![skwir_core::names::Change::Changed(
-                        skwir_core::names::Noted {
-                            path: root.join("big/x.bin"),
-                            kind: EntryKind::File,
-                            id: None,
-                        },
-                    )],
-                    mark: skwir_core::names::Mark {
-                        by: "summing".into(),
-                        token: "m2".into(),
-                    },
-                    names: true,
-                    attrs: true,
-                    holes: Vec::new(),
-                },
-            ));
-            let big = s.totals.get_mut(&root.join("big")).unwrap();
-            big.0[1].totals = totals(300_000, 1, 0);
-            big.1 = totals(1_200_000, 10, 1);
-            let whole = s.totals.get_mut(&root).unwrap();
-            whole.0[0].totals = totals(1_200_000, 10, 1);
-            whole.1 = totals(1_250_000, 13, 4);
+            let mut s = t.index.0.lock();
             s.asked.clear();
             s.token = "m3".into();
         }
-        let later = Instant::now() + REVALIDATE;
-        let dirty = worker.journals(later);
-        assert_eq!(dirty, HashSet::from([PaneId(0)]));
-        worker.update(&dirty, later);
-        let tree = shared.statuses.lock()[&PaneId(0)].tree.clone().unwrap();
-        assert_eq!(tree.size, 1_250_000 + 5000);
-        let asked = index.0.lock().asked.clone();
+        assert_eq!(t.round(), HashSet::from([PaneId(0)]));
+        let tree = t.status(0).tree.unwrap();
+        assert_eq!(tree.size, 1_250_000 + 8000);
+        let asked = t.index.0.lock().asked.clone();
         assert!(asked.contains(&root) && asked.contains(&root.join("big")));
         assert!(
             !asked.contains(&root.join("cached")),
             "its breakdown kept: {asked:?}"
         );
         assert_eq!(
-            worker.active[&PaneId(0)]
-                .journal
-                .as_ref()
-                .map(|m| m.token.as_str()),
-            Some("m3"),
-            "the mark of the totals summed again"
+            t.worker.cache.journals[&root].mark.token, "m2",
+            "asked from where it stood, not from the totals summed since: \
+             what changed meanwhile in what was kept is told"
         );
 
         // A journal that is not every change: whole again.
-        index.0.lock().journal = Some(skwir_core::names::Since::TooOld);
-        let later = later + REVALIDATE;
-        assert_eq!(worker.journals(later), HashSet::from([PaneId(0)]));
+        t.index.0.lock().journal = Some(Since::TooOld);
+        assert_eq!(t.round(), HashSet::from([PaneId(0)]));
+        assert_eq!(t.index.0.lock().since, ["", "m2"]);
+        assert_eq!(
+            t.worker.cache.journals[&root].mark.token, "m3",
+            "followed again from the totals summed anew"
+        );
+    }
+
+    /// A measure from an index says of names and caches what the scan of
+    /// the disk does: a file of several names how many, a cache inside a
+    /// cache what it holds, and what is scanned inside a cache room given
+    /// back with it.
+    #[test]
+    fn an_index_measure_says_what_the_scan_says_of_names_and_caches() {
+        let mut t = Indexing::new(&Recording::default());
+        let root = t.root.clone();
+        let tree = t.measure(0, &root, 1).tree.expect("measured");
+        assert_eq!(
+            named(named(&tree, "big"), "x.bin").nlink,
+            2,
+            "one of its two names"
+        );
+        let cached = named(&tree, "cached");
+        let private = named(cached, "private");
+        assert_eq!(private.size, 3000, "scanned");
+        assert_eq!(cached.alloc, 50_000 + private.alloc);
+        assert_eq!(cached.reclaimable, cached.alloc, "a cache whole");
+        assert_eq!(tree.reclaimable, cached.alloc);
+        let inner = named(cached, "inner");
+        assert_eq!(inner.reclaim, Some(marks::Reclaim::Cache));
+        assert_eq!(inner.reclaimable, 20_000);
+        let kept = t.worker.cache.peek(&root.join("cached")).unwrap();
+        assert_eq!(kept.reclaimable, kept.alloc);
+        assert_eq!(kept.alloc, 50_000 + private.alloc);
+    }
+
+    /// A breakdown taken from an index stays current wherever it is shown
+    /// again: drilled into, by a second pane, shown again after a while,
+    /// told by the journal it was kept with; a scan of the disk above the
+    /// index never counts with one.
+    #[test]
+    fn a_breakdown_from_an_index_is_kept_current_wherever_it_is_shown() {
+        let mut t = Indexing::new(&Recording::default());
+        let root = t.root.clone();
+        t.measure(0, &root, 1);
+        // Drilled into: big's breakdown, kept from the index's, shown at once.
+        t.index.0.lock().asked.clear();
+        let big = t.measure(0, &root.join("big"), 2);
+        assert_eq!(big.alloc, 1_000_000);
+        assert!(
+            !t.index.0.lock().asked.contains(&root.join("big")),
+            "kept, not summed again"
+        );
+        // A second pane shows the folder measured, kept too.
+        t.measure(1, &root, 3);
+        // big/part gains a file: both panes counted again, the drilled one too.
+        t.tell(
+            vec![names::Change::Added(noted(
+                root.join("big/part/new.bin"),
+                EntryKind::File,
+            ))],
+            "m2",
+        );
+        t.grow("big", "part", 50_000);
+        assert_eq!(t.round(), HashSet::from([PaneId(0), PaneId(1)]));
+        assert_eq!(t.status(0).alloc, 1_050_000);
+        assert_eq!(t.status(1).size, 1_100_000 + 8000);
+
+        // Let go of, then shown again: what changed meanwhile is told first.
+        t.worker.remove_active(PaneId(0));
+        t.worker.remove_active(PaneId(1));
+        t.tell(
+            vec![names::Change::Changed(noted(
+                root.join("big/x.bin"),
+                EntryKind::File,
+            ))],
+            "m4",
+        );
+        t.grow("big", "x.bin", 50_000);
+        let again = t.measure(0, &root, 4);
+        assert_eq!(again.size, 1_150_000 + 8000, "not what was kept before");
+
+        // Measured from above, outside the index: the disk read below it,
+        // a file of two names counted once where they meet.
+        let above = t.above.clone();
+        let status = t.measure(2, &above, 5);
+        let tree = status.tree.expect("measured");
+        let on_disk = 1000 + 5000 + 3000 + 2 * SIGNED.len() as u64;
+        assert_eq!(named(&tree, "measured").size, on_disk);
+        assert_eq!(tree.size, on_disk);
+    }
+
+    /// The journals are asked on a slow pace only while someone looks; a
+    /// folder they cover no more, though no change says so, is counted
+    /// again whole; an index that does not know every file's count of
+    /// names is not measured from.
+    #[test]
+    fn journals_are_asked_while_someone_looks_and_say_what_they_cover() {
+        let mut t = Indexing::new(&Recording::default());
+        let root = t.root.clone();
+        t.measure(0, &root, 1);
+        let window = skwir_core::workspace::WindowId(1);
+        t.app.set_window_focused(window, false);
+        assert!(t.round().is_empty());
+        assert!(t.index.0.lock().since.is_empty(), "not asked");
+        t.app.set_window_focused(window, true);
+        assert!(t.round().is_empty(), "nothing changed");
+        assert_eq!(t.index.0.lock().since.len(), 1);
+
+        // big/part kept out of the index now, no change said: scanned
+        // (it is empty on disk), and big counted again.
+        {
+            let mut s = t.index.0.lock();
+            s.holes.push(Hole {
+                path: root.join("big/part"),
+                why: Why::Private,
+            });
+        }
+        assert_eq!(t.round(), HashSet::from([PaneId(0)]));
+        let big = t
+            .worker
+            .cache
+            .peek(&root.join("big"))
+            .expect("summed again");
+        assert_eq!(named(big, "part").alloc, 0);
+
+        // Some file's count of names not known: the disk is read.
+        t.index.0.lock().links_unknown = true;
+        let mut force = request(0, root.clone());
+        force.generation = 2;
+        force.force = true;
+        register_status(&t.shared, &force);
+        t.worker.admit(force);
+        let status = t.status(0);
+        assert!(status.scanned_dirs >= 6, "{}", status.scanned_dirs);
+        assert_eq!(status.size, 1000 + 5000 + 3000 + 2 * SIGNED.len() as u64);
+        assert!(!t.worker.cache.journaled_below(&root));
+    }
+
+    /// A journal followed inside another is that one's to tell once both
+    /// were asked: one connection a round for what they kept.
+    #[test]
+    fn a_journal_inside_another_is_the_outer_ones_once_both_are_asked() {
+        let mut t = Indexing::new(&Recording::default());
+        let root = t.root.clone();
+        t.measure(0, &root.join("big"), 1);
+        t.measure(1, &root, 2);
+        let followed = |t: &Indexing| t.worker.cache.journals.keys().cloned().collect::<Vec<_>>();
+        assert_eq!(followed(&t), [root.clone(), root.join("big")]);
+        assert!(t.round().is_empty());
+        assert_eq!(followed(&t), [root.as_path()]);
+        // Asked as the second pane came, then both, the inner first.
+        assert_eq!(t.index.0.lock().since.len(), 3);
+    }
+
+    /// A breakdown summed by the index whose scanned folders are not all
+    /// watched is not kept, as a scan's own is not.
+    #[test]
+    fn a_breakdown_with_a_folder_scanned_unwatched_is_not_kept() {
+        let recording = Recording {
+            refuse: Some("private"),
+            ..Recording::default()
+        };
+        let mut t = Indexing::new(&recording);
+        let root = t.root.clone();
+        let status = t.measure(0, &root, 1);
+        assert!(status.stale, "partly watched");
+        assert!(t.worker.cache.peek(&root.join("cached")).is_none());
+        assert!(t.worker.cache.peek(&root.join("big")).is_some());
     }
 
     /// Without an index, or where its sizes are not live, the disk is read
@@ -3945,6 +4447,6 @@ mod tests {
         let status = shared.statuses.lock()[&PaneId(0)].clone();
         assert_eq!(status.size, 4);
         assert_eq!(status.scanned_dirs, 1);
-        assert!(worker.active[&PaneId(0)].journal.is_none());
+        assert!(worker.cache.journals.is_empty());
     }
 }

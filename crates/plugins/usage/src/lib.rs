@@ -166,6 +166,10 @@ enum Message {
     Scan(Request),
     Release(PaneId),
     Changed,
+    /// A window came to the front: what is asked only while someone
+    /// looks (the journals of the indexes breakdowns came from) is asked
+    /// now, not at the worker's next wake.
+    LookedAt,
 }
 
 struct Shared {
@@ -506,6 +510,11 @@ impl Plugin for UsagePlugin {
                 color: None,
             },
         );
+    }
+    fn on_looked_at(&self, _app: &App) {
+        if let Some(r) = self.runtime.lock().as_ref() {
+            let _ = r.tx.send(Message::LookedAt);
+        }
     }
     fn on_disable(&self, app: &App) {
         self.runtime.lock().take();
