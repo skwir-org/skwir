@@ -23970,3 +23970,58 @@ asked for them fixed before the release.
   the load's.
 - **Not checked:** a remote's lane; Windows and macOS (compiled only);
   the window.
+
+## 2026-11-24, evening: Homebrew's cask, names in both forms
+
+The user asked for the queued points before the release. Two were
+skwir's to build; the third, removable volumes in skwird, waits for
+skwird's 0.2, after its 0.1.0 (its session's word: a request ahead of
+the release that ships it).
+- **Homebrew's cask** (29738a41, dd724f10; ADR-142, 075 and 040
+  amended). A `macos` copy where Homebrew's Caskroom holds `skwir`
+  (`/opt/homebrew` or `/usr/local`) never checks for a new version, read
+  again at each look as a `.deb`'s repository is. `just cask <tag>`
+  writes `Casks/skwir.rb` from the bundle's manifest into a checkout of
+  skwir-org/homebrew-tap: the release's zip as it is, `skwir` on the
+  PATH, the quarantine never taken off, its caveats saying Open Anyway
+  and `brew trust skwir-org/tap`. The tap's local branch `cask/skwir`
+  (d58f29e) adds a workflow job that installs it and checks the seal,
+  the quarantine and the Caskroom, then uninstalls it. Pushed by the user
+  with the first release after 0.6.1.
+- **Names in both forms** (6286ae29, 3ecbc9b7, 6ada1784, ca096d2b,
+  b00a70e0; ADR-150 17). skwird's client copied at 12a90c2: its hello
+  says what its engine does beyond its version. Core's
+  `name_match::NameMatch` is the one matcher of a search's terms, a
+  filter's words, the name filter and `/`, a term matched composed and
+  decomposed. An index is trusted for a term whose forms differ only
+  where its connection says it matches both (`Session::both_forms`,
+  skwird's `names-both-forms`); plocate is asked every form. Built by a
+  fixer (`forms`), the gate reworked to follow each connection's hello,
+  skwird wired by the integrator.
+- **Checked:** `lint-all` (check-cross included), `deny`, `notices`
+  (made again: the helpers on core now carry unicode-normalization and
+  tinyvec), `release-tools-check` (the cask's tests among them), the
+  workspace's tests (4,399), the six real-engine tests against skwird
+  at 12a90c2 (0.1.0, which says no word), the cask written from
+  v0.6.1's bundle (that zip's SHA-256, `ruby -c`). The plugins' new
+  tests fail without their change: the plugin's on `managed`, skwird's
+  on the hello's word, four of the matcher's at HEAD's export. Bench:
+  `images10k.stream_complete_us` read 14.3 ms (budget 12) in the gate
+  under a load average of 17, then 4.4 to 5.4 ms three times alone; the
+  other budgets met; `name_search_us` and a 100,000-name filter
+  alternated with HEAD's build by the fixer, unchanged.
+- **Under Wine** (`test-windows`, the query, updates and skwird
+  plugins): skwird's and updates' pass; the query plugin fails 13 of
+  194. Run again at e874434c, the round's base, in a worktree:
+  - the eight older `names_index` tests failed there too, their indexed
+    search naming nothing, and the new one fails alike;
+  - `lang`'s last instant of January (a time one nanosecond short of a
+    second, which Windows' 100 ns clock cannot hold), `groups`' type
+    name (the database under Wine) and `field`'s whole disk as typed (a
+    hole walked) failed there too;
+  - `changes`' `closing_a_search_stops_an_arriving_subtree` failed once
+    among the 194 and passed five times alone, as at the base.
+  None looked into (PLAN).
+- **Not checked:** a Mac (the cask, the Caskroom read), Homebrew's own
+  `brew style` and `brew audit` (a scratch Homebrew was refused here:
+  the tap's workflow runs them once pushed), real Windows.

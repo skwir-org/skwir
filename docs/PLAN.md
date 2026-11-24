@@ -1603,6 +1603,13 @@ U+0306 against й); exclusions by name, path completion, `jump`'s
 matcher and the save dialog's name still match one form, an excluded
 name with an accent typed composed missing a folder written decomposed.
 
+**The query plugin under Wine** (first run 2026-11-24, evening): its
+`names_index` tests find nothing through their fake index (all nine,
+the eight older ones failing before that round too); `lang`'s last
+instant of January rounds up to February on Windows' 100 ns clock;
+`groups`' type name and `field`'s whole disk as typed fail too. All
+failed before the round of names in both forms; none looked into.
+
 **Removable volumes in skwird** (designed with skwird's session,
 2026-11-24: `volumes {keep, forget, release}`, the engine listing the
 volumes it sees mounted with their ids, released before an eject): skwird
