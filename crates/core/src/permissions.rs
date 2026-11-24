@@ -404,7 +404,8 @@ pub struct Checker<'a> {
 
 impl Checker<'_> {
     /// Whether `path` is private: under a folder listed, under one a
-    /// rule names (a name, a glob, a regex, beside its tool's file), or
+    /// rule names (a name, a glob, a regex, beside its tool's file, a
+    /// mount of the kernel's filesystems, `Rule::names`), or
     /// under one holding a marker (a `.private` file), by its given name or
     /// its resolved target.
     pub fn holds(&mut self, path: &Path) -> bool {
@@ -962,6 +963,40 @@ mod tests {
                 ..self.checker()
             }
         }
+    }
+
+    /// The kernel's filesystems kept from agents (the Exclusions page's
+    /// switch) are private where the mount table says they are mounted:
+    /// the mount, what it holds, what a link leads to there; never a
+    /// folder only named so. Unticked, nothing there is.
+    #[test]
+    fn the_kernel_filesystems_kept_from_agents_are_private() {
+        use crate::exclusions::{Filesystems, Matcher};
+        let tmp = tempfile::tempdir().unwrap();
+        let base = crate::os_path::canonical(tmp.path()).unwrap();
+        let proc = base.join("proc");
+        let environ = proc.join("1").join("environ");
+        std::fs::create_dir_all(environ.parent().unwrap()).unwrap();
+        std::fs::write(&environ, "SECRET=it's here").unwrap();
+        let named = base.join("home").join("proc");
+        std::fs::create_dir_all(&named).unwrap();
+        std::fs::write(named.join("notes"), "public").unwrap();
+        crate::fs::reach::pretend_kernel_mount(&proc);
+        let privacy = Privacy::ruled(Rule::of(&[Matcher::Mounted(Filesystems::Kernel)]));
+        let mut check = privacy.checker();
+        assert!(check.holds(&environ));
+        assert!(check.holds(&proc), "the mount itself");
+        assert!(!check.holds(&named.join("notes")), "named so, no mount");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(proc.join("1"), base.join("a link")).unwrap();
+            assert!(
+                check.holds(&base.join("a link").join("environ")),
+                "its target"
+            );
+        }
+        let unticked = Privacy::ruled(Rule::default());
+        assert!(!unticked.checker().holds(&environ), "unticked");
     }
 
     /// A path a lookup would reach another machine for is never read: below

@@ -91,6 +91,34 @@ fn shipped_entry<'a>(catalog: &'a Catalog, text: &str) -> &'a Entry {
     shipped(catalog, text)
 }
 
+/// The kernel's filesystems turned on for agents are named for them as for
+/// searches: where the mount table says they are mounted, whoever asks the
+/// rule (privacy, the tags index), never a folder only named so; a rule of
+/// them alone leaves something out.
+#[test]
+fn the_kernel_filesystems_turned_on_for_agents_are_named_for_them() {
+    let point = Path::new("/pretended for agents/proc");
+    crate::fs::reach::pretend_kernel_mount(point);
+    let alone = Rule::of(&[Matcher::Mounted(Filesystems::Kernel)]);
+    assert!(!alone.is_empty() && alone.names(point));
+    assert!(
+        !alone.names(&point.join("1")),
+        "the mount, not what it holds"
+    );
+    assert!(!alone.names(Path::new("/pretended for agents/home/proc")));
+    let agents = catalog(r#""skwir.kernel" = { agents = true }"#, "").rule(Role::Agents);
+    let shipped = Catalog::shipped().rule(Role::Agents);
+    assert!(
+        !shipped.names(point),
+        "kept from searches alone, as shipped"
+    );
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(agents.kernel() && agents.names(point));
+    } else {
+        assert!(!agents.kernel(), "no such entry here");
+    }
+}
+
 #[test]
 fn what_you_change_is_stored_and_nothing_more() {
     let list = catalog(

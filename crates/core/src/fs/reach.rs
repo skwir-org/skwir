@@ -645,6 +645,8 @@ pub fn is_point(path: &Path) -> bool {
 /// A mount the table lists ([`points`]): where it is mounted, what tells
 /// it apart from another mount made at the same point since, and whether
 /// it is a network's.
+// Facts of one mount, each asked alone, not states of a machine.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mount {
     pub point: PathBuf,
@@ -664,6 +666,9 @@ pub struct Mount {
     /// One of the kernel's own filesystems ([`kernel_filesystem`]): its
     /// names are the running system's state, not files kept.
     pub kernel: bool,
+    /// Linux's btrfs, whose folders may be snapshots
+    /// (`fs::snapshot::may_hold`).
+    pub btrfs: bool,
 }
 
 impl Mount {
@@ -678,6 +683,7 @@ impl Mount {
             remote: false,
             on_demand: fstype == "autofs",
             kernel: kernel_filesystem(fstype),
+            btrfs: fstype == "btrfs",
         }
     }
 }
@@ -736,6 +742,38 @@ pub fn kernel_points_below(root: &Path) -> Vec<PathBuf> {
         .map(|m| m.point.clone())
         .chain(pretended)
         .collect()
+}
+
+/// Whether one of the kernel's own filesystems is mounted at `point`
+/// ([`Mount::kernel`]): from the table in memory, one lookup, nothing of
+/// `point` read. Never on Windows, which lists no table.
+pub fn kernel_point(point: &Path) -> bool {
+    #[cfg(test)]
+    if PRETENDED_KERNEL.lock().iter().any(|p| p == point) {
+        return true;
+    }
+    table().kernel.contains(point)
+}
+
+/// Whether btrfs holds `root` (a path the system resolved), or is mounted
+/// below it ([`Mount::btrfs`]): where a walk of it may meet a snapshot.
+/// From the table in memory, nothing read.
+pub fn btrfs_at_or_below(root: &Path) -> bool {
+    btrfs_in(&table().points, root)
+}
+
+/// [`btrfs_at_or_below`] in `points`.
+fn btrfs_in(points: &[Mount], root: &Path) -> bool {
+    // The one on top where several are mounted at the deepest point
+    // holding it: the last the table lists there.
+    let holding = points
+        .iter()
+        .filter(|m| root.starts_with(&m.point))
+        .max_by_key(|m| m.point.components().count());
+    holding.is_some_and(|m| m.btrfs)
+        || points
+            .iter()
+            .any(|m| m.btrfs && m.point != root && m.point.starts_with(root))
 }
 
 /// The kernel's mounts this test's process pretends are there
@@ -1006,6 +1044,8 @@ struct Table {
     remotes: Vec<Arc<Remote>>,
     made_up: MadeUp,
     points: Vec<Mount>,
+    /// Where the kernel's own filesystems are mounted ([`kernel_point`]).
+    kernel: crate::hashing::Set<PathBuf>,
 }
 
 impl Table {
@@ -1018,11 +1058,18 @@ impl Table {
         for mount in &mut points {
             mount.remote = remote.contains(mount.point.as_path());
         }
+        // Stable: those at one point stay in the table's order.
         points.sort_by_key(|mount| std::cmp::Reverse(mount.point.as_os_str().len()));
+        let kernel = points
+            .iter()
+            .filter(|m| m.kernel)
+            .map(|m| m.point.clone())
+            .collect();
         Table {
             remotes,
             made_up,
             points,
+            kernel,
         }
     }
 
@@ -1726,6 +1773,37 @@ mod tests {
         );
         assert!(!below.iter().any(|p| p == std::path::Path::new("/")));
         assert!(super::kernel_filesystem("sysfs") && !super::kernel_filesystem("tmpfs"));
+        // One point asked: the mount itself, not what is below it.
+        assert!(super::kernel_point(std::path::Path::new("/proc")));
+        assert!(!super::kernel_point(std::path::Path::new("/proc/self")));
+        assert!(!super::kernel_point(std::path::Path::new("/")));
+    }
+
+    /// Where btrfs may hold a snapshot is told by the table: the mount on
+    /// top at the deepest point holding the root, or one below it, never
+    /// one another mount hides.
+    #[test]
+    fn btrfs_is_told_by_the_table() {
+        let mut points: Vec<Mount> = [
+            ("/", "ext4"),
+            ("/home", "btrfs"),
+            ("/srv", "btrfs"),
+            ("/srv", "ext4"),
+            ("/data", "xfs"),
+            ("/data/pool", "btrfs"),
+        ]
+        .iter()
+        .map(|(point, fstype)| Mount::of(PathBuf::from(point), fstype, (point, fstype)))
+        .collect();
+        points.sort_by_key(|mount| std::cmp::Reverse(mount.point.as_os_str().len()));
+        let btrfs = |root: &str| super::btrfs_in(&points, Path::new(root));
+        assert!(btrfs("/home/u/it's mine"));
+        assert!(btrfs("/home"));
+        assert!(btrfs("/data"), "mounted below it");
+        assert!(btrfs("/"), "mounted below it");
+        assert!(!btrfs("/data/x"));
+        assert!(!btrfs("/srv/www"), "hidden by the mount on top");
+        assert!(!btrfs("/srv"), "hidden by the mount on top");
     }
 
     /// A mount made and let go of by another program is told, once each,
@@ -1842,6 +1920,7 @@ mod tests {
                     mounts: imp::made_up(&mounts),
                 },
                 points: Vec::new(),
+                ..Table::default()
             }
         };
         let table = of_text(text);
@@ -2186,6 +2265,7 @@ mod tests {
                 .collect(),
             made_up: MadeUp::default(),
             points: Vec::new(),
+            ..Table::default()
         };
         assert_eq!(table.remotes.len(), 2);
         let sftp = table
@@ -2216,6 +2296,7 @@ mod tests {
                 .collect(),
             made_up: MadeUp::default(),
             points: Vec::new(),
+            ..Table::default()
         };
         let root = Path::new("/run/user/1000/kio-fuse-AbCdEf");
         let share = table.of(&root.join("smb/nas/photos/2024")).unwrap();

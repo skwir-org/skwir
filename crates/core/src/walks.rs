@@ -17,6 +17,11 @@
 //!
 //! Only what is below a walk's root is left out ([`Below`]): a search or a
 //! count asked of a folder the rules name walks it.
+//!
+//! A walk keeps nothing of the folders it finds, each asked once: what it
+//! remembers is what it read of the folders above the paths it is handed
+//! without walking (an index's answers, [`Below::stops_above`]), [`KEPT`]
+//! at most, so a walk of a million folders weighs what one of ten does.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -39,6 +44,11 @@ const ALWAYS: u64 = 2;
 /// (`excluded:yes`): what was made of a walk under one is not taken for
 /// the other's.
 const SNAPSHOTS_WALKED: u64 = 1 << 17;
+
+/// How many folders above the paths a walk is handed it remembers what it
+/// read of ([`Below::stops_above`]), all forgotten once more are: an
+/// index's answers, in its order, share the folders above them.
+const KEPT: usize = 4096;
 
 /// What a walk leaves out, as the settings said it when read.
 #[derive(Clone, Debug, Default)]
@@ -101,11 +111,18 @@ impl LeftOut {
     }
 
     /// Whether the rules, or the rule for a trash, name the folder `dir` by
-    /// its name or its path: nothing is read.
+    /// its name, its path or what is mounted there (`Rule::names`): nothing
+    /// of it is read.
     pub fn names(&self, dir: &Path) -> bool {
+        self.names_written(dir) || self.rule.names(dir)
+    }
+
+    /// [`names`](Self::names) by its name or its path alone: for a walk,
+    /// which asked the mount table once (`Below::named`).
+    fn names_written(&self, dir: &Path) -> bool {
         dir.file_name().is_some_and(is_trash)
             || self.trash.iter().any(|trash| trash == dir)
-            || self.rule.names(dir)
+            || self.rule.names_written(dir)
     }
 
     /// Whether the rules name the file `path`: nothing is read. A walk
@@ -128,10 +145,9 @@ impl LeftOut {
                 HashSet::new()
             },
             probe,
-            looked: Mutex::default(),
-            // Read once a walk: no stat of a folder where no btrfs is.
+            // Asked once a walk: no stat of a folder where no btrfs is.
             btrfs: probe && self.snapshots && crate::fs::snapshot::may_hold(root),
-            subvolumes: Mutex::default(),
+            above: Mutex::default(),
         }
     }
 }
@@ -162,7 +178,9 @@ fn is_trash(name: &OsStr) -> bool {
 }
 
 /// What one walk of a folder leaves out below it: shared by the walk's
-/// threads, what a folder holds and beside it looked up once per folder.
+/// threads. What a folder holds, what is beside it and what it is are
+/// read as it is found, never kept; those above the paths handed without
+/// walking are read once while remembered ([`KEPT`]).
 pub struct Below {
     rule: Arc<LeftOut>,
     root: PathBuf,
@@ -171,12 +189,12 @@ pub struct Below {
     /// the rules name them.
     kernel: HashSet<PathBuf>,
     probe: bool,
-    looked: Mutex<HashMap<PathBuf, bool>>,
     /// Whether the walk may meet a snapshot: it reads folders, passes a
     /// snapshot over, and btrfs holds its root or is mounted below it.
     btrfs: bool,
-    /// Whether a folder asked is a snapshot, each asked once.
-    subvolumes: Mutex<HashMap<PathBuf, bool>>,
+    /// What was read of the folders above the paths [`Below::stops_above`]
+    /// was asked of: whether it leaves each out, [`KEPT`] at most.
+    above: Mutex<HashMap<PathBuf, bool>>,
 }
 
 impl Below {
@@ -191,22 +209,36 @@ impl Below {
     /// Whether `dir`, a folder found below the root, is left out: a network
     /// mount, named by the rules, holding a marker or beside a sibling
     /// that says so, a snapshot (its inode read, where btrfs may hold
-    /// one). The root itself never is.
+    /// one), each read as it is asked: a walk asks each folder once. The
+    /// root itself never is.
     pub fn leaves_out(&self, dir: &Path) -> bool {
         if dir == self.root || !dir.starts_with(&self.root) {
             return false;
         }
-        self.named(dir) || (self.probe && self.looked_up(dir)) || self.passes_over(dir, None)
+        self.named(dir) || self.read_out(dir)
+    }
+
+    /// Whether what `dir` holds, what is beside it or what it is leaves it
+    /// out, read: a marker or a sibling where the walk probes, a snapshot
+    /// where btrfs may hold one.
+    fn read_out(&self, dir: &Path) -> bool {
+        (self.probe && self.looked_up(dir)) || self.passes_over(dir, None)
+    }
+
+    /// Whether [`read_out`](Self::read_out) may find anything: where not,
+    /// nothing is read nor remembered.
+    fn reads(&self) -> bool {
+        let rule = self.rule.rule();
+        (self.probe && (!rule.markers().is_empty() || rule.has_beside())) || self.btrfs
     }
 
     /// Whether `dir`, a folder found below the root, is a snapshot the
     /// walk passes over (ADR-125, 14): a read-only btrfs subvolume, told by
     /// its inode (`ino`, as a stat says it, never a listing, which names a
     /// subvolume by its id; `None`: read here) and btrfs asked only of a
-    /// subvolume's top folder, each once. Only where btrfs holds the root
-    /// or is mounted below it, where the walk reads what a folder holds
-    /// (never on a remote), never with `excluded:yes`: elsewhere nothing
-    /// is read.
+    /// subvolume's top folder. Only where btrfs holds the root or is
+    /// mounted below it, where the walk reads what a folder holds (never
+    /// on a remote), never with `excluded:yes`: elsewhere nothing is read.
     pub fn passes_over(&self, dir: &Path, ino: Option<u64>) -> bool {
         if !self.btrfs
             || dir == self.root
@@ -215,12 +247,7 @@ impl Below {
         {
             return false;
         }
-        if let Some(known) = self.subvolumes.lock().get(dir) {
-            return *known;
-        }
-        let out = crate::fs::snapshot::is_snapshot(dir, ino);
-        self.subvolumes.lock().insert(dir.to_owned(), out);
-        out
+        crate::fs::snapshot::is_snapshot(dir, ino)
     }
 
     /// Whether the file `path` found below the root is left out.
@@ -246,7 +273,9 @@ impl Below {
     /// without reading.
     pub fn named(&self, dir: &Path) -> bool {
         dir != self.root
-            && (self.mounts.contains(dir) || self.kernel.contains(dir) || self.rule.names(dir))
+            && (self.mounts.contains(dir)
+                || self.kernel.contains(dir)
+                || self.rule.names_written(dir))
     }
 
     /// Whether the walk looks up markers and siblings.
@@ -276,9 +305,11 @@ impl Below {
     /// leaves out: what a path named without walking (an index's
     /// candidate, plocate's answer, a change arriving) would have been
     /// left out under. `path` itself is not asked: a folder left out is
-    /// still found itself.
+    /// still found itself. What is read of a folder on the way is
+    /// remembered for the paths after ([`KEPT`] folders).
     pub fn stops_above(&self, path: &Path) -> Option<PathBuf> {
         let rest = path.strip_prefix(&self.root).ok()?;
+        let reads = self.reads();
         let mut at = self.root.clone();
         let mut components = rest.components().peekable();
         while let Some(component) = components.next() {
@@ -286,25 +317,34 @@ impl Below {
                 break;
             }
             at.push(component);
-            if self.leaves_out(&at) {
+            if self.named(&at) || (reads && self.read_above(&at)) {
                 return Some(at);
             }
         }
         None
     }
 
-    /// Whether a marker or a sibling leaves out `dir`, looked up once.
-    fn looked_up(&self, dir: &Path) -> bool {
-        let rule = self.rule.rule();
-        if rule.markers().is_empty() && !rule.has_beside() {
-            return false;
-        }
-        if let Some(known) = self.looked.lock().get(dir) {
+    /// [`read_out`](Self::read_out) of `dir`, a folder above a path asked,
+    /// read once while remembered: [`KEPT`] folders, all forgotten once
+    /// more are asked.
+    fn read_above(&self, dir: &Path) -> bool {
+        if let Some(known) = self.above.lock().get(dir) {
             return *known;
         }
-        let out = rule.marked(dir) || rule.beside_found(dir);
-        self.looked.lock().insert(dir.to_owned(), out);
+        let out = self.read_out(dir);
+        let mut above = self.above.lock();
+        if above.len() >= KEPT {
+            above.clear();
+        }
+        above.insert(dir.to_owned(), out);
         out
+    }
+
+    /// Whether a marker or a sibling leaves out `dir`, looked up.
+    fn looked_up(&self, dir: &Path) -> bool {
+        let rule = self.rule.rule();
+        (!rule.markers().is_empty() && rule.marked(dir))
+            || (rule.has_beside() && rule.beside_found(dir))
     }
 }
 
@@ -381,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_says_so_with_a_signed_tag_looked_up_once() {
+    fn a_cache_says_so_with_a_signed_tag_read_as_asked() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = tmp.path().join("built");
         let plain = tmp.path().join("plain");
@@ -399,8 +439,20 @@ mod tests {
         let below = left.below(tmp.path(), true);
         assert!(below.leaves_out(&cache));
         assert!(!below.leaves_out(&plain), "unsigned");
+        assert_eq!(
+            below.stops_above(&cache.join("it's built")).as_deref(),
+            Some(cache.as_path())
+        );
         std::fs::remove_file(cache.join(CACHEDIR_TAG)).unwrap();
-        assert!(below.leaves_out(&cache), "looked up once a walk");
+        assert_eq!(
+            below.stops_above(&cache.join("built too")).as_deref(),
+            Some(cache.as_path()),
+            "above an index's answers, read once while remembered"
+        );
+        assert!(
+            !below.leaves_out(&cache),
+            "a folder a walk finds is read as it is found"
+        );
         assert!(
             !left.below(tmp.path(), false).leaves_out(&cache),
             "not probed"
@@ -495,6 +547,35 @@ mod tests {
         );
     }
 
+    /// A walk keeps nothing of the folders it finds, and remembers no more
+    /// than `KEPT` of those above the paths it is handed: a walk of a
+    /// million folders weighs what one of ten does. Where nothing could be
+    /// read, nothing is remembered.
+    #[test]
+    fn a_walk_keeps_no_more_than_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let left = Arc::new(LeftOut::ruled(Rule::of(&[Matcher::Pattern {
+            text: "target".into(),
+            beside: Some("Cargo.toml".into()),
+            names: Names::Folders,
+        }])));
+        let mut below = left.below(tmp.path(), true);
+        // As though btrfs held it: each folder's inode is read.
+        below.btrfs = true;
+        for n in 0..2 * KEPT {
+            let dir = tmp.path().join(format!("folder {n}, été"));
+            assert!(!below.leaves_out(&dir));
+            assert!(below.stops_above(&dir.join("deeper/it's a file")).is_none());
+            assert!(below.above.lock().len() <= KEPT);
+        }
+        let quiet = rule(&["node_modules"]).below(tmp.path(), false);
+        for n in 0..16 {
+            let file = tmp.path().join(format!("folder {n}/it's a file"));
+            assert!(quiet.stops_above(&file).is_none());
+        }
+        assert!(quiet.above.lock().is_empty(), "nothing read, nothing kept");
+    }
+
     #[test]
     fn the_fingerprint_is_the_rules_whatever_their_order() {
         let a = LeftOut::listed(["node_modules", "~/.cargo"]);
@@ -526,8 +607,18 @@ mod tests {
             "a folder named so is no mount"
         );
         assert!(!named.below(&proc, false).leaves_out(&proc), "its own root");
+        // Asked without walking (the tags index), the rule says so too.
+        assert!(named.names(&proc));
+        assert!(
+            named
+                .below(root, false)
+                .stops_above(&proc.join("1/environ"))
+                .is_some()
+        );
+        assert!(!named.names(&root.join("chroot/home/proc")));
         let unnamed = Arc::new(LeftOut::ruled(Rule::default()));
         assert!(!unnamed.below(root, false).leaves_out(&proc), "unticked");
+        assert!(!unnamed.names(&proc), "unticked");
         assert!(!LeftOut::none().fingerprint().eq(&named.fingerprint()));
         assert_ne!(named.fingerprint(), unnamed.fingerprint());
     }

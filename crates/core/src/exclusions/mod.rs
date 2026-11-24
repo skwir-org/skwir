@@ -24,7 +24,10 @@
 //! is below its root (`walks::Below`), privacy refuses the path, what is
 //! under it and its target, fail closed (`permissions::Checker`). The
 //! trash and network mounts are left out of walks by code, whatever the
-//! list says.
+//! list says. Whether the rule names a folder is `Rule::names`' alone,
+//! by its name, its path or what is mounted there (a `Mounted` entry,
+//! from the mount table in memory): a reader that asks anything else of
+//! a rule would leave in what the page says is kept from its role.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
@@ -2386,8 +2389,9 @@ impl Rule {
     }
 
     /// Whether the kernel's own filesystems are named, wherever they are
-    /// mounted (`Matcher::Mounted`): a walk asks the mount table which are
-    /// below its root (`fs::reach::kernel_points_below`).
+    /// mounted (`Matcher::Mounted`): [`names`](Self::names) asks the mount
+    /// table in memory of each folder, a walk asks it once which are below
+    /// its root (`fs::reach::kernel_points_below`).
     pub fn kernel(&self) -> bool {
         self.kernel
     }
@@ -2430,11 +2434,22 @@ impl Rule {
             && self.files.is_empty()
             && self.beside.is_empty()
             && self.holding.is_empty()
+            && !self.kernel
     }
 
-    /// Whether the folder `dir` is one of it by its name or its path:
-    /// nothing is read.
+    /// Whether the folder `dir` is one of it: by its name or its path, or
+    /// as a mount of the filesystems it names (`Matcher::Mounted`), which
+    /// the mount table in memory says (`fs::reach::kernel_point`). Nothing
+    /// of `dir` is read. Every reader of the rule asks this, so what one
+    /// leaves out every other does: a walk, privacy, the tags index.
     pub fn names(&self, dir: &Path) -> bool {
+        self.names_written(dir) || (self.kernel && crate::fs::reach::kernel_point(dir))
+    }
+
+    /// Whether `dir` is one of it by its name or its path alone: for a walk,
+    /// which asked the mount table once what is mounted below its root
+    /// (`walks::Below`).
+    pub(crate) fn names_written(&self, dir: &Path) -> bool {
         self.folders.names(dir)
     }
 

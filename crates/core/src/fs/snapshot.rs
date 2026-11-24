@@ -1,8 +1,11 @@
 //! Whether a folder is a btrfs snapshot (ADR-125, 14): a read-only
 //! subvolume, a copy of what it was taken of, which walks pass over below
 //! the folder they start at (`walks::Below::passes_over`). Told by what it
-//! is, never by its name: snapper's `/.snapshots`, timeshift's and btrbk's
-//! alike. Linux's; elsewhere no folder is one.
+//! is, never by its name: snapper's `/.snapshots` and btrbk's, read-only
+//! both. Timeshift's are made writable (so a snapshot can be booted, and
+//! put in the system's place to restore it): a writable subvolume may be
+//! the live system, so it is walked as any folder. Linux's; elsewhere no
+//! folder is one.
 
 use std::path::Path;
 
@@ -11,24 +14,14 @@ use std::path::Path;
 /// subvolume by its id.
 pub const SUBVOLUME_ROOT: u64 = 256;
 
-/// Whether a walk of `root` may meet a snapshot: btrfs holds `root`, or is
-/// mounted below it, as the system's mount table says (read once a walk).
+/// Whether a walk of `root` may meet a snapshot: btrfs holds `root`, as
+/// the system resolves it, or is mounted below it, as the mount table in
+/// memory says (`reach::btrfs_at_or_below`, never read again for a walk).
 /// Elsewhere no folder is asked anything.
 #[cfg(target_os = "linux")]
 pub fn may_hold(root: &Path) -> bool {
-    let Ok(table) = std::fs::read("/proc/self/mountinfo") else {
-        return false;
-    };
     let root = crate::os_path::canonical(root).unwrap_or_else(|_| root.to_path_buf());
-    let mounts = crate::fs::volume::mountinfo(&table);
-    let holding = mounts
-        .iter()
-        .filter(|m| root.starts_with(&m.point))
-        .max_by_key(|m| m.point.components().count());
-    holding.is_some_and(|m| m.fstype == "btrfs")
-        || mounts
-            .iter()
-            .any(|m| m.fstype == "btrfs" && m.point.starts_with(&root))
+    crate::fs::reach::btrfs_at_or_below(&root)
 }
 
 /// No walk meets a btrfs snapshot elsewhere than Linux.
