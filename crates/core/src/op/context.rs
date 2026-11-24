@@ -1155,6 +1155,15 @@ struct GoingOn {
     cut: Option<Cut>,
 }
 
+/// Said after why a move onto a removable drive could not have the drive
+/// hold its copies: the originals were not removed.
+pub(super) fn moved_stays() -> crate::words::Words {
+    crate::words!(
+        op_moved_stays = "what was moved stays where it was",
+        note = "Said after why a move to a removable drive could not be written out: the originals were not removed."
+    )
+}
+
 /// The bytes a copy cut short must have moved to be kept for Retry: below
 /// it, starting again costs little.
 pub(super) const KEEP_FROM: u64 = 8 << 20;
@@ -1353,7 +1362,10 @@ impl StepContext {
     /// The largest file the volume of the folder `dir` keeps, where it
     /// keeps less than any file asks (`sys::largest_file`: FAT's), asked
     /// once a plan for each folder. A folder not there yet (one the plan
-    /// makes) is on the volume of the nearest folder above it.
+    /// makes) is on the volume of the nearest folder above it. A link on
+    /// the way is followed (`~/stick` a link to a drive is on the drive),
+    /// and what it leads to on a remote is not asked, as a remote named
+    /// by its own path is not.
     pub(super) fn largest_in(&self, dir: &Path) -> Option<u64> {
         if let Some(known) = self.largest.borrow().get(dir) {
             return *known;
@@ -1363,8 +1375,16 @@ impl StepContext {
             None
         } else {
             dir.ancestors()
-                .find(|folder| std::fs::symlink_metadata(folder).is_ok_and(|m| m.is_dir()))
-                .and_then(super::sys::largest_file)
+                .find_map(|folder| {
+                    let meta = std::fs::metadata(folder)
+                        .ok()
+                        .filter(std::fs::Metadata::is_dir)?;
+                    let remote = crate::fs::stat::identity(folder, &meta)
+                        .is_some_and(|id| crate::fs::reach::of_device(id.dev).is_some());
+                    Some((folder, remote))
+                })
+                .filter(|(_, remote)| !remote)
+                .and_then(|(folder, _)| super::sys::largest_file(folder))
         };
         self.largest.borrow_mut().insert(dir.to_path_buf(), largest);
         largest
@@ -1453,16 +1473,24 @@ impl StepContext {
     /// The same context, going on from `partial`, what a copy this plan
     /// retries left (`Executor::retry`): its staging folder is the one
     /// this plan's copies into its destination share, and the copy of its
-    /// source goes on from it ([`Self::partial_at`]).
+    /// source goes on from it ([`Self::partial_at`]). One whose lock was
+    /// let go of with its volume (`Staging::let_go`) is locked again
+    /// first; gone meanwhile (swept, its volume not there), the copy
+    /// starts again.
     #[must_use]
     pub(super) fn with_partial(self, partial: Option<super::staging::Partial>) -> Self {
-        let Some(partial) = partial else {
+        let Some(mut partial) = partial else {
             return self;
         };
+        if !partial.staging.hold_again() {
+            tracing::info!("what a copy cut short kept is gone: it starts again");
+            return self;
+        }
         let super::staging::Partial {
             staging,
             mark,
             dest_dir,
+            held_at: _,
             kept,
         } = partial;
         // Names staged next come after its own (`n`, `batch-n`, `partial-n`).
@@ -1642,6 +1670,7 @@ impl StepContext {
             .get_mut(&kept.dest_dir)
             .and_then(Option::take);
         Some(super::staging::Partial {
+            held_at: staging.held_at(),
             staging,
             mark,
             dest_dir: kept.dest_dir,
@@ -1795,10 +1824,7 @@ impl StepContext {
             if self.waiting.borrow().is_empty() {
                 e
             } else {
-                e.context(crate::words!(
-                    op_moved_stays = "what was moved stays where it was",
-                    note = "Said after why a move to a removable drive could not be written out: the originals were not removed."
-                ))
+                e.context(moved_stays())
             }
         };
         for (_, pace) in self.paces.borrow().iter() {

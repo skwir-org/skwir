@@ -4495,41 +4495,42 @@ impl Executor {
         }
     }
 
-    /// Let go of what the plans a step's error stopped keep under `tree`
-    /// of a large file cut short (`staging::Partial`, ADR-080), as its
-    /// volume is let go of (`App::release`): its staging folder holds its
-    /// lock open there, and the kernel refuses to unmount a volume
-    /// anything holds ("target is busy"). Each is removed with what it
-    /// holds, on a thread of its own: closing a file on FAT waits a tenth
-    /// of a second (udisks mounts it `flush`), and removing a large one
-    /// writes the volume's records, never on the caller's thread (a
-    /// window's command); an unmount meanwhile is refused as busy, which
-    /// it tries again. Its plan, still retried, copies that file from its
-    /// start. Only as the volume is let go of: while it stays, Retry goes
-    /// on from what was kept. A remote's stays: its server may not answer,
-    /// and what it went on from is worth more there.
+    /// Let go of what the plans a step's error stopped keep open under
+    /// `tree` of a large file cut short (`staging::Partial`, ADR-080), as
+    /// its volume is let go of (`App::release`): its staging folder's lock
+    /// is held open there, and the kernel refuses to unmount a volume
+    /// anything holds ("target is busy"). Only the lock is let go of
+    /// (`Staging::let_go`): what was kept stays on the volume, for the
+    /// unmount may yet be refused (another program uses the volume, its
+    /// write-out fails), and then Retry takes the lock again and goes on
+    /// from it, its last part read back, as it always does; unmounted, a
+    /// Retry finds nothing and starts that file again. On the volume by the
+    /// path its plan named or by where its folder was found (a link on the
+    /// way, `Partial::is_under`). The locks are closed on a thread of their
+    /// own: closing a file on FAT waits a tenth of a second (udisks mounts
+    /// it `flush`), never on the caller's thread (a window's command); an
+    /// unmount meanwhile is refused as busy, which it tries again. A
+    /// remote's stays held: its server may not answer, and what it went
+    /// on from is worth more there.
     pub fn let_go_under(&self, tree: &Path) {
-        let gone: Vec<super::staging::Partial> = {
+        let locks: Vec<std::fs::File> = {
             let mut stopped = self.stopped.lock();
             stopped
                 .iter_mut()
-                .filter(|s| {
-                    s.partial.as_ref().is_some_and(|p| {
-                        p.dest_dir.starts_with(tree) && crate::fs::reach::of(&p.dest_dir).is_none()
-                    })
-                })
-                .filter_map(|s| s.partial.take())
+                .filter_map(|s| s.partial.as_mut())
+                .filter(|p| p.is_under(tree) && !p.on_remote())
+                .filter_map(|p| p.staging.let_go())
                 .collect()
         };
-        if gone.is_empty() {
+        if locks.is_empty() {
             return;
         }
-        // Removed out of the lock, and off the caller's thread.
-        let removing = std::thread::Builder::new()
+        // Closed out of the lock, and off the caller's thread.
+        let closing = std::thread::Builder::new()
             .name("skwir-let-go".into())
-            .spawn(move || drop(gone));
-        if let Err(error) = removing {
-            tracing::warn!("a copy cut short removed on the caller's thread: {error}");
+            .spawn(move || drop(locks));
+        if let Err(error) = closing {
+            tracing::warn!("a copy cut short let go of on the caller's thread: {error}");
         }
     }
 
@@ -4922,6 +4923,9 @@ impl Executor {
         let mut complete = true;
         let mut error = None;
         let mut failed = None;
+        // The step's error a Retry meets again (`builtin::fails_again`): no
+        // Retry is offered, and nothing kept for one.
+        let mut for_good = false;
         let mut cancelled = false;
         // What the steps said, each once (several booklets fold alike).
         let (mut said, mut heard) = (Vec::new(), std::collections::HashSet::new());
@@ -5028,12 +5032,14 @@ impl Executor {
                             holds = true;
                             step_came = Came::Applied;
                             journal_inverse(&mut inverses, inverse);
+                            for_good = super::builtin::fails_again(&error);
                             let error = Arc::new(error);
                             err = Some(Words::of_error_from(&error, 0));
                             reason = super::reason_after(&error, &change);
                         }
                         Err(e) => {
                             tracing::warn!(plan = %plan.title.english(), "a step failed: {e:#}");
+                            for_good = super::builtin::fails_again(&e);
                             let e = Arc::new(e);
                             err = Some(Words::of_error_from(&e, 0));
                             reason = super::reason_after(&e, &change);
@@ -5154,8 +5160,10 @@ impl Executor {
         };
         // Stopped by a step's error, what it had left waits for Retry,
         // with what a copy cut short left; what stopped it otherwise
-        // (Cancel, a write-out) is not retried.
-        let stop = match (failed, &result.error, cancelled) {
+        // (Cancel, a write-out), or an error a Retry meets again (a file
+        // larger than its volume keeps), is not retried: what it staged
+        // goes with its context.
+        let stop = match (failed, &result.error, cancelled || for_good) {
             (Some(at), Some(_), false) => Some(Stop {
                 at,
                 partial: ctx.take_partial(),
@@ -7498,6 +7506,56 @@ mod tests {
         fn clone_box(&self) -> Box<dyn Operation> {
             Box::new(self.clone())
         }
+    }
+
+    /// A step its volume refuses with `kind`, as a copy's write is.
+    #[derive(Debug, Clone)]
+    struct Refused(std::io::ErrorKind);
+
+    impl Operation for Refused {
+        fn kind(&self) -> &'static str {
+            "refused"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Trash {
+                path: "/example/it's a film.mkv".into(),
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: false }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            Err(anyhow::Error::new(std::io::Error::from(self.0))
+                .context(Words::as_written("“it's a film.mkv” could not be copied")))
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+    }
+
+    /// A step its volume refused as larger than it keeps (`EFBIG`: a FAT
+    /// volume not told so, through FUSE, ext2 on small blocks) is no
+    /// Retry's: one would meet it again. A drive full is, once room is
+    /// made.
+    #[test]
+    fn a_file_too_large_for_its_volume_is_not_retried() {
+        let executor = Executor::new(Scheduler::new(1));
+        let plan = Plan::with_steps(
+            Words::as_written("copy"),
+            vec![Box::new(Refused(std::io::ErrorKind::FileTooLarge))],
+        );
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert!(r.error.is_some());
+        assert!(!executor.can_retry(plan.id), "no Retry");
+        let plan = Plan::with_steps(
+            Words::as_written("copy"),
+            vec![Box::new(Refused(std::io::ErrorKind::StorageFull))],
+        );
+        executor.execute_blocking(&plan, &CancelToken::new());
+        assert!(executor.can_retry(plan.id), "Retry once room is made");
     }
 
     /// A step that finds, as it runs, it has nothing to make.

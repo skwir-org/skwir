@@ -448,6 +448,16 @@ fn on_fat32_a_file_too_large_is_refused_and_a_full_drive_let_go_of() {
         "nothing held: {:?}",
         held_under(&fat)
     );
+    // Reached through a link: the volume it leads to is asked.
+    let link = tmp.path().join("my stick");
+    std::os::unix::fs::symlink(dest.path(), &link).unwrap();
+    let r = app.executor.execute_blocking(
+        &Plan::with_steps(Words::as_written("copy"), vec![copy(&film, &link)]),
+        app.lifetime(),
+    );
+    let error = r.error.expect("refused through a link").english();
+    assert!(error.contains("formatted as FAT"), "says why: {error}");
+    assert!(names(dest.path()).is_empty());
 
     // In a folder, asked as one action: the plan's sizing refuses it.
     app.apply_whole(Plan::with_steps(
@@ -492,17 +502,13 @@ fn on_fat32_a_file_too_large_is_refused_and_a_full_drive_let_go_of() {
         !held_under(&fat).is_empty(),
         "the partial's lock holds the drive"
     );
-    // The drive let go of, as before its unmount (`App::release`): removed
-    // on a thread of its own, an unmount meanwhile trying again.
+    // The drive let go of, as before its unmount (`App::release`): the
+    // partial's lock closed on a thread of its own, an unmount meanwhile
+    // trying again; what it wrote kept, should the unmount be refused.
     app.release(&fat, &skwir_core::location::Location::from_path(tmp.path()))
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let staged = || {
-        names(dest.path())
-            .iter()
-            .any(|name| name.starts_with(".skwir-copy"))
-    };
-    while (!held_under(&fat).is_empty() || staged()) && std::time::Instant::now() < deadline {
+    while !held_under(&fat).is_empty() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     assert!(
@@ -513,12 +519,9 @@ fn on_fat32_a_file_too_large_is_refused_and_a_full_drive_let_go_of() {
     assert!(
         names(dest.path())
             .iter()
-            .all(|name| !name.starts_with(".skwir-copy")),
-        "the partial removed: {:?}",
+            .any(|name| name.starts_with(".skwir-copy")),
+        "the partial kept: {:?}",
         names(dest.path())
     );
-    assert!(
-        app.executor.can_retry(plan.id),
-        "still retried, from its start"
-    );
+    assert!(app.executor.can_retry(plan.id), "still retried");
 }

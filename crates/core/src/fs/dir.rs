@@ -31,6 +31,23 @@ pub use unix::Dir;
 #[cfg(unix)]
 pub(crate) use unix::kind_of;
 
+/// Where the file `file` holds open is now, wherever it moved, as the
+/// system knows it from the handle (a link on the way to it resolved):
+/// what tells the volume something held open is on by a path the mount
+/// table names, asking nothing of that volume where the system keeps it
+/// in memory. `None` when the system cannot say, or it was removed.
+pub(crate) fn held_at(file: &std::fs::File) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        unix::path_held(file.as_fd())
+    }
+    #[cfg(windows)]
+    {
+        crate::fs::win::path_now(file)
+    }
+}
+
 #[cfg(unix)]
 mod unix {
     use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -48,6 +65,32 @@ mod unix {
             FileType::CharacterDevice => EntryKind::CharDevice,
             FileType::BlockDevice => EntryKind::BlockDevice,
             FileType::Unknown => EntryKind::Unknown,
+        }
+    }
+
+    /// Where what `fd` holds open is now, wherever it moved, as the
+    /// system knows it (Linux's `/proc/self/fd`, macOS's `F_GETPATH`),
+    /// asking nothing of its volume: `None` when the system cannot say, or
+    /// it was removed.
+    pub(crate) fn path_held(fd: BorrowedFd<'_>) -> Option<PathBuf> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            let link = format!("/proc/self/fd/{}", fd.as_raw_fd());
+            std::fs::read_link(link).ok().filter(|now| {
+                now.is_absolute() && !now.as_os_str().as_encoded_bytes().ends_with(b" (deleted)")
+            })
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let path = rustix::fs::getpath(fd).ok()?;
+            let path: &OsStr = std::os::unix::ffi::OsStrExt::from_bytes(path.to_bytes());
+            Some(PathBuf::from(path)).filter(|now| now.is_absolute())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = fd;
+            None
         }
     }
 
@@ -213,23 +256,7 @@ mod unix {
         /// Where the folder is now, wherever it moved: `None` when the
         /// system cannot say, or it was removed.
         pub fn path_now(&self) -> Option<PathBuf> {
-            #[cfg(target_os = "linux")]
-            {
-                use std::os::fd::AsRawFd;
-                let link = format!("/proc/self/fd/{}", self.0.as_raw_fd());
-                std::fs::read_link(link).ok().filter(|now| {
-                    now.is_absolute()
-                        && !now.as_os_str().as_encoded_bytes().ends_with(b" (deleted)")
-                })
-            }
-            #[cfg(target_os = "macos")]
-            {
-                let path = rustix::fs::getpath(&self.0).ok()?;
-                let path: &OsStr = std::os::unix::ffi::OsStrExt::from_bytes(path.to_bytes());
-                Some(PathBuf::from(path)).filter(|now| now.is_absolute())
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            None
+            path_held(self.0.as_fd())
         }
 
         /// A path to `name` in the folder that holds wherever the folder

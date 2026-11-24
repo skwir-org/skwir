@@ -62,7 +62,7 @@ const FILES: usize = 64;
 
 /// What a copy written through to its drive could not do, its why after
 /// it.
-fn not_written_out() -> crate::words::Words {
+pub(super) fn not_written_out() -> crate::words::Words {
     crate::words!(
         op_not_written_out = "the copy could not be written out to the drive",
         note = "What a copy to a removable drive could not do: hand the drive what it wrote; why follows."

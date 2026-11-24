@@ -1027,6 +1027,9 @@ fn move_entry(
                 return Ok(moved);
             }
             let copied_as = originals[0].1;
+            // Onto a stick Windows may keep in memory: the copy on it
+            // before its original goes, or the original stays.
+            let flush = !through && sys::flushed_before_removal(&dest_dir);
             let remove = move || {
                 // Edited while it was copied, or since: the copy may not
                 // hold it, so nothing of it goes. Gone is nothing to remove.
@@ -1061,6 +1064,15 @@ fn move_entry(
                 ctx.after_write_out(remove);
                 moved.waits = Some(super::context::CopiedAs(copied_as));
             } else {
+                if flush {
+                    for copy in
+                        std::iter::once(target).chain(moved.beside.iter().map(PathBuf::as_path))
+                    {
+                        sys::flush_tree(copy)
+                            .context(super::pace::not_written_out())
+                            .context(super::context::moved_stays())?;
+                    }
+                }
                 remove()?;
             }
         }
@@ -2218,8 +2230,11 @@ fn copy_staged(
     // What this copy staged goes; the folder stays for the plan's other
     // copies, and goes with the plan. A large file a failure cut short
     // (not Cancel: a server gone, a drive pulled out) stays for Retry to go
-    // on from, and the folder with it.
-    let kept = !error.is::<super::Cancelled>() && ctx.keep_partial(src, dest_dir, &staged);
+    // on from, and the folder with it; never one its volume refused as too
+    // large, which a Retry meets again (`fails_again`).
+    let kept = !error.is::<super::Cancelled>()
+        && !fails_again(&error)
+        && ctx.keep_partial(src, dest_dir, &staged);
     let made = along(ctx, &staged, target)
         .into_iter()
         .map(|a| a.from)
@@ -2273,14 +2288,59 @@ fn too_large_there(most: u64) -> Words {
     )
 }
 
+/// Whether `error`, which failed a step, meets its Retry again whatever
+/// changes meanwhile: its volume refused a file as larger than it keeps
+/// (`FileTooLarge`, `EFBIG`), whatever the volume (FAT where it is not
+/// told so: through FUSE, a share; ext2 and ext3 on blocks of 1 KiB, 16
+/// GiB; UDF; a server's). What the copy wrote is not kept for a Retry
+/// (`copy_staged`), and none is offered (`Executor::apply_plan`).
+///
+/// Where this process has a file size limit of its own (`RLIMIT_FSIZE`),
+/// the same `EFBIG` may be that limit's: a limit of the process, not of
+/// the volume, which `prlimit` (or the process, up to its hard limit) lifts
+/// while Skwir runs, so the partial is kept and Retry offered as for any
+/// failure. The system says which of the two refused only by the length
+/// written, which the error does not carry: any limit of the process's
+/// counts as possibly its, a rare setting, rather than a vain partial
+/// kept where it is not. A write the volume refuses with no such limit
+/// is the volume's.
+pub(super) fn fails_again(error: &anyhow::Error) -> bool {
+    let too_large = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::FileTooLarge)
+    });
+    too_large && !limited_here()
+}
+
+/// Whether this process may write no file past a length of its own
+/// (`RLIMIT_FSIZE`): a write past it fails with `EFBIG`, as one past what
+/// a volume keeps does.
+fn limited_here() -> bool {
+    #[cfg(unix)]
+    {
+        rustix::process::getrlimit(rustix::process::Resource::Fsize)
+            .current
+            .is_some()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Why `src` cannot be copied into `dest_dir`: a file larger than the
-/// volume there keeps (a FAT drive's 4 GiB). The volume is asked once a
-/// plan (`StepContext::largest_in`), and the source looked at only where
-/// it keeps less than any file asks.
+/// volume there keeps (a FAT drive's 4 GiB). Only a file larger than
+/// [`sys::FAT_MOST`] asks the volume (no volume keeps less), once a plan
+/// for each folder (`StepContext::largest_in`): a copy of anything
+/// smaller, a rename on one volume, asks nothing of the destination.
 fn too_large(src: &Path, dest_dir: &Path, ctx: &StepContext) -> Option<Words> {
-    let most = ctx.largest_in(dest_dir)?;
     let meta = std::fs::symlink_metadata(src).ok()?;
-    (meta.is_file() && meta.len() > most).then(|| too_large_for(src, dest_dir, most))
+    if !meta.is_file() || meta.len() <= sys::FAT_MOST {
+        return None;
+    }
+    let most = ctx.largest_in(dest_dir)?;
+    (meta.len() > most).then(|| too_large_for(src, dest_dir, most))
 }
 
 /// What a copy that failed left at `path`, which could not be removed
@@ -6517,8 +6577,9 @@ mod tests {
     /// A file larger than the volume it goes to keeps (a FAT drive's
     /// 4 GiB) is refused by the check of its copy and of its move, in
     /// words: before anything is copied, where it could never be written.
-    /// One that fits, and a folder (the plan's sizing looks inside it), are
-    /// not.
+    /// One that fits, a folder (the plan's sizing looks inside it), and a
+    /// file no volume refuses (no larger than FAT keeps, the volume not
+    /// even asked) are not.
     #[test]
     fn a_file_larger_than_its_drive_keeps_is_refused_by_its_check() {
         let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
@@ -6526,7 +6587,13 @@ mod tests {
         let dir = tempfile::tempdir_in(base).unwrap();
         let (src, dest) = (dir.path().join("it's a film.mkv"), dir.path().join("stick"));
         std::fs::create_dir(&dest).unwrap();
-        std::fs::write(&src, [7u8; 100]).unwrap();
+        // Larger than FAT keeps, and holding nothing: a hole.
+        std::fs::File::create(&src)
+            .unwrap()
+            .set_len(sys::FAT_MOST + 1)
+            .unwrap();
+        let small = dir.path().join("notes.txt");
+        std::fs::write(&small, [7u8; 100]).unwrap();
         std::fs::create_dir(dir.path().join("films")).unwrap();
         std::fs::write(dir.path().join("films/a.mkv"), [7u8; 100]).unwrap();
         let entry = |path: &Path| EntryRef::from_path(path).unwrap();
@@ -6546,15 +6613,85 @@ mod tests {
             _ => None,
         };
         let ctx = StepContext::detached();
-        ctx.assume_largest(&dest, Some(99));
-        let said = "“it's a film.mkv” is too large for “stick”: a drive formatted as FAT keeps no file of 100\u{a0}B or more";
-        assert_eq!(refused(copy(&src).check(&ctx)).as_deref(), Some(said));
-        assert_eq!(refused(moving.check(&ctx)).as_deref(), Some(said));
+        ctx.assume_largest(&dest, Some(sys::FAT_MOST));
+        let said = refused(copy(&src).check(&ctx)).expect("refused");
+        assert!(
+            said.starts_with("“it's a film.mkv” is too large for “stick”: a drive formatted as FAT keeps no file of "),
+            "{said}"
+        );
+        assert_eq!(refused(moving.check(&ctx)), Some(said));
         assert_eq!(refused(copy(&dir.path().join("films")).check(&ctx)), None);
-        ctx.assume_largest(&dest, Some(100));
+        // Said to keep less than FAT does, which no volume does: a file
+        // that small never asks.
+        ctx.assume_largest(&dest, Some(99));
+        assert_eq!(refused(copy(&small).check(&ctx)), None, "never asked");
+        ctx.assume_largest(&dest, Some(sys::FAT_MOST + 1));
         assert_eq!(refused(copy(&src).check(&ctx)), None, "just fits");
         ctx.assume_largest(&dest, None);
         assert_eq!(refused(copy(&src).check(&ctx)), None, "keeps any");
+    }
+
+    /// A move's copy flushed onto a drive Windows may keep in memory
+    /// (`sys::flush_tree`): each file and folder of it, a read-only file
+    /// opened for it and given its mark back, as it was.
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_flushed_onto_its_drive_is_as_it_was() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let copy = dir.path().join("it's moved, été");
+        std::fs::create_dir_all(copy.join("inside")).unwrap();
+        std::fs::write(copy.join("inside/notes.txt"), b"notes").unwrap();
+        let sealed = copy.join("sealed.txt");
+        std::fs::write(&sealed, b"sealed").unwrap();
+        let mut read_only = std::fs::metadata(&sealed).unwrap().permissions();
+        read_only.set_readonly(true);
+        std::fs::set_permissions(&sealed, read_only).unwrap();
+        sys::flush_tree(&copy).unwrap();
+        sys::flush_tree(&sealed).unwrap();
+        assert!(std::fs::metadata(&sealed).unwrap().permissions().readonly());
+        assert_eq!(std::fs::read(&sealed).unwrap(), b"sealed");
+        assert_eq!(
+            std::fs::read(copy.join("inside/notes.txt")).unwrap(),
+            b"notes"
+        );
+        let mut open = std::fs::metadata(&sealed).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)] // Windows: no bits for others.
+        open.set_readonly(false);
+        std::fs::set_permissions(&sealed, open).unwrap();
+    }
+
+    /// A write its volume refused as too large meets its Retry again: not
+    /// retried. One a full drive refused is, and so is one the process's
+    /// own file size limit may have refused (`RLIMIT_FSIZE`, which can be
+    /// lifted while it runs; `tests/retry.rs` goes on after one).
+    #[cfg(unix)]
+    #[test]
+    fn a_write_its_volume_refused_as_too_large_is_not_retried() {
+        let refused = |kind: std::io::ErrorKind| {
+            not_copied(Path::new("/example/it's a film.mkv")).because(std::io::Error::from(kind))
+        };
+        let too_large = refused(std::io::ErrorKind::FileTooLarge);
+        assert!(fails_again(&too_large), "the volume's");
+        assert!(!fails_again(&refused(std::io::ErrorKind::StorageFull)));
+        // A limit of this test's own process (nextest runs each in one of
+        // its own), far above anything it writes.
+        let limit = |bytes| {
+            rustix::process::setrlimit(
+                rustix::process::Resource::Fsize,
+                rustix::process::Rlimit {
+                    current: bytes,
+                    maximum: None,
+                },
+            )
+            .unwrap();
+        };
+        limit(Some(1 << 40));
+        let limited = fails_again(&too_large);
+        limit(None);
+        assert!(!limited, "maybe the process's own limit: retried");
+        assert!(fails_again(&too_large), "the volume's again");
     }
 
     /// The home's volume keeps any file: only a FAT one is said to keep

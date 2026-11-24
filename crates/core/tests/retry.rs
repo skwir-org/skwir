@@ -131,6 +131,102 @@ fn cut_short(executor: &Executor, src: &Path, dest: &Path) -> (Plan, PathBuf) {
     (plan, partial)
 }
 
+/// What this process holds open at or below `dir`: what makes the kernel
+/// refuse to unmount its volume.
+fn held_under(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir("/proc/self/fd")
+        .expect("fds")
+        .flatten()
+        .filter_map(|fd| std::fs::read_link(fd.path()).ok())
+        .filter(|target| target.starts_with(dir))
+        .collect()
+}
+
+/// `executor` lets go of `dest`'s volume, as before an unmount
+/// (`App::release`): what it held there closed, on a thread of its own.
+fn let_go(executor: &Executor, dest: &Path) {
+    assert!(!held_under(dest).is_empty(), "the partial's lock holds it");
+    executor.let_go_under(dest);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !held_under(dest).is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        held_under(dest).is_empty(),
+        "nothing held there, which an unmount finds free: {:?}",
+        held_under(dest)
+    );
+}
+
+/// As its volume is let go of (before it is unmounted), a copy cut short
+/// lets go of its lock and keeps what it wrote: nothing holds the volume,
+/// and should it stay (the unmount refused: another program uses it), no
+/// sweep here takes what was kept, and Retry locks it again and goes on
+/// from it.
+#[test]
+fn a_copy_cut_short_lets_go_of_its_volume_and_goes_on_where_it_stays() {
+    let (_src_dir, src, bytes) = source();
+    let tmp = home_tempdir();
+    let dest = tmp.path().join("a stick, l'été");
+    std::fs::create_dir(&dest).expect("dest");
+    let executor = Executor::new(Scheduler::new(2));
+    let (plan, partial) = cut_short(&executor, &src, &dest);
+
+    let_go(&executor, &dest);
+    let lock = partial.parent().expect("staging").join("lock");
+    let free = std::fs::File::open(&lock).expect("lock");
+    assert!(free.try_lock().is_ok(), "its lock free");
+    drop(free);
+    assert!(partial.exists() && executor.can_retry(plan.id), "kept");
+    // The unmount refused: a copy into the folder meanwhile sweeps it.
+    skwir_core::op::staging::sweep(&dest);
+    assert!(partial.exists(), "not swept");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&partial)
+        .expect("partial")
+        .write_all_at(b"X", 0)
+        .expect("marked");
+
+    let r = executor
+        .retry_blocking(plan.id, &CancelToken::new())
+        .expect("retried");
+    assert_eq!((r.applied, r.error), (1, None));
+    let copied = std::fs::read(dest.join("it's big.bin")).expect("copied");
+    assert_eq!(copied.len(), bytes.len());
+    assert_eq!(copied[0], b'X', "gone on from what it had");
+    assert!(copied[1..] == bytes[1..], "the rest as the source");
+    assert_eq!(
+        std::fs::read_dir(&dest).expect("dest").count(),
+        1,
+        "nothing staged left"
+    );
+}
+
+/// Unmounted, or swept by another skwir meanwhile, what was kept is not
+/// there for Retry: the copy starts that file again, whole.
+#[test]
+fn a_copy_cut_short_whose_partial_went_with_its_volume_starts_again() {
+    let (_src_dir, src, bytes) = source();
+    let tmp = home_tempdir();
+    let dest = tmp.path().join("a stick");
+    std::fs::create_dir(&dest).expect("dest");
+    let executor = Executor::new(Scheduler::new(2));
+    let (plan, partial) = cut_short(&executor, &src, &dest);
+    let_go(&executor, &dest);
+    std::fs::remove_dir_all(partial.parent().expect("staging")).expect("gone");
+
+    let r = executor
+        .retry_blocking(plan.id, &CancelToken::new())
+        .expect("retried");
+    assert_eq!((r.applied, r.error), (1, None));
+    assert_eq!(
+        std::fs::read(dest.join("it's big.bin")).expect("copied"),
+        bytes
+    );
+    assert_eq!(std::fs::read_dir(&dest).expect("dest").count(), 1);
+}
+
 /// Retried, it goes on from what it had written: a byte changed at its
 /// start since is still there (no one reads it back but its last part).
 /// The staging folder stays locked meanwhile: no sweep takes it.

@@ -31,7 +31,13 @@
 //! answering, its drive was pulled out) is kept instead, for Retry to go
 //! on from ([`Partial`]): its folder stays, locked, and noted where it
 //! is, until the retry places it or the stopped plan is let go; a process
-//! that ends meanwhile leaves it to the sweeps.
+//! that ends meanwhile leaves it to the sweeps. As its volume is let go of
+//! (an unmount, `Executor::let_go_under`), its lock is let go of too and
+//! the folder kept ([`Staging::let_go`]): nothing of Skwir's holds the
+//! volume, and should it stay (the unmount refused), Retry takes the lock
+//! again ([`Staging::hold_again`]) and goes on from what was kept, its
+//! last part read back. Meanwhile this process sweeps it not ([`KEPT`]);
+//! another skwir may, as it would once this one ended.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -43,6 +49,15 @@ use super::sys;
 pub(crate) const PREFIX: &str = ".skwir-copy-";
 /// The file a staging folder's copy keeps locked.
 const LOCK: &str = "lock";
+
+/// The names of the staging folders kept for Retry whose lock this
+/// process let go of with their volume ([`Staging::let_go`]): what a copy
+/// cut short left, theirs still, which no sweep here takes
+/// ([`sweep`]). By name alone, which a staging folder's random end makes
+/// its own, whatever path its folder is reached by (a link): two alike in
+/// two folders would leave the other's to a later sweep, nothing more.
+static KEPT: parking_lot::Mutex<std::collections::BTreeSet<std::ffi::OsString>> =
+    parking_lot::Mutex::new(std::collections::BTreeSet::new());
 
 /// The staging folders this test's process made.
 #[cfg(test)]
@@ -56,6 +71,9 @@ pub struct Staging {
     /// Released before the folder goes: Windows removes no folder holding
     /// a file still open.
     lock: Option<File>,
+    /// Its lock let go of with its volume, the folder kept ([`Self::let_go`]),
+    /// until it is taken again ([`Self::hold_again`]).
+    let_go: bool,
     /// `None` once removed.
     dir: Option<PathBuf>,
     /// On a remote, the note naming it ([`UnderWay::mark`]): forgotten
@@ -80,9 +98,69 @@ impl Staging {
             .and_then(|under_way| under_way.mark(&dir));
         Ok(Self {
             lock: hold(&dir),
+            let_go: false,
             dir: Some(dir),
             note,
         })
+    }
+
+    /// Let go of the lock, which holds its volume busy, the folder and what
+    /// it holds kept: what a copy cut short kept for Retry, as its volume
+    /// is let go of (`Executor::let_go_under`). Noted as this process's
+    /// first ([`KEPT`]), so no sweep here takes it once its lock is free.
+    /// The lock is handed back, to be closed off the caller's thread (on
+    /// FAT, mounted `flush`, a close waits a tenth of a second); `None`
+    /// where none is held.
+    pub(super) fn let_go(&mut self) -> Option<File> {
+        self.lock.as_ref()?;
+        if let Some(name) = self.dir.as_deref().and_then(Path::file_name) {
+            KEPT.lock().insert(name.to_os_string());
+        }
+        self.let_go = true;
+        self.lock.take()
+    }
+
+    /// Take again the lock let go of with its volume ([`Self::let_go`]),
+    /// before a Retry goes on in the folder: false when the folder or its
+    /// lock is gone (swept by another skwir, its volume not there now), or
+    /// another holds it, the folder then forgotten. True for one never let
+    /// go of. I/O: the Retry's worker.
+    pub(super) fn hold_again(&mut self) -> bool {
+        if !self.let_go {
+            return true;
+        }
+        self.kept_no_more();
+        let Some(dir) = self.dir.clone() else {
+            return false;
+        };
+        let Ok(lock) = crate::fs::file::open_regular(&dir.join(LOCK)) else {
+            return false;
+        };
+        if lock.try_lock().is_err() {
+            // Not this process's any more: left to whoever holds it.
+            self.dir = None;
+            return false;
+        }
+        self.lock = Some(lock);
+        true
+    }
+
+    /// Where the folder is now as the system knows it from the lock it
+    /// holds (a link on the way resolved, `fs::dir::held_at`), asking
+    /// nothing of its volume; `None` where it holds none.
+    pub(super) fn held_at(&self) -> Option<PathBuf> {
+        crate::fs::dir::held_at(self.lock.as_ref()?)?
+            .parent()
+            .map(Path::to_path_buf)
+    }
+
+    /// No longer kept unlocked by this process ([`KEPT`]).
+    fn kept_no_more(&mut self) {
+        if std::mem::take(&mut self.let_go)
+            && let Some(name) = self.dir.as_deref().and_then(Path::file_name)
+        {
+            KEPT.lock().remove(name);
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -97,6 +175,12 @@ impl Staging {
         let Some(dir) = self.dir.take() else {
             return Ok(());
         };
+        // Kept from this process's sweeps no more.
+        if std::mem::take(&mut self.let_go)
+            && let Some(name) = dir.file_name()
+        {
+            KEPT.lock().remove(name);
+        }
         match remove_tree(&dir) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
                 // Its server gone, say: swept once reached again.
@@ -203,13 +287,41 @@ impl Staging {
 /// What a copy cut short left in its staging folder, kept for Retry
 /// (`Executor::retry`) to go on from: the folder, its lock held and its
 /// notes kept, so no sweep takes it; removed with what it holds when let
-/// go, as any staging folder.
+/// go, as any staging folder. Its volume let go of, its lock is let go of
+/// and the folder kept ([`Staging::let_go`]).
 pub struct Partial {
     pub(super) staging: Staging,
     /// The destination's note as under way, on this machine's volumes.
     pub(super) mark: Option<Mark>,
     pub(super) dest_dir: PathBuf,
+    /// Where its staging folder is as the system resolved it once kept
+    /// ([`Staging::held_at`]): a destination reached through a link is on
+    /// the volume the link leads to, which is what is let go of.
+    pub(super) held_at: Option<PathBuf>,
     pub(super) kept: Kept,
+}
+
+impl Partial {
+    /// Whether it is on the volume whose mount point is `tree`: by the
+    /// path its plan named, or by where its folder is (a link on the way
+    /// followed), as a listing's `holds` is told.
+    pub(super) fn is_under(&self, tree: &Path) -> bool {
+        self.dest_dir.starts_with(tree)
+            || self
+                .held_at
+                .as_deref()
+                .is_some_and(|held| held.starts_with(tree))
+    }
+
+    /// Whether it is on a remote, by either path (`fs::reach`, the table in
+    /// memory).
+    pub(super) fn on_remote(&self) -> bool {
+        crate::fs::reach::of(&self.dest_dir).is_some()
+            || self
+                .held_at
+                .as_deref()
+                .is_some_and(|held| crate::fs::reach::of(held).is_some())
+    }
 }
 
 /// What of a copy cut short is kept in its staging folder.
@@ -344,6 +456,11 @@ pub fn sweep(dir: &Path) {
             .as_encoded_bytes()
             .starts_with(PREFIX.as_bytes());
         if !ours || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        // Kept for Retry by this process, its lock let go of with its
+        // volume (`Staging::let_go`).
+        if KEPT.lock().contains(&entry.file_name()) {
             continue;
         }
         let folder = entry.path();
