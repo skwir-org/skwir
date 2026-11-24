@@ -250,10 +250,17 @@ mod imp {
     const REGISTRATION: u32 = WM_APP + 3;
 
     /// The window that follows, 0 when none does: one at a time (the places
-    /// plugin's, a later one taking over).
+    /// plugin's, a later one taking over). Set, with what core tells
+    /// (`watch::follow_volumes`), under [`FOLLOWING`].
     static WINDOW: AtomicIsize = AtomicIsize::new(0);
+    /// Held while the window that follows and what core tells change
+    /// together: a window ending never stops what tells the one taking
+    /// over.
+    static FOLLOWING: Mutex<()> = Mutex::new(());
     /// The drives core told of since the window last looked
-    /// (`watch::follow_volumes`).
+    /// (`watch::follow_volumes`): a look is posted as the first comes; a
+    /// window made looks at those there, a look posted to one that ended
+    /// first being never read.
     static ASKED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
     thread_local! {
@@ -341,15 +348,22 @@ mod imp {
                 drives: Vec::new(),
             });
         });
-        let previous = WINDOW.swap(window as isize, Ordering::AcqRel);
+        let previous = {
+            let _following = FOLLOWING.lock();
+            let previous = WINDOW.swap(window as isize, Ordering::AcqRel);
+            // Told from now on.
+            for volume in watch::follow_volumes(asked) {
+                asked(&volume);
+            }
+            previous
+        };
         if previous != 0 {
             // SAFETY: a window of this module's, whose thread ends it.
             unsafe { PostMessageW(previous as HWND, END, 0, 0) };
         }
-        // Told from now on, and the drives watched now looked at.
-        for volume in watch::follow_volumes(asked) {
-            asked(&volume);
-        }
+        // The drives watched now, and what was asked of a window before
+        // that ended without looking, looked at here.
+        look(window);
         let bits = window as isize;
         let _ending = stop.on_cancel(move || {
             // SAFETY: this thread's window, or none any more: a message
@@ -799,11 +813,14 @@ mod imp {
             }
             close(held.handle);
         }
-        if WINDOW
-            .compare_exchange(window as isize, 0, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
         {
-            watch::unfollow_volumes();
+            let _following = FOLLOWING.lock();
+            if WINDOW
+                .compare_exchange(window as isize, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                watch::unfollow_volumes();
+            }
         }
         // SAFETY: this thread's window.
         unsafe { DestroyWindow(window) };
@@ -943,6 +960,43 @@ mod imp {
                 changes.lock().iter().any(|c| c.deleted && c.unmounted)
             });
             assert_eq!(registration(), 0, "its registration ended");
+            drop(watched);
+            stop.cancel();
+            until("the window ended", || window().is_null());
+        }
+
+        /// A window made registers the drives watched whatever was asked of
+        /// the one before: a look posted to a window that ended first (the
+        /// places plugin turned off and on) is not waited for.
+        #[test]
+        fn a_window_made_again_registers_what_is_watched() {
+            if std::env::var_os("DISPLAY").is_none()
+                && skwir_core::system::under_wine("a window without a display")
+            {
+                return;
+            }
+            let folder = tempfile::tempdir().unwrap();
+            let volume = skwir_core::fs::reach::volume_of(folder.path()).unwrap();
+            // Asked while no window follows: its look never read.
+            super::asked(&volume);
+            let stop = CancelToken::new();
+            assert!(super::follow(&stop, Arc::new(|_| {}), None));
+            until("the window made", || !window().is_null());
+            let watched =
+                watch::watch(folder.path(), Duration::from_millis(10), &stop, |_| {}).unwrap();
+            let registration = || {
+                // SAFETY: the window this test started; a path that
+                // outlives the call.
+                unsafe { SendMessageW(window(), REGISTRATION, (&raw const volume) as usize, 0) }
+            };
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while registration() == 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if registration() == 0 && skwir_core::system::under_wine("a drive's registration") {
+                return;
+            }
+            assert_ne!(registration(), 0, "{} registered for", volume.display());
             drop(watched);
             stop.cancel();
             until("the window ended", || window().is_null());
