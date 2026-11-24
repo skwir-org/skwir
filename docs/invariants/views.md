@@ -908,6 +908,20 @@ around the views is in [shell.md](shell.md).
   reliable watch coverage. Scope invalidation and deadlines to the
   affected subscriptions: eviction is not a content change, and an
   unrelated event never rescans every pane.
+- **From a names index where it sums the folder live** (ADR-150, 16):
+  where an index follows the folder measured with its sizes and times
+  live (`names::Session::totals`, skwird's), each breakdown is its
+  totals (`worker/indexed.rs`), the folders `nest` opens summed too;
+  what it does not count on the folder's own device (a folder it keeps
+  out, a private one, one unread) is scanned, watched, and added in, so
+  nothing goes missing; what caches and trashes hold is found by name
+  through it (a signed `CACHEDIR.TAG`, a trash) and each one's room
+  summed. Those breakdowns are kept current by its journal, asked every
+  `REVALIDATE` while shown (`Worker::journals`): a change drops the
+  breakdowns holding it, a journal not every change since drops the
+  folder's. Only the root and what is scanned are watched. Elsewhere
+  the disk is read as below, and a figure means the same either way
+  (checked against a real engine: `just skwird-check`).
 - **A change is counted at once; changes that keep coming wait.** A
   change that comes within `REVALIDATE_DUTY` (4) times the duration of
   the last recount a change asked for waits until then, remembered

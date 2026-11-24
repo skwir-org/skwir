@@ -405,6 +405,7 @@ fn totals_of(totals: &protocol::Totals) -> Totals {
         size: totals.size,
         alloc: totals.alloc,
         files: totals.files,
+        names: totals.names,
         folders: totals.folders,
         newest_file: totals.newest_file_mtime.map(time_of),
         by_extension: totals

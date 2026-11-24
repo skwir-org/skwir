@@ -172,6 +172,8 @@ struct Shared {
     statuses: Mutex<HashMap<PaneId, Status>>,
     revision: Arc<AtomicU64>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    /// What asks the names indexes for a folder's totals (ADR-150, D3).
+    app: std::sync::Weak<App>,
 }
 impl Shared {
     fn changed(&self) {
@@ -229,6 +231,7 @@ impl UsagePlugin {
                 statuses: Mutex::new(HashMap::new()),
                 revision: Arc::clone(revision),
                 wake: app.waker_handle(),
+                app: app.weak(),
             });
             let cancel = app.lifetime().child();
             let worker_shared = Arc::clone(&shared);

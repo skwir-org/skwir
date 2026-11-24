@@ -183,6 +183,9 @@ pub struct Totals {
     pub alloc: u64,
     /// Every entry but folders, a file of several names once.
     pub files: u64,
+    /// Every entry but folders, each name counted, as a listing shows
+    /// them: a file and its hard link in one folder are two.
+    pub names: u64,
     pub folders: u64,
     /// The newest modification of its files (every entry but folders):
     /// none where it holds none, a folder then dated by its own

@@ -384,6 +384,11 @@ pub struct Totals {
     /// Files, links and others counted: every entry but folders, a file of
     /// several names once.
     pub files: u64,
+    /// Their names: every entry but folders, each name counted, a file of
+    /// several names at each, as a listing shows them (skwir's Usage counts
+    /// so).
+    #[serde(default)]
+    pub names: u64,
     /// Folders below, the subtree's own not counted.
     pub folders: u64,
     /// The newest modification time of its files (every entry but
@@ -463,6 +468,7 @@ impl Totals {
         self.size += other.size;
         self.alloc += other.alloc;
         self.files += other.files;
+        self.names += other.names;
         self.folders += other.folders;
         self.shared += other.shared;
         self.newest_file_mtime = match (self.newest_file_mtime, other.newest_file_mtime) {
@@ -789,6 +795,7 @@ mod tests {
                 size: alloc,
                 alloc,
                 files,
+                names: files,
                 folders: u64::from(kind == Kind::Folder),
                 newest_file_mtime: Some(Instant {
                     sec: i64::try_from(alloc).unwrap(),

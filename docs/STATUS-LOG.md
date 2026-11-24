@@ -23428,3 +23428,36 @@ skwird's plugin answers it. skwird's client copied again at a9fb857.
   clippy; `notices-check`.
 - **Not built yet:** Usage on it (its worker's breakdowns, holes, what
   caches hold, the nested levels, freshness by the journal).
+
+## 2026-11-24: Usage measures from an index's folder totals (ADR-150, 16)
+
+D3, the user's go on the plan. Usage's worker read every folder of what
+it measured and kept each current by a watch of its own.
+
+- **Where an index sums the folder with sizes live** (skwird's), each
+  breakdown is its totals (`worker/indexed.rs`: entries, the largest 64
+  by bytes and 16 by files, the rest among the other items), the folders
+  `nest` opens summed too and kept. What the index does not count on the
+  folder's own device (kept out, private, unread) is scanned by the
+  scanner as before, watched, and added in (`indexed::add_hole`). What
+  caches and trashes hold is found by name through the index (a signed
+  `CACHEDIR.TAG`, a trash) and each one's room summed, once a measure.
+  The scanner opens the index only when no breakdown is kept.
+- **Kept current by the journal** (`Worker::journals`): every
+  `REVALIDATE` while shown, the breakdowns holding a change are dropped
+  and the pane counted again; a journal too old or not every change
+  drops the folder's. Only the root and what is scanned are watched.
+- **The same figures:** asked of skwird's session on the way, its totals
+  date a folder by its newest file and each entry's own time (a9fb857)
+  and count names as Usage does (`names`, 03014bc); skwird's client
+  copied again at 6e061fe.
+- **Checked:** two worker tests against a stand-in index (measured from
+  it, a kept-out folder scanned, a cache's room, the nested levels, the
+  journal's re-sum keeping what did not change, too old; no index: the
+  disk); `just skwird-check`'s engine tests, now 6: the same fixture
+  (a hard-linked file, an empty folder, a folder kept out) measured
+  through the index and by the disk scan agrees folder by folder, the
+  kept-out folder the only one read; the Usage and skwird plugins' tests
+  (58), `plugins_toggle`, `dialogs_offer`; clippy; `check-cross`.
+- **Not checked:** in a window on a real home, or a large tree's timing
+  against the scan.

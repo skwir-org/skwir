@@ -173,7 +173,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 5: Cross-platform](#phase-5-cross-platform) | 5a gate passed 2026-10-06; 5b waits for machines | ~6 weeks |
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
-| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (ADR-050 amended); the user's choices made that day (ADR-150); A built that day (the coverage type, the names indexes' seam, plocate behind it), B too (the `skwird` plugin, checked in a window), E (Kept live, the Index page) and F (`just skwird-check`); D built but D3 (D1 the whole disk as typed, D2 sizes and times asked of an index, D4 the tags index's checks from the journal, D5 the journal through the seam; D3, Usage from folder totals, waits for skwird's `totals`); skwird's phases 1 to 3 done | — |
+| [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; skwird's client copied 2026-11-23 (ADR-050 amended); the user's choices made that day (ADR-150); A built that day (the coverage type, the names indexes' seam, plocate behind it), B too (the `skwird` plugin, checked in a window), E (Kept live, the Index page) and F (`just skwird-check`); D built (D1 the whole disk as typed, D2 sizes and times asked of an index, D3 Usage from folder totals, D4 the tags index's checks from the journal, D5 the journal through the seam; the harvest's own use waits for Phase 7); skwird's phases 1 to 3 done | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05; the desktop shells' colors (G) 2026-11-07 (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
@@ -3795,8 +3795,14 @@ own (its `docs/DESIGN.md` and `docs/PLAN.md`); these are Skwir's steps.
     dated by the newest file and each entry's own time, `largest` with the
     rest summed, a journal token). *Its seam built 2026-11-24*
     (`Session::totals`, `names::Totals`, `Summed`, `Largest`; skwird's
-    plugin answers it, checked through the fake and a real engine). Usage
-    itself not yet built on it.
+    plugin answers it, checked through the fake and a real engine).
+    *Usage built on it 2026-11-24* (ADR-150, 16, the user's go on the
+    plan): breakdowns from the totals where sizes are live, what the index
+    leaves out scanned and added, caches found by name, the nested levels
+    summed, kept current by the journal; the same fixture measured both
+    ways agrees folder by folder against a real engine (names counted as
+    Usage counts them: skwird 03014bc, asked for it). Not checked: in a
+    window on a real home, nor a large tree's timing against the scan.
   - **D4, the tags index's checks** through skwird's journal: *built
     2026-11-23* (ADR-150, 15): a count keeps the journal's mark, the next
     check reads only the folders the journal names where it is every

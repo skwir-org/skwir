@@ -359,3 +359,90 @@ fn a_real_engine_sums_a_folder() {
             .any(|e| e.ext.as_deref() == Some(std::ffi::OsStr::new("pdf")) && e.files == 2)
     );
 }
+
+/// Usage measures a folder from a real engine's totals as its own scan of
+/// the disk does (ADR-150, D3): the same bytes, files, folders and dates,
+/// folder by folder, a file of two names once, an empty folder dated by its
+/// own time; what the engine keeps out scanned, and nothing else read.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs a real skwird: `just skwird-check`"]
+fn usage_measures_from_a_real_engine_as_its_scan_does() {
+    use skwir_core::command::{Invocation, Outcome};
+    let (_dir, root) = fixture(&[
+        "a.txt",
+        "docs/b.pdf",
+        "docs/deeper/c.pdf",
+        "kept out/secret.txt",
+        "media/clip.mkv",
+    ]);
+    std::fs::write(root.join("a.txt"), vec![b'x'; 10_000]).unwrap();
+    std::fs::write(root.join("media/clip.mkv"), vec![b'y'; 300_000]).unwrap();
+    std::fs::hard_link(root.join("docs/b.pdf"), root.join("docs/b again.pdf")).unwrap();
+    std::fs::create_dir(root.join("empty")).unwrap();
+    let engine = Engine::start(&root, &[&root.join("kept out")]);
+    engine.watch(&root);
+    let measured = |with_index: bool| {
+        let state = tempfile::tempdir().unwrap();
+        let app = if with_index {
+            app(state.path(), &engine)
+        } else {
+            App::new(AppConfig::ephemeral(state.path())).unwrap()
+        };
+        app.plugins
+            .add(Arc::new(skwir_plugin_usage::UsagePlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.dispatch(&Invocation::with_args(
+            "usage.scan",
+            &serde_json::json!({"pane": pane, "path": root}),
+        ))
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let Outcome::Value(status) = app
+                .dispatch(&Invocation::with_args(
+                    "usage.status",
+                    &serde_json::json!({"pane": pane}),
+                ))
+                .unwrap()
+            else {
+                panic!("usage.status answers a value");
+            };
+            if status["scanning"] == false && status["tree"].is_object() {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "measured: {status}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let facts = |node: &serde_json::Value| {
+        let mut rows: Vec<String> = vec![format!(
+            "{} size {} alloc {} files {} dirs {} modified {}",
+            node["name"],
+            node["size"],
+            node["alloc"],
+            node["files"],
+            node["dirs"],
+            node["modified"]
+        )];
+        for child in node["children"].as_array().unwrap() {
+            rows.push(format!(
+                "  {} size {} alloc {} files {} dirs {} modified {}",
+                child["name"],
+                child["size"],
+                child["alloc"],
+                child["files"],
+                child["dirs"],
+                child["modified"]
+            ));
+        }
+        rows.sort();
+        rows
+    };
+    let scanned = measured(false);
+    let indexed = measured(true);
+    assert_eq!(facts(&indexed["tree"]), facts(&scanned["tree"]));
+    assert_eq!(indexed["scanned_dirs"], 1, "the folder kept out alone");
+    assert!(scanned["scanned_dirs"].as_u64().unwrap() >= 6);
+    assert_eq!(indexed["stale"], false);
+}

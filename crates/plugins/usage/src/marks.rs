@@ -175,6 +175,14 @@ impl Places {
         Places { caches, trashes }
     }
 
+    /// The places known by their path, each with what it is.
+    pub(crate) fn paths(&self) -> impl Iterator<Item = (&Path, Reclaim)> {
+        self.caches
+            .iter()
+            .map(|p| (p.as_path(), Reclaim::Cache))
+            .chain(self.trashes.iter().map(|p| (p.as_path(), Reclaim::Trash)))
+    }
+
     pub(crate) fn of(&self, path: &Path) -> Option<Reclaim> {
         if self.trashes.iter().any(|t| t == path) || skwir_platform::trash::named_as_trash(path) {
             Some(Reclaim::Trash)

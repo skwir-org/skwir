@@ -29,6 +29,8 @@ use skwir_core::workspace::PaneId;
 use skwir_core::{EntryId, FileId};
 
 use super::marks::{self, Places, Types};
+
+mod indexed;
 use super::{Linked, Links, Message, Node, Request, Shared, SnapshotKind, Status};
 
 const MAX_CHILDREN: usize = 64;
@@ -405,6 +407,10 @@ struct Inbox<'a> {
 
 struct Scanner<'a> {
     cache: &'a mut Cache,
+    /// A names index summing the request's folder (ADR-150, D3), opened
+    /// once a breakdown is not kept: its breakdowns are taken from it,
+    /// what it does not count scanned.
+    indexed: Option<indexed::Indexed>,
     monitor: Option<Monitor<'a>>,
     inbox: Option<Inbox<'a>>,
     request: &'a Request,
@@ -636,6 +642,7 @@ impl<'a> Scanner<'a> {
     fn new(cache: &'a mut Cache, request: &'a Request, path: &'a Path, shared: &'a Shared) -> Self {
         Scanner {
             cache,
+            indexed: None,
             monitor: None,
             inbox: None,
             request,
@@ -735,6 +742,9 @@ impl<'a> Scanner<'a> {
         if let Some(node) = self.cache.get(self.path) {
             return Ok(node);
         }
+        if let Some(node) = self.indexed_root()? {
+            return Ok(node);
+        }
         let subdirectories = self.list_root()?;
         self.scan_children(subdirectories)?;
         self.ensure()?;
@@ -750,6 +760,135 @@ impl<'a> Scanner<'a> {
             self.cache.insert(node.clone());
         }
         Ok(node)
+    }
+
+    /// The root's breakdown from a names index's totals, where one sums it
+    /// with its sizes live (ADR-150, D3); the folders `nest` would open kept
+    /// too. `None`: the scan reads the disk. Its folders are kept current
+    /// by the index's journal, not by watches of Usage's own (the
+    /// worker's `journals`); only the root and what the index does not
+    /// count are watched.
+    fn indexed_root(&mut self) -> anyhow::Result<Option<Node>> {
+        // Not where nothing is kept: no watch, no journal either.
+        if !self.caching || !cfg!(unix) || virtual_filesystem(self.path) {
+            return Ok(None);
+        }
+        let Some(app) = self.shared.app.upgrade() else {
+            return Ok(None);
+        };
+        self.indexed = indexed::Indexed::open(&app, self.path, &self.request.cancel);
+        if self.indexed.is_none() {
+            return Ok(None);
+        }
+        let Ok(metadata) = std::fs::metadata(self.path) else {
+            return Ok(None);
+        };
+        if !metadata.is_dir() {
+            return Ok(None);
+        }
+        self.dev = meta::device(&metadata);
+        self.root_modified = meta::modified(&metadata);
+        if !self.watch(self.path)? {
+            self.unmonitored += 1;
+        }
+        let Some(mut node) = self.indexed_breakdown(self.path, 0)? else {
+            return Ok(None);
+        };
+        let shown = &self.request.path;
+        node.name = shown
+            .file_name()
+            .unwrap_or(shown.as_os_str())
+            .to_string_lossy()
+            .into_owned();
+        self.indexed_nested(&node)?;
+        if !node.incomplete && self.unmonitored == 0 && self.caching {
+            self.cache.insert(node.clone());
+        }
+        Ok(Some(node))
+    }
+
+    /// `folder`'s breakdown from the index, what it does not count below
+    /// scanned and added (`indexed::add_hole`); `None` where it does not
+    /// sum it.
+    fn indexed_breakdown(&mut self, folder: &Path, depth: usize) -> anyhow::Result<Option<Node>> {
+        let Some(indexed) = self.indexed.as_mut() else {
+            return Ok(None);
+        };
+        let Some(mut node) = indexed.breakdown(folder, &mut self.types, &self.places) else {
+            return Ok(None);
+        };
+        let holes = indexed.holes_in(folder);
+        let errors = self.errors;
+        for hole in holes {
+            self.ensure()?;
+            let Ok(metadata) = std::fs::symlink_metadata(&hole) else {
+                continue;
+            };
+            if !metadata.is_dir() || !descend(&hole, &metadata, self.dev) {
+                continue;
+            }
+            let below = hole
+                .strip_prefix(folder)
+                .map_or(1, |r| r.components().count());
+            let id = folder_entry(&hole, &metadata);
+            match self.directory(&hole, depth + below, id, meta::modified(&metadata)) {
+                Ok(scanned) => indexed::add_hole(&mut node, scanned),
+                Err(_) if self.interrupted() => anyhow::bail!("Scan interrupted"),
+                Err(_) => self.errors += 1,
+            }
+        }
+        trim(&mut node);
+        reclaim_whole(&mut node);
+        node.incomplete = self.errors != errors;
+        Ok(Some(node))
+    }
+
+    /// The breakdowns `nest` opens below `tree`, from the index, kept: the
+    /// folders weighing a share of the tree, down `NESTED_LEVELS`, while
+    /// `MAX_NESTED` allows.
+    fn indexed_nested(&mut self, tree: &Node) -> anyhow::Result<()> {
+        let (total, files) = (tree.alloc, tree.files);
+        let weighs = |n: &Node| {
+            n.is_dir
+                && (n.alloc.saturating_mul(OPEN_SHARE) >= total.max(1)
+                    || n.files.saturating_mul(OPEN_SHARE) >= files.max(1))
+        };
+        let mut level: Vec<PathBuf> = tree
+            .children
+            .iter()
+            .filter(|n| weighs(n))
+            .map(|n| n.path.clone())
+            .collect();
+        let mut budget = MAX_NESTED;
+        for depth in 1..=NESTED_LEVELS {
+            let mut next = Vec::new();
+            for folder in level {
+                self.ensure()?;
+                if budget == 0 {
+                    return Ok(());
+                }
+                let node = if let Some(kept) = self.cache.peek(&folder) {
+                    kept.clone()
+                } else {
+                    let Some(node) = self.indexed_breakdown(&folder, depth)? else {
+                        continue;
+                    };
+                    if !node.incomplete && self.caching {
+                        self.cache.insert(node.clone());
+                    }
+                    node
+                };
+                budget = budget.saturating_sub(node.children.len());
+                next.extend(
+                    node.children
+                        .iter()
+                        .filter(|n| weighs(n))
+                        .map(|n| n.path.clone()),
+                );
+            }
+            level = next;
+        }
+        Ok(())
     }
 
     /// One pass over the root: files and unknown folders are visible before
@@ -1192,6 +1331,12 @@ struct Active {
     /// took. The first scan of a request is not one: it reads the whole
     /// tree, where a change reads its folder and those above it again.
     recounted: Option<(Instant, Duration)>,
+    /// Where the journal of the names index its breakdowns came from stood
+    /// (ADR-150, D3): asked what changed since every `REVALIDATE` while it
+    /// is shown, its breakdowns that did summed again.
+    journal: Option<skwir_core::names::Mark>,
+    /// When the journal was last asked.
+    journal_asked: Instant,
 }
 
 impl Active {
@@ -1230,6 +1375,9 @@ struct Worker {
     stop: Option<skwir_core::cancel::CancelSignal>,
     /// Since when no view has shown a breakdown.
     idle_since: Option<Instant>,
+    /// The journal's mark of the last scan's names index, where its
+    /// breakdowns came from one.
+    scanned_mark: Option<skwir_core::names::Mark>,
 }
 
 /// What the worker's wait ended with.
@@ -1261,6 +1409,7 @@ impl Worker {
             places: Places::default(),
             stop: None,
             idle_since: None,
+            scanned_mark: None,
         }
     }
 
@@ -1299,8 +1448,74 @@ impl Worker {
                 }
             }
         }
+        dirty.extend(self.journals(Instant::now()));
         self.update(&dirty, Instant::now());
         true
+    }
+
+    /// Ask the journal of each shown breakdown's names index what changed
+    /// since its mark, every `REVALIDATE` (ADR-150, D3): the breakdowns
+    /// holding what changed are dropped, and their panes counted again;
+    /// one whose journal is not every change since, or cannot be followed,
+    /// is counted again whole. Returns the panes to count again.
+    fn journals(&mut self, now: Instant) -> HashSet<PaneId> {
+        let mut dirty = HashSet::new();
+        let Some(app) = self.shared.app.upgrade() else {
+            return dirty;
+        };
+        let due: Vec<PaneId> = self
+            .active
+            .iter()
+            .filter(|(_, s)| {
+                s.journal.is_some() && now.duration_since(s.journal_asked) >= REVALIDATE
+            })
+            .map(|(pane, _)| *pane)
+            .collect();
+        for pane in due {
+            let Some(state) = self.active.get_mut(&pane) else {
+                continue;
+            };
+            state.journal_asked = now;
+            let Some(mark) = state.journal.take() else {
+                continue;
+            };
+            let root = state.target.path.clone();
+            let told = app
+                .names
+                .follow(&root, Some(&mark.by), &state.request.cancel)
+                .and_then(|(_, opened)| {
+                    let mut session = opened.session;
+                    session.changes(Some(&mark))
+                });
+            match told {
+                Some(skwir_core::names::Since::Journal(journal)) if journal.complete() => {
+                    if !journal.changes.is_empty() {
+                        for change in &journal.changes {
+                            let path = match change {
+                                skwir_core::names::Change::Added(n)
+                                | skwir_core::names::Change::Removed(n)
+                                | skwir_core::names::Change::Changed(n) => n.path.as_path(),
+                                skwir_core::names::Change::NotCovered(hole) => hole.path.as_path(),
+                            };
+                            if path.starts_with(&root) {
+                                // It and every folder above it.
+                                self.cache.invalidate(path, true);
+                            }
+                        }
+                        dirty.insert(pane);
+                    }
+                    if let Some(state) = self.active.get_mut(&pane) {
+                        state.journal = Some(journal.mark);
+                    }
+                }
+                // Too old, not every change, or not followed: whole again.
+                _ => {
+                    self.cache.invalidate(&root, true);
+                    dirty.insert(pane);
+                }
+            }
+        }
+        dirty
     }
 
     /// Wait for a message, the plugin's end, or `wait` to pass (`None`:
@@ -1399,6 +1614,8 @@ impl Worker {
             pending: false,
             changed: false,
             recounted: None,
+            journal: None,
+            journal_asked: Instant::now(),
         };
         self.acquire_aliases(&mut state);
         self.set_cache_roots(Some(&state.target.path));
@@ -1566,6 +1783,11 @@ impl Worker {
                 state.coverage = coverage;
                 state.last_scan = Instant::now();
                 state.last_duration = started.elapsed();
+                // A breakdown kept from before keeps the mark it came with.
+                if let Some(mark) = self.scanned_mark.take() {
+                    state.journal = Some(mark);
+                    state.journal_asked = state.last_scan;
+                }
                 // What the scan freed, given back before the worker
                 // sleeps: it is no scheduler worker.
                 skwir_core::scheduler::release_now();
@@ -1633,7 +1855,9 @@ impl Worker {
         if scanner.yielded {
             return None;
         }
+        let mark = scanner.indexed.take().and_then(|i| i.mark);
         drop(scanner);
+        self.scanned_mark = mark;
         let coverage = if exhausted {
             self.exhaust(&target.path, Instant::now());
             Coverage::None
@@ -2081,6 +2305,7 @@ mod tests {
             statuses: Mutex::default(),
             revision: Arc::default(),
             wake: Arc::new(|| {}),
+            app: std::sync::Weak::new(),
         })
     }
 
@@ -2117,6 +2342,7 @@ mod tests {
                         tx.send(shared.statuses.lock()[&pane].clone()).unwrap();
                     }
                 }),
+                app: std::sync::Weak::new(),
             }
         });
         (shared, rx)
@@ -2710,6 +2936,7 @@ mod tests {
             )])),
             revision: Arc::default(),
             wake: Arc::new(move || cancel.cancel()),
+            app: std::sync::Weak::new(),
         };
         let mut cache = Cache::default();
         assert!(scanner(&mut cache, &request, &shared).root().is_err());
@@ -3391,5 +3618,333 @@ mod tests {
             meta::device(&std::fs::metadata("/").unwrap())
         ));
         assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
+    }
+
+    /// A stand-in names index: it sums the folders it is given, names the
+    /// paths it is given, and tells the journal it is given.
+    #[derive(Clone, Default)]
+    struct Summing(Arc<Mutex<Summed>>);
+
+    #[derive(Default)]
+    struct Summed {
+        root: PathBuf,
+        holes: Vec<skwir_core::coverage::Hole>,
+        totals: HashMap<PathBuf, (Vec<skwir_core::names::Child>, skwir_core::names::Totals)>,
+        named: Vec<PathBuf>,
+        journal: Option<skwir_core::names::Since>,
+        /// The folders whose entries were asked, in order.
+        asked: Vec<PathBuf>,
+        /// The journal's token its totals are as of.
+        token: String,
+    }
+
+    fn live() -> skwir_core::coverage::Proof {
+        skwir_core::coverage::Proof::Live {
+            since: std::time::SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    impl skwir_core::names::NameIndex for Summing {
+        fn id(&self) -> &'static str {
+            "summing"
+        }
+        fn by(&self) -> Words {
+            Words::as_written("summing")
+        }
+        fn syncs(&self) -> bool {
+            true
+        }
+        fn open(&self, _: &Path, _: &CancelToken) -> Option<skwir_core::names::Opened> {
+            None
+        }
+        fn follow(&self, root: &Path, _: &CancelToken) -> Option<skwir_core::names::Opened> {
+            let summed = self.0.lock();
+            root.starts_with(&summed.root)
+                .then(|| skwir_core::names::Opened {
+                    coverage: skwir_core::coverage::Coverage {
+                        names: live(),
+                        attrs: live(),
+                        holes: summed.holes.clone(),
+                    },
+                    session: Box::new(self.clone()),
+                })
+        }
+    }
+
+    impl skwir_core::names::Session for Summing {
+        fn sync(&mut self) -> Option<skwir_core::coverage::Coverage> {
+            None
+        }
+        fn query(
+            &mut self,
+            q: &skwir_core::names::Query,
+            each: &mut dyn FnMut(Vec<PathBuf>) -> bool,
+        ) -> Option<skwir_core::names::Answer> {
+            let named: Vec<PathBuf> = self
+                .0
+                .lock()
+                .named
+                .iter()
+                .filter(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().contains(q.names[0].text.as_str()))
+                })
+                .cloned()
+                .collect();
+            each(named);
+            None
+        }
+        fn changes(
+            &mut self,
+            _: Option<&skwir_core::names::Mark>,
+        ) -> Option<skwir_core::names::Since> {
+            self.0.lock().journal.take()
+        }
+        fn totals(
+            &mut self,
+            folder: &Path,
+            largest: Option<skwir_core::names::Largest>,
+            each: &mut dyn FnMut(Vec<skwir_core::names::Child>) -> bool,
+        ) -> Option<skwir_core::names::Summed> {
+            let mut summed = self.0.lock();
+            let sent = largest.is_none_or(|l| l.alloc > 0 || l.files > 0);
+            if sent {
+                summed.asked.push(folder.to_path_buf());
+            }
+            let (children, totals) = summed.totals.get(folder)?.clone();
+            if sent {
+                each(children);
+            }
+            Some(skwir_core::names::Summed {
+                totals,
+                mtime: None,
+                mark: skwir_core::names::Mark {
+                    by: "summing".into(),
+                    token: summed.token.clone(),
+                },
+                coverage: skwir_core::coverage::Coverage {
+                    names: live(),
+                    attrs: live(),
+                    holes: Vec::new(),
+                },
+                links_known: true,
+                count: 0,
+                rest: None,
+            })
+        }
+    }
+
+    fn totals(alloc: u64, files: u64, folders: u64) -> skwir_core::names::Totals {
+        skwir_core::names::Totals {
+            size: alloc,
+            alloc,
+            files,
+            names: files,
+            folders,
+            newest_file: Some(std::time::SystemTime::UNIX_EPOCH + Duration::from_hours(500_000)),
+            by_extension: Vec::new(),
+            shared: 0,
+        }
+    }
+
+    fn entry(path: PathBuf, dir: bool, t: skwir_core::names::Totals) -> skwir_core::names::Child {
+        skwir_core::names::Child {
+            path,
+            kind: if dir {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            },
+            id: Some((1, 2)),
+            mtime: None,
+            totals: t,
+        }
+    }
+
+    /// A folder a names index sums with its sizes live is measured from it
+    /// (ADR-150, D3), the disk read only where the index counts nothing: a
+    /// folder it keeps out scanned and added, a cache's room asked of it by
+    /// name, the folders the map opens summed too; what its journal says
+    /// changed is summed again.
+    #[test]
+    fn a_folder_an_index_sums_is_measured_from_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap().join("measured");
+        for dir in ["big/part", "kept out", "cached"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        // What the disk holds is not what the index says, but where it says
+        // it counts nothing.
+        std::fs::write(root.join("kept out/secret"), vec![b'x'; 5000]).unwrap();
+        std::fs::write(
+            root.join("cached").join(marks::CACHEDIR_TAG),
+            b"Signature: 8a477f597d28d172789f06886806bc55\n",
+        )
+        .unwrap();
+        let index = Summing::default();
+        {
+            let mut s = index.0.lock();
+            s.root = root.clone();
+            s.holes = vec![skwir_core::coverage::Hole {
+                path: root.join("kept out"),
+                why: skwir_core::coverage::Why::Excluded,
+            }];
+            s.totals.insert(
+                root.clone(),
+                (
+                    vec![
+                        entry(root.join("big"), true, totals(1_000_000, 10, 1)),
+                        entry(root.join("kept out"), true, totals(0, 0, 0)),
+                        entry(root.join("cached"), true, totals(50_000, 3, 0)),
+                    ],
+                    totals(1_050_000, 13, 4),
+                ),
+            );
+            s.totals.insert(
+                root.join("big"),
+                (
+                    vec![
+                        entry(root.join("big/part"), true, totals(900_000, 9, 0)),
+                        entry(root.join("big/x.bin"), false, totals(100_000, 1, 0)),
+                    ],
+                    totals(1_000_000, 10, 1),
+                ),
+            );
+            s.totals
+                .insert(root.join("cached"), (Vec::new(), totals(50_000, 3, 0)));
+            s.named = vec![root.join("cached").join(marks::CACHEDIR_TAG)];
+        }
+        let state = tempfile::tempdir().unwrap();
+        let app =
+            skwir_core::app::App::new(skwir_core::app::AppConfig::ephemeral(state.path())).unwrap();
+        app.names.register("test", Arc::new(index.clone()));
+        let shared = Arc::new(Shared {
+            statuses: Mutex::default(),
+            revision: Arc::default(),
+            wake: Arc::new(|| {}),
+            app: app.weak(),
+        });
+        let recording = Recording::default();
+        let mut worker = worker(Arc::clone(&shared), Some(self::recording(&recording)));
+        let request = request(0, root.clone());
+        register_status(&shared, &request);
+        worker.admit(request);
+        let status = shared.statuses.lock()[&PaneId(0)].clone();
+        let tree = status.tree.expect("measured");
+        let child = |name: &str| {
+            tree.children
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("{name}"))
+                .clone()
+        };
+        // From the index, not the disk (big holds nothing there).
+        assert_eq!(child("big").alloc, 1_000_000);
+        assert_eq!(child("big").files, 10);
+        // Kept out of the index: scanned.
+        let kept_out = child("kept out");
+        assert_eq!((kept_out.size, kept_out.files), (5000, 1));
+        assert_eq!(tree.size, 1_050_000 + 5000);
+        assert_eq!(tree.files, 14);
+        // The cache, said so by its tag, its room asked of the index.
+        assert_eq!(child("cached").reclaim, Some(marks::Reclaim::Cache));
+        assert_eq!(child("cached").reclaimable, 50_000);
+        assert_eq!(tree.reclaimable, 50_000);
+        // Only what the index does not count was read.
+        assert_eq!(status.scanned_dirs, 1, "kept out alone");
+        assert!(!status.stale, "kept current by the journal");
+        // The map opens big: summed by the index too, and drawn inside.
+        let big = child("big");
+        assert!(
+            big.children
+                .iter()
+                .any(|c| c.name == "part" && c.alloc == 900_000),
+            "{:?}",
+            big.children
+        );
+        assert!(worker.active[&PaneId(0)].journal.is_some(), "its mark kept");
+
+        // The journal says big/x.bin changed: big summed again, the rest kept.
+        {
+            let mut s = index.0.lock();
+            s.journal = Some(skwir_core::names::Since::Journal(
+                skwir_core::names::Journal {
+                    changes: vec![skwir_core::names::Change::Changed(
+                        skwir_core::names::Noted {
+                            path: root.join("big/x.bin"),
+                            kind: EntryKind::File,
+                            id: None,
+                        },
+                    )],
+                    mark: skwir_core::names::Mark {
+                        by: "summing".into(),
+                        token: "m2".into(),
+                    },
+                    names: true,
+                    attrs: true,
+                    holes: Vec::new(),
+                },
+            ));
+            let big = s.totals.get_mut(&root.join("big")).unwrap();
+            big.0[1].totals = totals(300_000, 1, 0);
+            big.1 = totals(1_200_000, 10, 1);
+            let whole = s.totals.get_mut(&root).unwrap();
+            whole.0[0].totals = totals(1_200_000, 10, 1);
+            whole.1 = totals(1_250_000, 13, 4);
+            s.asked.clear();
+            s.token = "m3".into();
+        }
+        let later = Instant::now() + REVALIDATE;
+        let dirty = worker.journals(later);
+        assert_eq!(dirty, HashSet::from([PaneId(0)]));
+        worker.update(&dirty, later);
+        let tree = shared.statuses.lock()[&PaneId(0)].tree.clone().unwrap();
+        assert_eq!(tree.size, 1_250_000 + 5000);
+        let asked = index.0.lock().asked.clone();
+        assert!(asked.contains(&root) && asked.contains(&root.join("big")));
+        assert!(
+            !asked.contains(&root.join("cached")),
+            "its breakdown kept: {asked:?}"
+        );
+        assert_eq!(
+            worker.active[&PaneId(0)]
+                .journal
+                .as_ref()
+                .map(|m| m.token.as_str()),
+            Some("m3"),
+            "the mark of the totals summed again"
+        );
+
+        // A journal that is not every change: whole again.
+        index.0.lock().journal = Some(skwir_core::names::Since::TooOld);
+        let later = later + REVALIDATE;
+        assert_eq!(worker.journals(later), HashSet::from([PaneId(0)]));
+    }
+
+    /// Without an index, or where its sizes are not live, the disk is read
+    /// as before.
+    #[test]
+    fn without_an_index_the_disk_is_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        std::fs::write(root.join("file"), b"four").unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let app =
+            skwir_core::app::App::new(skwir_core::app::AppConfig::ephemeral(state.path())).unwrap();
+        let shared = Arc::new(Shared {
+            statuses: Mutex::default(),
+            revision: Arc::default(),
+            wake: Arc::new(|| {}),
+            app: app.weak(),
+        });
+        let recording = Recording::default();
+        let mut worker = worker(Arc::clone(&shared), Some(self::recording(&recording)));
+        let request = request(0, root.clone());
+        register_status(&shared, &request);
+        worker.admit(request);
+        let status = shared.statuses.lock()[&PaneId(0)].clone();
+        assert_eq!(status.size, 4);
+        assert_eq!(status.scanned_dirs, 1);
+        assert!(worker.active[&PaneId(0)].journal.is_none());
     }
 }

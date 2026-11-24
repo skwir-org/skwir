@@ -16,7 +16,8 @@ and the evening's 8 to 12 (the Index page, Kept live, the switch, the
 menu's entry, skwird-check), checked in the release window. Amended the
 same evening (the Index page, steps E and F, the footer's
 words), and again (13 to 15: step D's whole disk as typed, sizes
-and times, the journal). Amends
+and times, the journal), and on 2026-11-24 (16: Usage from folder
+totals). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 
@@ -237,4 +238,16 @@ time, folder totals: agreed with it, built on its side next).
     coverage is said in the same words (`HintProvider::coverage`, a
     `Coverage` in place of ADR-026's yes or no): the tags index's, as of
     when the count covering the folder began.
+16. **Usage measures from an index's folder totals** (D3, the user's go
+    2026-11-24 on the plan): skwird's `totals` (designed with its session:
+    each entry's subtree totals by extension, a file of several names
+    counted once and `shared` as Usage counts it, holes by path, dated by
+    the newest file and each entry's own time, the largest 64 by bytes and
+    16 by files with the rest summed, a journal token), through
+    `Session::totals`. Only where the index holds sizes and times live
+    (5); what it does not count on the folder's own device is scanned by
+    Usage and added in; what caches hold is found by name through it; its
+    journal keeps the breakdowns current in place of Usage's own watches.
+    A figure means the same from either source: the same fixture measured
+    both ways agrees folder by folder against a real engine.
 
