@@ -1551,13 +1551,15 @@ would lose a large file's end with copy and unmount succeeding); steps
 staging onto a removable drive (extract, compress, Reduce Size, Make
 PDF) are neither written through nor written out at the plan's end; an
 archive's member over 4 GiB onto FAT fails in the helper; Windows'
-`largest_file` and `written_through` compiled only; Windows' flush of a
-move's copy onto a removable drive (`sys::flush_tree`) tried under Wine,
-which keeps no write cache, so whether it holds under "Better
-performance" is not known; a process with a file size limit of its own
-(`RLIMIT_FSIZE`) is offered Retry for a file its volume cannot hold (the
-error does not say whose limit refused it); the FAT32 test (ignored)
-not run since the partial is kept.
+`largest_file` and `written_through` compiled only; Windows' flush of
+each copy onto a removable drive through its own handle
+(`sys::flushed_as_closed`, in `CopyFileExW`'s routine) compiled only,
+as Wine calls no routine (its fallback, reopening the file, tried under
+Wine, which keeps no write cache), so whether it and the folders'
+flushes hold under "Better performance" is not known; on a mount read
+in ranges, a copy refused at the process's own file size limit is told
+by its length alone; the FAT32 test (ignored) not run since the partial
+is kept.
 
 **Two stats of an entry** (2026-11-24): the folder provider keeps the
 later begun, whatever each found (`Names::newest`, `Names::applies`,
@@ -1575,7 +1577,19 @@ from an index: a file of several names that takes no room says one. A
 drive Windows is letting go of reads nothing (`watch::letting_go`): its
 rows answered unread then stay so after a refused removal until read
 again; tried under Wine, never with a drive. Drive registration after
-the places plugin returns: compiled only (Wine has no display).
+the places plugin returns: compiled only (Wine has no display). From the
+second review: a stalled engine (stopped, not gone) holds Usage's worker
+up to the client's 60 s silence at each navigation, as its journals are
+asked under the worker's lifetime, not a pane's (the stoppable connect
+above would end it); where only plocate answers at once, a search shown
+as typed and a lens's folders rest on its database, so a file made since
+`updatedb` is not found (as before without skwird; with skwird and no
+engine running, an engine used to be started); Windows' Eject: a folder
+opened there or refreshed meanwhile is still read (`list` does not ask
+`watch::letting_go`), and a hydration under way as the let-go begins
+keeps its handle until it ends; a refresh's or rescan's readdir is
+applied without the stats' tickets, so `mv f g; mv g f` during a long
+one may leave a ghost row until the next change.
 
 **Scratch folders of killed processes** (built 2026-11-24): each
 process holds a lock file of its own for its life, and names its

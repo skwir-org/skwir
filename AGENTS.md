@@ -305,7 +305,9 @@ working in an area, also read that area's rules (see
   rows while rendering. A hydration answers every id it is given:
   `Updated`, `Removed`, or `Unreadable` for what is there and cannot be
   read, marked `keys::UNREAD` (hydrated, so nothing waits for it; nothing
-  known, so a test of its size or tags stays unknown). A stat alone is not
+  known, so a test of its size or tags stays unknown). An id answered
+  unread without being read (a drive Windows lets go of) is asked again
+  by the next listing again (`Names::unread`). A stat alone is not
   a reading: it makes an entry hydrated (`Metadata::is_hydrated`: its size
   and dates, what weighs or dates it), and only the metadata providers'
   pass makes it filled (`Metadata::is_filled`, set by
@@ -504,8 +506,10 @@ working in an area, also read that area's rules (see
   stats of an entry, the one begun later stands, whichever is told last:
   each takes a ticket just before it reads (`Shared::ticket`), and what an
   older one found is left out once a newer was told (`Names::newest`,
-  under the names' lock); a full hydration left out behind a stat alone
-  is read again. A rescan, which says nothing of it (the kernel's queue
+  under the names' lock), whatever each found, gone included
+  (`Names::applies`: one entry a name, kept only while another read is
+  under way); a full hydration left out behind a stat alone is read
+  again. A rescan, which says nothing of it (the kernel's queue
   overflowed), tells those names again unmarked.
 - **Remote paths (ADR-077).** A path may be on a server that stops
   answering, where `stat` waits for good. Work that reads one runs in its

@@ -23802,3 +23802,44 @@ invariants of commands, locations, notes, operations, settings, views).
   display for the drive window's test), macOS, a real FAT32 stick since
   the partial is kept (its test is ignored). Left in PLAN, "From the
   review of 2026-11-24".
+
+## 2026-11-24: the second review, and the gate
+
+The full gate passed on af3f9d9f, the first review's fixes and their
+docs: `just prune`, `deny`, `notices-check`, `lint-all` (check-cross
+included), `test-all` (4,352 passed), `skwird-check` against skwird
+built optimized (the six real-engine tests and the window check), and
+`release-tools-check`.
+
+Two reviewers then read the fixes themselves (733317af..82eed65e). Of
+the plugins': one high, Enter on a search shown as typed walked it all
+again, taking back what it showed, wherever no index answered live
+(every search on a machine without skwird), fixed in 637d94f0 with the
+typed search and the lens asking what runs alone (`NameIndex::follow`);
+the Index page asking skwird again at each listing, each answer that
+differed waking it to list again (4d8f7261, once every 5 s at most);
+what notes a tag count reads hashed again for every folder, and an
+index kept before it recorded them trusted (b14258ff); a PNG's three
+rows held, not one (9951c649). Of the core's: one medium, a partial
+kept on a drive that was then really ejected left there for good, its
+note gone with it (a675a245, noted and swept as its volume comes back,
+Retry's lock taken back safely); the process's own file size limit told
+by how far the copy went (`SIGXFSZ` ends the process first in the app),
+Windows' copies onto sticks flushed through their own handle
+(f1952849); a stat noted once a name, and rows a let-go left unread read
+again (c5c2a8f6). A test waiting for the metadata providers within a
+fixed 300 ms failed once in five full runs under load; it waits with a
+deadline now (a68c5a3e). What the reviews left is in PLAN, "From the
+review of 2026-11-24".
+
+- **Checked:** the plugins' fixes in a worktree of their own (clippy on
+  core, platform, query, tags and skwird; 1,930 tests; the binary's tag,
+  search and real-engine tests); each new test failing without its fix.
+  The core's fixes on the tree: rustfmt, clippy on every target, the
+  workspace's tests (4,311 passed, three runs, one failing once as
+  above), `just check-cross`; core's Windows tests under Wine (805 of
+  810: two crashes that passed on rerun, and the three Unix-path tests
+  that fail there before).
+- **Not checked:** the gate again after these last commits (each fix's
+  crates and the workspace's tests were); real Windows (Windows' flush
+  in `CopyFileExW`'s routine never ran: Wine calls no routine); macOS.

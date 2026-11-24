@@ -396,6 +396,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   again (`UnderWay::sweep_noted`: before a copy stages in that folder,
   and when its mount is found answering, `App::sweep_left_on`, in its
   lane). A run's start never looks at a remote.
+- A staging folder let go of that stays (its removal failed, or it was
+  not found: its drive unmounted or pulled out) keeps a note wherever it
+  is: on a remote its own, elsewhere the folder it is in
+  (`Staging::stays`); only a folder removed forgets its notes. They are
+  swept at the next start and as its volume comes back
+  (`App::volumes_changed`, `UnderWay::sweep_left_under`, on a worker).
 - **A large file cut short (ADR-080).** A copy step that fails partway
   through a file it copies byte by byte from its start
   (`StepContext::copying`; a file with holes, written in order, too),
@@ -404,7 +410,13 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   was writing, never by looking): the plan's staging folder there leaves
   its context with its lock and notes (`staging::Partial`, held by the
   stopped plan), so no sweep takes it, and is removed with it when let
-  go. The retry's context takes it back (`StepContext::with_partial`):
+  go. Released with its volume (an unmount, Eject), its lock is closed
+  off the caller's thread (`staging::Released`) and the partial stays
+  there; Retry waits for that close, locks again, and only then lets
+  this process's sweeps reach it (`Staging::hold_again`), holding it
+  only while the folder still names that lock (a sweep removes the name
+  of the lock it took before letting go of it). The retry's context
+  takes it back (`StepContext::with_partial`):
   its copy of that source goes on from the partial when the source's
   length and time are unchanged and the partial's last MiB reads as the
   source's (`builtin::goes_on_from`; else one of the three MiB before,
@@ -772,14 +784,20 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (FAT: 4 GiB − 1, `sys::largest_file` from what the system says the
   volume is), by its step's check, the plan's sizing and the copy
   (`FileTooLarge`); a write the volume refuses as too large keeps no
-  partial and offers no Retry (`builtin::fails_again`), unless the
-  process has a file size limit of its own (`RLIMIT_FSIZE`, which can be
-  lifted while Skwir runs, and which the error does not tell apart).
+  partial and offers no Retry (`builtin::fails_again`), unless the copy
+  reached this process's own file size limit (`RLIMIT_FSIZE`'s soft one,
+  by where the refused write began or the copy's length:
+  `builtin::own_limit`), which is retried; with `SIGXFSZ` as the system
+  leaves it, such a write ends the process first.
 - A move removes originals only once a write-out has their copies on the
   drive (`StepContext::after_write_out`, batched so write-outs stay a
   tenth of the plan's time; on Windows, where nothing is written
-  through, each file of a copy onto a removable drive is flushed first,
-  `sys::flush_tree`), and keeps an original that changed after its
+  through, each file a copy makes onto a drive Windows calls removable
+  is flushed through its own handle as it is made,
+  `sys::flushed_as_closed`, reopened only where `CopyFileExW`'s routine
+  is told nothing, as under Wine, and a move's folders before its
+  original goes, `sys::flush_names`), and keeps an original that
+  changed after its
   copy began. A move whose original's removal waits (here, or for the
   plan's end after a batch) is undone by an `Unmove` (a trash by an
   `Untrash`, [The trash](#the-trash)): where the original
