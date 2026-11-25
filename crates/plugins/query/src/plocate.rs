@@ -10,17 +10,19 @@
 //! daily), which the search says (ADR-050): a file made, renamed or
 //! removed since is not in it.
 
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::coverage::Coverage;
 use skwir_core::names::{Answer, NameIndex, Opened, Session};
 
-/// How long the database may take to answer before the walk is used.
+/// How long the database may take to answer before the walk is used: all
+/// of a search's runs ([`runs`]) together.
 const TIMEOUT: Duration = Duration::from_secs(30);
-/// The most of an answer read: about a million paths. A broader one is
-/// left to the walk, which streams.
+/// The most of an answer read, all of a search's runs together: about a
+/// million paths. A broader one is left to the walk, which streams.
 const ANSWER: u64 = 64 << 20;
 /// How long its help may take to name its database, and how much of it is
 /// read.
@@ -37,7 +39,7 @@ pub fn by() -> skwir_core::words::Words {
 
 /// plocate's database as a names index (ADR-150, 4): it covers `/` as of
 /// its databases' update, and answers a search all of whose terms are name
-/// substrings, as it did before the seam, each asked in both its forms
+/// substrings, as it did before the seam, each asked in its forms
 /// ([`runs`]). It cannot be synced: its answer is taken as of when it is,
 /// and dated.
 #[derive(Default)]
@@ -122,14 +124,14 @@ impl NameIndex for Index {
         if q.root != Path::new("/") {
             return None;
         }
-        substrings(q)?;
+        asked(q)?;
         let bin = self.program()?;
         let at = updated(&self.databases_of(&bin, cancel))?;
         Some(Coverage::as_of(Some(at)))
     }
 
-    /// As [`covers`](Self::covers): it is asked each term in both its
-    /// forms ([`runs`]).
+    /// As [`covers`](Self::covers): it is asked each term in its forms
+    /// ([`runs`]).
     fn covers_both_forms(
         &self,
         q: &skwir_core::names::Query,
@@ -146,7 +148,7 @@ struct Located {
 }
 
 impl Session for Located {
-    /// Asked each term in both its forms ([`runs`]).
+    /// Asked each term in its forms ([`runs`]).
     fn both_forms(&self) -> bool {
         true
     }
@@ -155,28 +157,58 @@ impl Session for Located {
         None
     }
 
+    /// Its runs ([`runs`]) asked in turn ([`located`]).
     fn query(
         &mut self,
         q: &skwir_core::names::Query,
         each: &mut dyn FnMut(Vec<PathBuf>) -> bool,
     ) -> Option<Answer> {
-        let patterns = substrings(q)?;
-        let case_sensitive = q.names.iter().any(|n| n.case_sensitive);
-        let mut paths = Vec::new();
-        let mut named = std::collections::HashSet::new();
-        for run in runs(&patterns) {
-            for path in locate_with(&self.bin, &run, case_sensitive, &self.cancel)? {
-                if named.insert(path.clone()) {
-                    paths.push(path);
-                }
-            }
-        }
-        each(paths);
+        let (runs, case_sensitive) = asked(q)?;
+        let budget = (TIMEOUT, ANSWER);
+        located(&self.bin, &runs, case_sensitive, &self.cancel, budget, each)?;
         Some(Answer {
             coverage: Coverage::as_of(updated(&databases(&self.bin, &self.cancel))),
             truncated: false,
         })
     }
+}
+
+/// `runs` asked of `bin` in turn, each run's answer handed to `each` as it
+/// ends, each path once: where there are several runs, what an earlier one
+/// named is left out of a later one's (a name holding a term in two
+/// forms), from a set of what was handed, added to while a run follows; a
+/// single run, every ASCII search, keeps none. One time limit and one
+/// answer's size (`time`, bytes) for all of them: a search of several
+/// forms waits and holds no more than one of one. `None` where a run could
+/// not answer within what was left, or `each` said to stop.
+fn located(
+    bin: &Path,
+    runs: &[Vec<String>],
+    case_sensitive: bool,
+    cancel: &CancelToken,
+    (time, answer): (Duration, u64),
+    each: &mut dyn FnMut(Vec<PathBuf>) -> bool,
+) -> Option<()> {
+    let deadline = Instant::now() + time;
+    let mut left = answer;
+    let mut named: HashSet<PathBuf> = HashSet::new();
+    for (at, run) in runs.iter().enumerate() {
+        let time = deadline.saturating_duration_since(Instant::now());
+        if time.is_zero() {
+            return None;
+        }
+        let (mut paths, read) = locate_within(bin, run, case_sensitive, cancel, time, left)?;
+        left = left.saturating_sub(read);
+        if at + 1 < runs.len() {
+            paths.retain(|path| named.insert(path.clone()));
+        } else if at > 0 {
+            paths.retain(|path| !named.contains(path));
+        }
+        if !each(paths) {
+            return None;
+        }
+    }
+    Some(())
 }
 
 /// The names a search asks for, every one of them as a substring, when
@@ -201,25 +233,40 @@ fn substrings(q: &skwir_core::names::Query) -> Option<Vec<String>> {
         .collect()
 }
 
-/// The most runs a search asks of plocate: every form of three terms
-/// whose forms differ.
+/// What plocate is asked of `q`, and whether its case counts: [`runs`] of
+/// its [`substrings`]; `None` where it is asked nothing.
+fn asked(q: &skwir_core::names::Query) -> Option<(Vec<Vec<String>>, bool)> {
+    let patterns = substrings(q)?;
+    let case_sensitive = q.names.iter().any(|n| n.case_sensitive);
+    Some((runs(&patterns, case_sensitive)?, case_sensitive))
+}
+
+/// The most runs a search asks of plocate: every form of three terms of
+/// two forms each.
 const RUNS: usize = 8;
 
 /// What plocate is asked, a run each, for `patterns` all found in a name:
-/// each in both its forms, composed and decomposed (NFC and NFD), its case
-/// as typed, which `--ignore-case` folds; every combination of them, as
-/// plocate matches bytes and finds a name holding all a run's patterns
-/// (`name_match`: a term matches in either form). At most [`RUNS`]: a term
-/// of two forms past those is left out, which the search checks of every
-/// name, and plocate is asked for more, never fewer.
-fn runs(patterns: &[String]) -> Vec<Vec<String>> {
+/// each in its forms, as typed, composed and decomposed (NFC and NFD,
+/// `name_match::Forms`), its case as typed, which `--ignore-case` folds
+/// unless `case_sensitive`; every combination of them, as plocate matches
+/// bytes and finds a name holding all a run's patterns (`name_match`: a
+/// term matches in any of its forms). At most [`RUNS`]: a term whose forms
+/// would make more is left out, which the search checks of every name, and
+/// plocate is asked for more, never fewer. So is a term holding a sigma
+/// where case is ignored: plocate folds `Σ` to `σ` alone, never to `ς`,
+/// where `name_match` takes `ς` as `σ` on both sides (`name_match::fold`).
+/// `None` where every term is left out.
+fn runs(patterns: &[String], case_sensitive: bool) -> Option<Vec<Vec<String>>> {
     let mut runs: Vec<Vec<String>> = vec![Vec::new()];
     for pattern in patterns {
-        let forms = skwir_core::name_match::Forms::of(pattern);
-        if !forms.is_one() && runs.len() * 2 > RUNS {
+        if !case_sensitive && skwir_core::name_match::fold(pattern).contains('\u{3c3}') {
             continue;
         }
-        let mut next = Vec::with_capacity(runs.len() * 2);
+        let forms = skwir_core::name_match::Forms::of(pattern);
+        if runs.len() * forms.count() > RUNS {
+            continue;
+        }
+        let mut next = Vec::with_capacity(runs.len() * forms.count());
         for run in &runs {
             for form in forms.iter() {
                 let mut run = run.clone();
@@ -229,7 +276,9 @@ fn runs(patterns: &[String]) -> Vec<Vec<String>> {
         }
         runs = next;
     }
-    runs
+    runs.first()
+        .is_some_and(|run| !run.is_empty())
+        .then_some(runs)
 }
 
 /// The databases `bin` reads when given none, as plocate (and mlocate
@@ -302,26 +351,39 @@ pub fn locate_with(
     case_sensitive: bool,
     cancel: &CancelToken,
 ) -> Option<Vec<PathBuf>> {
+    locate_within(bin, patterns, case_sensitive, cancel, TIMEOUT, ANSWER).map(|(paths, _)| paths)
+}
+
+/// [`locate_with`] within `time` and `answer` bytes, and how many it read.
+fn locate_within(
+    bin: &Path,
+    patterns: &[String],
+    case_sensitive: bool,
+    cancel: &CancelToken,
+    time: Duration,
+    answer: u64,
+) -> Option<(Vec<PathBuf>, u64)> {
     let mut cmd = skwir_platform::process::command(bin);
     cmd.arg("--basename").arg("--null");
     if !case_sensitive {
         cmd.arg("--ignore-case");
     }
     cmd.arg("--").args(patterns);
-    let out = skwir_platform::process::run_capped(&mut cmd, None, cancel, TIMEOUT, ANSWER).ok()?;
+    let out = skwir_platform::process::run_capped(&mut cmd, None, cancel, time, answer).ok()?;
     if !out.status.success() {
         // plocate exits 1, silently, when nothing matched. A message (a
         // missing or unreadable database) means it could not answer.
         return (out.status.code() == Some(1) && out.stdout.is_empty() && out.stderr.is_empty())
-            .then(Vec::new);
+            .then(|| (Vec::new(), 0));
     }
-    Some(
-        out.stdout
-            .split(|b| *b == 0)
-            .filter(|s| !s.is_empty())
-            .map(|s| PathBuf::from(skwir_core::os_path::from_bytes(s.to_vec())))
-            .collect(),
-    )
+    let read = out.stdout.len() as u64;
+    let paths = out
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| PathBuf::from(skwir_core::os_path::from_bytes(s.to_vec())))
+        .collect();
+    Some((paths, read))
 }
 
 #[cfg(test)]
@@ -339,45 +401,164 @@ mod tests {
         assert!(!visible(Path::new("/"), true, None));
     }
 
-    /// Each term is asked in both its forms, every combination of them,
-    /// an ASCII one once; past [`RUNS`], a term of two forms is left out,
-    /// never one of one.
+    /// Each term is asked in its forms (as typed, composed, decomposed),
+    /// every combination of them, an ASCII one once; past [`RUNS`], a term
+    /// of more forms is left out, never one of one; so is one holding a
+    /// sigma where case is ignored, and with none left, nothing is asked.
     #[test]
-    fn plocate_is_asked_each_term_in_both_forms() {
+    fn plocate_is_asked_each_term_in_its_forms() {
         let strings = |run: &[&str]| run.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let runs = |patterns: &[&str]| runs(&strings(patterns), false);
         assert_eq!(
-            runs(&strings(&["report", "q3"])),
-            [strings(&["report", "q3"])]
+            runs(&["report", "q3"]),
+            Some(vec![strings(&["report", "q3"])])
         );
         assert_eq!(
-            runs(&strings(&["CAF\u{c9}", "report"])),
-            [
+            runs(&["CAF\u{c9}", "report"]),
+            Some(vec![
                 strings(&["CAF\u{c9}", "report"]),
                 strings(&["CAFE\u{301}", "report"])
-            ],
+            ]),
             "its case as typed"
         );
         assert_eq!(
-            runs(&strings(&["cafe\u{301}", "th\u{e9}"])),
-            [
-                strings(&["caf\u{e9}", "th\u{e9}"]),
-                strings(&["caf\u{e9}", "the\u{301}"]),
+            runs(&["cafe\u{301}", "th\u{e9}"]),
+            Some(vec![
                 strings(&["cafe\u{301}", "th\u{e9}"]),
                 strings(&["cafe\u{301}", "the\u{301}"]),
-            ]
+                strings(&["caf\u{e9}", "th\u{e9}"]),
+                strings(&["caf\u{e9}", "the\u{301}"]),
+            ]),
+            "as typed first"
         );
         assert_eq!(
-            runs(&strings(&["\u{434}\u{43e}\u{43c}"])),
-            [strings(&["\u{434}\u{43e}\u{43c}"])],
+            runs(&["\u{434}\u{43e}\u{43c}"]),
+            Some(vec![strings(&["\u{434}\u{43e}\u{43c}"])]),
             "one form"
         );
-        let many = strings(&["\u{e9}1", "\u{e9}2", "\u{e9}3", "\u{e9}4", "x"]);
-        let asked = runs(&many);
+        // As typed too, where neither form keeps it.
+        assert_eq!(
+            runs(&["\u{f900}"]),
+            Some(vec![strings(&["\u{f900}"]), strings(&["\u{8c48}"])])
+        );
+        assert_eq!(
+            runs(&["\u{1f71}"]),
+            Some(vec![
+                strings(&["\u{1f71}"]),
+                strings(&["\u{3ac}"]),
+                strings(&["\u{3b1}\u{301}"])
+            ])
+        );
+        let many = ["\u{e9}1", "\u{e9}2", "\u{e9}3", "\u{e9}4", "x"];
+        let asked = runs(&many).unwrap();
         assert_eq!(asked.len(), RUNS);
         for run in &asked {
             assert_eq!(run.len(), 4, "the fourth left out: {run:?}");
             assert_eq!(run.last().map(String::as_str), Some("x"));
         }
+        // Three forms, then three more: the second left out.
+        let asked = runs(&["\u{1f71}", "\u{1f71}x", "y"]).unwrap();
+        assert_eq!(asked.len(), 3);
+        assert!(asked.iter().all(|run| run.len() == 2 && run[1] == "y"));
+        // A sigma, case ignored: plocate folds `Σ` to `σ` alone.
+        for sigma in [
+            "\u{39f}\u{394}\u{39f}\u{3a3}",
+            "\u{3bf}\u{3b4}\u{3bf}\u{3c2}",
+            "\u{3c3}\u{3b1}",
+        ] {
+            assert_eq!(
+                runs(&[sigma, "x"]),
+                Some(vec![strings(&["x"])]),
+                "{sigma:?}"
+            );
+            assert_eq!(runs(&[sigma]), None, "{sigma:?}: nothing left to ask");
+            assert_eq!(
+                super::runs(&strings(&[sigma]), true),
+                Some(vec![strings(&[sigma])]),
+                "{sigma:?}: as typed where case counts"
+            );
+        }
+        assert_eq!(
+            runs(&["\u{3bf}\u{3b4}\u{3bf}"]),
+            Some(vec![strings(&["\u{3bf}\u{3b4}\u{3bf}"])])
+        );
+    }
+
+    /// A search whose every term is left out is not one plocate answers.
+    #[test]
+    fn a_search_of_a_sigma_alone_is_not_asked() {
+        let named = |s: &str| crate::lang::parse(s).unwrap().named("/".into()).unwrap();
+        assert!(asked(&named("\u{3bf}\u{3b4}\u{3bf}\u{3c2} in:/")).is_none());
+        assert!(asked(&named("\u{3bf}\u{3b4}\u{3bf}\u{3c2} case:sensitive in:/")).is_some());
+        assert!(asked(&named("\u{3bf}\u{3b4}\u{3bf}\u{3c2} report in:/")).is_some());
+    }
+
+    /// A search's runs share one time limit and one answer's size, each
+    /// run's answer handed as it ends, a path an earlier run named left
+    /// out of a later one's.
+    #[cfg(unix)]
+    #[test]
+    fn runs_share_one_time_limit_and_one_answer() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("asked");
+        // Each run said on a line; 13 bytes: what both name, and its own.
+        let script = |pause: &str| {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nsleep {pause}\nfor a; do last=$a; done\nprintf '/same\\0/run-%s\\0' \"$last\"\n",
+                log.display()
+            )
+        };
+        let bin = tmp.path().join("plocate");
+        let write = |pause: &str| {
+            std::fs::write(&bin, script(pause)).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::write(&log, "").unwrap();
+        };
+        let runs = vec![vec!["a".to_owned()], vec!["b".to_owned()]];
+        let never = CancelToken::new();
+        let ample = Duration::from_secs(60);
+        let ask = |budget: (Duration, u64)| {
+            let mut handed = Vec::new();
+            let answered = located(&bin, &runs, false, &never, budget, &mut |paths| {
+                handed.push(paths);
+                true
+            });
+            let asked = std::fs::read_to_string(&log).unwrap().lines().count();
+            (answered, handed, asked)
+        };
+        write("0");
+        let (answered, handed, asked) = ask((ample, 26));
+        assert_eq!(answered, Some(()));
+        assert_eq!(asked, 2);
+        assert_eq!(
+            handed,
+            [
+                vec![PathBuf::from("/same"), PathBuf::from("/run-a")],
+                vec![PathBuf::from("/run-b")]
+            ],
+            "each as its run ends, each once"
+        );
+        // The second run is given what the first left: too little.
+        write("0");
+        let (answered, handed, asked) = ask((ample, 20));
+        assert_eq!(answered, None);
+        assert_eq!(asked, 2);
+        assert_eq!(handed.len(), 1, "the first run's answer handed");
+        // Likewise the time: a second run of a second each, within 1.5 s
+        // all together, is stopped.
+        write("1");
+        let started = Instant::now();
+        let (answered, _, _) = ask((Duration::from_millis(1500), 1 << 20));
+        assert_eq!(answered, None);
+        assert!(started.elapsed() < Duration::from_secs(30));
+        write("0");
+        assert_eq!(ask((Duration::ZERO, 1 << 20)).0, None);
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "",
+            "nothing started"
+        );
     }
 
     #[test]
