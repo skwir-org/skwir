@@ -1,5 +1,126 @@
 # Changes
 
+## 0.7.0 (2026-11-25)
+
+Skwir 0.7.0 answers searches from skwird, its own index of file names: at
+once where the index can prove its answer, checked by Skwir as always. A
+removable drive can be indexed too, once you say so, and a word is found
+however its accents are written. On the Mac, Homebrew installs the app.
+
+[Installation instructions](README.md#installing)
+
+- **Searches answered from skwird's index**: installed apart
+  ([skwird 0.2.0](https://github.com/skwir-org/skwird/releases/tag/v0.2.0)),
+  skwird keeps your home's names indexed: at once and up to date below a
+  folder kept live, after a half-second check elsewhere. Skwir checks every
+  file it names, and the footer says what an answer rests on. Without
+  skwird, searches walk as before.
+- **Settings › Index**: the folders kept live (your folders and bookmarks,
+  those you add), and whether a search starts skwird.
+- **Removable drives indexed, once you say so**: Skwir asks once as a drive
+  is plugged in, or a drive's menu has Index Its Names. The index stays on
+  this computer, and Eject lets skwird go of the drive first. Needs skwird
+  0.2.0.
+- **A word found however its accents are written**: `café` finds a name
+  written with a combining accent, as macOS often writes them, and a Greek
+  word is found whatever its final sigma.
+- **A copy that cannot fit is refused before its first byte**: a file over
+  a FAT drive's 4 GiB, and a copy onto a removable drive is written through
+  as it goes.
+- **On the Mac, a Homebrew cask**: `brew install --cask skwir-org/tap/skwir`
+  after `brew trust skwir-org/tap`; Homebrew updates it.
+
+**Changed from 0.6.1**: a search of `/` leaves out `/proc`, `/sys` and the
+Nix store (`excluded:true` searches them), and a btrfs snapshot below the
+folder searched; the home folder is written `~`.
+
+**Windows and macOS builds to try** come with this release too, made on
+Linux and never run there: please [try them and tell us what
+happens](docs/HELP-WANTED.md). Every test now runs under Wine before each
+release, which fixed eight of Windows' own bugs.
+
+### All changes
+
+- **Names indexes behind one seam** (ADR-150): a search asks every index of
+  names that runs (skwird's, a plugin of its own, and plocate's database)
+  how far it covers the folder searched, and takes the strongest proof:
+  live (every change heard), checked (changes looked for first), or as of a
+  time (plocate). What an index names is checked as any found file is; its
+  holes (a folder denied, a mount below the root, a network mount) are
+  walked. Sizes and modification times are asked of an index where it holds
+  them live. The footer names the index an answer rests on.
+- **skwird's plugin**: the connection made at a search, never at start, one
+  per search and given up on with it, an engine that says no hello within a
+  few seconds let go of; its Secrets kept out of the index; the folders kept
+  live sent as differences, from the Index page's list (Your folders,
+  Bookmarks, Added by you) or a folder's menu (Keep Live for Searches); a
+  switch for whether a search starts an engine.
+- **A search of `/` shown as you type** where the index asked first answers
+  it at once, and `/proc`, `/sys` and the Nix store left out of searches as
+  indexes leave them out (two categories of Settings › Exclusions); a btrfs
+  snapshot (snapper's, timeshift's, btrbk's) passed over below the folder a
+  search, a tag count or the timeline starts at, and walked with
+  `excluded:yes` or when searched in (ADR-125).
+- **The tags index checks a folder from an index's journal**, and Usage
+  measures from an index's folder totals where it holds them live, kept
+  current by its journal (ADR-150).
+- **Names in both forms** (ADR-150): a term is matched as typed, composed
+  and decomposed (NFC and NFD), in a search, a filter's words, the name
+  filter and `/`; with case ignored, a final sigma is a sigma. An index is
+  trusted for such a term only where its engine says it matches alike
+  (skwird 0.2.0's `names-both-forms`); plocate is asked each form, a
+  sigma as a wildcard, in UTF-8 whatever the locale (under a Turkish one,
+  `file` missed `FILE.txt`).
+- **Removable drives** (ADR-150): asked once per drive, by the identity
+  skwird gives it, as it is plugged in while skwird runs, or from a drive's
+  menu (Index Its Names); the drives kept listed on Settings › Index, each
+  with Forget; Eject asks skwird to let go of a drive, within a few seconds,
+  before unmounting it, as does an unmount another program announces.
+- **Of two reads of a file, the later stands**: a search, a tag's place, the
+  shelf and Recent files no longer show a file renamed and back as two rows,
+  lose one, or keep its old size or tags until opened again.
+- **A folder sorted by a date or a size is shown once its files are read**,
+  without waiting for their tags and ratings (ADR-121): grouping `/nix/store`
+  by Modified took 11.6 s in a debug build, 9.3 of them waiting.
+- **Pictures**: a PNG's or a TIFF's part zoomed in is read alone, not the
+  whole picture (ADR-146).
+- **Copies to a drive**: a file larger than its drive holds (a FAT drive's
+  4 GiB) is refused by the Copy and Move checks before its first byte; a copy
+  stopped there keeps its partial for Retry without holding the drive busy
+  at an Eject; a copy onto a removable drive is flushed as it is written.
+- **The "writing" mark ends by itself**, after a program puts a file's time
+  back (removing a picture's position did) (ADR-135).
+- **A drag from another program after a drop of Skwir's** onto an XWayland
+  window or a program that ended at the drop is taken for what it is, with
+  its menu (Hyprland; gpui patch 0092).
+- **A name's direction controls shown wherever a path is said**: a file
+  or folder named with a right-to-left override can no longer read
+  reversed in a plan's review and its step lines, the deleting dialog, Run
+  Command, Print's Save as or a Save field's completions.
+- **Agents**: a call refused says why ("would make the system reach another
+  machine"), naming nothing the agent did not send, where it read
+  "(private)".
+- **A type no system names** is said by its extension in Open With ("Open
+  ZQX9 files with") and in a printed listing's Type column, never by its id.
+- **A remote mounted by a FUSE program that names no subtype** (davfs2,
+  older sshfs) is taken as a network folder, with a lane of its own; a
+  KDE network folder Skwir keeps for a server is named without `?`, `#`
+  or `%`, which KDE read as part of its address.
+- **On the Mac**: Homebrew's cask (ADR-075); a copy it installed says
+  nothing of new versions itself (ADR-142); `skwir` started through a link,
+  as Homebrew puts it on the PATH, finds the app's helpers, its type database
+  and its licences.
+- **On Windows** (tried under Wine): a drive's watches let go of when Eject
+  asks (ADR-149); programs started inherit none of Skwir's handles; paths
+  said with `\` in the sidebar, the address field, Recent files, a group's
+  heading and skwird's lists; a date range's last instant on Windows' clock;
+  a printed listing named after a place whose name Windows refuses
+  (`kind:image`).
+- **Tests under Wine before each release**: `release-check` runs every
+  crate's tests under Wine, built once (ADR-053).
+- **Dependencies** at their newest releases their dependents allow (notify
+  9, hyper 1.13, zip 9.8.2, anyhow 1.0.105 among them).
+
 ## 0.6.1 (2026-11-23)
 
 Skwir 0.6.1 shows pictures sharp at every zoom and reads JPEG XL, HEIC, AVIF
