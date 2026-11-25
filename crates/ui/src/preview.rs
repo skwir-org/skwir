@@ -8151,20 +8151,47 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
     line
 }
 
+/// What a preview's header heads, which says what stands beside the
+/// file's facts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Heads {
+    /// The panel, whose own bar holds its buttons.
+    Panel,
+    /// Peek's card over the window: Properties and its ×.
+    Peek,
+    /// A viewer's window (ADR-151, 3), whose top row it is: Properties,
+    /// and the window's buttons at its ends while they are in the top row,
+    /// its empty parts moving the window; its × (`Shell::close_peek`
+    /// closing the window) only where skwir draws no Close of the window's
+    /// (`title_bar::draws_close`), the system framing it.
+    Viewer,
+}
+
 /// Everything the panel knows at a glance: the entry's icon, its name (a
 /// trail inside a container), and one line of type, size and date. The card
 /// is the one place that says what the panel shows; Properties, right under
 /// it while its switch is on, holds the rest and repeats none of it. The
 /// panel's switches are the Preview and Properties buttons beside Split,
 /// not here. The peek overlay, which hides them, keeps Properties' and a
-/// close button.
+/// close button; a viewer's, its window's buttons (`Heads`).
 fn header(
     shell: &Shell,
     theme: &Theme,
-    in_peek: bool,
+    heads: Heads,
     ground: Option<gpui::Hsla>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let top_row =
+        heads == Heads::Viewer && shell.title_bar.drawn == crate::title_bar::Drawn::TopRow;
+    let closes = heads == Heads::Peek
+        || heads == Heads::Viewer && !crate::title_bar::draws_close(&shell.title_bar);
+    let ends = top_row.then(|| {
+        (
+            crate::title_bar::top_row_buttons(shell, crate::title_bar::End::Start, cx),
+            crate::title_bar::top_row_buttons(shell, crate::title_bar::End::End, cx),
+        )
+    });
+    let (start, end) = ends.unwrap_or((None, None));
     let preview = &shell.preview;
     let info = &preview.info;
     // Each fact is one unbreakable segment of a wrapping line: a narrow
@@ -8245,7 +8272,16 @@ fn header(
                 ),
         );
     div()
+        // In the top row, its empty parts move the window, a double click
+        // maximizing it; the traffic lights in its middle on macOS.
+        .when(top_row, |d| {
+            d.relative()
+                .children(crate::title_bar::top_row_drag(shell, true))
+                .children(crate::title_bar::lights_over(shell))
+        })
         .px_1()
+        // At the window's edges, as the top row's.
+        .when(top_row, |d| d.px(sized(6.)))
         .py(sized(2.))
         // The panel's own ground; in Peek, the dialog's under it (a
         // ground of its own would square its rounded corners).
@@ -8255,8 +8291,9 @@ fn header(
         .flex()
         .items_center()
         .gap_1()
+        .children(start)
         .child(card)
-        .when(in_peek, |d| {
+        .when(heads != Heads::Panel, |d| {
             d.child(
                 crate::toolbar::Button::new(
                     "properties",
@@ -8267,7 +8304,9 @@ fn header(
                 .active(preview.properties_on)
                 .render(shell, cx),
             )
-            .child(
+        })
+        .when(closes, |d| {
+            d.child(
                 crate::toolbar::Button::new(
                     "preview-close",
                     "close",
@@ -8280,6 +8319,7 @@ fn header(
                 .render(shell, cx),
             )
         })
+        .children(end)
         .into_any_element()
 }
 
@@ -9287,7 +9327,7 @@ pub fn render_panel(
     // While peek shows the preview, the panel is only a picture of it: the
     // kept rows, which take the keyboard, are drawn in peek alone.
     let interactive = !shell.preview.peek;
-    let heading = header(shell, &theme, false, Some(theme.window_bar()), cx);
+    let heading = header(shell, &theme, Heads::Panel, Some(theme.window_bar()), cx);
     // As cards, what it holds is cards of their own, the header heading the
     // first (`cards_under`).
     let content = if theme.cards {
@@ -9579,7 +9619,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                     .bg(theme.surface)
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(header(shell, &theme, true, None, cx))
+                    .child(header(shell, &theme, Heads::Peek, None, cx))
                     .child(under_card(
                         shell,
                         &theme,
@@ -9607,8 +9647,8 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 /// A viewer's window (`skwir view`, ADR-151, 3): peek's card filling the
 /// window, the file's bar and its preview, with the whole screen in its
 /// place while it shows. Its keys are the viewer's (`keymap::VIEWER`), and
-/// the window's buttons stand at the end of a row above the card where
-/// skwir draws them in the top row (ADR-138).
+/// its header is the window's top row: where skwir draws the window's
+/// buttons there (ADR-138), they stand at its ends (`Heads::Viewer`).
 pub(crate) fn render_viewed(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     if shell.preview.fullscreen.is_some()
         && let Some(whole) = crate::fullscreen::render(shell, cx)
@@ -9616,25 +9656,8 @@ pub(crate) fn render_viewed(shell: &Shell, cx: &mut Context<Shell>) -> AnyElemen
         return whole;
     }
     let theme = cx.global::<Theme>().clone();
-    let buttons = (shell.title_bar.drawn == crate::title_bar::Drawn::TopRow).then(|| {
-        div()
-            .id("viewer-buttons")
-            .relative()
-            .flex_none()
-            .w_full()
-            .h(sized(crate::address::PANE_ROW_HEIGHT))
-            .px(sized(6.))
-            .flex()
-            .items_center()
-            .children(crate::title_bar::top_row_drag(shell, true))
-            .child(div().flex_1())
-            .children(crate::title_bar::top_row_buttons(
-                shell,
-                crate::title_bar::End::End,
-                cx,
-            ))
-    });
-    let card = div()
+    // Its header is the window's top row (`Heads::Viewer`).
+    div()
         .id("viewer")
         .role(gpui::Role::Main)
         .when_some(said(shell), |d, (name, facts)| {
@@ -9650,7 +9673,7 @@ pub(crate) fn render_viewed(shell: &Shell, cx: &mut Context<Shell>) -> AnyElemen
         .flex()
         .flex_col()
         .bg(theme.surface)
-        .child(header(shell, &theme, true, None, cx))
+        .child(header(shell, &theme, Heads::Viewer, None, cx))
         .child(under_card(
             shell,
             &theme,
@@ -9659,13 +9682,7 @@ pub(crate) fn render_viewed(shell: &Shell, cx: &mut Context<Shell>) -> AnyElemen
             true,
             theme.grounds(),
             cx,
-        ));
-    div()
-        .size_full()
-        .flex()
-        .flex_col()
-        .children(buttons)
-        .child(card)
+        ))
         .into_any_element()
 }
 

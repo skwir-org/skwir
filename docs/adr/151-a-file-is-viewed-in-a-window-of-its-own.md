@@ -93,14 +93,23 @@ in a window on Xvfb; macOS and Windows compiled only.
    - Its title is the file's name, and its tag `viewer`, for the
      compositor's rules (ADR-141, 9).
    - It has a size of its own, the last one left, kept apart from the
-     user's windows and the dialogs' (`ui.viewer_session`).
+     user's windows and the dialogs' (`ui.viewer_size`).
+   - Its title bar is the main window's, by `ui.title_bar` (ADR-138):
+     the system's, skwir's above or compact, none on the whole screen.
+     In the top row, the card's header is that row: the window's buttons
+     at its ends, as the desktop orders them (the start's before the
+     file's icon, the end's last), its empty parts moving the window. The card has a × of its own only where the system frames the
+     window, whose frame may have no Close (Hyprland's); where skwir draws
+     the window's Close, it is the one (amended as tried, 2026-11-25: the
+     buttons had a row of their own above the card, the start's left out,
+     and two × stood at the top right).
 4. **Its keys.**
    - Peek's: the arrows step, F goes to the whole screen.
-   - Escape, Ctrl+W, Quit (Ctrl+Q) and the card's × close the window,
-     ending the program: whatever ends peek there ends the window
-     (`Shell::close_peek`; amended as tried, 2026-11-25, the × having
-     closed only the preview). On the whole screen, Escape leaves the
-     whole screen first. Quit asks first while something runs (a print
+   - Escape, Ctrl+W, Quit (Ctrl+Q), the window's Close and the card's ×
+     close the window, ending the program: whatever ends peek there ends
+     the window (`Shell::close_peek`; amended as tried, 2026-11-25, the ×
+     having closed only the preview). On the whole screen, Escape leaves
+     the whole screen first. Quit asks first while something runs (a print
      being sent), as anywhere (ADR-115).
    - Steps go through the folder, in the order that folder is shown in
      (ADR-132), as peek's do. With several files given, they go through

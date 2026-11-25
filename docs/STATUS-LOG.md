@@ -24330,3 +24330,27 @@ evening, a program of its own that starts only what viewing needs.
   against the folder, the viewing plugins), the UI's commands and keys
   (35: the window tags, `ui.viewer_step` repeating while held);
   rustfmt and clippy `-D warnings` on every crate touched.
+- **Amended as tried** (the user, the same evening). The card's × ended
+  peek and left an empty window: `Shell::close_peek` now closes a
+  viewer's window, whatever ends peek there; Quit (Ctrl+Q) is offered
+  and ends the program. The title bar was the main window's only in
+  part: in the top row the buttons had a row of their own above the
+  card, the start's left out, and two × stood at the top right. The
+  card's header is now that row (the window's buttons at its ends, its
+  empty parts moving the window), and the card's × stands only where the
+  system frames the window (`title_bar::draws_close`). Checked on a
+  headless Weston (no frame of the compositor's, a stand-in Settings
+  portal giving the button layout): Automatic draws minimize, maximize
+  and close after the facts in one row; with `close,minimize,maximize:`
+  they stand before the icon; Compact and System draw skwir's bar,
+  titled by the file (`b text.txt — skwir`), and no × of the card's. On a
+  headless sway through wayvnc: In the top row (sway keeping its frame)
+  shows the window's Close alone; a drag from the header's empty part
+  moved the window (160,70 to 79,219); a click on that Close ran
+  `ui.close_window` and the process ended; Automatic (sway's border, no
+  title bar) keeps the card's ×, whose click ran `ui.preview_close` and
+  ended the process. macOS's traffic lights are put in the header's
+  middle as it is laid out (`title_bar::lights_over`); macOS and Windows
+  (its captions at the header's end) are linted only, clippy `-D
+  warnings` for each. skwir-ui's 851 tests, rustfmt and clippy `-D
+  warnings` on Linux.

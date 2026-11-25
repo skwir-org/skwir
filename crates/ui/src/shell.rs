@@ -619,10 +619,10 @@ pub struct Shell {
     /// The press on the title bar's empty parts that moves the window once
     /// the pointer moves (`elements::window_drag`).
     pub(crate) window_press: crate::elements::window_drag::Press,
-    /// Where macOS's traffic lights were last put (`title_bar::lights`):
-    /// told again only when that moves.
+    /// Where macOS's traffic lights were last put (`title_bar::lights`,
+    /// `title_bar::lights_over`): told again only when that moves.
     #[cfg(target_os = "macos")]
-    lights_at: Option<gpui::Point<gpui::Pixels>>,
+    pub(crate) lights_at: crate::title_bar::LightsAt,
     /// Where the window's cards are this frame (`Theme::cards`): written
     /// as they are laid out, the frame painted around them
     /// (`elements::frame`).
@@ -1008,7 +1008,7 @@ impl Shell {
             title_bar: crate::title_bar::Frame::default(),
             window_press: crate::elements::window_drag::Press::default(),
             #[cfg(target_os = "macos")]
-            lights_at: None,
+            lights_at: crate::title_bar::LightsAt::default(),
             frame_cards: crate::elements::frame::Cards::default(),
             drawn_raised: None,
             strip_holes: crate::elements::ground::Holes::default(),
@@ -5336,10 +5336,8 @@ impl Render for Shell {
             &self.title_bar,
             self.frame_inset(&theme, window).top,
             window,
-        ) && self.lights_at != Some(at)
-        {
-            window.set_traffic_light_position(at);
-            self.lights_at = Some(at);
+        ) {
+            crate::title_bar::put_lights(&self.lights_at, at, window);
         }
         // The window's own width is known before layout, unlike an element's.
         // Below it the panes keep the room: places stay reachable through the
@@ -5571,6 +5569,15 @@ impl Shell {
     fn render_viewer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         self.sync_title(window);
         let theme = cx.global::<Theme>().clone();
+        // macOS's traffic lights in skwir's compact bar; in the top row,
+        // the header holding them puts them as it is laid out
+        // (`title_bar::lights_over`).
+        #[cfg(target_os = "macos")]
+        if self.title_bar.drawn != crate::title_bar::Drawn::TopRow
+            && let Some(at) = crate::title_bar::lights(&self.title_bar, 0., window)
+        {
+            crate::title_bar::put_lights(&self.lights_at, at, window);
+        }
         let title_bar = crate::title_bar::bar(self, cx);
         let (above, band) = match self.title_bar.drawn {
             crate::title_bar::Drawn::System => (title_bar, None),

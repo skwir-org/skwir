@@ -357,6 +357,21 @@ fn platform_layout(cx: &App) -> gpui::WindowButtonLayout {
     })
 }
 
+/// Where macOS's traffic lights were last put (`lights`, `lights_over`):
+/// told again only when that moves. Shared with what puts them as it is
+/// laid out.
+#[cfg(target_os = "macos")]
+pub type LightsAt = std::rc::Rc<std::cell::Cell<Option<gpui::Point<gpui::Pixels>>>>;
+
+/// Put macOS's traffic lights `at`, unless they are there already.
+#[cfg(target_os = "macos")]
+pub fn put_lights(told: &LightsAt, at: gpui::Point<gpui::Pixels>, window: &mut Window) {
+    if told.get() != Some(at) {
+        window.set_traffic_light_position(at);
+        told.set(Some(at));
+    }
+}
+
 /// Where macOS's traffic lights go while skwir draws its title bar: in
 /// the middle of its first row, the frame's gutter above it where the
 /// cards hang below one (`gutter`). `None` elsewhere.
@@ -387,6 +402,54 @@ pub fn top_row_buttons(shell: &Shell, end: End, cx: &mut Context<Shell>) -> Opti
         return None;
     }
     buttons(shell, end, cx)
+}
+
+/// Whether skwir draws the window's Close (its bar's, or the top row's;
+/// on macOS, the traffic lights moved there): what has a × of its own for
+/// the window (a viewer's header, ADR-151) leaves it out then, and keeps it
+/// where the system frames the window, which may have none (Hyprland's).
+pub fn draws_close(frame: &Frame) -> bool {
+    frame.drawn != Drawn::None
+        && (cfg!(target_os = "macos")
+            || frame
+                .start
+                .iter()
+                .chain(&frame.end)
+                .any(|button| *button == WindowButton::Close))
+}
+
+/// Over a first row whose height is known only once it is laid out (a
+/// viewer's header, ADR-151, whose facts wrap), its first child while the
+/// window's buttons are in the top row: on macOS, the element putting the
+/// traffic lights in its middle as it is laid out (`lights` puts them in
+/// a row of known height before anything is built). None elsewhere.
+pub fn lights_over(shell: &Shell) -> Option<AnyElement> {
+    if shell.title_bar.drawn != Drawn::TopRow {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let told = shell.lights_at.clone();
+        Some(
+            gpui::canvas(
+                move |bounds, window, _| {
+                    let at = gpui::point(
+                        px(LIGHTS_X),
+                        bounds.origin.y + (bounds.size.height - px(14.)) / 2.,
+                    );
+                    put_lights(&told, at, window);
+                },
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .size_full()
+            .into_any_element(),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
 }
 
 /// Under a row that holds the window's tools while its buttons are in the
