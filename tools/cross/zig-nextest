@@ -3,10 +3,19 @@
 # with the environment it set up, Zig as the target's C compiler and
 # linker, run nextest where it would run `cargo test`. Anything else goes
 # to the real cargo, which nextest uses too.
+#
+# With SKWIR_NEXTEST_BINARIES naming a file, the tests are built and not
+# run: what nextest built is written there (its binaries' metadata), for
+# runs that take the build as it is (`--binaries-metadata`,
+# test-windows-each.sh).
 set -eu
 : "${REAL_CARGO:?the real cargo, as REAL_CARGO}"
 if [ "${1:-}" = test ]; then
     shift
+    if [ -n "${SKWIR_NEXTEST_BINARIES:-}" ]; then
+        CARGO="$REAL_CARGO" exec cargo-nextest nextest list --list-type binaries-only \
+            --message-format json "$@" >"$SKWIR_NEXTEST_BINARIES"
+    fi
     CARGO="$REAL_CARGO" exec cargo-nextest nextest run "$@"
 fi
 exec "$REAL_CARGO" "$@"

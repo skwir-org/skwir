@@ -295,9 +295,9 @@ check-macos:
     CARGO_TARGET_DIR=target/cross CARGO_INCREMENTAL=0 cargo-zigbuild clippy --target aarch64-apple-darwin --all-targets --workspace --exclude skwir-ui --exclude skwir --exclude skwir-poppler-worker --exclude skwir-mupdf-worker --exclude skwir-djvulibre-worker --exclude skwir-media-worker -- -D warnings
     tools/cross/clippy-media.sh aarch64-apple-darwin
 
-# Run the Windows build's tests under Wine (args go to nextest: `-p skwir-core`); none, every crate's, one at a time.
+# Run the Windows build's tests under Wine (args go to nextest: `-p skwir-core`); none, every crate's, one at a time from one build.
 test-windows *args:
-    {{ if args == "" { "tools/cross/test-windows-each.sh" } else { "tools/cross/test-windows.sh " + args } }}
+    tools/cross/test-windows.sh {{args}}
 
 # The Nix package (ADR-124): skwir and the helpers its flags keep, from the
 # git tree; `variant` is default, minimal or full.

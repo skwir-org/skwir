@@ -7,7 +7,9 @@
 # ~/.cache/skwir-tests that writes nothing into the desktop's menus or
 # types (wine-env.sh), no display (Wine opens no window in the session),
 # and nextest's XDG isolation (Wine's Recycle Bin is the freedesktop trash
-# of XDG_DATA_HOME). Arguments go to nextest (`-p skwir-core`, a filter).
+# of XDG_DATA_HOME). Arguments go to nextest (`-p skwir-core`, a filter);
+# given none, every default member's tests, one crate at a time from one
+# build (test-windows-each.sh, run here in this environment).
 set -eu
 if ! command -v wine >/dev/null; then
     exec nix develop .#windows --command "$0" "$@"
@@ -63,6 +65,16 @@ rm -rf "${made:?}"
 trap - EXIT
 # Not incremental, as `just check-cross`: its caches only fill the disk.
 export CARGO_INCREMENTAL=0
+# Line tables alone for debugging: `release-check` builds this at every
+# release, and a test program with the whole of its debug information
+# was 1.4 GB, 83 % of it DWARF (2026-11-25), one set of them 59 GB. A
+# failure's backtrace still names each file and line.
+export CARGO_PROFILE_DEV_DEBUG=line-tables-only
 REAL_CARGO="$(command -v cargo)"
 export REAL_CARGO
+# What test-windows-each.sh asks to know it runs here.
+export SKWIR_WINE_HARNESS=1
+if [ "$#" -eq 0 ]; then
+    exec tools/cross/test-windows-each.sh
+fi
 CARGO="$(pwd)/tools/cross/zig-nextest" exec cargo-zigbuild test --target x86_64-pc-windows-gnu "$@"
