@@ -1,5 +1,11 @@
 # Changes
 
+## Unreleased
+
+- **The Mac app's signature holds**: in every Mac build to 0.7.0, a library
+  of GStreamer's framework was signed again once sealed, so macOS's check
+  of the app's signature failed, and macOS could call the app damaged.
+
 ## 0.7.0 (2026-11-25)
 
 Skwir 0.7.0 answers searches from skwird, its own index of file names: at

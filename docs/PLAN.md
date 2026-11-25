@@ -1433,10 +1433,11 @@ by the tap's first cask job, the first Mac ever to check a release):
 since 285f685b (2026-10-21) is. The framework's main binary is a link
 to `lib/libgstreamer-1.0.0.dylib`, which rcodesign signs as a library,
 seals, then signs again through the link. Left: a framework rcodesign
-seals once (its binary a file, not a link), a look-over in
-`package-macos` that checks every bundle's seal as codesign does, a Mac
-build that passes the tap's job, and then the cask on the tap's main
-(it waits on `cask/skwir`).
+seals once (its binary a file, not a link) and a look-over in
+`package-macos` that checks every bundle's seal as codesign does, both
+done in 0952a7be and passed on Linux. Left: the next release's Mac
+build checked by a Mac (the tap's cask job runs codesign's deep check),
+and then the cask on the tap's main (it waits on `cask/skwir`).
 
 **A folder comes back with its volume** (ADR-149, built and amended
 twice 2026-11-22). Left: a folder deleted and made again at its path is

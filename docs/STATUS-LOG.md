@@ -24245,6 +24245,16 @@ files.
 
   skwird's job passed. The cask stays on `cask/skwir`, off the tap's
   main, until a Mac build passes that check.
+- **After, on the user's choice** (fix now, release later; the cask out
+  of the notes meanwhile): 0.7.0's section here, HELP-WANTED and the
+  release's page no longer offer the cask and say macOS may call the app
+  damaged, with the `xattr` command to try it (1adaf070); the site the
+  same, in its four languages. 0952a7be makes libgstreamer the
+  framework's binary, a file that lib/ names by a link, and has
+  `package-macos` check every bundle's seal as codesign does: the check
+  refuses 0.7.0's build (by the link, and by libgstreamer's digest with
+  that rule off), and the build with the fix passes it (2 bundles, 225
+  entries). Not yet run on a Mac.
 - **The repositories:** `just repositories v0.7.0` wrote the apt and
   dnf indexes into the site, which the site's session checked
   (signatures, hashes, sizes against the manifest; `skwir-repository`
