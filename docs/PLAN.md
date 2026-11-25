@@ -31,13 +31,14 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-23)
+## Current status (2026-11-25)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.6.1, its source made ready on 2026-11-23 (the three reviews
-  of the night before it fixed, every dependency at its newest, its
-  changelog section dated), its tag, signed build and GitHub draft made
-  from it next, its publication the user's; 0.6.0 was released
+  version 0.7.0, its source made ready on 2026-11-25 (the two reviews of
+  the night before it fixed, its changelog section dated, every package
+  built unsigned), skwird 0.2.0 shipping with it; its tag, signed build
+  and GitHub draft made from it next, its publication the user's; 0.6.1
+  was released 2026-11-23 on GitHub, the AUR and the repositories, 0.6.0
   2026-11-21 on GitHub and the AUR's three bases, 0.5.1 2026-11-16,
   0.5.0 2026-11-14, 0.4.0 2026-11-10, 0.3.1 2026-11-05, 0.3.0
   2026-11-03, 0.2.0 2026-10-20, 0.1.0 [released](#release-01-linux)
@@ -1271,6 +1272,20 @@ windows (ADR-145, after what GTK, KDE, COSMIC Files and Windows do); a
 skwir the bus starts reaches no display until it is asked. Checks in
 `docs/STATUS-LOG.md` (2026-11-21).
 
+## Review fixes before 0.7.0 (2026-11-25)
+
+The user asked for the usual review rounds over what came since the
+night's second review (the 55 commits after b7655793: ADR-150's names
+in both forms, removable drives, every test under Wine, the cask),
+then 0.7.0 made. Five readers made 28 findings, none high, six medium;
+five fixers fixed them (375f05e0..c9ceec28). Two readers of the fixes
+made six more, one medium: paths said from home still reached sentences
+as text, their bidi controls obeyed, closed by a type of their own
+(7c65baed, 425e6f05). The release's gate then found the tags index's
+tally 60 % slower than 0.6.1's, the mount table asked once a folder
+(fixed in 4e6c77dd). What is left of them is below (Paths said as text,
+Release tooling). Checks in `docs/STATUS-LOG.md` (2026-11-25, night).
+
 ## Review fixes before 0.6.1 (2026-11-23)
 
 The user asked for a review of what came since 0.6.0 (a9b0d5ce..f280442b,
@@ -1617,7 +1632,12 @@ not exist", order.rs's bulk rename); each would pass `&path`. A
 left: a question closed in the window is told to no one (an
 `App::question_closed` hook would let a later drive wait behind it), and
 `op::name_from` keeps control characters on Linux (harmless where it is
-used, but a newline in a file name troubles line-based scripts).
+used, but a newline in a file name troubles line-based scripts). And
+`Rule::names` asks the mount table of each folder it is given (the
+kernel's filesystems, since 733317af): the tags index now asks once a
+count (4e6c77dd), but privacy (`permissions::named_on`) still asks it
+of every folder above each path an agent reads; a test of many folders
+should take the mount table once, as a walk's `Below` does.
 
 **Release tooling, from the review before 0.7.0**: `std::env::current_exe`
 is not refused by clippy, though what a package carries is looked for

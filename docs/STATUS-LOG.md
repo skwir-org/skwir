@@ -24102,3 +24102,87 @@ nothing of the volume is held, and by mount point).
 - **Not checked:** a real drive (a loop device is no removable volume
   to skwird), in a window; Eject's release against a real engine;
   macOS and Windows.
+
+## 2026-11-25, night: two reviews, then 0.7.0 ready to tag
+
+The user asked, before sleeping: the usual review rounds and their fixes
+over what came since the night's second review (b7655793), then 0.7.0
+made ready to tag, everything but publishing; skwird 0.2.0 shipping the
+same day.
+
+- **Round 1:** five readers by area (locations, names, skwird, release
+  tooling, Windows) over 55 commits: 0 high, 6 medium, 22 low. Five
+  fixers, files owned apart. Among the fixes:
+  - the shelf told every sink of what it read (375f05e0);
+  - a search's results followed renames (030f5738);
+  - a drive's question settled under one lock, and Eject's release
+    bounded at 8 s before the unmount (d2fe86a9);
+  - a refusal's reason given to an agent typed, naming nothing it did
+    not send (5d94b3b9);
+  - `folders::program()` for every lookup of what a package carries,
+    so the cask's linked `skwir` finds its helpers (dec22074);
+  - Wine's run built once, then crate by crate (adb30c0e);
+  - a term matched as typed, a final sigma folded, a glob folded in
+    its literal parts (c1c9ad7c), plocate's runs bounded (201ff755);
+  - a plain `fuse` mount told by its source (09aee1d6);
+  - a journal's root, or a folder above it, taken as the root changed
+    (e4bedb1b).
+- **Round 2:** two readers over the fix commits: 0 high, 1 medium, 5
+  low.
+  - The medium: paths said from home still reached sentences as text,
+    their bidi controls obeyed. `os_path::from_home` returns a
+    `SaidPath` now, which becomes only what shows its controls; the
+    compiler found every caller (7c65baed). A plan's step lines said
+    paths as text too (425e6f05).
+  - The lows: plocate asked a sigma as a wildcard, in `C.UTF-8`
+    (76bff7af); a KDE network folder's file named through
+    `op::name_from` (26af7d34); a disk's second volume waiting behind
+    the first's question, with the drive tests kept off the machine's
+    mount table (37e6486a); the print test counting real reads.
+  - skwird's protocol doc of `names-both-forms` was fixed in skwird
+    before its tag.
+- **skwird 0.2.0** (tag 47f537c, its draft uploaded by skwird's
+  session): the client and protocol copied (1d3aecd4), the notices made
+  again (b1115109). Skwird's plugin tests (44) and the seven
+  real-engine tests against its 0.2.0 engine pass.
+- **The release:** startup order (54dff251: 13,001 functions, 19.3 MiB;
+  a first run stopped when one X11 start of eight ended by itself, its
+  log removed with its folder, and the second run's eight ran). The
+  release commit 4090ed05: version, lock, PKGBUILDs and .SRCINFO
+  (`just package-aur` makes them alike), AppStream dated 2026-11-25, the
+  changelog's section (2.1 KB above `### All changes`), the README.
+  `release-metadata` agrees; `words --release` and `--check` pass.
+- **The gate found a regression.** The first `release-check` passed
+  everything but bench-check: `tags_index_tally_us` 1,504 µs (budget
+  1,500).
+  - Alternated with 0.6.1's bench under the same load, it was real:
+    0.73–0.84 ms then, 1.24–1.35 ms now, and learning 0.51 s then,
+    0.64 s now.
+  - The cause: `LeftOut::names` has asked the mount table of each
+    folder since 733317af, and the tags index asks it of every folder
+    below a count's root and of each folder a batch teaches it.
+  - Fixed in 4e6c77dd: the kernel's mounts below the root asked once.
+    Afterwards 0.77–0.81 ms against 0.80–0.88, learning alike.
+- **Checked** on 4e6c77dd: `release-check` whole, which took 60 min:
+  - lint-all, with check-cross, deny and notices;
+  - test-all: 4,442;
+  - every crate under Wine, three tests passing only on their retry
+    (FLAKY);
+  - smoke, a11y, the Poppler, MuPDF and DjVu checks;
+  - bench-check: every budget met, the tally at 743 µs;
+  - release-tools-check.
+- **Packages**, unsigned, from 4e6c77dd, each passing its own check:
+  - `package-l10n` and `package-nix-check`;
+  - the AppImage (215 MB) and the tarball (232 MB; 0.6.0's were 204 and
+    220);
+  - Debian's, Ubuntu's, Fedora's and Arch's, each built and installed
+    in a root of its own;
+  - Windows' zip and installer, passed under Wine;
+  - the Mac's app, looked over (running it needs a Mac).
+  - `just package-aur` makes the .SRCINFO files the release commit
+    holds.
+- **Not checked:**
+  - a real drive in a window, and Eject's release against a real
+    engine;
+  - real Windows and macOS;
+  - `idle-pss`, which needs the user's display.
