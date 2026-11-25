@@ -333,6 +333,38 @@ pub enum Ask {
         #[serde(default)]
         remove: Vec<WirePath>,
     },
+    /// Removable volumes (`docs/DESIGN.md`, Protocol, "Removable
+    /// volumes"), each by the identity the engine spelled
+    /// ([`SeenVolume::id`]), never derived by the client: kept for this
+    /// client across restarts, as its exclusions are; answered
+    /// [`Answer::Volumes`]. An engine that says no [`VOLUMES`] refuses it.
+    /// `forget` applies first, then `keep`, then `release` and
+    /// `release_at`. A release is answered once nothing of the volume is
+    /// held: every read of it ended, the reads of its first build among
+    /// them, or after a few seconds, should one not end.
+    Volumes {
+        /// To index from now on, once its user said yes for it: a root
+        /// whenever it is mounted.
+        #[serde(default)]
+        keep: Vec<String>,
+        /// To index no more: let go of, its index removed.
+        #[serde(default)]
+        forget: Vec<String>,
+        /// About to be ejected, asked before the client asks for its
+        /// unmount: let go of, everything held on it closed, and read no
+        /// more until it is mounted again, or a while has passed should
+        /// the unmount have been refused.
+        #[serde(default)]
+        release: Vec<String>,
+        /// About to be ejected, named by where it is mounted, as a client
+        /// that ejects any volume knows it: every kept volume mounted at or
+        /// below each is released, as `release` releases it. The engine
+        /// reads nothing past a mount below its roots (a hole, `mount`): a
+        /// volume mounted there, kept or not, holds nothing of the
+        /// engine's.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        release_at: Vec<WirePath>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,6 +389,10 @@ pub struct Welcome {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub features: Vec<String>,
 }
+
+/// A [`Welcome::features`] word: the engine answers [`Ask::Volumes`],
+/// and indexes a removable volume a client keeps.
+pub const VOLUMES: &str = "volumes";
 
 /// A [`Welcome::features`] word: a name term is matched in both its
 /// Unicode forms, composed and decomposed (NFC and NFD), lowercased first
@@ -638,7 +674,69 @@ pub enum Answer {
     },
     /// The folders this client wants live, after its `watch`.
     Watching(Watching),
+    /// The removable volumes this client keeps, and those mounted, after
+    /// its `volumes`.
+    Volumes(Volumes),
     Error(Failure),
+}
+
+/// The removable volumes a client keeps, and those mounted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Volumes {
+    /// This client's, in the order it kept them.
+    pub kept: Vec<KeptVolume>,
+    /// Every removable volume the engine sees mounted, kept or not, which
+    /// a client offers its user.
+    pub seen: Vec<SeenVolume>,
+}
+
+/// A removable volume kept, as the engine holds it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptVolume {
+    pub id: String,
+    pub standing: Standing,
+    /// Where it is mounted, if it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<WirePath>,
+    /// How far answers below it hold, where it is a root: not covered
+    /// until it is checked, then checked as of the check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<Coverage>,
+}
+
+/// Where a kept volume stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Standing {
+    /// Not mounted: its index kept, by its identity. A path on it is in no
+    /// root.
+    Away,
+    /// Mounted, a root.
+    Indexed,
+    /// Mounted, let go of before an eject: read no more until it is
+    /// mounted again, or a while has passed. A path on it is in no root.
+    Released,
+    /// Mounted while another volume of its identity is, and indexed (a
+    /// stick copied whole, two FAT serials alike): this one is refused. A
+    /// path on it is in no root.
+    Twin,
+}
+
+/// A removable volume mounted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeenVolume {
+    /// Its identity, in the engine's spelling, the one a client keeps:
+    /// none where it has none, and it is never indexed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub at: WirePath,
+    /// Its filesystem's type, as the system names it.
+    pub filesystem: String,
+    /// Its label, as its filesystem holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Whether any client keeps it.
+    pub kept: bool,
 }
 
 /// What a client keeps live, after its `watch`.

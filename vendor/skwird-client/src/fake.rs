@@ -17,7 +17,7 @@
 
 use std::path::PathBuf;
 
-use skwird_protocol::{Changes, Child, Coverage, Entry, TotalsDone, Watching};
+use skwird_protocol::{Changes, Child, Coverage, Entry, TotalsDone, Volumes, Watching};
 
 /// What the fake engine answers.
 #[derive(Clone, Debug, Default)]
@@ -40,6 +40,9 @@ pub struct Script {
     pub totals: Vec<(PathBuf, Vec<Child>, TotalsDone)>,
     /// What its hello says it does beyond its version (`Welcome::features`).
     pub features: Vec<String>,
+    /// What every `volumes` is answered, if given; refused otherwise, as
+    /// by an engine that says no `volumes`.
+    pub volumes: Option<Volumes>,
 }
 
 /// A fake engine serving until dropped.
@@ -186,6 +189,13 @@ mod imp {
                     share: None,
                 }),
             )),
+            Ask::Volumes { .. } => say(match &script.volumes {
+                Some(volumes) => Answer::Volumes(volumes.clone()),
+                None => Answer::Error(wire::Failure {
+                    what: "not_here".into(),
+                    message: "this engine keeps no removable volume".into(),
+                }),
+            }),
         }
     }
 
@@ -349,6 +359,7 @@ mod tests {
             changes: None,
             totals: Vec::new(),
             features: vec!["names-both-forms".into()],
+            volumes: None,
         };
         let fake = Fake::start(dir.join("socket"), script).unwrap();
         let mut c = Client::connect(&Find {
@@ -359,6 +370,12 @@ mod tests {
         .unwrap();
         assert_eq!(c.welcome().roots, vec![WirePath(b"/home/user".to_vec())]);
         assert_eq!(c.welcome().features, ["names-both-forms"]);
+        // Scripted no volumes, it refuses them, as an engine that says no
+        // `volumes` does.
+        assert!(matches!(
+            c.volumes(&["ABCD-1234"], &[], &[]),
+            Err(crate::Error::Engine(f)) if f.what == "not_here"
+        ));
         assert_eq!(
             c.coverage(std::path::Path::new("/home/user/a")).unwrap(),
             checked

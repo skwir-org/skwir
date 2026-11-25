@@ -751,6 +751,51 @@ impl Client {
     }
 }
 
+impl Client {
+    /// Forget `forget`, keep `keep`, then release `release`, each a
+    /// removable volume by the identity the engine spelled
+    /// ([`protocol::SeenVolume::id`]): the volumes this client keeps after,
+    /// and those mounted. Released before the client asks for its unmount,
+    /// a volume holds nothing the engine opened. An engine whose hello says
+    /// no `volumes` ([`protocol::VOLUMES`]) refuses it.
+    pub fn volumes(
+        &mut self,
+        keep: &[&str],
+        forget: &[&str],
+        release: &[&str],
+    ) -> Result<protocol::Volumes, Error> {
+        let owned = |ids: &[&str]| ids.iter().map(|&id| id.to_owned()).collect();
+        let id = self.ask(Ask::Volumes {
+            keep: owned(keep),
+            forget: owned(forget),
+            release: owned(release),
+            release_at: Vec::new(),
+        })?;
+        match self.answer(id)? {
+            Answer::Volumes(volumes) => Ok(volumes),
+            _ => Err(Error::Unexpected),
+        }
+    }
+
+    /// Release every kept volume mounted at or below each of `points`,
+    /// before the client asks for their unmount, as an eject of any volume
+    /// knows it, by where it is mounted: answered once nothing of them is
+    /// held, or after a few seconds. The volumes this client keeps after,
+    /// and those mounted.
+    pub fn release_at(&mut self, points: &[&Path]) -> Result<protocol::Volumes, Error> {
+        let id = self.ask(Ask::Volumes {
+            keep: Vec::new(),
+            forget: Vec::new(),
+            release: Vec::new(),
+            release_at: points.iter().map(|p| WirePath::of(p)).collect(),
+        })?;
+        match self.answer(id)? {
+            Answer::Volumes(volumes) => Ok(volumes),
+            _ => Err(Error::Unexpected),
+        }
+    }
+}
+
 /// The program to start, a path relative to the client's folder made
 /// absolute: from the folder the engine starts in, it would name another
 /// program. A bare name is looked for on the `PATH`.
