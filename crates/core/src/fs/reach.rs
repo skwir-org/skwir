@@ -1202,13 +1202,18 @@ pub fn network(fstype: &str, source: &std::ffi::OsStr) -> bool {
     if KERNEL_NETWORK.contains(&fstype) {
         return true;
     }
-    let Some(subtype) = fstype.strip_prefix("fuse.") else {
-        return false;
-    };
-    if FUSE_NETWORK.contains(&subtype) {
-        return true;
+    // A FUSE program says its name as a subtype (`fuse.sshfs`), or says
+    // none: `fuse` alone, as davfs2 mounts (`https://dav.example/files`)
+    // and libfuse 2's programs did (`sshfs#me@host:/`). Either is told by
+    // its source below, as a subtype not known is.
+    match fstype.strip_prefix("fuse.") {
+        Some(subtype) if FUSE_NETWORK.contains(&subtype) => return true,
+        Some(_) => {}
+        None if fstype == "fuse" => {}
+        None => return false,
     }
-    // `me@host:/srv`, `host:path`: a server's, not a device's or a file's.
+    // `me@host:/srv`, `host:path`, a URL: a server's, not a device's or a
+    // file's (`/dev/fuse`).
     let source = source.to_string_lossy();
     !source.starts_with('/')
         && source
@@ -2245,6 +2250,16 @@ mod tests {
             network("fuse.someday", os("me@server:/srv")),
             "a server's source"
         );
+        assert!(
+            network("fuse", os("https://dav.example/files")),
+            "davfs2, no subtype"
+        );
+        assert!(
+            network("fuse", os("sshfs#me@host:/")),
+            "libfuse 2, no subtype"
+        );
+        assert!(!network("fuse", os("/dev/fuse")), "a local FUSE program");
+        assert!(!network("fuse", os("portal")));
         assert!(!network("fuseblk", os("/dev/sde1")), "ntfs-3g");
         assert!(!network("fuse.portal", os("portal")));
         assert!(!network("fuse.someday", os("/home/me/archive.zip")));
