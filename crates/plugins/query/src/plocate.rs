@@ -248,29 +248,39 @@ const RUNS: usize = 8;
 /// What plocate is asked, a run each, for `patterns` all found in a name:
 /// each in its forms, as typed, composed and decomposed (NFC and NFD,
 /// `name_match::Forms`), its case as typed, which `--ignore-case` folds
-/// unless `case_sensitive`; every combination of them, as plocate matches
-/// bytes and finds a name holding all a run's patterns (`name_match`: a
-/// term matches in any of its forms). At most [`RUNS`]: a term whose forms
-/// would make more is left out, which the search checks of every name, and
-/// plocate is asked for more, never fewer. So is a term holding a sigma
-/// where case is ignored: plocate folds `Σ` to `σ` alone, never to `ς`,
-/// where `name_match` takes `ς` as `σ` on both sides (`name_match::fold`).
-/// `None` where every term is left out.
+/// unless `case_sensitive` (a sigma then asked as a wildcard,
+/// [`ignoring_case`]); every combination of them, as plocate matches bytes
+/// and finds a name holding all a run's patterns (`name_match`: a term
+/// matches in any of its forms). At most [`RUNS`]: a term whose forms would
+/// make more is left out, which the search checks of every name, and
+/// plocate is asked for more, never fewer. So is a term of sigmas alone
+/// where case is ignored, which narrows nothing. `None` where every term
+/// is left out.
 fn runs(patterns: &[String], case_sensitive: bool) -> Option<Vec<Vec<String>>> {
     let mut runs: Vec<Vec<String>> = vec![Vec::new()];
     for pattern in patterns {
-        if !case_sensitive && skwir_core::name_match::fold(pattern).contains('\u{3c3}') {
-            continue;
-        }
         let forms = skwir_core::name_match::Forms::of(pattern);
         if runs.len() * forms.count() > RUNS {
             continue;
         }
-        let mut next = Vec::with_capacity(runs.len() * forms.count());
+        let asked: Option<Vec<String>> = forms
+            .iter()
+            .map(|form| {
+                if case_sensitive {
+                    Some(form.to_owned())
+                } else {
+                    ignoring_case(form)
+                }
+            })
+            .collect();
+        let Some(asked) = asked else {
+            continue;
+        };
+        let mut next = Vec::with_capacity(runs.len() * asked.len());
         for run in &runs {
-            for form in forms.iter() {
+            for form in &asked {
                 let mut run = run.clone();
-                run.push(form.to_owned());
+                run.push(form.clone());
                 next.push(run);
             }
         }
@@ -281,12 +291,38 @@ fn runs(patterns: &[String], case_sensitive: bool) -> Option<Vec<Vec<String>>> {
         .then_some(runs)
 }
 
+/// `form`, a term's, as plocate is asked it where case is ignored: as it
+/// is, but where it holds a sigma (what [`name_match::fold`] takes as `σ`:
+/// `σ`, `ς`, `Σ`), a glob of it with `?` for each, `*` around it, as
+/// plocate matches a pattern holding a wildcard against the whole name.
+/// plocate folds as `towlower` does, its trigrams and its
+/// `fnmatch(FNM_CASEFOLD)` alike, which takes `Σ` to `σ` alone, never `ς`,
+/// where `fold` takes `ς` as `σ` on both sides: asked as typed, `οδος`
+/// would leave out `ΟΔΟΣ.txt` and `οδοσ`. Its literal runs still give
+/// plocate its trigrams. `?` is one character, as plocate reads text in
+/// UTF-8 ([`plocate`]). `None` where it holds nothing but sigmas: `*?*`
+/// narrows nothing. ([`substrings`] keeps out a term holding what a glob
+/// reads, so nothing else needs escaping.)
+///
+/// [`name_match::fold`]: skwir_core::name_match::fold
+fn ignoring_case(form: &str) -> Option<String> {
+    let sigma = |c: char| skwir_core::name_match::fold(c.encode_utf8(&mut [0; 4])).contains('σ');
+    if form.is_ascii() || !skwir_core::name_match::fold(form).contains('σ') {
+        return Some(form.to_owned());
+    }
+    let glob: String = std::iter::once('*')
+        .chain(form.chars().map(|c| if sigma(c) { '?' } else { c }))
+        .chain(std::iter::once('*'))
+        .collect();
+    form.chars().any(|c| !sigma(c)).then_some(glob)
+}
+
 /// The databases `bin` reads when given none, as plocate (and mlocate
 /// before it) does: its own default, which its help names, then those
 /// `LOCATE_PATH` adds. Without the default (a help that does not name it)
 /// none: the answer is then as of a time that cannot be told.
 pub fn databases(bin: &Path, cancel: &CancelToken) -> Vec<PathBuf> {
-    let mut cmd = skwir_platform::process::command(bin);
+    let mut cmd = plocate(bin);
     cmd.arg("--help");
     let Some(default) =
         skwir_platform::process::run_capped(&mut cmd, None, cancel, HELP_TIMEOUT, HELP)
@@ -343,6 +379,21 @@ pub(crate) fn visible(path: &Path, hidden: bool, depth: Option<usize>) -> bool {
     names > 0 && depth.is_none_or(|d| names <= d)
 }
 
+/// `bin` to be run, reading text as a search reads it, in UTF-8 and its
+/// case folded the same in every language, whatever the session's locale
+/// (`C.UTF-8`): plocate reads its patterns and names, and folds their case
+/// (`towlower`, `--ignore-case`), in the locale's encoding and by its rules.
+/// In a Turkish one `I` folds to `ı`, so `file` would not find `FILE.txt`;
+/// in one of a byte a character (`el_GR.ISO-8859-7`) Greek folds not at
+/// all, `οδο` not finding `ΟΔΟΣ`, and `?` takes a byte. Where the system
+/// has no `C.UTF-8`, plocate refuses a pattern beyond ASCII with case
+/// ignored, which is an answer it could not give: the search walks.
+fn plocate(bin: &Path) -> std::process::Command {
+    let mut cmd = skwir_platform::process::command(bin);
+    cmd.env("LC_ALL", "C.UTF-8");
+    cmd
+}
+
 /// Run `bin` with plocate's flags and parse NUL-separated output. `None`
 /// when plocate failed rather than found nothing, or was stopped.
 pub fn locate_with(
@@ -363,7 +414,7 @@ fn locate_within(
     time: Duration,
     answer: u64,
 ) -> Option<(Vec<PathBuf>, u64)> {
-    let mut cmd = skwir_platform::process::command(bin);
+    let mut cmd = plocate(bin);
     cmd.arg("--basename").arg("--null");
     if !case_sensitive {
         cmd.arg("--ignore-case");
@@ -403,8 +454,9 @@ mod tests {
 
     /// Each term is asked in its forms (as typed, composed, decomposed),
     /// every combination of them, an ASCII one once; past [`RUNS`], a term
-    /// of more forms is left out, never one of one; so is one holding a
-    /// sigma where case is ignored, and with none left, nothing is asked.
+    /// of more forms is left out, never one of one. A sigma, where case is
+    /// ignored, is a wildcard; a term of sigmas alone is left out, and with
+    /// none left, nothing is asked.
     #[test]
     fn plocate_is_asked_each_term_in_its_forms() {
         let strings = |run: &[&str]| run.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
@@ -460,18 +512,21 @@ mod tests {
         let asked = runs(&["\u{1f71}", "\u{1f71}x", "y"]).unwrap();
         assert_eq!(asked.len(), 3);
         assert!(asked.iter().all(|run| run.len() == 2 && run[1] == "y"));
-        // A sigma, case ignored: plocate folds `Σ` to `σ` alone.
-        for sigma in [
-            "\u{39f}\u{394}\u{39f}\u{3a3}",
-            "\u{3bf}\u{3b4}\u{3bf}\u{3c2}",
-            "\u{3c3}\u{3b1}",
+        // A sigma, case ignored: plocate folds `Σ` to `σ` alone, so each
+        // is a wildcard, the term a glob of the whole name; its other
+        // forms alike.
+        for (sigma, glob) in [
+            ("\u{39f}\u{394}\u{39f}\u{3a3}", "*\u{39f}\u{394}\u{39f}?*"),
+            ("\u{3bf}\u{3b4}\u{3bf}\u{3c2}", "*\u{3bf}\u{3b4}\u{3bf}?*"),
+            ("\u{3c3}\u{3b1}", "*?\u{3b1}*"),
+            ("\u{3c3}\u{3c3}\u{3c2}x\u{3a3}", "*???x?*"),
         ] {
             assert_eq!(
                 runs(&[sigma, "x"]),
-                Some(vec![strings(&["x"])]),
+                Some(vec![strings(&[glob, "x"])]),
                 "{sigma:?}"
             );
-            assert_eq!(runs(&[sigma]), None, "{sigma:?}: nothing left to ask");
+            assert_eq!(runs(&[sigma]), Some(vec![strings(&[glob])]), "{sigma:?}");
             assert_eq!(
                 super::runs(&strings(&[sigma]), true),
                 Some(vec![strings(&[sigma])]),
@@ -479,18 +534,80 @@ mod tests {
             );
         }
         assert_eq!(
+            runs(&["\u{3bf}\u{3b4}\u{3cc}\u{3c2}"]),
+            Some(vec![
+                strings(&["*\u{3bf}\u{3b4}\u{3cc}?*"]),
+                strings(&["*\u{3bf}\u{3b4}\u{3bf}\u{301}?*"])
+            ]),
+            "each form a glob"
+        );
+        // Sigmas alone narrow nothing: left out.
+        assert_eq!(runs(&["\u{3c3}", "x"]), Some(vec![strings(&["x"])]));
+        assert_eq!(runs(&["\u{3a3}\u{3c2}"]), None);
+        assert_eq!(
             runs(&["\u{3bf}\u{3b4}\u{3bf}"]),
             Some(vec![strings(&["\u{3bf}\u{3b4}\u{3bf}"])])
         );
     }
 
-    /// A search whose every term is left out is not one plocate answers.
+    /// A search of `/` whose every term holds a sigma is asked of plocate
+    /// (each sigma a wildcard), not walked; one of sigmas alone is not.
     #[test]
-    fn a_search_of_a_sigma_alone_is_not_asked() {
+    fn a_search_of_sigmas_is_asked_as_a_glob() {
         let named = |s: &str| crate::lang::parse(s).unwrap().named("/".into()).unwrap();
-        assert!(asked(&named("\u{3bf}\u{3b4}\u{3bf}\u{3c2} in:/")).is_none());
-        assert!(asked(&named("\u{3bf}\u{3b4}\u{3bf}\u{3c2} case:sensitive in:/")).is_some());
-        assert!(asked(&named("\u{3bf}\u{3b4}\u{3bf}\u{3c2} report in:/")).is_some());
+        let ask = |s: &str| asked(&named(s)).map(|(runs, _)| runs);
+        assert_eq!(
+            ask("\u{3bf}\u{3b4}\u{3bf}\u{3c2} in:/"),
+            Some(vec![vec!["*\u{3bf}\u{3b4}\u{3bf}?*".to_owned()]])
+        );
+        assert_eq!(
+            ask("\u{3bf}\u{3b4}\u{3bf}\u{3c2} case:sensitive in:/"),
+            Some(vec![vec!["\u{3bf}\u{3b4}\u{3bf}\u{3c2}".to_owned()]])
+        );
+        assert!(ask("\u{3c3} in:/").is_none());
+        assert!(ask("\u{3c3} report in:/").is_some());
+    }
+
+    /// plocate is asked in UTF-8 and by one case folding, whatever the
+    /// session's locale: a Turkish one folds `I` to `ı`, one of a byte a
+    /// character folds no Greek, and its `?` would take a byte.
+    #[cfg(unix)]
+    #[test]
+    fn plocate_reads_text_in_utf8_whatever_the_locale() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("asked");
+        let bin = tmp.path().join("plocate");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\nprintf '%s %s\\n' \"$LC_ALL\" \"$*\" >> '{}'\nprintf '/x\\0'\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let index = Index::at(bin);
+        let never = CancelToken::new();
+        let mut opened = index.open(Path::new("/"), &never).expect("over /");
+        let q = crate::lang::parse("\u{39f}\u{394}\u{39f}\u{3a3} in:/")
+            .unwrap()
+            .named("/".into())
+            .unwrap();
+        let mut found = Vec::new();
+        opened
+            .session
+            .query(&q, &mut |paths| {
+                found.extend(paths);
+                true
+            })
+            .expect("asked");
+        assert_eq!(found, [PathBuf::from("/x")]);
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "C.UTF-8 --basename --null --ignore-case -- *\u{39f}\u{394}\u{39f}?*\n\
+             C.UTF-8 --help\n"
+        );
     }
 
     /// A search's runs share one time limit and one answer's size, each
