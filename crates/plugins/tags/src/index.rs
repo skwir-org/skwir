@@ -31,6 +31,7 @@ use parking_lot::{Mutex, MutexGuard};
 use skwir_core::app::App;
 use skwir_core::cache::CacheSlot;
 use skwir_core::cancel::CancelToken;
+use skwir_core::fs::reach::kernel_points_below;
 use skwir_core::metadata::{tag_parent, tag_within};
 use skwir_core::walks::LeftOut;
 pub(crate) use skwir_core::walks::mounts_below;
@@ -138,12 +139,42 @@ fn piece_of(folder: &Path) -> usize {
     (stable_hash(&[folder.as_os_str().as_encoded_bytes()]) % BUCKETS as u64) as usize
 }
 
-/// Whether the list or the rule (`rule`) leaves out `path`, or a folder
-/// holding it, below `root` (never `root` itself): what a walk of `root`
-/// leaves out with nothing read. Each folder on the way is asked once of
-/// a set.
-fn listed_below(rule: &LeftOut, path: &Path, root: &Path) -> bool {
-    left_out_below(path, root, |at| rule.names(at))
+/// Whether the list or the rule (`named`, made for `root`) leaves out
+/// `path`, or a folder holding it, below `root` (never `root` itself):
+/// what a walk of `root` leaves out with nothing read. Each folder on the
+/// way is asked once of a set.
+fn listed_below(named: &Named, path: &Path, root: &Path) -> bool {
+    left_out_below(path, root, |at| named.names(at))
+}
+
+/// What the rule names below one folder, the mount table asked once for
+/// all the folders tested, where `LeftOut::names` asks it of each (a
+/// count of 20 000 folders asked it 60 000 times): what tests many
+/// folders (a count, a batch learned, a move) makes one first.
+struct Named {
+    rule: Arc<LeftOut>,
+    /// Where the kernel's own filesystems are mounted below the folder,
+    /// where the rule names them.
+    kernel: HashSet<PathBuf>,
+}
+
+impl Named {
+    fn below(rule: &Arc<LeftOut>, root: &Path) -> Named {
+        let kernel = if rule.rule().kernel() {
+            kernel_points_below(root).into_iter().collect()
+        } else {
+            HashSet::new()
+        };
+        Named {
+            rule: Arc::clone(rule),
+            kernel,
+        }
+    }
+
+    /// `LeftOut::names` of `dir`, a folder below the one it was made for.
+    fn names(&self, dir: &Path) -> bool {
+        self.rule.names_written(dir) || self.kernel.contains(dir)
+    }
 }
 
 /// Whether `left_out` says so of `path` or a folder holding it, below
@@ -421,12 +452,26 @@ impl State {
             .collect()
     }
 
+    /// What the rule names below the home folder (`Named`), for what
+    /// tests many folders there.
+    fn named_at_home(&self) -> Named {
+        match &self.home {
+            Some(home) => Named::below(&self.rule, home),
+            // Nothing is counted there: nothing asked.
+            None => Named {
+                rule: Arc::clone(&self.rule),
+                kernel: HashSet::new(),
+            },
+        }
+    }
+
     /// Whether the files of `dir` are counted under the home folder: in
-    /// it, outside the folders the list leaves out.
-    fn at_home(&self, dir: &Path) -> bool {
+    /// it, outside the folders the list leaves out (`named`, from
+    /// [`named_at_home`](Self::named_at_home)).
+    fn at_home(&self, dir: &Path, named: &Named) -> bool {
         self.home
             .as_deref()
-            .is_some_and(|home| dir.starts_with(home) && !listed_below(&self.rule, dir, home))
+            .is_some_and(|home| dir.starts_with(home) && !listed_below(named, dir, home))
     }
 
     /// The tags of the files under the home folder that its tag places
@@ -435,8 +480,9 @@ impl State {
     fn count_home(&mut self) {
         let mut counts: HashMap<u32, u64> = HashMap::new();
         if let Some(home) = &self.home {
+            let named = Named::below(&self.rule, home);
             for (path, folder) in self.pieces.iter().flat_map(|p| p.folders.iter()) {
-                if path.starts_with(home) && !listed_below(&self.rule, path, home) {
+                if path.starts_with(home) && !listed_below(&named, path, home) {
                     for (tag, n) in &folder.counts {
                         *counts.entry(*tag).or_default() += u64::from(*n);
                     }
@@ -448,11 +494,11 @@ impl State {
     }
 
     /// Whether a walk of `root` leaves out the folder `path`, or one
-    /// holding it below `root`: the list, a cache found, a network mount
-    /// (`mounts`). Nothing is read.
-    fn left_out(&self, path: &Path, root: &Path, mounts: &HashSet<PathBuf>) -> bool {
+    /// holding it below `root`: the list (`named`, made for `root`), a
+    /// cache found, a network mount (`mounts`). Nothing is read.
+    fn left_out(&self, path: &Path, root: &Path, named: &Named, mounts: &HashSet<PathBuf>) -> bool {
         left_out_below(path, root, |at| {
-            self.rule.names(at) || self.caches.contains(at) || mounts.contains(at)
+            named.names(at) || self.caches.contains(at) || mounts.contains(at)
         })
     }
 
@@ -477,14 +523,14 @@ impl State {
     /// files took and what they counted under the home folder: a folder
     /// moved away or gone, rather than each of its files forgotten, which
     /// moved all those after it, a folder of many thousands quadratic.
-    fn take_folder(&mut self, at: usize, path: &Path) -> Option<Folder> {
+    fn take_folder(&mut self, at: usize, path: &Path, named: &Named) -> Option<Folder> {
         let folder = self.pieces[at].folders.remove(path)?;
         let room = folder_bytes(path) + folder.files.iter().map(File::room).sum::<u64>();
         self.bytes[at] = self.bytes[at].saturating_sub(room);
         if self.folders.remove(path).is_some() {
             self.folders_dirty = true;
         }
-        if self.at_home(path) {
+        if self.at_home(path, named) {
             let gone = folder
                 .counts
                 .iter()
@@ -996,8 +1042,9 @@ impl TagIndex {
     /// is what a count of it covers, and nothing there is read to tell.
     fn load_reached(&self, state: &mut State, root: &Path) -> Vec<(PathBuf, usize)> {
         let mounts: HashSet<PathBuf> = mounts_below(root).into_iter().collect();
+        let named = Named::below(&state.rule, root);
         let mut under = state.under(root);
-        under.retain(|(path, _)| !state.left_out(path, root, &mounts));
+        under.retain(|(path, _)| !state.left_out(path, root, &named, &mounts));
         self.load_pieces(state, &under);
         under
     }
@@ -1130,8 +1177,9 @@ impl TagIndex {
         let mut changed = false;
         let mut total = state.total();
         let mut home: HashMap<u32, i64> = HashMap::new();
+        let named = state.named_at_home();
         for group in read.chunk_by(|a, b| a.dir_bytes() == b.dir_bytes()) {
-            changed |= Self::learn_folder(state, group, limit, &mut total, &mut home);
+            changed |= Self::learn_folder(state, group, limit, &mut total, &mut home, &named);
         }
         if !home.is_empty() {
             state.add_home(home);
@@ -1149,6 +1197,7 @@ impl TagIndex {
         limit: u64,
         total: &mut u64,
         home: &mut HashMap<u32, i64>,
+        named: &Named,
     ) -> bool {
         let dir = group[0].dir();
         // Each file's last read, its tags by number, before the folder is
@@ -1183,7 +1232,7 @@ impl TagIndex {
             limit,
             total,
             live: folder.files.len(),
-            at_home: state.at_home(dir),
+            at_home: state.at_home(dir, named),
             home,
             changed: false,
         };
@@ -1410,6 +1459,7 @@ impl TagIndex {
         let changed = {
             let mut state = self.state();
             let mut changed = false;
+            let named = state.named_at_home();
             for (from, to) in moves {
                 // The files it held under `from`: a folder's, or one file.
                 let mut read: Vec<(PathBuf, Vec<String>)> = Vec::new();
@@ -1417,7 +1467,7 @@ impl TagIndex {
                 // Each folder under it goes whole, its files learned where
                 // they went.
                 for (folder, at) in self.load_under(&mut state, from) {
-                    let Some(f) = state.take_folder(at, &folder) else {
+                    let Some(f) = state.take_folder(at, &folder, &named) else {
                         continue;
                     };
                     changed = true;
@@ -1650,6 +1700,7 @@ impl TagIndex {
             .filter(|dir| *dir != &home && dir.starts_with(&home))
             .cloned()
             .collect();
+        let named = Named::below(&state.rule, &home);
         let mut away: BTreeMap<PathBuf, usize> = BTreeMap::new();
         for point in mounts.iter().chain(&caches) {
             away.extend(state.under(point));
@@ -1661,7 +1712,7 @@ impl TagIndex {
                 continue;
             };
             // Not counted in the first place.
-            if listed_below(&state.rule, path, &home) {
+            if listed_below(&named, path, &home) {
                 continue;
             }
             for (tag, n) in &folder.counts {

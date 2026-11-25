@@ -117,9 +117,11 @@ impl LeftOut {
         self.names_written(dir) || self.rule.names(dir)
     }
 
-    /// [`names`](Self::names) by its name or its path alone: for a walk,
-    /// which asked the mount table once (`Below::named`).
-    fn names_written(&self, dir: &Path) -> bool {
+    /// [`names`](Self::names) by its name or its path alone: for what
+    /// tests many folders below one root and asked the mount table once
+    /// what is mounted there (a walk's `Below::named`, the tags index's
+    /// counts), as `names` asks it of each folder.
+    pub fn names_written(&self, dir: &Path) -> bool {
         dir.file_name().is_some_and(is_trash)
             || self.trash.iter().any(|trash| trash == dir)
             || self.rule.names_written(dir)
