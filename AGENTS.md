@@ -41,8 +41,11 @@ working in an area, also read that area's rules (see
    ADR-002 and ADR-033: Skwir's own share of PSS, not the GPU driver's
    code). `just bench-check` and `just idle-pss` stay green. Budgets are
    tightened when the reference improves, never loosened without an ADR.
-3. **Stateless and idempotent.** No daemon, no database, one deletable
-   cache (`skwir_core::cache`). Re-applying an applied plan is a no-op.
+3. **Stateless and idempotent.** No daemon of its own, no database, one
+   deletable cache (`skwir_core::cache`). skwird, the index of names a
+   search asks, is installed apart; a search may start it, and it ends a
+   minute after its last client (ADR-050). Re-applying an applied plan is
+   a no-op.
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the
    MIME database, bookmarks, zoxide, recently-used and installed tools
    (`ffmpeg`, `plocate`, `$EDITOR`, `$TERMINAL`) before building our own.

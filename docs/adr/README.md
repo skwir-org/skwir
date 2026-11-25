@@ -12,7 +12,7 @@ them by topic.
 
 | ADR | Decision | State |
 | --- | --- | --- |
-| [000](000-principles-and-budgets.md) | Principles and performance budgets | binding; revised by 002, 033, 049, 120 |
+| [000](000-principles-and-budgets.md) | Principles and performance budgets | binding; revised by 002, 033, 049, 050, 120 |
 | [001](001-ui-toolkit.md) | gpui is the UI toolkit | built (vendored, patched); pin revised by 064 |
 | [002](002-ui-budgets-revisited.md) | UI budgets revisited after Phase 2 | in force; amended by 033 |
 | [003](003-fulltext-engine.md) | An embedded full-text search engine | not built; amended by 050; revised by 090: trigrams, Tantivy dropped |

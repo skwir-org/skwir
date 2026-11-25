@@ -1280,7 +1280,10 @@ Settings › General › Updates turns that off.
 | A tile server's key | The desktop's keyring |
 | Plugins from outside Skwir | `~/.local/share/skwir/plugins/` |
 
-There is no database and no daemon.
+Skwir keeps no database and runs no daemon of its own. skwird, its index
+of names, is installed apart and keeps its indexes in its own cache
+(`~/.cache/skwird` on Linux); one a search started ends a minute after
+the last search ([Searching](#searching)).
 
 If Skwir stops during a copy (a crash, a power cut), what it had copied
 waits in a hidden folder named `.skwir-copy-…` in the destination, never

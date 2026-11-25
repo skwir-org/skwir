@@ -60,8 +60,10 @@ Windows and macOS, made on Linux and never run on either system: see
 - **Keys, scripts and agents**: every action is a command, from the palette,
   `skwir cmd` or an MCP client, with private folders that never leave the
   machine.
-- **Light**: no daemon, no database; the desktop's thumbnails, icons and
-  bookmarks; everything beyond a small core is a plugin you can turn off.
+- **Light**: no daemon or database of its own (the index of names a search
+  asks is skwird's, installed apart, and one a search starts ends a minute
+  after the last); the desktop's thumbnails, icons and bookmarks;
+  everything beyond a small core is a plugin you can turn off.
 
 ## Installing
 

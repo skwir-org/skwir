@@ -22,8 +22,9 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
    streams, everything cancels.
 2. **Light:** idle memory and startup are budgeted and measured
    (ADR-000, revised by ADR-002 and ADR-033).
-3. **Stateless and idempotent:** no daemon, no database, one deletable
-   cache; re-applying a plan is a no-op.
+3. **Stateless and idempotent:** no daemon of its own, no database, one
+   deletable cache (skwird, installed apart, is asked and may be started
+   on demand: ADR-050); re-applying a plan is a no-op.
 4. **Harness the environment:** OS thumbnails, icons, the MIME database,
    bookmarks, indexes, installed tools.
 5. **Small core:** only what two plugins must agree on; everything else

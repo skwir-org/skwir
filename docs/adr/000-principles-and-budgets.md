@@ -2,8 +2,9 @@
 
 Status: accepted, 2026-09-18. Revised by ADR-002 and ADR-033 (the
 first-frame and idle-memory rows), ADR-049 (principle 6: a file's
-identity is not an entry's) and ADR-120 (principle 1: a folder appears
-whole, built on a worker; searches stream).
+identity is not an entry's), ADR-120 (principle 1: a folder appears
+whole, built on a worker; searches stream) and ADR-050 (principle 3: no
+daemon of Skwir's own, skwird installed apart; worded so 2026-11-25).
 
 ## Context
 
@@ -19,9 +20,12 @@ this record makes them binding and attaches numbers, so that "fast" and
    every provider call is async, batched and cancellable. Work visible in the
    viewport has priority over everything else.
 2. **Light.** Idle memory and startup time are budgeted (below) and measured.
-3. **Stateless and idempotent.** No daemon, no database. One content-addressed
-   cache directory that can be deleted at any time. Re-applying an applied plan
-   is a no-op.
+3. **Stateless and idempotent.** No daemon of Skwir's own, no database. One
+   content-addressed cache directory that can be deleted at any time.
+   Re-applying an applied plan is a no-op. An index installed apart is the
+   environment's (4): skwird, which a search may start where it is
+   installed and which ends a minute after its last client, is no daemon
+   of Skwir's (ADR-050).
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the MIME
    database, bookmarks, existing indexes and installed tools before building
    our own.
