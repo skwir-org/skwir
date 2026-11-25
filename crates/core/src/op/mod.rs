@@ -561,10 +561,12 @@ impl Change {
     /// written from there (paths as they are, in every language): a review
     /// that says the folder once lists `rename a.txt -> b.txt`, not the
     /// folder on every line. What its `Display` says in English, said in
-    /// the reader's language where it is shown.
+    /// the reader's language where it is shown. Each path is a path
+    /// (`Arg::Path`): its controls shown, never obeyed, in the lines a
+    /// person confirms, isolated where the window draws them.
     pub fn words(&self, folder: Option<&Path>) -> Words {
         use crate::words;
-        let p = |path| shown(path, folder).to_string();
+        let p = |path| words::Arg::Path(shown(path, folder).to_string());
         match self {
             Change::Rename { from, to } => words!(
                 op_change_rename = "rename { $from } -> { $to }",
@@ -1854,6 +1856,67 @@ mod tests {
             paths,
             [dir.join("old  name.txt"), dir.join("sub/new name.txt")]
         );
+    }
+
+    /// Every path a step says shows its controls, never obeys them: `a` +
+    /// U+202E + `gpj.exe` never reads `aexe.jpg` in a line of a review, in
+    /// the reader's language, to agents, or in a log.
+    #[test]
+    fn a_step_s_paths_show_their_controls() {
+        let dir = Path::new("/data/a\u{202e}gpj.exe");
+        let (a, b) = (dir.join("x\u{202e}txt.exe"), PathBuf::from("/b\u{202e}y"));
+        let made = |directory| Change::Create {
+            path: a.clone(),
+            directory,
+            words: None,
+        };
+        let changes = [
+            Change::Rename {
+                from: a.clone(),
+                to: b.clone(),
+            },
+            Change::Move {
+                from: a.clone(),
+                to: b.clone(),
+            },
+            Change::Copy {
+                from: a.clone(),
+                to: b.clone(),
+            },
+            Change::Link {
+                from: a.clone(),
+                to: b.clone(),
+            },
+            Change::Swap {
+                a: a.clone(),
+                b: b.clone(),
+            },
+            Change::Trash { path: a.clone() },
+            Change::Restore { path: a.clone() },
+            Change::Delete { path: a.clone() },
+            made(true),
+            made(false),
+            Change::Remove { path: a.clone() },
+            Change::Metadata {
+                path: a.clone(),
+                field: "tags".into(),
+                words: None,
+            },
+        ];
+        for change in &changes {
+            for folder in [None, Some(dir)] {
+                let words = change.words(folder);
+                for said in [
+                    words.say_plain(),
+                    words.english(),
+                    words.say(),
+                    change.to_string(),
+                ] {
+                    assert!(said.contains("⟨RLO⟩"), "{change:?}: {said:?}");
+                    assert!(!said.contains('\u{202e}'), "{change:?}: {said:?}");
+                }
+            }
+        }
     }
 
     #[test]
