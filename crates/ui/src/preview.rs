@@ -7065,6 +7065,13 @@ impl Shell {
     }
 
     pub fn close_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A viewer's card is its window: whatever ends peek there (its ×,
+        // `ui.peek_close`, `ui.preview_close`) closes it (ADR-151, 4).
+        if self.viewer.is_some() {
+            self.close_window(window, cx);
+            window.remove_window();
+            return;
+        }
         self.exit_fullscreen(window, cx);
         if let Some(session) = &self.preview.media.session {
             let _ = session.control(skwir_core::media::Control::Play(false));

@@ -3055,10 +3055,10 @@ impl Shell {
     /// asks: keys and F1's list, the palette, menus, buttons and the
     /// address field's rows, pickers, Properties' links, toasts' buttons.
     pub(crate) fn in_window(&self, name: &str, args: &serde_json::Value) -> InDialogs {
-        // A viewer's window views (ADR-151, 5), and its own buttons close,
-        // maximize and minimize it.
+        // A viewer's window views (ADR-151, 5); its buttons close, maximize
+        // and minimize it, and Quit ends its program.
         if self.viewer.is_some() {
-            if WINDOW_BUTTONS.contains(&name) {
+            if VIEWER_OWN.contains(&name) {
                 return InDialogs::Offered;
             }
             return self.app.in_viewer(name);
@@ -4343,11 +4343,6 @@ impl Shell {
             ),
             "cursor_toggle" => self.toggle_cursor(window, cx),
             "peek" => self.peek_command(window, cx),
-            // A viewer's card is its window: its × closes it (ADR-151, 4).
-            "peek_close" if self.viewer.is_some() => {
-                self.close_window(window, cx);
-                window.remove_window();
-            }
             "peek_close" => self.close_peek(window, cx),
             "viewer_step" => {
                 // Given one file, the steps go through its folder, as
@@ -5558,11 +5553,14 @@ impl Render for Shell {
     }
 }
 
-/// The window's own buttons (ADR-138), which every window offers.
-const WINDOW_BUTTONS: &[&str] = &[
+/// What a viewer's window offers whatever its topic (ADR-151, 4 and 5):
+/// the window's own buttons (ADR-138), and Quit, which ends the viewer's
+/// program as it ends any (ADR-115).
+const VIEWER_OWN: &[&str] = &[
     "ui.close_window",
     "ui.maximize_window",
     "ui.minimize_window",
+    "ui.quit",
 ];
 
 impl Shell {

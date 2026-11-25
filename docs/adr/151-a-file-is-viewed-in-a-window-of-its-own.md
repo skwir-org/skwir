@@ -96,15 +96,19 @@ in a window on Xvfb; macOS and Windows compiled only.
      user's windows and the dialogs' (`ui.viewer_session`).
 4. **Its keys.**
    - Peek's: the arrows step, F goes to the whole screen.
-   - Escape and Ctrl+W close the window. On the whole screen, Escape
-     leaves the whole screen first.
+   - Escape, Ctrl+W, Quit (Ctrl+Q) and the card's × close the window,
+     ending the program: whatever ends peek there ends the window
+     (`Shell::close_peek`; amended as tried, 2026-11-25, the × having
+     closed only the preview). On the whole screen, Escape leaves the
+     whole screen first. Quit asks first while something runs (a print
+     being sent), as anywhere (ADR-115).
    - Steps go through the folder, in the order that folder is shown in
      (ADR-132), as peek's do. With several files given, they go through
      those alone, in the order given.
 5. **What it offers** (ADR-144's one answer, with a third kind of
    window):
    - the previews' commands and what plays in them;
-   - the window's own;
+   - the window's own, its buttons and Quit;
    - Open With, Print…;
    - Show in Skwir (`ui.viewer_reveal`): a window of the user's own on
      the folder, the file selected.

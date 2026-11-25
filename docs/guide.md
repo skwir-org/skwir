@@ -837,8 +837,8 @@ and no file manager around it.
 - **Stepping:** the arrows go to the next file of its folder, in the
   order Skwir shows that folder in. Given several files
   (`skw *.jpg`), they go through those.
-- **Keys:** `F` shows the preview on the whole screen, and `Escape`
-  closes the window.
+- **Keys:** `F` shows the preview on the whole screen; `Escape`, `Ctrl+Q`
+  and the × close the window.
 - **More:** the menu opens the file in another application, prints it,
   or shows it in Skwir, its folder open and the file selected.
 - **Standard input:** `skw -` shows what is piped in, whatever it is:
