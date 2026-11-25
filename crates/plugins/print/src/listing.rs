@@ -95,9 +95,10 @@ pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::
         folder: !location.is_path() && !one_folder,
         deleted: app.verbs(&location).restore.is_some() && !one_folder,
     };
+    let mut said = Said::new();
     let rows = shown
         .iter()
-        .map(|(entry, depth, path)| row(entry, *depth, path.as_deref(), columns))
+        .map(|(entry, depth, path)| row(entry, *depth, path.as_deref(), columns, &mut said))
         .collect();
     Ok(Listed {
         title: title(app, &location, filter.as_deref()),
@@ -185,11 +186,61 @@ impl Columns {
     }
 }
 
+/// What a listing's rows say of many entries alike, read once a listing,
+/// never once a row (`AGENTS.md`, "Scale"): the home folder its folders
+/// are said from, each type's name (`Mime::description`, which reads the
+/// type database or asks the registry), and what a file is called while
+/// its type's name is not known, by its extension; as the window's
+/// `TypeNames` keeps them.
+struct Said {
+    home: Option<PathBuf>,
+    types: HashMap<skwir_platform::mime::Mime, Option<String>>,
+    unnamed: HashMap<Option<String>, String>,
+}
+
+impl Said {
+    fn new() -> Self {
+        Said {
+            home: skwir_core::os_path::home(),
+            types: HashMap::new(),
+            unnamed: HashMap::new(),
+        }
+    }
+
+    /// What `entry`, a file, is, as the window's Type column says it:
+    /// its type's name; where the system names it not, by its extension
+    /// (`mime::unnamed`), never blank.
+    fn type_of(&mut self, entry: &Entry) -> String {
+        if let Some(mime) = skwir_platform::mime::of_entry(entry)
+            && let Some(name) = self
+                .types
+                .entry(mime)
+                .or_insert_with_key(skwir_platform::mime::Mime::description)
+        {
+            return name.clone();
+        }
+        let extension =
+            skwir_platform::mime::unnamed_extension(&entry.type_name().to_string_lossy());
+        self.unnamed
+            .entry(extension)
+            .or_insert_with_key(|extension| {
+                skwir_platform::mime::unnamed_by(extension.as_deref()).say_plain()
+            })
+            .clone()
+    }
+}
+
 /// An entry's row: its name (indented by how deep it is shown, a folder's
 /// ending with a slash), the folder it is in and when it was deleted
 /// where `columns` say them, its kind, its size and when it was modified,
 /// as the list view says them; what is not known yet is left blank.
-fn row(entry: &Entry, depth: usize, path: Option<&Path>, columns: Columns) -> Vec<String> {
+fn row(
+    entry: &Entry,
+    depth: usize,
+    path: Option<&Path>,
+    columns: Columns,
+    said: &mut Said,
+) -> Vec<String> {
     let mut name = "    ".repeat(depth);
     name.push_str(&entry.name.to_string_lossy());
     if entry.is_dir() {
@@ -207,7 +258,9 @@ fn row(entry: &Entry, depth: usize, path: Option<&Path>, columns: Columns) -> Ve
         let folder = from
             .or_else(|| path?.parent().map(Path::to_owned))
             .filter(|_| !entry.is_place());
-        row.push(folder.map_or_else(String::new, |dir| skwir_core::os_path::from_home(&dir)));
+        row.push(folder.map_or_else(String::new, |dir| {
+            skwir_core::os_path::from_home_given(&dir, said.home.as_deref())
+        }));
     }
     if columns.deleted {
         row.push(when(entry.metadata.value(keys::TRASHED)));
@@ -234,13 +287,7 @@ fn row(entry: &Entry, depth: usize, path: Option<&Path>, columns: Columns) -> Ve
         )
         .say_plain()
     } else {
-        // Where the system names its type not, by its extension, as the
-        // window's Type column says it (`mime::unnamed`), never blank.
-        skwir_platform::mime::of_entry(entry)
-            .and_then(|mime| mime.description())
-            .unwrap_or_else(|| {
-                skwir_platform::mime::unnamed(&entry.type_name().to_string_lossy()).say_plain()
-            })
+        said.type_of(entry)
     };
     let size = match entry.metadata.value(keys::SIZE).and_then(Value::as_u64) {
         Some(size) if !entry.is_dir() => skwir_platform::inspection::size(size),
@@ -404,6 +451,37 @@ mod tests {
         assert_eq!(tag[1], "", "a place is in no folder");
         assert_eq!(tag[3], "Tag");
         assert_eq!(tag[4], "3 files");
+    }
+
+    /// A listing names each type once, however many of its files it
+    /// lists: a type's name is read of the type database (or asked of the
+    /// registry) once a listing, never once a row.
+    #[test]
+    fn a_listing_reads_each_type_s_name_once() {
+        use skwir_core::FileId;
+        use skwir_core::entry::{Entry, EntryId, EntryKind};
+        let names = ["a.txt", "b.txt", "c.txt", "d.zqx9", "e.zqx9", "f"];
+        let entries: Vec<Entry> = (0u64..)
+            .zip(names)
+            .map(|(n, name)| {
+                let id = EntryId::at_path(FileId::new(7, n), std::path::Path::new(name));
+                Entry::new(id, name, EntryKind::File)
+            })
+            .collect();
+        let mut said = super::Said::new();
+        let kinds: Vec<String> = entries.iter().map(|entry| said.type_of(entry)).collect();
+        assert_eq!(kinds[0], kinds[1]);
+        assert_eq!(kinds[1], kinds[2]);
+        assert_eq!(kinds[3], "ZQX9 file", "a type named not, by its extension");
+        assert_eq!(kinds[4], "ZQX9 file");
+        let types: std::collections::HashSet<_> = entries
+            .iter()
+            .filter_map(skwir_platform::mime::of_entry)
+            .collect();
+        assert_eq!(said.types.len(), types.len(), "{:?}", said.types);
+        // One an extension at most: ZQX9, none, and TXT where the system
+        // names not text's type (Wine's registry).
+        assert!(said.unnamed.len() <= 3, "{:?}", said.unnamed);
     }
 
     mod fake {
