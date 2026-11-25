@@ -113,9 +113,7 @@ fn by_folder() -> Keyer {
             key: Arc::from(skwir_core::collate::sort_key(folder.as_os_str())),
             // Its heading drawn alone, its controls shown (ADR-139, 5), the
             // path as a person reads it on this system (`~\…` on Windows).
-            label: Arc::from(
-                skwir_core::words::shown_controls(&skwir_core::os_path::from_home(folder)).as_ref(),
-            ),
+            label: Arc::from(skwir_core::os_path::from_home(folder).controls_shown()),
             folders: false,
             term: None,
         }),

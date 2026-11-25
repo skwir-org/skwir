@@ -1028,7 +1028,7 @@ mod tests {
                 })
         };
         let path = |name: &str| quote(&dir.join(name).to_string_lossy());
-        let folder = skwir_core::os_path::from_home(&dir);
+        let folder = skwir_core::os_path::from_home(&dir).controls_shown();
         let says = said(
             "shell.run.describe",
             serde_json::json!({ "command": " du -sh " }),
@@ -1064,9 +1064,16 @@ mod tests {
             said("shell.run_here.describe", here).unwrap(),
             format!(
                 "Runs ls -la  with no paths  in {}",
-                skwir_core::os_path::from_home(tmp.path())
+                skwir_core::os_path::from_home(tmp.path()).controls_shown()
             )
         );
+        // A folder whose name holds U+202E is said with it shown, never
+        // obeyed.
+        let spoof = tmp.path().join("a\u{202e}gpj.exe");
+        std::fs::create_dir(&spoof).unwrap();
+        let here = serde_json::json!({ "command": "ls", "in": spoof });
+        let says = said("shell.run_here.describe", here).unwrap();
+        assert!(says.ends_with("a⟨RLO⟩gpj.exe"), "{says}");
         assert!(
             said(
                 "shell.run_here.describe",

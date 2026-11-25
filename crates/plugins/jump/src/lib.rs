@@ -120,10 +120,11 @@ pub fn rank_by_words(
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            // What its row says of where it is, as drawn.
             let folders = c
                 .path
                 .parent()
-                .map(|p| skwir_core::os_path::from_home_given(p, home))
+                .map(|p| skwir_core::os_path::from_home_given(p, home).controls_shown())
                 .unwrap_or_default();
             let mut points = 0;
             for atom in &atoms {
@@ -441,9 +442,7 @@ const FIELD_PLACES: usize = 5;
 /// its controls shown.
 fn where_it_is(path: &Path, home: Option<&Path>) -> Option<Words> {
     let parent = path.parent()?;
-    Some(Words::name_alone(skwir_core::os_path::from_home_given(
-        parent, home,
-    )))
+    Some(skwir_core::os_path::from_home_given(parent, home).alone())
 }
 
 impl skwir_core::suggest::SuggestSource for Places {

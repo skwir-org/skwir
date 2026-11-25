@@ -108,7 +108,8 @@ pub enum Kind {
     Link,
     /// A file to write, or the folder files are written in: a whole path,
     /// written from `~` where it lies under the home folder
-    /// (`os_path::from_home`). The window completes its folders a name at
+    /// (`os_path::from_home`, held as a field holds it:
+    /// `SaidPath::into_field`). The window completes its folders a name at
     /// a time as the address field completes a path (ADR-070) and lists
     /// `folders` (values written so), each chosen in place of the folder
     /// typed, the name kept; it selects the name but its `ending` as it

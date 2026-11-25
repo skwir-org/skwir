@@ -224,9 +224,9 @@ fn ended(name: &str, ending: &str) -> String {
 }
 
 /// `folder` written as the field holds folders: from `~`, ending with
-/// its separator.
+/// its separator, its controls as they are (the field shows them).
 fn written(folder: &Path) -> String {
-    let mut text = skwir_core::os_path::from_home(folder);
+    let mut text = skwir_core::os_path::from_home(folder).into_field();
     if !text.ends_with(complete::is_separator) {
         text.push(std::path::MAIN_SEPARATOR);
     }
@@ -520,10 +520,11 @@ impl Reads {
             .map(|m| {
                 let holder = &resolved.folders[m.folder];
                 let name = &holder.names[m.index];
+                // Drawn as strings: their controls shown, never obeyed.
                 Row {
-                    title: name.text.clone(),
+                    title: skwir_core::words::shown_controls(&name.text).into_owned(),
                     detail: if several {
-                        skwir_core::os_path::from_home(&holder.path)
+                        skwir_core::os_path::from_home(&holder.path).controls_shown()
                     } else {
                         String::new()
                     },
@@ -660,9 +661,16 @@ impl Shell {
             return;
         };
         let (_, name) = split(&held.text);
+        // By the name it completed, as it is, never as drawn.
         let began = {
             let typed = stem(name, &held.ending).to_lowercase();
-            row.completed && row.title.to_lowercase().starts_with(&typed)
+            row.completed
+                && row.folder.file_name().is_some_and(|completed| {
+                    completed
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .starts_with(&typed)
+                })
         };
         let kept = if held.alone {
             String::new()
@@ -1124,6 +1132,43 @@ mod tests {
                 vec!["report-2024".to_owned(), "report-2025".to_owned()],
                 Some("report-202".to_owned())
             )
+        );
+    }
+
+    /// What completes a folder typed is drawn with its controls shown,
+    /// never obeyed: its name and, from several folders, where it is.
+    #[cfg(unix)]
+    #[test]
+    fn completions_show_their_controls() {
+        let folder = |path: &str, name: &str| {
+            Arc::new(complete::Folder {
+                path: PathBuf::from(path),
+                names: vec![complete::Name::new(name.into(), true, false)],
+            })
+        };
+        let mut reads = Reads::default();
+        reads.answered(answer(
+            "/example/a",
+            complete::Resolved {
+                folders: vec![
+                    folder("/example/a\u{202e}gpj.exe", "b\u{202e}txt.exe"),
+                    folder("/example/ab", "bz"),
+                ],
+                abbreviated: true,
+                ..complete::Resolved::default()
+            },
+        ));
+        let (rows, _) = reads.completions("/example/a/b", ".pdf").expect("known");
+        let spoofed = rows
+            .iter()
+            .find(|row| row.title == "b⟨RLO⟩txt.exe")
+            .expect("its name shown");
+        assert_eq!(spoofed.detail, "/example/a⟨RLO⟩gpj.exe");
+        assert!(
+            spoofed
+                .folder
+                .ends_with("a\u{202e}gpj.exe/b\u{202e}txt.exe"),
+            "what it puts there is the folder as it is"
         );
     }
 

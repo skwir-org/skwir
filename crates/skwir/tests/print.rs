@@ -847,11 +847,19 @@ fn a_search_s_listing_is_saved_where_the_dialog_says() {
         .map(|choice| choice.value.as_str())
         .collect();
     assert!(
-        !offered.contains(&skwir_core::os_path::from_home(&inside).as_str()),
+        !offered.contains(
+            &skwir_core::os_path::from_home(&inside)
+                .into_field()
+                .as_str()
+        ),
         "{offered:?}"
     );
     assert!(
-        offered.contains(&skwir_core::os_path::from_home(&elsewhere).as_str()),
+        offered.contains(
+            &skwir_core::os_path::from_home(&elsewhere)
+                .into_field()
+                .as_str()
+        ),
         "{offered:?}"
     );
     assert!(app.answer_form(after.id, None));
@@ -859,7 +867,7 @@ fn a_search_s_listing_is_saved_where_the_dialog_says() {
 
 /// `folder` as Save as holds it alone: from `~`, ending with a separator.
 fn in_folder(folder: &Path) -> String {
-    let mut written = skwir_core::os_path::from_home(folder);
+    let mut written = skwir_core::os_path::from_home(folder).into_field();
     written.push(std::path::MAIN_SEPARATOR);
     written
 }
@@ -1031,7 +1039,7 @@ fn the_folders_chosen_are_offered_after_a_restart() {
         .iter()
         .map(|choice| (choice.value.as_str(), choice.section.english()))
         .collect();
-    let written = skwir_core::os_path::from_home(&out);
+    let written = skwir_core::os_path::from_home(&out).into_field();
     assert!(
         before.contains(&(written.as_str(), "Chosen before".to_owned())),
         "{before:?}"

@@ -562,10 +562,10 @@ pub fn arrange(
             // As a person reads a path on this system, never the
             // exclusions list's `/` between names; drawn as a string, its
             // controls shown, never obeyed.
-            let path = place.location.path().map(|path| {
-                skwir_core::words::shown_controls(&skwir_core::os_path::from_home(&path))
-                    .into_owned()
-            });
+            let path = place
+                .location
+                .path()
+                .map(|path| skwir_core::os_path::from_home(&path).controls_shown());
             Arranged {
                 place,
                 role,

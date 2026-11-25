@@ -716,8 +716,7 @@ fn not_saved(app: &App, error: anyhow::Error) {
 /// controls shown, never obeyed, and isolated where the window draws it
 /// (ADR-139, 5): a name holding U+202E reverses nothing.
 fn state(row: &Row, said: &Said) -> Words {
-    let folder = PathBuf::from(skwir_core::os_path::from_home(&row.path));
-    let folder = &folder;
+    let folder = &skwir_core::os_path::from_home(&row.path);
     if !row.kept {
         return skwir_core::words!(
             skwird_kept_not = "{ $folder } · not kept live",
@@ -753,7 +752,7 @@ fn state(row: &Row, said: &Said) -> Words {
         (protocol::Keeping::Live(_), Some(within)) => skwir_core::words!(
             skwird_kept_within = "{ $folder } · live, inside { $within }",
             folder = folder,
-            within = &PathBuf::from(skwir_core::os_path::from_home(&within.to_path())),
+            within = skwir_core::os_path::from_home(&within.to_path()),
             note = "Under a folder's name in the list of folders kept live: another folder kept live holds it. within: that folder."
         ),
         (protocol::Keeping::Live(_), None) => skwir_core::words!(

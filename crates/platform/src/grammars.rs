@@ -1029,8 +1029,8 @@ fn home() -> Option<PathBuf> {
 }
 
 /// A text the helper wrote (naming files by their whole path), its paths
-/// from `~` (`os_path::from_home_in`).
-fn home_in(text: &str) -> String {
+/// from `~`, its controls shown (`os_path::from_home_in`).
+fn home_in(text: &str) -> skwir_core::words::Words {
     skwir_core::os_path::from_home_in(text)
 }
 
@@ -1483,8 +1483,9 @@ fn is_repository(dir: &Path) -> bool {
 }
 
 /// `path` as a reason says it: from `~` where it is under the home
-/// folder (`os_path::from_home`, as the settings say paths).
-fn shown(path: &Path) -> String {
+/// folder (`os_path::from_home`, as the settings say paths), its controls
+/// shown.
+fn shown(path: &Path) -> skwir_core::os_path::SaidPath {
     skwir_core::os_path::from_home(path)
 }
 

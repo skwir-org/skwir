@@ -52,7 +52,7 @@ pub fn rank_of(label: &str, words: &str) -> Option<i32> {
 /// obeyed; else its text, as written.
 pub(crate) fn said(location: &Location) -> Words {
     match location.path() {
-        Some(path) => Words::name_alone(skwir_core::os_path::from_home(&path)),
+        Some(path) => skwir_core::os_path::from_home(&path).alone(),
         None => Words::as_written(location.to_string()),
     }
 }

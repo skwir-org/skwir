@@ -363,32 +363,102 @@ pub fn home() -> Option<PathBuf> {
 /// separator between every name), the home folder itself `~`, as shells
 /// say it; else whole. The one way a path is said so, whoever draws it
 /// (a row's detail, a tooltip, a heading, a printed column): never one
-/// written by hand. `from_home_in` for a text that names paths. Where it
-/// goes into what the window draws, its controls are shown
-/// (`Arg::Path`, `Words::name_alone`, `words::shown_controls`). A field
-/// that holds a folder (Save as) adds its separator.
-pub fn from_home(path: &Path) -> String {
+/// written by hand. `from_home_in` for a text that names paths. It is a
+/// [`SaidPath`], which goes only where its controls are shown, never
+/// obeyed.
+pub fn from_home(path: &Path) -> SaidPath {
     from_home_given(path, home().as_deref())
 }
 
 /// [`from_home`] from `home`, the home folder read once by a caller saying
 /// many paths (a listing's rows), or none.
-pub fn from_home_given(path: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| path.strip_prefix(home).ok()) {
+pub fn from_home_given(path: &Path, home: Option<&Path>) -> SaidPath {
+    SaidPath(match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
         Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
         None => path.display().to_string(),
+    })
+}
+
+/// A path said for a person ([`from_home`]), or an address a person reads
+/// as one ([`SaidPath::address`]). Its bidirectional controls are shown
+/// wherever it goes, never obeyed (ADR-139, 5): a folder `a` + U+202E +
+/// `gpj.exe` never reads `aexe.jpg`, in a sentence, a row, a dialog that
+/// asks before files are deleted. It goes only into what shows them:
+/// - words, as a path (`Arg::Path`, by `From`: unquoted, isolated where
+///   the window draws it);
+/// - words drawn alone, a row's detail or a tooltip ([`SaidPath::alone`]);
+/// - a string the window draws, a cell of a table or a list
+///   ([`SaidPath::controls_shown`]);
+/// - a field the person edits, which draws them itself and reads the text
+///   back as a path (Save as: [`SaidPath::into_field`]).
+///
+/// It has no `Display`, gives no `String` by `From` or `Deref`: what reads
+/// a path as data (a key, a comparison, a file written, a command's
+/// argument) takes the `Path`, never this.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SaidPath(String);
+
+impl SaidPath {
+    /// The address of a folder on a server (`sftp://me@host/docs`), said
+    /// where a local folder is said from `~`.
+    pub fn address(location: &crate::Location) -> Self {
+        SaidPath(location.to_string())
+    }
+
+    /// Drawn alone as words (a row's detail, a tooltip, a heading), as a
+    /// name alone is (`Words::name_alone`): its controls shown as tags,
+    /// isolated where the window draws it, nothing added.
+    pub fn alone(self) -> crate::words::Words {
+        crate::words::Words::name_alone(self.0)
+    }
+
+    /// As a string the window draws (a cell, a heading, a list's row, a
+    /// printed column): its controls shown as tags
+    /// (`words::shown_controls`), nothing else added. What it draws is
+    /// what is read there, so it is also what a person's typing is matched
+    /// against (Jump's rows).
+    pub fn controls_shown(&self) -> String {
+        crate::words::shown_controls(&self.0).into_owned()
+    }
+
+    /// The text a field the person edits holds (Save as's folder, the
+    /// folders it offers): the path as written, its controls as they are,
+    /// which the field draws as tags itself (`ui::input`), and which is
+    /// read back as a path (`form::path`). Never drawn as a string
+    /// elsewhere: that is [`SaidPath::controls_shown`].
+    pub fn into_field(self) -> String {
+        self.0
+    }
+}
+
+impl From<SaidPath> for crate::words::Arg {
+    fn from(said: SaidPath) -> Self {
+        crate::words::Arg::Path(said.0)
+    }
+}
+
+impl From<&SaidPath> for crate::words::Arg {
+    fn from(said: &SaidPath) -> Self {
+        crate::words::Arg::Path(said.0.clone())
     }
 }
 
 /// `text` (a message a program wrote, naming files by their whole path)
-/// with each path under the home folder from `~`, as `from_home` says it.
-pub fn from_home_in(text: &str) -> String {
-    let Some(home) = home().filter(|home| home.parent().is_some()) else {
-        return text.to_owned();
+/// with each path under the home folder from `~`, as `from_home` says it:
+/// words of the program's making, as written, their controls shown, never
+/// obeyed, and isolated whole where the window draws them
+/// (`Words::shown`), so that no name in them reorders the sentence they
+/// are said in.
+pub fn from_home_in(text: &str) -> crate::words::Words {
+    let written = match home().filter(|home| home.parent().is_some()) {
+        Some(home) => {
+            let sep = std::path::MAIN_SEPARATOR;
+            text.replace(&format!("{}{sep}", home.display()), &format!("~{sep}"))
+        }
+        None => text.to_owned(),
     };
-    let sep = std::path::MAIN_SEPARATOR;
-    text.replace(&format!("{}{sep}", home.display()), &format!("~{sep}"))
+    crate::words::Words::shown(crate::words::Words::as_written(written))
 }
 
 /// `std::fs::canonicalize`, the one way a path is made absolute and freed
@@ -642,16 +712,38 @@ mod tests {
         };
         let sep = std::path::MAIN_SEPARATOR;
         let file = home.join("grammars").join("x.so");
-        assert_eq!(from_home(&file), format!("~{sep}grammars{sep}x.so"));
+        assert_eq!(
+            from_home(&file).controls_shown(),
+            format!("~{sep}grammars{sep}x.so")
+        );
         let elsewhere = std::env::temp_dir().join("x.so");
         if !elsewhere.starts_with(&home) {
-            assert_eq!(from_home(&elsewhere), elsewhere.display().to_string());
+            assert_eq!(
+                from_home(&elsewhere).controls_shown(),
+                elsewhere.display().to_string()
+            );
         }
         let said = format!("load {}: no such file", file.display());
         assert_eq!(
-            from_home_in(&said),
+            from_home_in(&said).say_plain(),
             format!("load ~{sep}grammars{sep}x.so: no such file")
         );
+        // A program's text naming a folder that holds U+202E: shown, never
+        // obeyed, in a sentence too.
+        let spoof = format!(
+            "load {}: no such file",
+            home.join("a\u{202e}gpj.exe").display()
+        );
+        assert_eq!(
+            from_home_in(&spoof).say_plain(),
+            format!("load ~{sep}a⟨RLO⟩gpj.exe: no such file")
+        );
+        let in_words = crate::words!(
+            test_os_path_why = "cannot ({ $why })",
+            why = from_home_in(&spoof)
+        );
+        assert!(in_words.say_plain().contains("⟨RLO⟩"), "{in_words:?}");
+        assert!(!in_words.say_plain().contains('\u{202e}'), "{in_words:?}");
     }
 
     /// A path below a home given is said from `~` with the system's
@@ -665,17 +757,46 @@ mod tests {
         } else {
             PathBuf::from("/home/u")
         };
+        let said = |path: &Path, home: Option<&Path>| from_home_given(path, home).into_field();
         let nested = home.join("wip").join("one").join("l'été");
         assert_eq!(
-            from_home_given(&nested, Some(&home)),
+            said(&nested, Some(&home)),
             format!("~{sep}wip{sep}one{sep}l'été")
         );
-        assert_eq!(from_home_given(&home, Some(&home)), "~");
+        assert_eq!(said(&home, Some(&home)), "~");
         let beside = home.with_file_name("u2").join("x");
-        assert_eq!(
-            from_home_given(&beside, Some(&home)),
-            beside.display().to_string()
+        assert_eq!(said(&beside, Some(&home)), beside.display().to_string());
+        assert_eq!(said(&nested, None), nested.display().to_string());
+    }
+
+    /// A path said for a person shows a folder's U+202E as a tag wherever
+    /// it goes: in words as a path, drawn alone, drawn as a string; only a
+    /// field the person edits holds it as it is, drawing it itself.
+    #[test]
+    fn a_path_said_shows_its_controls_wherever_it_goes() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let home = if cfg!(windows) {
+            PathBuf::from(r"C:\Users\u")
+        } else {
+            PathBuf::from("/home/u")
+        };
+        let spoof = home.join("a\u{202e}gpj.exe");
+        let said = from_home_given(&spoof, Some(&home));
+        let shown = format!("~{sep}a⟨RLO⟩gpj.exe");
+        assert_eq!(said.controls_shown(), shown);
+        assert_eq!(said.clone().alone().say_plain(), shown);
+        let arg: crate::words::Arg = said.clone().into();
+        assert!(matches!(arg, crate::words::Arg::Path(_)), "{arg:?}");
+        let words = crate::words!(test_os_path_in = "In { $folder }", folder = &said);
+        assert_eq!(words.say_plain(), format!("In {shown}"));
+        assert_eq!(words.english(), format!("In {shown}"));
+        assert_eq!(said.into_field(), format!("~{sep}a\u{202e}gpj.exe"));
+        // A server's folder, said by its address, alike.
+        let address = crate::Location::new("sftp", "//me@host/a\u{202e}gpj.exe");
+        assert!(
+            SaidPath::address(&address)
+                .controls_shown()
+                .ends_with("a⟨RLO⟩gpj.exe")
         );
-        assert_eq!(from_home_given(&nested, None), nested.display().to_string());
     }
 }

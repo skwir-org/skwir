@@ -123,7 +123,7 @@ pub struct Checked {
     steps: Vec<(Change, StepStatus)>,
     /// The folder its steps' paths share (`shared_folder`), and how the
     /// line above the steps writes it (`~/…`).
-    folder: Option<(PathBuf, String)>,
+    folder: Option<(PathBuf, skwir_core::os_path::SaidPath)>,
     applicable: bool,
     /// The names it finds taken that the user is asked about as it is
     /// applied (ADR-054): its lines show them settled as the defaults
@@ -132,6 +132,19 @@ pub struct Checked {
 }
 
 impl Checked {
+    /// Where its steps' paths are, which their lines leave out: the
+    /// folder they share, its controls shown, never obeyed.
+    fn within(&self) -> Option<Words> {
+        self.folder.as_ref().map(|(_, said)| {
+            words!(
+                review_within = "In { $folder }",
+                folder = said,
+                note = "Above a proposed plan's steps: the folder their paths are in, as \
+                            the address writes it (~/Documents), which the steps leave out."
+            )
+        })
+    }
+
     fn of((diff, asked): (PlanDiff, usize)) -> Self {
         let home = skwir_core::os_path::home();
         Checked {
@@ -618,15 +631,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         Review::Plan {
             diff: Some(checked),
             ..
-        } => checked.folder.as_ref().map(|(_, said)| {
-            words!(
-                review_within = "In { $folder }",
-                folder = said.clone(),
-                note = "Above a proposed plan's steps: the folder their paths are in, as \
-                            the address writes it (~/Documents), which the steps leave out."
-            )
-            .say()
-        }),
+        } => checked.within().map(|within| within.say()),
         _ => None,
     };
     let (title, size) = (title.say(), size.say());
@@ -874,9 +879,39 @@ mod tests {
             },
             0,
         ));
-        let (folder, said) = checked.folder.unwrap();
+        let (folder, said) = checked.folder.clone().unwrap();
         assert_eq!(folder, at(""));
         assert_eq!(said, skwir_core::os_path::from_home(&at("")));
+        assert_eq!(
+            checked.within().map(|within| within.english()),
+            Some(format!("In {}", said.controls_shown()))
+        );
+    }
+
+    /// The folder a plan's steps share is said with its controls shown,
+    /// never obeyed: `a` + U+202E + `gpj.exe` never reads `aexe.jpg` above
+    /// the steps the user is asked to confirm.
+    #[test]
+    fn the_folder_above_a_plan_shows_its_controls() {
+        let at = |path: &str| PathBuf::from(format!("/data/a\u{202e}gpj.exe{path}"));
+        let pending = StepStatus::Pending { reversible: true };
+        let steps = vec![
+            (Change::Delete { path: at("/x.txt") }, pending.clone()),
+            (Change::Delete { path: at("/y.txt") }, pending),
+        ];
+        let checked = Checked::of((
+            PlanDiff {
+                title: Words::as_written("t"),
+                note: None,
+                steps,
+            },
+            0,
+        ));
+        let within = checked.within().expect("a folder shared");
+        for said in [within.say_plain(), within.english(), within.say()] {
+            assert!(said.contains("a⟨RLO⟩gpj.exe"), "{said:?}");
+            assert!(!said.contains('\u{202e}'), "{said:?}");
+        }
     }
 
     #[test]

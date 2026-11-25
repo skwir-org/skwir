@@ -188,20 +188,27 @@ impl Columns {
 
 /// What a listing's rows say of many entries alike, read once a listing,
 /// never once a row (`AGENTS.md`, "Scale"): the home folder its folders
-/// are said from, each type's name (`Mime::description`, which reads the
-/// type database or asks the registry), and what a file is called while
-/// its type's name is not known, by its extension; as the window's
-/// `TypeNames` keeps them.
+/// are said from, each type's name (`describe`: `Mime::description`, which
+/// reads the type database or asks the registry), and what a file is
+/// called while its type's name is not known, by its extension; as the
+/// window's `TypeNames` keeps them.
 struct Said {
     home: Option<PathBuf>,
+    describe: fn(&skwir_platform::mime::Mime) -> Option<String>,
     types: HashMap<skwir_platform::mime::Mime, Option<String>>,
     unnamed: HashMap<Option<String>, String>,
 }
 
 impl Said {
     fn new() -> Self {
+        Said::describing(skwir_platform::mime::Mime::description)
+    }
+
+    /// Each type's name read by `describe`.
+    fn describing(describe: fn(&skwir_platform::mime::Mime) -> Option<String>) -> Self {
         Said {
             home: skwir_core::os_path::home(),
+            describe,
             types: HashMap::new(),
             unnamed: HashMap::new(),
         }
@@ -212,10 +219,7 @@ impl Said {
     /// (`mime::unnamed`), never blank.
     fn type_of(&mut self, entry: &Entry) -> String {
         if let Some(mime) = skwir_platform::mime::of_entry(entry)
-            && let Some(name) = self
-                .types
-                .entry(mime)
-                .or_insert_with_key(skwir_platform::mime::Mime::description)
+            && let Some(name) = self.types.entry(mime).or_insert_with_key(self.describe)
         {
             return name.clone();
         }
@@ -241,8 +245,12 @@ fn row(
     columns: Columns,
     said: &mut Said,
 ) -> Vec<String> {
+    // A name and a folder as the window draws them: their controls shown,
+    // never obeyed (ADR-139, 5), on paper as on screen.
     let mut name = "    ".repeat(depth);
-    name.push_str(&entry.name.to_string_lossy());
+    name.push_str(&skwir_core::words::shown_controls(
+        &entry.name.to_string_lossy(),
+    ));
     if entry.is_dir() {
         name.push('/');
     }
@@ -259,7 +267,7 @@ fn row(
             .or_else(|| path?.parent().map(Path::to_owned))
             .filter(|_| !entry.is_place());
         row.push(folder.map_or_else(String::new, |dir| {
-            skwir_core::os_path::from_home_given(&dir, said.home.as_deref())
+            skwir_core::os_path::from_home_given(&dir, said.home.as_deref()).controls_shown()
         }));
     }
     if columns.deleted {
@@ -424,8 +432,17 @@ mod tests {
         std::fs::create_dir_all(&two).unwrap();
         std::fs::write(one.join("it's here.txt"), "hello").unwrap();
         std::fs::write(two.join("ünïcode.md"), "# Title\n").unwrap();
+        // A folder and a file named to read as others where their U+202E
+        // is obeyed.
+        let spoof = tmp.path().join("a\u{202e}gpj.exe");
+        std::fs::create_dir_all(&spoof).unwrap();
+        std::fs::write(spoof.join("b\u{202e}txt.exe"), "x").unwrap();
         let app = app(tmp.path());
-        let files = vec![one.join("it's here.txt"), two.join("ünïcode.md")];
+        let files = vec![
+            one.join("it's here.txt"),
+            two.join("ünïcode.md"),
+            spoof.join("b\u{202e}txt.exe"),
+        ];
         app.register_provider("test", Arc::new(fake::Bin { files }));
         let pane = app.workspace.read().active_id();
         app.navigate(pane, &Location::new(fake::SCHEME, ""))
@@ -443,10 +460,23 @@ mod tests {
         );
         let row = |name: &str| rows.iter().find(|row| row[0] == name).unwrap();
         let here = row("it's here.txt");
-        assert_eq!(here[1], skwir_core::os_path::from_home(&one));
+        assert_eq!(
+            here[1],
+            skwir_core::os_path::from_home(&one).controls_shown()
+        );
         assert_eq!(here[2], "", "no time said is none printed");
         assert_eq!(here[4], "5\u{a0}B", "read where the place listed none");
-        assert_eq!(row("ünïcode.md")[1], skwir_core::os_path::from_home(&two));
+        assert_eq!(
+            row("ünïcode.md")[1],
+            skwir_core::os_path::from_home(&two).controls_shown()
+        );
+        // Its controls shown, never obeyed, in its name and its folder.
+        let shown = row("b⟨RLO⟩txt.exe");
+        assert!(shown[1].ends_with("a⟨RLO⟩gpj.exe"), "{shown:?}");
+        assert!(
+            !shown.iter().any(|cell| cell.contains('\u{202e}')),
+            "{shown:?}"
+        );
         let tag = row("a tag/");
         assert_eq!(tag[1], "", "a place is in no folder");
         assert_eq!(tag[3], "Tag");
@@ -468,7 +498,16 @@ mod tests {
                 Entry::new(id, name, EntryKind::File)
             })
             .collect();
-        let mut said = super::Said::new();
+        thread_local! {
+            /// Each type whose name was read, as many times as it was.
+            static READ: std::cell::RefCell<Vec<skwir_platform::mime::Mime>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+        fn counted(mime: &skwir_platform::mime::Mime) -> Option<String> {
+            READ.with_borrow_mut(|read| read.push(mime.clone()));
+            mime.description()
+        }
+        let mut said = super::Said::describing(counted);
         let kinds: Vec<String> = entries.iter().map(|entry| said.type_of(entry)).collect();
         assert_eq!(kinds[0], kinds[1]);
         assert_eq!(kinds[1], kinds[2]);
@@ -478,7 +517,11 @@ mod tests {
             .iter()
             .filter_map(skwir_platform::mime::of_entry)
             .collect();
-        assert_eq!(said.types.len(), types.len(), "{:?}", said.types);
+        // Every type read, each once, however many rows are of it.
+        let read = READ.take();
+        let once: std::collections::HashSet<_> = read.iter().cloned().collect();
+        assert_eq!(read.len(), once.len(), "a type read twice: {read:?}");
+        assert_eq!(once, types, "{read:?}");
         // One an extension at most: ZQX9, none, and TXT where the system
         // names not text's type (Wine's registry).
         assert!(said.unnamed.len() <= 3, "{:?}", said.unnamed);

@@ -400,7 +400,7 @@ fn into_folder(
     {
         return Err(words!(
             print_no_such_folder = "Save as: there is no folder { $path }",
-            path = skwir_core::words::Arg::Path(skwir_core::os_path::from_home(dest)),
+            path = skwir_core::os_path::from_home(dest),
             note = "Said in the dialog: the folder typed in the Save as field is none. The path is as typed, from ~ where it is the home's."
         ));
     }
@@ -730,16 +730,17 @@ fn save_as(offers: &Offers) -> Field {
         offered.push(folder.to_owned());
         folders.push(
             Choice::new(
-                skwir_core::os_path::from_home(folder),
-                Words::as_written(title),
+                skwir_core::os_path::from_home(folder).into_field(),
+                Words::name_alone(title),
             )
             .detail(said)
             .section(section),
         );
     };
-    // A folder's path is said as written; its title is its name, or a
-    // place's as the sidebar says it.
-    let path = |folder: &Path| Words::as_written(skwir_core::os_path::from_home(folder));
+    // A folder's path is said as a person reads it; its title is its name,
+    // or a place's as the sidebar says it: each drawn alone, its controls
+    // shown.
+    let path = |folder: &Path| skwir_core::os_path::from_home(folder).alone();
     let chosen_before = || {
         words!(
             print_chosen_before = "Chosen before",
@@ -788,7 +789,7 @@ fn save_as(offers: &Offers) -> Field {
         .as_deref()
         .or(saved.folder.as_deref())
         .map_or_else(String::new, |folder| {
-            let mut written = skwir_core::os_path::from_home(folder);
+            let mut written = skwir_core::os_path::from_home(folder).into_field();
             if !written.ends_with(std::path::is_separator) {
                 written.push(std::path::MAIN_SEPARATOR);
             }
@@ -2072,5 +2073,61 @@ mod tests {
             super::save_as(&offered(last.dest)).value,
             ex("/example/notes/")
         );
+    }
+
+    /// The folders Save as offers are drawn with their controls shown,
+    /// never obeyed, by their names and their paths; what is put in the
+    /// field is the path as it is, which the field shows so itself.
+    #[test]
+    fn save_as_offers_folders_with_their_controls_shown() {
+        let offers = offers();
+        let spoof = PathBuf::from(ex("/example/a\u{202e}gpj.exe"));
+        let offered = Offers {
+            saved: Saved {
+                recent: vec![spoof.clone()],
+                places: vec![(
+                    "b\u{202e}txt.exe".to_owned(),
+                    PathBuf::from(ex("/example/b")),
+                )],
+                ..offers.saved.clone()
+            },
+            ..offers.clone()
+        };
+        let field = super::save_as(&offered);
+        let Kind::Save { folders, .. } = &field.kind else {
+            panic!("a file to write");
+        };
+        let said: Vec<(String, String, String)> = folders
+            .iter()
+            .map(|c| (c.value.clone(), c.title.say(), c.detail.say()))
+            .collect();
+        let shown = ex("/example/a⟨RLO⟩gpj.exe");
+        let chosen = said
+            .iter()
+            .find(|(value, ..)| *value == ex("/example/a\u{202e}gpj.exe"))
+            .expect("offered as written");
+        assert!(chosen.1.contains("a⟨RLO⟩gpj.exe"), "{chosen:?}");
+        assert!(chosen.2.contains(&shown), "{chosen:?}");
+        let place = said
+            .iter()
+            .find(|(value, ..)| *value == ex("/example/b"))
+            .expect("the place");
+        assert!(place.1.contains("b⟨RLO⟩txt.exe"), "{place:?}");
+        for (_, title, detail) in &said {
+            assert!(
+                !title.contains('\u{202e}') && !detail.contains('\u{202e}'),
+                "{said:?}"
+            );
+        }
+        // A folder typed that is none is said so too.
+        let typed = ex("/example/a\u{202e}gpj.exe/x");
+        let chosen = super::chosen(
+            &values(&[(TO, "pdf"), (LAYOUT, "as_shown"), (SAVE_AS, &typed)]),
+            &offers,
+        )
+        .unwrap();
+        let refused = into_folder(chosen, &typed, &offers.saved, &|_| Some(false)).unwrap_err();
+        assert!(refused.english().contains(&shown), "{refused:?}");
+        assert!(!refused.say().contains('\u{202e}'), "{refused:?}");
     }
 }

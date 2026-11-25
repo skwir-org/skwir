@@ -284,7 +284,7 @@ fn a_search_groups_by_the_folder_each_file_is_in() {
             .split('/')
             .filter(|name| !name.is_empty())
             .fold(root.clone(), |path, name| path.join(name));
-        skwir_core::os_path::from_home(&path)
+        skwir_core::os_path::from_home(&path).controls_shown()
     };
     assert_eq!(
         shown(&app, pane),

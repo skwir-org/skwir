@@ -1462,7 +1462,7 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
         };
         records.push(serde_json::json!({
             "id": format!("nearly-{n}"),
-            "name": home_shown(&nearly.what),
+            "name": home_shown(&nearly.what).controls_shown(),
             "detail": detail.to_data(),
             "wraps": true,
             "fixed": true,
@@ -1515,7 +1515,7 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
         };
         records.push(serde_json::json!({
             "id": format!("exclusion-{}-{}", looked.source.key(), looked.folder.display()),
-            "name": home_shown(&looked.folder),
+            "name": home_shown(&looked.folder).controls_shown(),
             "detail": held.to_data(),
             "fixed": true,
         }));
@@ -1529,7 +1529,7 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
         if folders.peek().is_none() || report.looked.iter().any(|l| l.source == source && l.there) {
             continue;
         }
-        let names: Vec<String> = folders.map(|looked| home_shown(&looked.folder)).collect();
+        let names: Vec<_> = folders.map(|looked| home_shown(&looked.folder)).collect();
         records.push(serde_json::json!({
             "id": format!("source-{}", source.key()),
             "name": source.short_words().to_data(),
@@ -1547,8 +1547,9 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
 }
 
 /// `path` as the settings show it: from `~` where it is under the home
-/// folder (`os_path::from_home`, the one way it is said).
-pub(crate) fn home_shown(path: &std::path::Path) -> String {
+/// folder (`os_path::from_home`, the one way it is said), its controls
+/// shown wherever it goes.
+pub(crate) fn home_shown(path: &std::path::Path) -> skwir_core::os_path::SaidPath {
     skwir_core::os_path::from_home(path)
 }
 

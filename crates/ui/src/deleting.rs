@@ -26,6 +26,7 @@ use gpui::{
 use skwir_core::entry::keys;
 use skwir_core::fs::count::{self, Count};
 use skwir_core::op::{Change, PlanId};
+use skwir_core::os_path::SaidPath;
 use skwir_core::words;
 use skwir_core::words::{List, Name, Size, Words};
 use skwir_core::{CancelToken, EntryKind, Plan};
@@ -92,7 +93,7 @@ struct Row {
     name: SharedString,
     /// The folder it is in, written as the address takes it (`~/…`); for
     /// an item of a trash, the one it came from once read.
-    folder: Option<SharedString>,
+    folder: Option<SaidPath>,
     /// In a trash: its name and folder are what its record says.
     trashed: bool,
     /// What a step that deletes nothing says it does: shown as it is.
@@ -112,7 +113,7 @@ pub struct Deleting {
     rows: Vec<Row>,
     /// The folder every row is in, known when asked: said once, under the
     /// list, rather than on each row.
-    one_folder: Option<SharedString>,
+    one_folder: Option<SaidPath>,
     /// Each row says its folder: they are not all in one.
     folders: bool,
     /// The rows that are folders counted by themselves, once the count is
@@ -139,20 +140,19 @@ impl Drop for Deleting {
 }
 
 /// `dir` written as the address takes it: the home folder as `~`, a
-/// remote's folder as its address (`sftp://me@host/docs`).
+/// remote's folder as its address (`sftp://me@host/docs`); its controls
+/// shown wherever it goes, never obeyed.
 fn written(
     dir: &Path,
     home: Option<&Path>,
     remotes: &[(PathBuf, skwir_core::Location)],
-) -> SharedString {
+) -> SaidPath {
     if let Some((point, address)) = remotes.iter().find(|(point, _)| dir.starts_with(point))
         && let Ok(below) = dir.strip_prefix(point)
     {
-        return skwir_core::remotes::address_below(address, below)
-            .to_string()
-            .into();
+        return SaidPath::address(&skwir_core::remotes::address_below(address, below));
     }
-    skwir_core::os_path::from_home_given(dir, home).into()
+    skwir_core::os_path::from_home_given(dir, home)
 }
 
 /// Its name as a row draws it alone, its controls shown (`DrawnName`).
@@ -178,13 +178,15 @@ impl Deleting {
         let mut rows = Vec::with_capacity(plan.len());
         let mut paths = Vec::with_capacity(plan.len());
         // A folder is written once for the rows one after another in it.
-        let mut last: Option<(PathBuf, SharedString)> = None;
+        let mut last: Option<(PathBuf, SaidPath)> = None;
         for (at, step) in plan.steps.iter().enumerate() {
             let path = match step.describe() {
                 Change::Delete { path } => path,
                 other => {
                     rows.push(Row {
-                        name: other.to_string().into(),
+                        // In the reader's language, its paths as paths
+                        // are said; its `Display` is a log's English.
+                        name: other.words(None).say().into(),
                         folder: None,
                         trashed: false,
                         other: true,
@@ -449,12 +451,12 @@ impl Deleting {
         if row.companions.is_empty() {
             return None;
         }
-        // One path a line, each as the address writes it: a block of
-        // paths, as written, not a list said in words.
-        let paths: Vec<SharedString> = row
+        // One path a line, each as the address writes it, its controls
+        // shown: a block of paths, as written, not a list said in words.
+        let paths: Vec<String> = row
             .companions
             .iter()
-            .map(|path| written(path, self.home.as_deref(), &self.remotes))
+            .map(|path| written(path, self.home.as_deref(), &self.remotes).controls_shown())
             .collect();
         let said = words!(
             deleting_deleted_with = "{ $count ->
@@ -485,7 +487,7 @@ impl Deleting {
             [one] if one.trashed => Some(match &one.folder {
                 Some(from) => words!(
                     deleting_in_trash_from = "In the trash, from { $folder }",
-                    folder = from.to_string(),
+                    folder = from,
                     note = "Under what a deletion takes: an item of the trash, and the folder \
                             it was put there from, as the address writes it (~/Documents)."
                 ),
@@ -495,7 +497,7 @@ impl Deleting {
             _ => self.one_folder.as_ref().map(|dir| {
                 words!(
                     deleting_in_folder = "In { $folder }",
-                    folder = dir.to_string(),
+                    folder = dir,
                     note = "Under what a deletion takes: the folder all its items are in, as \
                             the address writes it (~/Documents)."
                 )
@@ -912,7 +914,7 @@ fn rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<
                 });
                 let mut said = Words::as_written(row.name.to_string());
                 let facts = [
-                    folder.as_ref().map(|f| Words::as_written(f.to_string())),
+                    folder.clone().map(SaidPath::alone),
                     with,
                     Some(weight.clone()),
                 ];
@@ -964,7 +966,7 @@ fn rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis_middle(),
-                            folder,
+                            folder.controls_shown(),
                         )
                     }))
                     .child(
@@ -1071,13 +1073,42 @@ mod tests {
             skwir_core::Location::new("sftp", "//me@example.com/"),
         )];
         assert_eq!(
-            written(&point.join("home/Two Words"), None, &remotes).as_ref(),
+            written(&point.join("home/Two Words"), None, &remotes).controls_shown(),
             "sftp://me@example.com/home/Two Words"
         );
         assert_eq!(
-            written(std::path::Path::new("/data"), None, &remotes).as_ref(),
+            written(std::path::Path::new("/data"), None, &remotes).controls_shown(),
             "/data"
         );
+        // Its controls shown there too, never obeyed.
+        assert_eq!(
+            written(&point.join("a\u{202e}gpj.exe"), None, &remotes).controls_shown(),
+            "sftp://me@example.com/a⟨RLO⟩gpj.exe"
+        );
+    }
+
+    /// Where the items asked about are is said with its controls shown,
+    /// never obeyed: a folder `a` + U+202E + `gpj.exe` never reads
+    /// `aexe.jpg`, under the list, on a row, or in what goes with an item.
+    #[test]
+    fn where_they_are_shows_its_controls() {
+        let dir = PathBuf::from("/data/a\u{202e}gpj.exe");
+        let shown = "/data/a⟨RLO⟩gpj.exe";
+        let two = plan(vec![dir.join("x"), dir.join("y")]);
+        let (listed, _) = Deleting::of(&two, Vec::new(), &[], CancelToken::new());
+        let summary = listed.summary();
+        assert_eq!(summary.english(), format!("In {shown} · Counting…"));
+        assert!(!summary.say().contains('\u{202e}'), "{summary:?}");
+        let apart = plan(vec![dir.join("x"), PathBuf::from("/elsewhere/y")]);
+        let (mut listed, _) = Deleting::of(&apart, Vec::new(), &[], CancelToken::new());
+        assert!(listed.folders);
+        let folder = listed.rows[0].folder.as_ref().unwrap();
+        assert_eq!(folder.controls_shown(), shown);
+        assert_eq!(folder.clone().alone().say_plain(), shown);
+        listed.rows[0].companions = vec![dir.join("x.xmp")];
+        let with = listed.deleted_with(&listed.rows[0]).unwrap();
+        assert!(with.contains("a⟨RLO⟩gpj.exe"), "{with}");
+        assert!(!with.contains('\u{202e}'), "{with}");
     }
 
     use super::{Deleting, Kind, read, written};
@@ -1269,7 +1300,13 @@ mod tests {
         assert_eq!(listed.rows[1].companions, std::slice::from_ref(&xmp));
         assert_eq!(
             listed.deleted_with(&listed.rows[1]).as_deref(),
-            Some(format!("Deleted with it:\n{}", written(&xmp, home.as_deref(), &[])).as_str()),
+            Some(
+                format!(
+                    "Deleted with it:\n{}",
+                    written(&xmp, home.as_deref(), &[]).controls_shown()
+                )
+                .as_str()
+            ),
             "the mark after its name says where its companions are"
         );
         assert_eq!(listed.deleted_with(&listed.rows[0]), None);
@@ -1322,7 +1359,10 @@ mod tests {
         );
         assert_eq!(
             listed.summary().english(),
-            format!("In the trash, from {from} · 4\u{a0}B in 1 file")
+            format!(
+                "In the trash, from {} · 4\u{a0}B in 1 file",
+                from.controls_shown()
+            )
         );
     }
 }
