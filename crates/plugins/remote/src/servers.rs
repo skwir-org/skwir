@@ -462,26 +462,26 @@ fn write_entry(file: &Path, name: &str, address: &Address) -> anyhow::Result<()>
     Ok(())
 }
 
-/// A file of `folder` no entry has yet, named after `name`: what a file's
-/// name cannot hold made `_`, ` 2`, ` 3` after a name taken.
+/// A file of `folder` no entry has yet, named after `name`, ` 2`, ` 3`
+/// after a name taken: a name this system takes (`op::name_from`, `_` for
+/// what it refuses), and one KDE lists and opens. KDE lists its network
+/// folders' `*.desktop` but its hidden files (a name begun with a dot,
+/// which takes `server` before it), and opens each as `remote:/` and its
+/// name joined as text, which it reads back as a URL (KIO's
+/// `RemoteImpl::createEntry`): `?` and `#` would end its path there, and
+/// `%` begin an escape, so they are `_` too, on every system.
 fn free_name(folder: &Path, name: &str) -> PathBuf {
-    let base: String = name
-        .chars()
-        .map(|c| {
-            if c == '/' || c == '\\' || c.is_control() {
-                '_'
-            } else {
-                c
-            }
-        })
-        .take(80)
-        .collect();
-    let base = base.trim();
-    let base = if base.is_empty() || base.starts_with('.') {
-        format!("server{base}")
+    let cut: String = name.chars().take(80).collect();
+    let cut = cut.trim();
+    let base = if cut.is_empty() || cut.starts_with('.') {
+        format!("server{cut}")
     } else {
-        base.to_owned()
+        cut.to_owned()
     };
+    let base: String = skwir_core::op::name_from(&base, '_')
+        .chars()
+        .map(|c| if matches!(c, '?' | '#' | '%') { '_' } else { c })
+        .collect();
     (1..=1000)
         .map(|n| {
             if n == 1 {
@@ -597,7 +597,12 @@ mod tests {
         let file = free_name(folder.path(), name);
         assert_eq!(
             file.file_name().unwrap().to_str().unwrap(),
-            "Ünïcode \\ it's_new.desktop".replace('\\', "_")
+            if cfg!(windows) {
+                "Ünïcode _ it's_new.desktop"
+            } else {
+                "Ünïcode \\ it's\nnew.desktop"
+            },
+            "what this system refuses in a name, `_`"
         );
         write_entry(&file, name, &address).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
@@ -629,6 +634,35 @@ mod tests {
                 .unwrap(),
             "server.hidden.desktop"
         );
+        let named = |name: &str| {
+            free_name(folder.path(), name)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned()
+        };
+        // Windows refuses `:` (and a device's name); KDE's `remote:/` reads
+        // `?`, `#` and `%` as a URL's.
+        assert_eq!(
+            named("NAS: photos"),
+            if cfg!(windows) {
+                "NAS_ photos.desktop"
+            } else {
+                "NAS: photos.desktop"
+            }
+        );
+        assert_eq!(named("nas #2? 100%41"), "nas _2_ 100_41.desktop");
+        assert_eq!(
+            named("con"),
+            if cfg!(windows) {
+                "_con.desktop"
+            } else {
+                "con.desktop"
+            }
+        );
+        assert_eq!(named("  "), "server.desktop");
+        assert_eq!(named("a/b"), "a_b.desktop");
     }
 
     #[test]
