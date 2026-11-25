@@ -1605,6 +1605,13 @@ U+0306 against й); exclusions by name, path completion, `jump`'s
 matcher and the save dialog's name still match one form, an excluded
 name with an accent typed composed missing a folder written decomposed.
 
+**Release tooling, from the review before 0.7.0**: `std::env::current_exe`
+is not refused by clippy, though what a package carries is looked for
+from `folders::program` alone (about 35 `#[allow]`s would be needed, 25
+in tests); `just prune` does not cover target/cross, whose Wine build
+is 42 GB; the tap's cask job installs the app but runs none of its
+helpers through Homebrew's link.
+
 **Tests under Wine** (2026-11-24, evening; fixed that night). The query
 plugin's 13 failures and the 49 of nine other crates are fixed, and
 `release-check` runs every crate's tests under Wine (ADR-053 amended).
@@ -1646,7 +1653,14 @@ next drive plugged in or the next run; with `skwird.start` off and no
 engine running, Yes says the drive is not indexed, and nothing waits to
 keep it later; tried against the fake engine only, never with a real
 drive or in a window, and Eject's release never against a real
-engine.
+engine. From the review before 0.7.0: Eject's own call to the indexes
+has no test, its mounts, flush and unmount being the platform's with no
+seam in the places plugin (an announced unmount's is tested); the
+client finds skwird's system service first, which keeps no drive, so
+where it runs the user's own engine is never asked about drives nor
+asked to let go of one; a question closed in the window still waits
+for the next drive or run, `App::ask_quietly` telling no one of a
+close (it could return the question's number).
 
 **From the review of 2026-11-24** (45 findings on the night's work, all
 fixed but these). Usage from an index: a file of several names that
