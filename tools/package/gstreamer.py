@@ -375,7 +375,13 @@ def framework(runtime, version):
     for entry in ("lib", "libexec"):
         (runtime / entry).rename(inside / entry)
     (inside / "Resources").mkdir()
-    (inside / "GStreamer").symlink_to("lib/libgstreamer-1.0.0.dylib")
+    # libgstreamer is the main binary, moved there, and lib/ names it by a
+    # link, never the other way: rcodesign seals a bundle's resources, then
+    # signs its main binary, so a main binary that is a link to one of them
+    # changes it once sealed, and macOS refuses the framework
+    # (`codesign --verify --deep --strict`, every Mac build to 0.7.0).
+    (inside / "lib/libgstreamer-1.0.0.dylib").rename(inside / "GStreamer")
+    (inside / "lib/libgstreamer-1.0.0.dylib").symlink_to("../GStreamer")
     (runtime / "GStreamer.framework/Versions/Current").symlink_to("1.0")
     for entry in ("GStreamer", "Resources"):
         (runtime / "GStreamer.framework" / entry).symlink_to(f"Versions/Current/{entry}")

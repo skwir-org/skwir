@@ -151,7 +151,10 @@ framework = pathlib.Path(sys.argv[1])
 root = framework / "Versions/1.0"
 info = plistlib.loads((framework / "Resources/Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "GStreamer" and info["CFBundlePackageType"] == "FMWK", info
-assert os.readlink(root / "GStreamer") == "lib/libgstreamer-1.0.0.dylib", "the framework's main binary"
+# libgstreamer is the main binary, a file, and lib/ names it by a link
+# (the seal below says why).
+assert (root / "GStreamer").is_file() and not (root / "GStreamer").is_symlink(), "the framework's main binary"
+assert os.readlink(root / "lib/libgstreamer-1.0.0.dylib") == "../GStreamer", "libgstreamer, named in lib/"
 macho = lambda p: p.read_bytes()[:4] in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
 files = sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink() and macho(p))
 for path in files:
@@ -173,34 +176,88 @@ if llvm-otool -L "$app/MacOS/skwir-archive-worker" | grep -q libarchive; then
     exit 1
 fi
 echo "ok: skwir-archive-worker carries its own libarchive"
-# The seal, checked here as macOS checks it (rcodesign's `verify` reads no
-# bundle): the main program's signature binds Info.plist and the list of
-# resources; that list holds each file's digest, and each program and
-# library (PDFium, GStreamer's) is signed in turn.
-python3 - "$app" "$scratch" <<'EOF'
-import base64, hashlib, pathlib, plistlib, re, subprocess, sys
-app, scratch = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+# The seals, checked here as macOS checks them (`codesign --verify --deep
+# --strict`; rcodesign's `verify` reads no bundle): the app and each bundle
+# it holds (GStreamer's framework). A bundle's main program binds its
+# Info.plist and its list of resources; that list holds each file's
+# digest, each link's target and each program or bundle nested in it by
+# its code's hash; nothing else is there. A main program that is a link
+# fails it: rcodesign seals what the link names as a resource, then signs
+# it again as the main program (every Mac build to 0.7.0, refused by a
+# Mac on 2026-11-25).
+python3 - "$app" <<'EOF'
+import hashlib, os, pathlib, plistlib, re, subprocess, sys
+app = pathlib.Path(sys.argv[1])
 macho = lambda p: p.read_bytes()[:4] in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
 codes = [p for p in [*(app / "MacOS").rglob("*"), *(app / "Frameworks").rglob("*")]
          if p.is_file() and not p.is_symlink() and macho(p)]
-signature = lambda code: subprocess.run(["rcodesign", "print-signature-info", str(code)],
-                                        check=True, capture_output=True, text=True).stdout
+signatures = {}
+def signature(code):
+    code = code.resolve()
+    if code not in signatures:
+        signatures[code] = subprocess.run(["rcodesign", "print-signature-info", str(code)],
+                                          check=True, capture_output=True, text=True).stdout
+    return signatures[code]
 for code in codes:
     assert "CodeSignatureFlags(ADHOC)" in signature(code), f"{code.relative_to(app)}: not signed"
-main = signature(app / "MacOS/skwir")
-slots = dict(re.findall(r"'(Info|Resources) \(\d\): ([0-9a-f]{64})'", main))
+# The hash a seal names a nested program by: its code directory's digest, cut to 20 bytes.
+def cdhash(code):
+    found = re.search(r"slot: CodeDirectory \(0\)\n(?:[ \t]+\w+: .*\n)*?[ \t]+sha256: ([0-9a-f]{64})", signature(code))
+    assert found, f"{code.relative_to(app)}: no code directory"
+    return bytes.fromhex(found[1])[:20]
 sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-assert "identifier: org.skwir.skwir" in main, "the main program is not org.skwir.skwir"
-assert slots.get("Info") == sha(app / "Info.plist"), "Info.plist is not the one signed"
-resources = app / "_CodeSignature/CodeResources"
-assert slots.get("Resources") == sha(resources), "the resources' list is not the one signed"
-listed = plistlib.loads(resources.read_bytes())["files2"]
+def bundle(root):
+    """A bundle's Info.plist and its main program: an app's in MacOS, a framework's beside it."""
+    plist = root / "Info.plist" if (root / "Info.plist").exists() else root / "Resources/Info.plist"
+    executable = plistlib.loads(plist.read_bytes())["CFBundleExecutable"]
+    return plist, (root / "MacOS" / executable if (root / "MacOS").is_dir() else root / executable)
+def nested(path):
+    """What a seal's nested entry names: a program, or a bundle by its main program."""
+    if path.is_dir():
+        for current in (path / "Versions/Current", path):
+            if (current / "_CodeSignature/CodeResources").exists():
+                return bundle(current)[1]
+    return path
+roots = [app, *sorted(p.parent.parent for p in (app / "Frameworks").rglob("_CodeSignature/CodeResources"))]
 checked = 0
-for path, entry in listed.items():
-    if isinstance(entry, dict) and "hash2" in entry:
-        assert entry["hash2"] == hashlib.sha256((app / path).read_bytes()).digest(), f"{path} changed"
+for root in roots:
+    where = "the app" if root == app else str(root.relative_to(app))
+    plist, main_path = bundle(root)
+    assert not main_path.is_symlink(), \
+        f"{main_path.relative_to(app)} is a link: rcodesign signs what it names again once that is sealed"
+    main = signature(main_path)
+    slots = dict(re.findall(r"'(Info|Resources) \(\d\): ([0-9a-f]{64})'", main))
+    resources = root / "_CodeSignature/CodeResources"
+    assert slots.get("Info") == sha(plist), f"{where}: its Info.plist is not the one signed"
+    assert slots.get("Resources") == sha(resources), f"{where}: its list of resources is not the one signed"
+    listed = plistlib.loads(resources.read_bytes())["files2"]
+    for path, entry in listed.items():
+        target = root / path
+        if not isinstance(entry, dict):
+            entry = {"hash": entry}
+        if entry.get("optional") and not os.path.lexists(target):
+            continue
+        if "symlink" in entry:
+            assert target.is_symlink() and os.readlink(target) == entry["symlink"], f"{where}: {path} is not the link sealed"
+        elif "cdhash" in entry:
+            assert cdhash(nested(target)) == entry["cdhash"], f"{where}: {path} is not the code sealed"
+        else:
+            assert not target.is_symlink() and target.is_file(), f"{where}: {path}, sealed, is missing"
+            assert hashlib.sha256(target.read_bytes()).digest() == entry["hash2"], f"{where}: {path} changed since sealed"
         checked += 1
-print(f"ok: signed ad hoc; Info.plist and {checked} resources as sealed, each of {len(codes)} programs and libraries signed")
+    # Strict: nothing there that the seal does not name, but what it leaves
+    # out (the main program, the list itself, an app's Info.plist) and what
+    # is inside what it names as nested.
+    inside = [path for path, entry in listed.items() if isinstance(entry, dict) and "cdhash" in entry]
+    for path in root.rglob("*"):
+        relative = str(path.relative_to(root))
+        if path.is_dir() and not path.is_symlink() or relative in listed:
+            continue
+        if path == main_path or relative.startswith("_CodeSignature/") or relative == "Info.plist" \
+                or any(relative.startswith(n + "/") for n in inside) or path.name == ".DS_Store":
+            continue
+        raise AssertionError(f"{where}: {relative} is there but not sealed")
+print(f"ok: signed ad hoc; {len(roots)} bundles' seals whole ({checked} entries), each of {len(codes)} programs and libraries signed")
 EOF
 echo "$name: looked over (not run: that needs a Mac)"
 # What passed, where a release collects it (SKWIR_PACKAGE_OUT, as try.sh).
