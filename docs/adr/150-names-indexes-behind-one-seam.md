@@ -16,9 +16,10 @@ and the evening's 8 to 12 (the Index page, Kept live, the switch, the
 menu's entry, skwird-check), checked in the release window. Amended the
 same evening (the Index page, steps E and F, the footer's
 words), and again (13 to 15: step D's whole disk as typed, sizes
-and times, the journal), and on 2026-11-24 (16: Usage from folder
-totals; 17: names in both forms; 18: removable volumes let go of
-before an eject; 19: a drive's index asked once, the user's choice). Amends
+and times, the journal), on 2026-11-24 (16: Usage from folder
+totals; 17: names in both forms), and on 2026-11-25 (18: removable
+volumes let go of before an eject; 19: a drive's index asked once, the
+user's choice). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 

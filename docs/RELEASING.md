@@ -353,13 +353,21 @@ After the GitHub release is published:
 - **Homebrew's cask.** `just cask v0.1.0` writes `Casks/skwir.rb` into a
   checkout of `skwir-org/homebrew-tap` (`../homebrew-tap` by default, or
   `just cask v0.1.0 <folder>`): the release's version and its macOS zip's
-  SHA-256, from the bundle's manifest. Review it (`git -C ../homebrew-tap
-  diff`), then commit and push it once the release is published: the
-  tap's workflow installs the zip from the release's page, checks that
-  it is still quarantined and that Homebrew's Caskroom holds it (what a
-  copy reads to stay quiet about new versions, ADR-142), and uninstalls
-  it. A copy of 0.6.1 or before does not read the Caskroom, and would be
-  told of its own updates: the tap holds no cask of one.
+  SHA-256, from the bundle's manifest. Once the release is published:
+  bring the tap's branch holding the cask's workflow job (`cask/skwir`
+  for the first, then the tap's `main`) up to date with the tap's main,
+  write the cask on it, `git add Casks/skwir.rb`, review it (`git -C
+  ../homebrew-tap diff --cached`), then commit and push. The tap's
+  workflow installs the zip from the release's page, checks that it is
+  still quarantined and that Homebrew's Caskroom holds it (what a copy
+  reads to stay quiet about new versions, ADR-142), and uninstalls it. A
+  copy of 0.6.1 or before does not read the Caskroom, and would be told
+  of its own updates: the tap holds no cask of one.
+- **skwird**, Skwir's index of names, is released apart, from its own
+  repository and process (its RELEASING); a release of Skwir that needs a
+  new skwird says so in its notes, linking that release's tag, and goes
+  out the same day as it (0.7.0 with skwird 0.2.0: drives indexed,
+  names in both forms answered from the index).
 
 **The repositories' key, once.** Make it where releases are made, with a
 passphrase, and keep its secret part off the site's host (a backup apart):

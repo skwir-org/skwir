@@ -249,11 +249,15 @@ programs.skwir = {
 
 Searches are answered from an index where skwird, Skwir's index of names,
 runs ([skwir-org/skwird](https://github.com/skwir-org/skwird)). Its flake has
-a Home Manager module of its own, `services.skwird`, the engine for your
-session: enable it beside `programs.skwir`, and skwir finds it, with no
-setting of its own:
+a Home Manager module of its own from its 0.2.0 on, `services.skwird`, the
+engine for your session: enable it beside `programs.skwir`, and skwir finds
+it, with no setting of its own:
 
 ```nix
+# flake.nix
+inputs.skwird.url = "github:skwir-org/skwird";
+
+# your Home Manager configuration
 imports = [
   inputs.skwir.homeManagerModules.default
   inputs.skwird.homeManagerModules.default

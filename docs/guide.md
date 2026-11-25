@@ -575,12 +575,13 @@ it, **+ Filter** adds one, and the text can be typed as is:
   shows the bar above the pane's files wherever it goes (each pane its
   own, as the timeline under them), and says why when it has nothing to
   offer.
-- A search asks the indexes that run to go faster, and always checks the
-  files themselves: skwird, Skwir's own index of names, installed apart
-  ([skwir-org/skwird](https://github.com/skwir-org/skwird)), plocate's
-  database, and the desktop's (Baloo). Each answers only as far as it
-  can prove, which the footer says, and where none answers, the search
-  walks the folders.
+- A search asks the indexes of names that run to go faster, and always
+  checks the files themselves: skwird, Skwir's own, installed apart
+  ([skwir-org/skwird](https://github.com/skwir-org/skwird)), and
+  plocate's database. Each answers only as far as it can prove, which the
+  footer says, and where none answers, the search walks the folders. The
+  desktop's index (Baloo) tells which files hold a tag, which a search
+  then checks.
   - Below a folder skwird keeps live, the answer comes at once and up to
     date. Elsewhere in your home, skwird checks what changed first,
     about half a second.
@@ -590,13 +591,15 @@ it, **+ Filter** adds one, and the text can be typed as is:
   - Settings › Index chooses the folders skwird keeps live (your own
     folders and bookmarks, and those you add, or a folder's Keep Live for
     Searches), whether a search starts skwird where it is not running,
-    and the removable drives it indexes. Skwir asks once as a drive is
-    plugged in while skwird runs, and a drive's menu in the sidebar has
-    Index Its Names. A drive's index stays on this computer, never on
-    the drive, and Eject lets skwird go of it first.
+    and the removable drives it indexes (skwird 0.2.0 or later). Skwir
+    asks once as a drive is plugged in while skwird runs, and a drive's
+    menu in the sidebar has Index Its Names. A drive's index stays on
+    this computer, never on the drive, and Eject lets skwird go of it
+    first.
 - A word is found however its accents are written: `café` typed finds a
   name written with `e` and a combining accent, as macOS's programs
-  often write names, and the other way round.
+  often write names, and the other way round (from skwird's index with
+  skwird 0.2.0 or later; walked with an older one).
 - A search looks at hidden files when the pane shows them (`Ctrl+H`), and
   again as you turn them on or off; `hidden:true` always finds and shows
   them, `hidden:false` never does.
