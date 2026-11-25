@@ -534,6 +534,15 @@ struct Results {
     /// out, the recheck reading what is there now. Let go of once no read
     /// is under way (`Shared::reading`).
     replaced: BTreeMap<PathBuf, u64>,
+    /// The results a recheck moved where a plan put them as it learned the
+    /// plan (`Results::follow`), not told yet, each by the ticket the
+    /// recheck to tell it learned at: its read where the file went tells
+    /// it, renamed where it is another entry there. A hydration asked
+    /// meanwhile is not read (`Shared::hydrate`): read where the file went
+    /// under the id of the name it had, it would stand over the recheck's
+    /// read and keep that id. Read again as asked once told
+    /// (`Results::followed`).
+    moving: HashMap<EntryId, u64>,
 }
 
 /// A row asked to be read (`Results::asked`).
@@ -647,7 +656,15 @@ impl Results {
             self.by_path.remove(&*path);
         }
         self.filled.remove(&id);
+        self.moving.remove(&id);
         Some(path)
+    }
+
+    /// Whether a result other than `id` is at `path`.
+    fn others_at(&self, id: EntryId, path: &Path) -> bool {
+        self.by_path
+            .get(path)
+            .is_some_and(|ids| ids.as_slice().iter().any(|other| *other != id))
     }
 
     /// Every result taken out: their ids. The rows asked to be read stay
@@ -656,6 +673,8 @@ impl Results {
     fn clear(&mut self) -> Vec<EntryId> {
         self.by_path.clear();
         self.filled.clear();
+        // The rechecks to tell them were the old walk's, ended with it.
+        self.moving.clear();
         for asked in self.asked.values_mut() {
             asked.reading = false;
         }
@@ -729,6 +748,65 @@ impl Results {
         }
         asked.reading = false;
         None
+    }
+
+    /// The results at or below the paths a plan's `changes` say, each
+    /// with where it was and what became of it there (`follow`), learned
+    /// by the recheck that took `learned`. In memory, before anything is
+    /// read, as the shelf follows its items: a result moved is held where
+    /// the plan put it from now on, so a read where it was is not about
+    /// its row (`holds`), and is the recheck's to tell (`moving`), its read
+    /// there telling it renamed. One a recheck before still moves is this
+    /// one's to tell, whose read of it is the later. Returns, besides, the
+    /// results this recheck is to tell (`followed`).
+    fn follow(
+        &mut self,
+        changes: &[Change],
+        follow: &skwir_core::op::Follow<'_>,
+        learned: u64,
+    ) -> (
+        Vec<(EntryId, PathBuf, skwir_core::op::Through)>,
+        Vec<EntryId>,
+    ) {
+        let mut picked = HashSet::new();
+        let found: Vec<(EntryId, PathBuf)> = changes
+            .iter()
+            .flat_map(Change::paths)
+            .flat_map(|path| self.under(path))
+            .filter(|(id, _)| picked.insert(*id))
+            .map(|(id, path)| (id, path.to_path_buf()))
+            .collect();
+        let mut told = Vec::new();
+        let followed = found
+            .into_iter()
+            .map(|(id, path)| {
+                let through = follow.through(&path);
+                if let Some(at) = through.at.as_ref().filter(|at| **at != path) {
+                    // Its fields kept (`insert`): nothing is told yet.
+                    self.insert(id, at.clone(), false);
+                    self.moving.insert(id, learned);
+                    told.push(id);
+                } else if let Some(by) = self.moving.get_mut(&id) {
+                    *by = learned;
+                    told.push(id);
+                }
+                (id, path, through)
+            })
+            .collect();
+        (followed, told)
+    }
+
+    /// The recheck that learned at `learned` is done with `id`, which it
+    /// was to tell (`moving`): told (renamed, taken out, told anew), its
+    /// mark went with it; left out behind a later read of where it is, the
+    /// mark goes now, and its row, asked meanwhile, is read again there,
+    /// beginning at `floor` at least.
+    fn followed(&mut self, id: EntryId, learned: u64, floor: u64) -> Option<(EntryId, Priority)> {
+        if self.moving.get(&id) != Some(&learned) {
+            return None;
+        }
+        self.moving.remove(&id);
+        self.told(id, floor)
     }
 
     /// A walk ended: what it did not find is no longer asked for.
@@ -2252,9 +2330,12 @@ impl Shared {
     /// What the changes say is learned first, with a ticket taken as it
     /// begins (`Results::learn`): a read begun before (a hydration, the
     /// walk's matches held in its batch) that found what was there then is
-    /// left out, whenever it is told. Each path read again takes a ticket
-    /// of its own, and what it found is applied under the lock it is sent
-    /// under, unless a read begun later told it already.
+    /// left out, whenever it is told. A result they moved is held where
+    /// they put it at once, under the same lock, and is this recheck's to
+    /// tell (`Results::follow`): a read of where it was, begun since, is
+    /// not about its row. Each path read again takes a ticket of its own,
+    /// and what it found is applied under the lock it is sent under,
+    /// unless a read begun later told it already.
     fn recheck(&self, location: &Location, changes: &[Change], cancel: &CancelToken) {
         #[cfg(test)]
         let _ended = Rechecked(&self.counted.rechecked.0);
@@ -2271,23 +2352,21 @@ impl Shared {
         let learned = self.tickets.take();
         // The results a change may move, take away or change: those at or
         // below a path it says (`Follow::through` follows a path through
-        // the changes that name it or a folder above it). Followed outside
-        // the lock, which `path_of` waits for under the workspace's.
-        let results: Vec<(EntryId, PathBuf)> = {
+        // the changes that name it or a folder above it). Followed under
+        // the lock it is learned under, in memory, as the results it moves
+        // are moved again once told: what reads them meanwhile finds them
+        // where the plan put them. Cancelled before it tells them, the
+        // walk's results are taken out with what it was to tell
+        // (`Results::clear`).
+        let follow = skwir_core::op::Follow::new(changes);
+        let (results, moving) = {
             let _walk = self.walk.lock();
             if cancel.is_cancelled() {
                 return;
             }
             let mut results = self.results.lock();
             results.learn(changes, learned);
-            let mut picked = HashSet::new();
-            changes
-                .iter()
-                .flat_map(Change::paths)
-                .flat_map(|path| results.under(path))
-                .filter(|(id, _)| picked.insert(*id))
-                .map(|(id, path)| (id, path.to_path_buf()))
-                .collect()
+            results.follow(changes, &follow, learned)
         };
         #[cfg(test)]
         {
@@ -2297,16 +2376,15 @@ impl Shared {
         }
         // Results the changes took away, where they were.
         let mut gone: Vec<(EntryId, PathBuf)> = Vec::new();
-        // Paths to read again, with the result each was and where, if one,
-        // and whether what the providers say of it changed (a field set).
+        // Paths to read again, with the result held there, if one, and
+        // whether what the providers say of it changed (a field set).
         let mut again: Vec<(PathBuf, Option<(EntryId, PathBuf)>, bool)> = Vec::new();
-        let follow = skwir_core::op::Follow::new(changes);
-        for (id, path) in results {
-            let through = follow.through(&path);
+        for (id, path, through) in results {
             match through.at {
                 None => gone.push((id, path)),
+                // Held where it went (`Results::follow`).
                 Some(at) if through.moved || through.changed => {
-                    again.push((at, Some((id, path)), through.changed));
+                    again.push((at.clone(), Some((id, at)), through.changed));
                 }
                 Some(_) => {}
             }
@@ -2376,14 +2454,14 @@ impl Shared {
                 }
             }
             for (path, was, matched, ticket) in read {
-                // The result as it was, unless another read moved it since.
-                let was = was.filter(|(id, old)| results.holds(*id, old));
+                // The result held there, unless another read moved it since.
+                let was = was.filter(|(id, at)| results.holds(*id, at));
                 if !results.stands(&path, ticket) {
-                    // A read of `path` begun later told it: what this one
-                    // says of where the result was still holds.
-                    if let Some((id, old)) = was
-                        && old != path
-                        && results.stands(&old, learned)
+                    // A read of `path` begun later told it: one that found
+                    // the file there under the id it has there (a walk's),
+                    // the result held there where the plan put it goes.
+                    if let Some((id, at)) = was
+                        && results.others_at(id, &at)
                     {
                         results.remove(id);
                         removed.push(id);
@@ -2408,6 +2486,11 @@ impl Shared {
                     }
                     (None, None) => {}
                 }
+            }
+            // What it was to tell and did not (left out behind a later
+            // read), let go of: asked meanwhile, read where it is.
+            for id in moving {
+                asked_again.extend(results.followed(id, learned, floor));
             }
             if !removed.is_empty() {
                 self.tx.send(ListingEvent::Removed(removed));
@@ -2536,11 +2619,22 @@ impl Shared {
     /// at, unless a read of that path begun later told it
     /// (`Results::stands`). One left out behind a tell that said less (a
     /// stat alone) is read again, as the pane asked (`Results::answered`).
+    /// One a plan moved is not read until its recheck told it
+    /// (`Results::moving`).
     fn hydrate(&self, ids: &[EntryId], cancel: &CancelToken) {
         let items: Vec<(EntryId, PathBuf)> = {
             let mut results = self.results.lock();
             let mut items = Vec::with_capacity(ids.len());
             for &id in ids {
+                // Moved by a plan, a recheck's to tell (`Results::moving`):
+                // its read ends, and it is read again once told
+                // (`Results::told`, `followed`).
+                if results.moving.contains_key(&id) {
+                    if let Some(asked) = results.asked.get_mut(&id) {
+                        asked.reading = false;
+                    }
+                    continue;
+                }
                 match results.get(id) {
                     Some(path) => items.push((id, path.to_path_buf())),
                     // No result now: its read ends, and told again, it is
@@ -3606,5 +3700,70 @@ mod tests {
         let results = open.shared.results.lock();
         let found: Vec<&Path> = results.by_id.values().map(|p| &**p).collect();
         assert_eq!(found, [b.as_path()]);
+    }
+
+    /// A row a plan renamed, drawn for the first time while the recheck
+    /// reads the file where it went (its tags read last, held), is asked
+    /// for then: not read where the file was and taken out, it is renamed
+    /// by the recheck, so it keeps its place and its selection.
+    #[test]
+    fn a_row_asked_for_as_a_recheck_reads_its_rename_follows_it() {
+        let tmp = home_tempdir();
+        let root = tmp.path().join("root d'été");
+        std::fs::create_dir_all(&root).unwrap();
+        let (a, b) = (root.join("it's à.tagged"), root.join("it's b à.tagged"));
+        std::fs::write(&a, "x").unwrap();
+        // Tags what ends in `.tagged`, holding nothing until armed.
+        let held = Arc::new(Held(Mutex::new(None)));
+        let metadata = Arc::new(skwir_core::metadata::MetadataProviders::default());
+        metadata.register("held", Arc::clone(&held) as _);
+        let (open, location) = open_with(&root, "tag:work", metadata);
+        assert_eq!(until_complete(&open), (1, 0));
+        let id = result_at(&open, &a);
+        let searches = followed(&open, location);
+
+        let (reached, held_there) = crossbeam_channel::bounded(1);
+        let (release, waits) = crossbeam_channel::bounded(1);
+        *held.0.lock() = Some((reached, waits));
+        std::fs::rename(&a, &b).unwrap();
+        searches.changed(&[Change::Rename {
+            from: a.clone(),
+            to: b.clone(),
+        }]);
+        // The plan learned, the recheck held as it reads where it went.
+        held_there.recv_timeout(Duration::from_secs(10)).unwrap();
+        open.hydrate(&[id], Priority::Visible);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while open
+            .shared
+            .results
+            .lock()
+            .asked
+            .get(&id)
+            .is_none_or(|asked| asked.reading)
+        {
+            assert!(Instant::now() < deadline, "the hydration ends");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        release.send(()).unwrap();
+        assert!(open.shared.ctx.scheduler.wait_idle(Duration::from_secs(10)));
+        let late: Vec<ListingEvent> = open.rx.try_iter().collect();
+        assert!(
+            !late
+                .iter()
+                .any(|event| matches!(event, ListingEvent::Removed(ids) if ids.contains(&id))),
+            "not taken out: {late:?}"
+        );
+        let renamed = late.iter().find_map(|event| match event {
+            ListingEvent::Renamed(pairs) => pairs
+                .iter()
+                .find(|(old, _)| *old == id)
+                .map(|(_, entry)| entry.id),
+            _ => None,
+        });
+        let renamed = renamed.unwrap_or_else(|| panic!("renamed: {late:?}"));
+        assert_eq!(open.path_of(renamed), Some(b));
+        assert_eq!(open.path_of(id), None);
+        assert!(open.shared.results.lock().moving.is_empty(), "let go of");
     }
 }
