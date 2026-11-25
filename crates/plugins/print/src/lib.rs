@@ -1625,11 +1625,12 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
 
 /// What the PDF of `location`'s listing is named: after the folder, a
 /// folder without a name of its own (the root, a drive) after what it is,
-/// never its path; any other place after its name (`named`), a separator
-/// and what this system keeps from names (Windows' `: * ? " < > |`, which
-/// a search's terms and a filter hold) a dash, control characters left
-/// out, else, a name this system refuses still, after what it is. Cut to
-/// what a folder takes, as a copy's name is (`kept_name`).
+/// never its path; any other place after its name (`named`), control
+/// characters left out, what this system refuses in a name (a separator,
+/// Windows' `: * ? " < > |`, which a search's terms and a filter hold) a
+/// dash (`op::name_from`), else, a name this system refuses still, after
+/// what it is. Cut to what a folder takes, as a copy's name is
+/// (`kept_name`).
 fn listing_name(location: &Location, named: &str) -> OsString {
     let plain = || OsString::from("Listing.pdf");
     let own = if let Some(folder) = location.path() {
@@ -1638,18 +1639,12 @@ fn listing_name(location: &Location, named: &str) -> OsString {
         };
         own.to_owned()
     } else {
-        let kept: String = named
-            .chars()
-            .filter(|c| !c.is_control())
-            .map(|c| {
-                if c == '/' || std::path::is_separator(c) || kept_from_names(c) {
-                    '-'
-                } else {
-                    c
-                }
-            })
-            .collect();
-        OsString::from(kept.trim())
+        let kept: String = named.chars().filter(|c| !c.is_control()).collect();
+        let kept = kept.trim();
+        if kept.is_empty() {
+            return plain();
+        }
+        OsString::from(op::name_from(kept, '-'))
     };
     if own.is_empty() {
         return plain();
@@ -1661,13 +1656,6 @@ fn listing_name(location: &Location, named: &str) -> OsString {
         return plain();
     }
     name
-}
-
-/// Whether this system keeps `c` from a file's name, beside its
-/// separators and control characters: Windows' `: * ? " < > |`
-/// (`op::valid_file_name`).
-fn kept_from_names(c: char) -> bool {
-    cfg!(windows) && matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')
 }
 
 /// What the PDF of `path` is named: its name with `.pdf` for its own

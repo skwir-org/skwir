@@ -312,18 +312,60 @@ pub fn valid_file_name(name: &OsStr) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What Windows keeps for itself in a name, beside control characters:
+/// the one list of them, which `windows_name_problem` refuses and
+/// `name_from` makes what names take.
+const WINDOWS_KEEPS: [char; 8] = ['\\', ':', '*', '?', '"', '<', '>', '|'];
+
+/// A name this system takes, made from `text` (words a person or a
+/// program wrote: a tag's leaf, a search's title), each character it
+/// refuses in a name made `with` (one every system takes: `_`, `-`): a
+/// separator and NUL everywhere; on Windows also `\ : * ? " < > |` and
+/// control characters. A name of dots alone (`.`, `..`, or none at all),
+/// which names no file of its own, starts with `with`; on Windows, one
+/// ending in a dot or a space ends with `with`, and a device's (`CON`,
+/// `lpt1.log`) starts with it. What it makes, `valid_file_name` takes.
+/// The one way a name is made from words: never a list of characters of
+/// one's own beside it.
+pub fn name_from(text: &str, with: char) -> String {
+    name_from_on(text, with, cfg!(windows))
+}
+
+/// [`name_from`] for Windows or for another system: tested everywhere.
+fn name_from_on(text: &str, with: char, windows: bool) -> String {
+    let refused = |c: char| {
+        c == '/'
+            || c == '\0'
+            || std::path::is_separator(c)
+            || (windows && (c.is_control() || WINDOWS_KEEPS.contains(&c)))
+    };
+    let mut name: String = text
+        .chars()
+        .map(|c| if refused(c) { with } else { c })
+        .collect();
+    if name.chars().all(|c| c == '.') {
+        name.insert(0, with);
+    }
+    if windows {
+        if name.ends_with(['.', ' ']) {
+            name.push(with);
+        }
+        // A device's name is all that is left.
+        if windows_name_problem(&name).is_some() {
+            name.insert(0, with);
+        }
+    }
+    name
+}
+
 /// What Windows refuses in a name, in the user's words: `\ : * ? " < >
-/// |` and control characters, a name ending in a dot or a space, and the
-/// names of devices (`CON`, `NUL`, `COM1`, `LPT¹`…), with an extension
-/// or without. `None` for a name Windows takes. Tested everywhere, asked
-/// on Windows.
-#[cfg(any(windows, test))]
+/// |` and control characters (`WINDOWS_KEEPS`), a name ending in a dot or
+/// a space, and the names of devices (`CON`, `NUL`, `COM1`, `LPT¹`…),
+/// with an extension or without. `None` for a name Windows takes. Tested
+/// everywhere, asked on Windows.
 pub(crate) fn windows_name_problem(name: &str) -> Option<Words> {
     use crate::words;
-    if let Some(c) = name
-        .chars()
-        .find(|c| matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-    {
+    if let Some(c) = name.chars().find(|c| WINDOWS_KEEPS.contains(c)) {
         return Some(words!(
             op_name_character = "a name cannot contain { $character }",
             character = crate::words::Name(c.to_string()),
@@ -1986,6 +2028,56 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} taken"))
                 .english();
             assert!(said.contains(says), "{name}: {said}");
+        }
+    }
+
+    /// A name made from words is one the system takes, each character it
+    /// refuses replaced, what Windows refuses besides made what it takes;
+    /// on another system what Windows alone refuses is kept.
+    #[test]
+    fn a_name_made_from_words_is_one_the_system_takes() {
+        use super::{name_from_on, windows_name_problem};
+        let windows = |text| name_from_on(text, '_', true);
+        let elsewhere = |text| name_from_on(text, '_', false);
+        for (text, named) in [
+            ("10:30", "10_30"),
+            ("a?b", "a_b"),
+            (r#"name:"a*" <b> | c?"#, "name__a__ _b_ _ c_"),
+            ("a/b", "a_b"),
+            (r"a\b", "a_b"),
+            ("tab\there", "tab_here"),
+            ("CON", "_CON"),
+            ("lpt1.log", "_lpt1.log"),
+            ("ends.", "ends._"),
+            ("ends ", "ends _"),
+            (".", "_._"),
+            ("..", "_.._"),
+            ("", "_"),
+            ("été", "été"),
+        ] {
+            assert_eq!(windows(text), named, "{text}");
+            assert_eq!(windows_name_problem(named), None, "{named}");
+        }
+        for (text, named) in [
+            ("10:30", "10:30"),
+            ("a/b", "a_b"),
+            ("nul\0here", "nul_here"),
+            ("CON", "CON"),
+            ("ends.", "ends."),
+            (".", "_."),
+            ("..", "_.."),
+            ("...", "_..."),
+            ("", "_"),
+            ("it's here", "it's here"),
+        ] {
+            assert_eq!(elsewhere(text), named, "{text}");
+        }
+        for text in ["a/b", ".", "..", "", "x\0y", "10:30", "CON"] {
+            let name = super::name_from(text, '-');
+            assert!(
+                super::valid_file_name(std::ffi::OsStr::new(&name)).is_ok(),
+                "{text}: {name}"
+            );
         }
     }
 }

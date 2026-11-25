@@ -350,46 +350,13 @@ pub struct Export {
 }
 
 /// The name of the folder a tag is exported as: its leaf, one name in
-/// its folder, whatever it holds. A path's separator in it is `_`, and a
-/// leaf of dots alone (`.`, `..`), which would name the folder it is in or
-/// the one above, starts with `_`. On Windows, what it refuses besides is
-/// made what it takes (`windows_folder_name`).
+/// its folder, whatever it holds, made a name this system takes with `_`
+/// (`op::name_from`): a path's separator in it is `_`, a leaf of dots
+/// alone (`.`, `..`), which would name the folder it is in or the one
+/// above, starts with `_`, and on Windows what it refuses besides (a
+/// time's `:`, a device's name, an ending dot) is made what it takes.
 fn folder_named(leaf: &str) -> String {
-    let name: String = leaf
-        .chars()
-        .map(|c| if std::path::is_separator(c) { '_' } else { c })
-        .collect();
-    if name.chars().all(|c| c == '.') {
-        return format!("_{name}");
-    }
-    #[cfg(windows)]
-    let name = windows_folder_name(&name);
-    name
-}
-
-/// A name Windows takes, from one it may refuse: the characters it
-/// reserves and control characters are `_`, a dot or a space at the end
-/// is followed by `_`, and a name it refuses still (a device's, `CON` or
-/// `lpt1.log`, as `op::valid_file_name` says) starts with `_`.
-#[cfg(windows)]
-fn windows_folder_name(name: &str) -> String {
-    let mut name: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    if name.ends_with(['.', ' ']) {
-        name.push('_');
-    }
-    if skwir_core::op::valid_file_name(std::ffi::OsStr::new(&name)).is_err() {
-        name.insert(0, '_');
-    }
-    name
+    skwir_core::op::name_from(leaf, '_')
 }
 
 /// The export of `address`'s tag (narrowed as it is) into `dest`, from
