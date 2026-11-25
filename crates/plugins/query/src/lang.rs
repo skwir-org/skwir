@@ -165,7 +165,7 @@ pub enum KindSel {
 }
 
 /// A name pattern: substring (case-insensitive unless `case:sensitive`) or
-/// glob, in both its forms, composed and decomposed, as every place
+/// glob, in its forms, as typed, composed and decomposed, as every place
 /// matches a name ([`NameMatch`]).
 #[derive(Clone, Debug)]
 pub struct NamePat {
@@ -799,7 +799,9 @@ impl Parser<'_> {
                 let exts: Vec<String> = v
                     .split(',')
                     .filter(|e| !e.is_empty())
-                    .map(|e| e.trim_start_matches('.').to_lowercase())
+                    // Folded as the name it is matched with is
+                    // (`Name::lowered`): a final sigma a sigma.
+                    .map(|e| skwir_core::name_match::fold(e.trim_start_matches('.')))
                     .collect();
                 if exts.is_empty() {
                     return Err(ParseError::new(words!(
@@ -2975,6 +2977,28 @@ mod tests {
         assert!(yes("CAF\u{c9} case:sensitive", "CAFE\u{301}.txt"));
         assert!(!yes("CAF\u{c9} case:sensitive", "caf\u{e9}.txt"));
         assert!(yes("report", "Report.txt"), "an ASCII word");
+        // As typed too, where neither form keeps it.
+        assert!(yes("\u{f900}", "\u{f900}.txt"));
+        assert!(yes("\u{f900}*", "\u{f900}.txt"));
+        assert!(yes("\u{958} case:sensitive", "\u{958}.txt"));
+        // A final sigma is a sigma, case ignored, the name's and an
+        // extension's alike.
+        assert!(yes(
+            "\u{39f}\u{394}\u{39f}\u{3a3}",
+            "\u{39f}\u{394}\u{39f}\u{3a3}.txt"
+        ));
+        assert!(yes(
+            "\u{3bb}\u{3bf}\u{3b3}\u{3b1}\u{3c1}\u{3b9}\u{3b1}\u{3c3}\u{3bc}\u{3bf}\u{3c2}",
+            "\u{39b}\u{39f}\u{393}\u{391}\u{3a1}\u{399}\u{391}\u{3a3}\u{39c}\u{39f}\u{3a3}.pdf"
+        ));
+        for ext in [
+            "ext:\u{3b1}\u{3a3}",
+            "ext:\u{3b1}\u{3c2}",
+            "ext:\u{391}\u{3a3}",
+        ] {
+            assert!(yes(ext, "a.\u{391}\u{3a3}"), "{ext}");
+            assert!(yes(ext, "a.\u{3b1}\u{3c2}"), "{ext}");
+        }
     }
 
     #[test]

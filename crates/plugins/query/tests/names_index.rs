@@ -446,6 +446,46 @@ fn a_term_of_two_forms_walks_unless_the_engine_says_both() {
     );
 }
 
+/// A term the matcher finds otherwise than as written is not answered by
+/// an engine that did not say it matches so: a word holding a sigma, case
+/// ignored (a final sigma folded as a sigma), a character neither form
+/// keeps (found as typed). The search walks, and finds each name by its
+/// own text.
+#[test]
+fn a_term_matched_otherwise_than_as_written_walks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = skwir_core::os_path::canonical(tmp.path())
+        .unwrap()
+        .join("search");
+    let greek = "\u{39f}\u{394}\u{39f}\u{3a3}.txt";
+    let ideograph = "\u{f900}.txt";
+    for name in [greek, ideograph, "report.txt"] {
+        let path = root.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "fixture").unwrap();
+    }
+    let live = proven(Proof::Live { since: at() }, Vec::new());
+    for (typed, found) in [
+        ("\u{39f}\u{394}\u{39f}\u{3a3}", greek),
+        ("\u{3bf}\u{3b4}\u{3bf}\u{3c2}", greek),
+        ("\u{f900}", ideograph),
+        ("\u{f900}*", ideograph),
+    ] {
+        let mut index = Fake::new(
+            &root,
+            live.clone(),
+            vec![Some((vec!["report.txt"], live.clone(), false))],
+        );
+        index.synced = Some(live.clone());
+        index.running = true;
+        let calls = Arc::clone(&index.calls);
+        let walked = search(&root, typed, vec![index]);
+        assert_eq!(walked.found, set(&[found]), "{typed:?}");
+        assert_eq!(walked.rests_on, [None], "{typed:?}: walked");
+        assert_eq!(*calls.lock(), ["open"], "{typed:?}: never asked");
+    }
+}
+
 /// Under a proof, what the index does not name and no hole holds is not
 /// looked for: the walk is skipped.
 #[test]

@@ -55,8 +55,8 @@ impl NameTerm {
 
     /// Whether an index that matches it as written, in one form, names
     /// every file it finds ([`NameMatch::as_written`]): every ASCII term,
-    /// and one whose two forms are one, but a glob holding more than ASCII
-    /// where case is ignored.
+    /// and one whose forms are one, but, where case is ignored, a glob
+    /// holding more than ASCII and a word holding a sigma.
     pub fn as_written(&self) -> bool {
         self.text.is_ascii() || self.matcher().as_written()
     }
