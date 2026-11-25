@@ -3,8 +3,10 @@
 holds as `Casks/skwir.rb`, so `brew install --cask skwir-org/tap/skwir`
 installs the Mac app and `brew upgrade` updates it. Made from the release's
 bundle, which `release-build` made and `release-verify` checked: its version
-and the zip's SHA-256 from its manifest, the zip at the release's own address,
-its bytes as they are (Homebrew quarantines them, as a browser does).
+and the zip's SHA-256 from its manifest, the oldest macOS from the Info.plist
+in that zip (not the working tree's, which may have moved on since the tag),
+the zip at the release's own address, its bytes as they are (Homebrew
+quarantines them, as a browser does).
 
     tools/package/cask.py target/releases/v0.7.0 [--tap FOLDER]
 
@@ -21,14 +23,20 @@ Its caveats say so.
 """
 
 import argparse
+import hashlib
 import json
 import pathlib
+import plistlib
 import re
 import sys
+import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 REPOSITORY = "https://github.com/skwir-org/skwir"
 TAP = "skwir-org/tap"
+# The app's own Info.plist in the release's zip, which has `skwir.app` at its root.
+INFO_PLIST = "skwir.app/Contents/Info.plist"
+MACOS_NAMES = {"12": "monterey", "13": "ventura", "14": "sonoma", "15": "sequoia", "26": "tahoe"}
 
 
 def summary():
@@ -37,20 +45,34 @@ def summary():
     return re.search(r"<summary>([^<]+)</summary>", metainfo).group(1)
 
 
-def minimum_macos():
-    """The oldest macOS the app runs on, as its Info.plist says it
-    (`LSMinimumSystemVersion`, ADR-075), by Homebrew's name for it."""
-    script = (ROOT / "tools/package/macos.sh").read_text()
-    version = re.search(r"<key>LSMinimumSystemVersion</key><string>([0-9.]+)</string>", script).group(1)
-    names = {"12": "monterey", "13": "ventura", "14": "sonoma", "15": "sequoia", "26": "tahoe"}
+def minimum_macos(zipped):
+    """The oldest macOS the app in the release's zip `zipped` runs on, as the
+    Info.plist the cask installs says it (`LSMinimumSystemVersion`, ADR-075),
+    by Homebrew's name for it."""
+    try:
+        with zipfile.ZipFile(zipped) as archive:
+            info = plistlib.loads(archive.read(INFO_PLIST))
+    except (OSError, KeyError, zipfile.BadZipFile, plistlib.InvalidFileException) as error:
+        sys.exit(f"{zipped.name}: no {INFO_PLIST} read: {error}")
+    version = info.get("LSMinimumSystemVersion")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(\.[0-9]+)*", version):
+        sys.exit(f"{zipped.name}: its Info.plist names no oldest macOS (LSMinimumSystemVersion)")
     major = version.split(".")[0]
-    if major not in names:
+    if major not in MACOS_NAMES:
         sys.exit(f"macOS {version}: no Homebrew name known for it (tools/package/cask.py)")
-    return names[major]
+    return MACOS_NAMES[major]
 
 
-def cask(manifest):
-    """The cask of the release `manifest` describes."""
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        while chunk := file.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def cask(bundle, manifest):
+    """The cask of the release `manifest` describes, its assets in `bundle`."""
     version = manifest["version"]
     zipped = f"skwir-{version}-macos-arm64.zip"
     if zipped not in manifest["assets"]:
@@ -58,6 +80,12 @@ def cask(manifest):
     sha256 = manifest["assets"][zipped]["sha256"].lower()
     if not re.fullmatch(r"[0-9a-f]{64}", sha256):
         sys.exit(f"{zipped}: not a SHA-256: {sha256}")
+    # The macOS it needs is read from the zip the cask names: that one's.
+    if not (bundle / zipped).is_file():
+        sys.exit(f"{bundle}: no {zipped} in the bundle")
+    if sha256_of(bundle / zipped) != sha256:
+        sys.exit(f"{zipped}: not the zip its manifest names (run `just release-verify`)")
+    oldest = minimum_macos(bundle / zipped)
     return f"""\
 # Skwir, a file manager for humans and agents (skwir.org): the Mac app of
 # its release, the release's own zip. Written at each release by skwir's
@@ -78,7 +106,7 @@ cask "skwir" do
   end
 
   depends_on arch: :arm64
-  depends_on macos: ">= :{minimum_macos()}"
+  depends_on macos: ">= :{oldest}"
 
   app "skwir.app"
   binary "#{{appdir}}/skwir.app/Contents/MacOS/skwir"
@@ -113,7 +141,7 @@ def main():
     tap = args.tap.resolve()
     if not (tap / ".git").exists():
         sys.exit(f"{tap}: not a checkout of skwir-org/homebrew-tap (give it with --tap)")
-    text = cask(json.loads((bundle / "manifest.json").read_text()))
+    text = cask(bundle, json.loads((bundle / "manifest.json").read_text()))
     out = tap / "Casks" / "skwir.rb"
     out.parent.mkdir(exist_ok=True)
     out.write_text(text)
