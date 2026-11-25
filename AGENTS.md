@@ -206,6 +206,10 @@ working in an area, also read that area's rules (see
     system (`skwir_core::system::not_yet`: "Listing a folder is not
     available on Windows yet"). Never Linux's behaviour where it would be
     wrong.
+  - What a package carries beside skwir's programs (helpers, the type
+    database, licences, fonts, a helper's libraries) is looked for from
+    `skwir_core::folders::program`, links followed (Homebrew links a
+    Mac's app into its bin), never `current_exe().parent()`.
   - Reach the filesystem through core's seams, not `std::os::unix` or
     rustix's `fs`: `fs::Dir` (a folder held open, listed and stat-ed),
     `fs::stat` (`stat::identity`, `stat::changed` for metadata in hand),
