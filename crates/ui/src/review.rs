@@ -140,7 +140,7 @@ impl Checked {
                 .iter()
                 .any(|(_, status)| matches!(status, StepStatus::Conflict { .. })),
             folder: shared_folder(&diff.steps).map(|folder| {
-                let said = crate::complete::written(&folder, "~", home.as_deref());
+                let said = skwir_core::os_path::from_home_given(&folder, home.as_deref());
                 (folder, said)
             }),
             steps: diff.steps,
@@ -876,10 +876,7 @@ mod tests {
         ));
         let (folder, said) = checked.folder.unwrap();
         assert_eq!(folder, at(""));
-        assert_eq!(
-            said,
-            crate::complete::written(&at(""), "~", skwir_core::os_path::home().as_deref())
-        );
+        assert_eq!(said, skwir_core::os_path::from_home(&at("")));
     }
 
     #[test]

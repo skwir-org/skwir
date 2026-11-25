@@ -359,16 +359,26 @@ pub fn home() -> Option<PathBuf> {
 }
 
 /// `path` as a person reads it: from `~` where it lies under the home
-/// folder (`~/.config/x`; `~\AppData\x` on Windows), else whole. The one
-/// way a path is said so; `from_home_in` for a text that names paths.
+/// folder (`~/.config/x`; `~\AppData\x` on Windows, the system's
+/// separator between every name), the home folder itself `~`, as shells
+/// say it; else whole. The one way a path is said so, whoever draws it
+/// (a row's detail, a tooltip, a heading, a printed column): never one
+/// written by hand. `from_home_in` for a text that names paths. Where it
+/// goes into what the window draws, its controls are shown
+/// (`Arg::Path`, `Words::name_alone`, `words::shown_controls`). A field
+/// that holds a folder (Save as) adds its separator.
 pub fn from_home(path: &Path) -> String {
-    home()
-        .and_then(|home| {
-            path.strip_prefix(home)
-                .ok()
-                .map(|rest| format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()))
-        })
-        .unwrap_or_else(|| path.display().to_string())
+    from_home_given(path, home().as_deref())
+}
+
+/// [`from_home`] from `home`, the home folder read once by a caller saying
+/// many paths (a listing's rows), or none.
+pub fn from_home_given(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        None => path.display().to_string(),
+    }
 }
 
 /// `text` (a message a program wrote, naming files by their whole path)
@@ -642,5 +652,30 @@ mod tests {
             from_home_in(&said),
             format!("load ~{sep}grammars{sep}x.so: no such file")
         );
+    }
+
+    /// A path below a home given is said from `~` with the system's
+    /// separator between all its names, never `/` before Windows' `\`;
+    /// the home folder itself is `~`, a path beside it whole.
+    #[test]
+    fn a_path_is_said_from_a_home_given_with_one_separator() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let home = if cfg!(windows) {
+            PathBuf::from(r"C:\Users\u")
+        } else {
+            PathBuf::from("/home/u")
+        };
+        let nested = home.join("wip").join("one").join("l'été");
+        assert_eq!(
+            from_home_given(&nested, Some(&home)),
+            format!("~{sep}wip{sep}one{sep}l'été")
+        );
+        assert_eq!(from_home_given(&home, Some(&home)), "~");
+        let beside = home.with_file_name("u2").join("x");
+        assert_eq!(
+            from_home_given(&beside, Some(&home)),
+            beside.display().to_string()
+        );
+        assert_eq!(from_home_given(&nested, None), nested.display().to_string());
     }
 }

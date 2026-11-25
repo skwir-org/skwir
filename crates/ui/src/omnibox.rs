@@ -2983,7 +2983,7 @@ impl Shell {
             }
             add(
                 place.location.clone(),
-                Some(crate::suggestions::said(&place.location)),
+                Some(crate::suggestions::said(&place.location).say()),
                 rank,
             );
             rank += 1;

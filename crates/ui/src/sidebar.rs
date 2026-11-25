@@ -479,10 +479,11 @@ pub struct Arranged {
     pub moves: Option<Reorder>,
     /// What tells it apart from another of its group shown under the same
     /// name, said after its name (`told_apart`): the first folder above it
-    /// that differs (`skwir/…`).
+    /// that differs (`skwir/…`), its controls shown.
     pub note: Option<String>,
     /// Where a place that is a folder's path leads, as its tooltip says it
-    /// (`~/wip/skwir`, `~\wip\skwir` on Windows: `os_path::from_home`).
+    /// (`~/wip/skwir`, `~\wip\skwir` on Windows: `os_path::from_home`), its
+    /// controls shown (`words::shown_controls`).
     pub path: Option<String>,
 }
 
@@ -559,11 +560,12 @@ pub fn arrange(
                 });
             }
             // As a person reads a path on this system, never the
-            // exclusions list's `/` between names.
-            let path = place
-                .location
-                .path()
-                .map(|path| skwir_core::os_path::from_home(&path));
+            // exclusions list's `/` between names; drawn as a string, its
+            // controls shown, never obeyed.
+            let path = place.location.path().map(|path| {
+                skwir_core::words::shown_controls(&skwir_core::os_path::from_home(&path))
+                    .into_owned()
+            });
             Arranged {
                 place,
                 role,
@@ -605,8 +607,9 @@ fn tell_apart(arranged: &mut [Arranged]) {
             at.into_iter().zip(notes).collect::<Vec<_>>()
         })
         .collect();
+    // Folders' names, drawn as a string: their controls shown.
     for (at, note) in notes {
-        arranged[at].note = note;
+        arranged[at].note = note.map(|note| skwir_core::words::shown_controls(&note).into_owned());
     }
 }
 
@@ -3286,18 +3289,33 @@ mod tests {
                 named("bookmarks", &at("wip/two/src")),
                 named("places", &at("three/src")),
                 place("bookmarks", "/elsewhere"),
+                named("devices", &at("a\u{202e}b/src")),
+                named("devices", &at("c/src")),
+                named("network", &home.to_string_lossy()),
             ],
             &Sections::default(),
             &unnamed,
         );
         let notes: Vec<Option<&str>> = arranged.iter().map(|a| a.note.as_deref()).collect();
-        assert_eq!(notes, [None, Some("one"), Some("two"), None]);
-        let sep = std::path::MAIN_SEPARATOR_STR;
         assert_eq!(
-            arranged[1].path.as_deref(),
-            Some(["~", "wip", "one", "src"].join(sep).as_str())
+            notes,
+            [
+                None,
+                Some("one"),
+                Some("two"),
+                None,
+                Some("a⟨RLO⟩b"),
+                Some("c"),
+                None
+            ]
         );
-        assert_eq!(arranged[3].path.as_deref(), Some("/elsewhere"));
+        let sep = std::path::MAIN_SEPARATOR_STR;
+        let path = |at: usize| arranged[at].path.as_deref();
+        assert_eq!(path(1), Some(["~", "wip", "one", "src"].join(sep).as_str()));
+        assert_eq!(path(3), Some("/elsewhere"));
+        // A name's controls are shown, never obeyed; home is `~`.
+        assert_eq!(path(4), Some(["~", "a⟨RLO⟩b", "src"].join(sep).as_str()));
+        assert_eq!(path(6), Some("~"));
     }
 
     /// What a section of the shell's own lists from what was used leaves

@@ -47,19 +47,13 @@ pub fn rank_of(label: &str, words: &str) -> Option<i32> {
     }
 }
 
-/// A location as a row's detail says it: a path from `~`, else its text.
-pub fn said(location: &Location) -> String {
+/// A location as a row's detail says it: a folder's path as a person
+/// reads it (`os_path::from_home`), drawn alone, its controls shown, never
+/// obeyed; else its text, as written.
+pub(crate) fn said(location: &Location) -> Words {
     match location.path() {
-        Some(path) => match skwir_core::os_path::home().and_then(|home| {
-            path.strip_prefix(&home)
-                .ok()
-                .map(std::path::Path::to_path_buf)
-        }) {
-            Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-            Some(rest) => format!("~/{}", rest.display()),
-            None => path.display().to_string(),
-        },
-        None => location.to_string(),
+        Some(path) => Words::name_alone(skwir_core::os_path::from_home(&path)),
+        None => Words::as_written(location.to_string()),
     }
 }
 
@@ -174,10 +168,7 @@ impl SuggestSource for History {
                         &serde_json::json!({ "steps": i + 1, "pane": ask.pane }),
                     ));
                 // A folder says where it is; a search's title says it all.
-                row.detail = location
-                    .path()
-                    .is_some()
-                    .then(|| Words::as_written(said(&location)));
+                row.detail = location.path().is_some().then(|| said(&location));
                 row.scope = scope_of(app, &location);
                 row
             })
@@ -209,7 +200,7 @@ impl SuggestSource for Places {
         // Those the window asking offers: a dialog's, none whose files are
         // not to give (the Trash, ADR-144, 3).
         let chooses = ask.pane.is_some_and(|pane| app.chooses_in(pane));
-        let mut found: Vec<(i32, (String, Option<String>), Suggestion)> = app
+        let mut found: Vec<(i32, (Location, Option<String>), Suggestion)> = app
             .places_offered(chooses)
             .into_iter()
             .filter(|place| !place.hidden)
@@ -222,15 +213,15 @@ impl SuggestSource for Places {
                 let rank = rank_of(&title.say(), words)?;
                 // A saved search or place opens as it was kept, a place
                 // saying its filter (ADR-109).
-                let leads = (said(&place.location), place.filter().map(str::to_owned));
+                let leads = (place.location.clone(), place.filter().map(str::to_owned));
                 let detail = match place.filter() {
                     Some(filter) => words!(
                         suggestions_place_filtered = "{ $location } · { $filter }",
-                        location = leads.0.clone(),
+                        location = said(&place.location),
                         filter = filter,
                         note = "Under a kept place's name in the address field's card; location: where it is (a path); filter: what it is filtered by, as typed."
                     ),
-                    None => Words::as_written(leads.0.clone()),
+                    None => said(&place.location),
                 };
                 let runs = match place.opens {
                     Opens::Lensed => navigate(&place.location, ask),
@@ -304,7 +295,8 @@ impl SuggestSource for Commands {
 
 #[cfg(test)]
 mod tests {
-    use super::rank_of;
+    use super::{rank_of, said};
+    use skwir_core::location::Location;
 
     #[test]
     fn labels_rank_by_where_the_words_are() {
@@ -312,5 +304,30 @@ mod tests {
         assert_eq!(rank_of("Show hidden files", "hid"), Some(1));
         assert_eq!(rank_of("Field Guide", "uid"), Some(2));
         assert_eq!(rank_of("Maps", "x"), None);
+    }
+
+    /// A folder below home is said from `~` with the system's separator
+    /// between all its names (`~\wip\one` on Windows, never `~/wip\one`),
+    /// its controls shown; home itself is `~`; what is no folder, as
+    /// written.
+    #[test]
+    fn a_folder_is_said_from_home_as_the_system_writes_it() {
+        let Some(home) = skwir_core::os_path::home() else {
+            return;
+        };
+        let sep = std::path::MAIN_SEPARATOR;
+        let nested = home.join("wip").join("one");
+        assert_eq!(
+            said(&Location::from_path(&nested)).say_plain(),
+            format!("~{sep}wip{sep}one")
+        );
+        let spoof = home.join("a\u{202e}gpj.exe");
+        assert_eq!(
+            said(&Location::from_path(&spoof)).say_plain(),
+            format!("~{sep}a⟨RLO⟩gpj.exe")
+        );
+        assert_eq!(said(&Location::from_path(&home)).say_plain(), "~");
+        let search = Location::new("query", "notes in:/a");
+        assert_eq!(said(&search).say_plain(), search.to_string());
     }
 }

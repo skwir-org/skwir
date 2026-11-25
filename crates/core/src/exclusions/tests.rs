@@ -1145,6 +1145,19 @@ fn a_name_is_of_files_or_of_folders_and_they_are_told_apart() {
     assert_eq!(said("target", Names::Folders), "any folder named target");
     assert_eq!(said("x", Names::Both), "any file or folder named x");
     assert_eq!(said("~/a/*.log", Names::Files), "the files like ~/a/*.log");
+    // The folder a variable gives is said as a person reads a path on this
+    // system (`os_path::from_home`), the pattern as written.
+    if let Some(home) = crate::os_path::home()
+        .filter(|home| std::env::var_os("HOME").is_some_and(|set| Path::new(&set) == home))
+    {
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            said("$HOME/a b/c", Names::Both),
+            format!("$HOME/a b/c, now ~{sep}a b{sep}c"),
+            "{}",
+            home.display()
+        );
+    }
     // What it names is read back from the settings; a hand's says both.
     let catalog = catalog(
         "",

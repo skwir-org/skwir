@@ -152,7 +152,7 @@ fn written(
             .to_string()
             .into();
     }
-    crate::complete::written(dir, "~", home).into()
+    skwir_core::os_path::from_home_given(dir, home).into()
 }
 
 /// Its name as a row draws it alone, its controls shown (`DrawnName`).

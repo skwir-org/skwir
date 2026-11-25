@@ -411,7 +411,9 @@ impl Matcher {
                     Some(path) => words!(
                         exclusions_said_now = "{ $pattern }, now { $path }",
                         pattern = text.clone(),
-                        path = tilde(&path),
+                        // The folder on this computer, as a person reads a
+                        // path here: not the list's grammar.
+                        path = crate::words::Arg::Path(crate::os_path::from_home(&path)),
                         note = "What an exclusion means, on the Exclusions page: a path from a variable as written ($CARGO_HOME/registry), then the folder it is on this computer."
                     ),
                     None => words!(
