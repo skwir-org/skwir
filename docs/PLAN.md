@@ -1605,6 +1605,20 @@ U+0306 against й); exclusions by name, path completion, `jump`'s
 matcher and the save dialog's name still match one form, an excluded
 name with an accent typed composed missing a folder written decomposed.
 
+**Paths said as text, from the second review before 0.7.0**: a path
+said from home is a `SaidPath` now, which shows its bidi controls by
+construction (7c65baed), and a plan's step lines say paths as paths
+(425e6f05). But 42 `words!` arguments elsewhere still pass a path as
+`path.display().to_string()`, raw text whose controls are obeyed (among
+them op/builtin.rs's copy that keeps no attributes, entry_ref.rs's "does
+not exist", order.rs's bulk rename); each would pass `&path`. A
+`words --check` rule refusing `.display().to_string()` and
+`.to_string_lossy()` in a `words!` argument would close the class. Also
+left: a question closed in the window is told to no one (an
+`App::question_closed` hook would let a later drive wait behind it), and
+`op::name_from` keeps control characters on Linux (harmless where it is
+used, but a newline in a file name troubles line-based scripts).
+
 **Release tooling, from the review before 0.7.0**: `std::env::current_exe`
 is not refused by clippy, though what a package carries is looked for
 from `folders::program` alone (about 35 `#[allow]`s would be needed, 25
