@@ -5,7 +5,7 @@
 Skwir 0.7.0 answers searches from skwird, its own index of file names: at
 once where the index can prove its answer, checked by Skwir as always. A
 removable drive can be indexed too, once you say so, and a word is found
-however its accents are written. On the Mac, Homebrew installs the app.
+however its accents are written.
 
 [Installation instructions](README.md#installing)
 
@@ -27,8 +27,6 @@ however its accents are written. On the Mac, Homebrew installs the app.
 - **A copy that cannot fit is refused before its first byte**: a file over
   a FAT drive's 4 GiB, and a copy onto a removable drive is written through
   as it goes.
-- **On the Mac, a Homebrew cask**: `brew install --cask skwir-org/tap/skwir`
-  after `brew trust skwir-org/tap`; Homebrew updates it.
 
 **Changed from 0.6.1**: a search of `/` leaves out `/proc`, `/sys` and the
 Nix store (`excluded:true` searches them), and a btrfs snapshot below the
@@ -36,8 +34,11 @@ folder searched; the home folder is written `~`.
 
 **Windows and macOS builds to try** come with this release too, made on
 Linux and never run there: please [try them and tell us what
-happens](docs/HELP-WANTED.md). Every test now runs under Wine before each
-release, which fixed eight of Windows' own bugs.
+happens](docs/HELP-WANTED.md). On the Mac, the app's GStreamer framework
+fails macOS's check of its signature, so macOS may say the app is damaged:
+try it after `xattr -dr com.apple.quarantine skwir.app`. Every test now
+runs under Wine before each release, which fixed eight of Windows' own
+bugs.
 
 ### All changes
 
@@ -106,10 +107,11 @@ release, which fixed eight of Windows' own bugs.
   older sshfs) is taken as a network folder, with a lane of its own; a
   KDE network folder Skwir keeps for a server is named without `?`, `#`
   or `%`, which KDE read as part of its address.
-- **On the Mac**: Homebrew's cask (ADR-075); a copy it installed says
-  nothing of new versions itself (ADR-142); `skwir` started through a link,
-  as Homebrew puts it on the PATH, finds the app's helpers, its type database
-  and its licences.
+- **On the Mac**: a copy Homebrew's cask installed says nothing of new
+  versions itself (ADR-142), the cask (ADR-075) waiting for a build whose
+  signature macOS accepts; `skwir` started through a link, as Homebrew puts
+  it on the PATH, finds the app's helpers, its type database and its
+  licences.
 - **On Windows** (tried under Wine): a drive's watches let go of when Eject
   asks (ADR-149); programs started inherit none of Skwir's handles; paths
   said with `\` in the sidebar, the address field, Recent files, a group's
