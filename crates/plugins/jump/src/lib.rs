@@ -123,7 +123,7 @@ pub fn rank_by_words(
             let folders = c
                 .path
                 .parent()
-                .map(|p| shown_from(p, home))
+                .map(|p| skwir_core::os_path::from_home_given(p, home))
                 .unwrap_or_default();
             let mut points = 0;
             for atom in &atoms {
@@ -436,13 +436,14 @@ struct Places {
 /// How many places the address field shows.
 const FIELD_PLACES: usize = 5;
 
-/// A folder as a row says it: from `~` under `home`.
-fn shown_from(path: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| path.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    }
+/// Where a row's file or folder is, as its detail says it: the folder it
+/// is in, as a person reads a path (`os_path::from_home`), drawn alone,
+/// its controls shown.
+fn where_it_is(path: &Path, home: Option<&Path>) -> Option<Words> {
+    let parent = path.parent()?;
+    Some(Words::name_alone(skwir_core::os_path::from_home_given(
+        parent, home,
+    )))
 }
 
 impl skwir_core::suggest::SuggestSource for Places {
@@ -498,10 +499,7 @@ impl skwir_core::suggest::SuggestSource for Places {
                         "jump.to",
                         &serde_json::json!({ "path": PathArg::from(c.path.clone()), "pane": ask.pane }),
                     ));
-                if let Some(parent) = c.path.parent() {
-                    // A path, drawn alone.
-                    row.detail = Some(Words::name_alone(shown_from(parent, home.as_deref())));
-                }
+                row.detail = where_it_is(&c.path, home.as_deref());
                 if dir {
                     row.scope = Some(Location::from_path(&c.path));
                 } else {
@@ -693,6 +691,7 @@ impl RecentLocation {
             tx,
             known: Mutex::default(),
             tickets: Tickets::default(),
+            listing: Mutex::new(CancelToken::new()),
         });
         recent.list();
         Arc::new(RecentLocation {
@@ -720,6 +719,8 @@ struct Recent {
     /// Taken by each read of a file just before it reads (a listing's
     /// stat, a hydration's).
     tickets: Tickets,
+    /// The listing under way, which the next supersedes (`list`).
+    listing: Mutex<CancelToken>,
 }
 
 #[derive(Default)]
@@ -759,9 +760,20 @@ impl Recent {
     /// holds its own files, never the listing of the others: what is on
     /// this machine is listed, then complete; a remote's come as its
     /// server answers. What is gone is left out.
+    ///
+    /// A listing supersedes the one before it, as a search's F5 does: the
+    /// older is cancelled, under `known`'s lock, before the newer reads
+    /// the list, so nothing the older read is told after (a stat of a file
+    /// its list named, which a stat's later ticket alone would let add
+    /// back what the newer list no longer names); what it told before,
+    /// the newer decides over (`listed_at`).
     fn list(self: &Arc<Self>) {
         let recent = Arc::clone(self);
         let cancel = self.ctx.cancel.child();
+        {
+            let _known = self.known.lock();
+            std::mem::replace(&mut *self.listing.lock(), cancel.clone()).cancel();
+        }
         let scheduler = self.ctx.scheduler.clone();
         self.ctx.scheduler.spawn(
             Priority::Visible,
@@ -777,6 +789,13 @@ impl Recent {
                 let items = xbel::default_path()
                     .map(|p| xbel::load(&p))
                     .unwrap_or_default();
+                #[cfg(test)]
+                {
+                    let hook = BEFORE_STATS.lock().take();
+                    if let Some(hook) = hook {
+                        hook();
+                    }
+                }
                 let wanted: std::collections::HashSet<PathBuf> =
                     items.iter().map(|r| r.path.clone()).collect();
                 let listing = Listed {
@@ -971,6 +990,11 @@ impl Recent {
 /// and is about to take out what is no longer recent: it may hold it there.
 #[cfg(test)]
 static BEFORE_PREV: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+
+/// What a test runs where a listing of the recent files has read the list
+/// and is about to stat its files: it may hold it there.
+#[cfg(test)]
+static BEFORE_STATS: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
 /// One listing of the recent files, shared by its lanes' jobs.
 #[derive(Clone)]
@@ -1241,6 +1265,32 @@ mod tests {
         assert_eq!(found, [PathBuf::from("/home/x/文档/项目")]);
     }
 
+    /// A row says where its file is from `~`, the system's separator
+    /// between all its names (`~\wip\one` on Windows, never `~/wip\one`),
+    /// its controls shown; a file in home itself is in `~`.
+    #[test]
+    fn a_row_says_its_folder_from_home_as_the_system_writes_it() {
+        let home = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\u"
+        } else {
+            "/home/u"
+        });
+        let sep = std::path::MAIN_SEPARATOR;
+        let said = |path: &Path| where_it_is(path, Some(&home)).map(|w| w.say_plain());
+        let nested = home.join("wip").join("one").join("l'été.txt");
+        assert_eq!(said(&nested), Some(format!("~{sep}wip{sep}one")));
+        let spoof = home.join("a\u{202e}gpj.exe").join("x");
+        assert_eq!(said(&spoof), Some(format!("~{sep}a⟨RLO⟩gpj.exe")));
+        assert_eq!(said(&home.join("notes.txt")).as_deref(), Some("~"));
+        // What is typed finds a folder by the words its row says.
+        let dirs = vec![zoxide::ZEntry {
+            score: 1.0,
+            path: nested.parent().unwrap().to_owned(),
+        }];
+        let found = rank_by_words("wip one", Some(&home), &dirs, &[], 10);
+        assert_eq!(found.len(), 1);
+    }
+
     #[cfg(unix)]
     #[test]
     fn candidates_command_uses_a_fake_zoxide_on_path() {
@@ -1502,6 +1552,80 @@ mod tests {
         assert!(id.is_some(), "used since, still listed");
         assert_eq!(id.and_then(|id| open.path_of(id)), Some(since));
         assert_eq!(listing.len(), 2);
+    }
+
+    /// Two F5s overlap, and a file is no longer recent in between: the
+    /// older listing, which read the list before, stats that file only
+    /// once the newer took it out, and never adds it back.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_older_refresh_never_adds_back_what_a_newer_one_took_out() {
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let data = tmp.path().join("data");
+        let dir = tmp.path().join("l'été, à l'ombre");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir(&dir).unwrap();
+        let (kept, dropped) = (
+            dir.join("still used, s'il vous plaît.txt"),
+            dir.join("it's ☂ no longer.txt"),
+        );
+        std::fs::write(&kept, b"kept").unwrap();
+        std::fs::write(&dropped, b"dropped").unwrap();
+        let xbel = |paths: &[&Path]| {
+            let marks: Vec<String> = paths
+                .iter()
+                .map(|p| skwir_platform::uri::file_uri(p))
+                .map(|href| format!(r#"<bookmark href="{href}" visited="2026-01-01T00:00:00Z"/>"#))
+                .collect();
+            let marks = marks.concat();
+            std::fs::write(
+                data.join("recently-used.xbel"),
+                format!(r#"<?xml version="1.0"?><xbel version="1.0">{marks}</xbel>"#),
+            )
+            .unwrap();
+        };
+        xbel(&[&kept, &dropped]);
+        // SAFETY: nextest runs each test in a process of its own, and no
+        // thread has started yet that reads the environment.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", &data);
+        }
+        let app = app(tmp.path());
+        app.plugins.add(Arc::new(JumpPlugin::default()), &app);
+        let open = app.open_location(&Location::parse("recent:")).unwrap();
+        let mut listing = skwir_core::Listing::default();
+        until(&*open, &mut listing, "listed", |l| {
+            l.is_complete() && l.len() == 2
+        });
+        // F5, held once it read the list, before it stats its files.
+        let (held, is_held) = crossbeam_channel::bounded(1);
+        let (go, gone) = crossbeam_channel::bounded::<()>(1);
+        *BEFORE_STATS.lock() = Some(Box::new(move || {
+            let _ = held.send(());
+            let _ = gone.recv_timeout(Duration::from_secs(30));
+        }));
+        open.refresh();
+        is_held.recv_timeout(Duration::from_secs(10)).expect("held");
+        // A file no longer recent, and F5 again: it is taken out.
+        xbel(&[&kept]);
+        open.refresh();
+        let named = std::ffi::OsStr::new("it's ☂ no longer.txt");
+        until(&*open, &mut listing, "taken out", |l| {
+            l.is_complete() && !l.is_named(named)
+        });
+        // The older let go: its stats come after the newer's list.
+        go.send(()).unwrap();
+        assert!(app.scheduler.wait_idle_here(Duration::from_secs(10)));
+        for event in open.events().try_iter() {
+            listing.apply(event);
+        }
+        assert!(!listing.is_named(named), "no longer recent, not listed");
+        assert_eq!(listing.len(), 1);
+        let kept_name = std::ffi::OsStr::new("still used, s'il vous plaît.txt");
+        assert!(listing.is_named(kept_name));
     }
 
     // The free desktops' recent files (step E, ADR-035).
