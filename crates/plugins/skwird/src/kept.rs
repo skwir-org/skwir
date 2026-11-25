@@ -642,7 +642,9 @@ impl Kept {
                 let id = id_of(&row.path);
                 serde_json::json!({
                     "id": id,
-                    "name": Words::as_written(row.name.clone()).to_data(),
+                    // A name of the user's or the desktop's making: its
+                    // controls shown (ADR-139, 5).
+                    "name": Words::name_alone(row.name.clone()).to_data(),
                     "state": state(row, &said).to_data(),
                     "group": row.source.id(),
                     "tick": {
@@ -710,9 +712,12 @@ fn not_saved(app: &App, error: anyhow::Error) {
 }
 
 /// What a row says under its name: its folder, as a person reads a path
-/// on this system, and how skwird keeps it.
+/// on this system, and how skwird keeps it. Each path a `Path`, its
+/// controls shown, never obeyed, and isolated where the window draws it
+/// (ADR-139, 5): a name holding U+202E reverses nothing.
 fn state(row: &Row, said: &Said) -> Words {
-    let folder = skwir_core::os_path::from_home(&row.path);
+    let folder = PathBuf::from(skwir_core::os_path::from_home(&row.path));
+    let folder = &folder;
     if !row.kept {
         return skwir_core::words!(
             skwird_kept_not = "{ $folder } · not kept live",
@@ -748,7 +753,7 @@ fn state(row: &Row, said: &Said) -> Words {
         (protocol::Keeping::Live(_), Some(within)) => skwir_core::words!(
             skwird_kept_within = "{ $folder } · live, inside { $within }",
             folder = folder,
-            within = skwir_core::os_path::from_home(&within.to_path()),
+            within = &PathBuf::from(skwir_core::os_path::from_home(&within.to_path())),
             note = "Under a folder's name in the list of folders kept live: another folder kept live holds it. within: that folder."
         ),
         (protocol::Keeping::Live(_), None) => skwir_core::words!(
@@ -1509,5 +1514,48 @@ mod tests {
                 "{command}: {error:#}"
             );
         }
+    }
+
+    /// A folder's path and its name are said with their bidirectional
+    /// controls shown, never obeyed: a name holding U+202E reverses
+    /// nothing of what is said under it (ADR-139, 5).
+    #[test]
+    fn a_folder_s_controls_are_shown_never_obeyed() {
+        let reversed = PathBuf::from("/fixture/Hello_\u{202e}gnp.js");
+        let row = Row {
+            path: reversed.join("inner"),
+            name: "Hello_\u{202e}gnp.js".into(),
+            source: Source::Added,
+            ticked: true,
+            kept: true,
+        };
+        let waiting = state(&row, &Said::default()).english();
+        assert!(
+            !waiting.contains('\u{202e}')
+                && waiting.contains("Hello_\u{27e8}RLO\u{27e9}gnp.js")
+                && waiting.ends_with("inner \u{b7} kept live once skwird runs"),
+            "{waiting:?}"
+        );
+        let said = Said {
+            scope: Some(protocol::Scope::User),
+            folders: HashMap::from([(
+                row.path.clone(),
+                protocol::Kept {
+                    path: protocol::WirePath::of(&row.path),
+                    state: protocol::Keeping::Live(protocol::Instant { sec: 0, nsec: 0 }),
+                    folders: None,
+                    within: Some(protocol::WirePath::of(&reversed)),
+                },
+            )]),
+            share: None,
+        };
+        let within = state(&row, &said).english();
+        assert!(!within.contains('\u{202e}'), "{within:?}");
+        assert!(
+            within.ends_with("live, inside /fixture/Hello_\u{27e8}RLO\u{27e9}gnp.js"),
+            "{within:?}"
+        );
+        let name = Words::name_alone(row.name.clone()).english();
+        assert!(!name.contains('\u{202e}'), "{name:?}");
     }
 }
