@@ -1674,6 +1674,31 @@ impl App {
         }
     }
 
+    /// How a viewer's window takes `name` (ADR-151, 5): what shows the file
+    /// and what plays in it (`Topic::Preview`, `Topic::Player`), the
+    /// window's own parts (`Topic::Window`), the steps through the files
+    /// (`Topic::Select`), and what acts on the file shown without changing
+    /// it: opening it elsewhere, Print. Nothing else: it views.
+    pub fn in_viewer(&self, name: &str) -> InDialogs {
+        /// What acts on the file shown without changing it, whatever its
+        /// topic.
+        const ACTS: &[&str] = &[
+            "open",
+            "open_with.choices",
+            "open_with.menu",
+            "print.print",
+            "print.save_pdf",
+        ];
+        let Some(spec) = self.commands.get(name) else {
+            return InDialogs::Not;
+        };
+        match spec.topic {
+            Topic::Preview | Topic::Player | Topic::Window | Topic::Select => InDialogs::Offered,
+            _ if ACTS.contains(&name) => InDialogs::Offered,
+            _ => InDialogs::Not,
+        }
+    }
+
     /// The places a window offers (ADR-144, 3): every place, but in one
     /// answering another program's dialog (`chooses`), none whose files are
     /// not files to give (the Trash: `gives_files`), wherever it would be
@@ -3022,7 +3047,7 @@ impl App {
         self.workspace
             .read()
             .window(window)
-            .is_some_and(|tabs| !tabs.chooses())
+            .is_some_and(crate::workspace::WindowTabs::is_own)
     }
 
     /// Wait at most `timeout` for the window to be shown

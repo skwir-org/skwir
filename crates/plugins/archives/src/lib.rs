@@ -34,6 +34,10 @@ impl Plugin for PreviewPlugin {
             archives_plugin_description = "List the contents of ZIP, tar, 7z and other archives, preview their members without extracting, extract them (Extract Here, in an archive's menu and a drop's), and make them (Compress, in the menu of what you select)"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

@@ -809,6 +809,7 @@ const SHOWS: &[&str] = &[
     "ui.preview_fullscreen",
     "ui.fullscreen_controls",
     "ui.fullscreen_step",
+    "ui.viewer_step",
     "ui.slideshow",
     "ui.player",
     "ui.player_volume",
@@ -865,6 +866,7 @@ const KEEPS: &[&str] = &[
 /// or pause what runs, or prompt the user for a command the agent named.
 const ACTS: &[&str] = &[
     "ui.ask",
+    "ui.viewer_reveal",
     "ui.choose",
     "ui.open_url",
     "ui.preview_open_external",
@@ -1196,6 +1198,13 @@ const KEY_FORMS: &[(&str, &str, fn() -> Words)] = &[
     ("ui.fullscreen_step", r#"{"delta":1}"#, || {
         words!(commands_key_fullscreen_next = "Full screen: next picture or page")
     }),
+    // A viewer's window: the file before or after it (ADR-151, 4).
+    ("ui.viewer_step", r#"{"delta":-1}"#, || {
+        words!(commands_key_viewer_previous = "Viewer: previous file")
+    }),
+    ("ui.viewer_step", r#"{"delta":1}"#, || {
+        words!(commands_key_viewer_next = "Viewer: next file")
+    }),
     // A structured preview: the files of an archive, a text read where it
     // is shown, its links, its size.
     ("ui.inspect", r#"{"action":"step","delta":-1}"#, || {
@@ -1463,13 +1472,21 @@ const NOT_IN_DIALOGS: &[&str] = &[
     "ui.media_pin",
     "ui.media_play",
     "ui.media_keep_playing",
+    // A viewer's own (ADR-151): a dialog's window views no files of its
+    // own (its Show in Skwir opens elsewhere, `OPENS_ELSEWHERE`).
+    "ui.viewer_step",
 ];
 
 /// The shell's commands that open something in another program
 /// (`Declared::opens_elsewhere`): an address, the file shown, the place
 /// shown. A window answering another program's dialog offers none
 /// (ADR-144, 1).
-const OPENS_ELSEWHERE: &[&str] = &["ui.open_url", "ui.preview_open_external", "ui.map_open"];
+const OPENS_ELSEWHERE: &[&str] = &[
+    "ui.open_url",
+    "ui.preview_open_external",
+    "ui.map_open",
+    "ui.viewer_reveal",
+];
 
 /// Where a window answering another program's dialog offers a shell's
 /// command by the arguments it runs with (ADR-144, 1;
@@ -1625,6 +1642,7 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         | "ui.preview_match"
         | "ui.media_step"
         | "ui.fullscreen_step"
+        | "ui.viewer_step"
         | "ui.player_volume"
         | "ui.volume_step"
         | "ui.map_pan"
@@ -3681,6 +3699,24 @@ pub fn declare_all(app: &App) {
         words!(commands_fullscreen_step = "Full screen: next"),
         words!(
             commands_fullscreen_step_description = "On the whole screen, show the next or previous picture of the pane, or turn the page"
+        ),
+    );
+    declare::<Delta>(
+        app,
+        Topic::Preview,
+        "ui.viewer_step",
+        words!(commands_viewer_step = "Viewer: next file"),
+        words!(
+            commands_viewer_step_description = "In a viewer's window, show the next or previous file of its folder, or of the files it was given"
+        ),
+    );
+    none(
+        Topic::Preview,
+        "ui.viewer_reveal",
+        words!(commands_viewer_reveal = "Show in Skwir"),
+        words!(
+            commands_viewer_reveal_description =
+                "Open the folder of the file a viewer's window shows in Skwir, the file selected"
         ),
     );
     none(

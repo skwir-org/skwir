@@ -28,6 +28,10 @@ impl Plugin for PreviewPlugin {
             markdown_plugin_description = "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, formulas, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

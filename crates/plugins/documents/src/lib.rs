@@ -69,6 +69,10 @@ impl Plugin for PreviewPlugin {
             documents_plugin_description = "Read PDF and office documents: continuous scrolling, search, text selection, links and contents; Word and OpenDocument text also as text that fits the panel"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

@@ -27,6 +27,10 @@ impl Plugin for PreviewPlugin {
             comics_plugin_description = "Read CBZ and CBR comic books, continuously or a page at a time, and show their covers"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

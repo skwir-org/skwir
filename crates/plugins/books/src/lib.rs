@@ -43,6 +43,10 @@ impl Plugin for PreviewPlugin {
             books_plugin_description = "Read EPUB, FB2 and MOBI books with their table of contents"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

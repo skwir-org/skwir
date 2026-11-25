@@ -70,7 +70,18 @@ fn main() -> anyhow::Result<()> {
     skwir_platform::process::keep_own_handles();
     // `skwir mcp` and `skwir cmd` (ADR-043), before anything logs: their
     // standard output is the protocol, or the JSON a script reads.
+    let program = std::env::args_os().next().unwrap_or_default();
     let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    // `skwir view` and `skw` (ADR-151): a program of its own, which hands
+    // nothing over and takes nothing over, started with what viewing needs.
+    if let Some(asked) = skwir::view::asked(&program, &args) {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let viewing = match skwir::view::read(asked, &cwd) {
+            Ok(viewing) => viewing,
+            Err(code) => std::process::exit(code),
+        };
+        return view(started, viewing);
+    }
     if let Some(code) = skwir::cli::run(&args) {
         std::process::exit(code);
     }
@@ -110,10 +121,18 @@ fn main() -> anyhow::Result<()> {
     // or its windows again while it finishes what runs without one
     // (ADR-115, ADR-122). Where none is, this costs a look at one file.
     let cwd = std::env::current_dir().unwrap_or_default();
+    // A file named opens its folder, the file selected (ADR-151, 5: what a
+    // viewer's Show in Skwir starts), as another program's ShowItems does
+    // (ADR-140).
+    let (location, select) = match args.first() {
+        Some(arg) => file_named(arg, &cwd),
+        None => (None, Vec::new()),
+    };
     let opening = skwir_platform::handover::Opening {
-        location: args.first().cloned(),
+        location,
         cwd: cwd.clone(),
         token: skwir_platform::handover::launch_token(),
+        select,
         ..skwir_platform::handover::Opening::default()
     };
     if windowless.is_none() && skwir_platform::handover::hand_over(&opening) {
@@ -122,32 +141,11 @@ fn main() -> anyhow::Result<()> {
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
     // hardware that is not here (ADR-002).
     let restricted = gpu::restrict_vulkan_drivers();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    log();
     if let Some(disabled) = restricted {
         tracing::debug!(%disabled, "restricting Vulkan drivers");
     }
-
-    // The system's languages, before anything says a word (ADR-139, 6).
-    skwir_core::locale::set_system(skwir_platform::locale::languages());
-    {
-        use skwir_platform::locale::{Category, of};
-        skwir_core::locale::set_formats(of(Category::Numeric), of(Category::Time));
-        // Names in the order of the region's collation (ADR-139, 15), set
-        // once before any listing makes a key: C and POSIX keep the folded
-        // order.
-        skwir_core::collate::set_locale(of(Category::Collate).as_deref());
-    }
-    // The catalogs shipped (ADR-139, G): the program's own now, a plugin's
-    // as it is enabled; and how much of each language they say, counted as
-    // they were made, which decides what Automatic speaks (ADR-139, 13).
-    skwir_core::words::ship(catalogs::CATALOGS);
-    skwir_core::words::ship_shares(catalogs::SHARES);
-    skwir_core::words::register_shipped_of_program("skwir");
+    speak();
     let app = App::new(AppConfig::default())?;
     // Type-to-find's table for the collation, made on a worker before a
     // key is typed, never on the window's thread.
@@ -176,8 +174,9 @@ fn main() -> anyhow::Result<()> {
     // program asks the bus is that location, as a launch naming its
     // folder: nothing restored, the request's folder in the one window
     // (ADR-140).
-    let initial = args
-        .first()
+    let initial = opening
+        .location
+        .as_ref()
         .map(|arg| skwir_ui::location_of(&app, arg, &cwd));
     // The folder is not logged: it can come from a preference, and paths
     // are private.
@@ -191,4 +190,70 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(ASKED_NOTHING);
     }
     ran
+}
+
+/// What a launch's first argument opens: a file named (not a folder) as
+/// its folder, its name to select there; anything else as it is.
+fn file_named(
+    arg: &std::ffi::OsStr,
+    cwd: &std::path::Path,
+) -> (Option<std::ffi::OsString>, Vec<std::ffi::OsString>) {
+    let path = cwd.join(arg);
+    let file = std::fs::metadata(&path).is_ok_and(|metadata| !metadata.is_dir());
+    match (file, path.parent(), path.file_name()) {
+        (true, Some(folder), Some(name)) => {
+            (Some(folder.as_os_str().to_owned()), vec![name.to_owned()])
+        }
+        _ => (Some(arg.to_owned()), Vec::new()),
+    }
+}
+
+/// The system's languages and Skwir's catalogs, before anything says a
+/// word (ADR-139, 6, G).
+fn speak() {
+    skwir_core::locale::set_system(skwir_platform::locale::languages());
+    {
+        use skwir_platform::locale::{Category, of};
+        skwir_core::locale::set_formats(of(Category::Numeric), of(Category::Time));
+        // Names in the order of the region's collation (ADR-139, 15), set
+        // once before any listing makes a key: C and POSIX keep the folded
+        // order.
+        skwir_core::collate::set_locale(of(Category::Collate).as_deref());
+    }
+    // The catalogs shipped (ADR-139, G): the program's own now, a plugin's
+    // as it is enabled; and how much of each language they say, counted as
+    // they were made, which decides what Automatic speaks (ADR-139, 13).
+    skwir_core::words::ship(catalogs::CATALOGS);
+    skwir_core::words::ship_shares(catalogs::SHARES);
+    skwir_core::words::register_shipped_of_program("skwir");
+}
+
+/// Logs to standard error, as `RUST_LOG` says, else what informs.
+fn log() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+}
+
+/// A viewer's program (`skwir view`, ADR-151, 1): no handover either way,
+/// the plugins that serve a viewer alone, none from outside, and not what
+/// the file manager starts (the login shell's variables, the collation's
+/// table for typing names). Ends once its window closes.
+fn view(started: Instant, viewing: skwir_ui::viewer::Viewing) -> anyhow::Result<()> {
+    skwir_platform::handover::keep_apart();
+    let restricted = gpu::restrict_vulkan_drivers();
+    log();
+    if let Some(disabled) = restricted {
+        tracing::debug!(%disabled, "restricting Vulkan drivers");
+    }
+    speak();
+    let app = App::new(AppConfig::default())?;
+    for plugin in skwir::viewer_plugins() {
+        app.plugins.add(plugin, &app);
+    }
+    tracing::info!("viewing");
+    skwir_ui::view(app, viewing, started)
 }

@@ -20,6 +20,10 @@ impl Plugin for PreviewPlugin {
     fn description(&self) -> skwir_core::words::Words {
         skwir_core::words!(hex_plugin_description = "Inspect any file as hexadecimal bytes")
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

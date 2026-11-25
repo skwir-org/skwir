@@ -7,6 +7,7 @@ use std::sync::Arc;
 use skwir_core::plugin::Plugin;
 
 pub mod cli;
+pub mod view;
 
 /// Every plugin, in registration order. Each registers its commands,
 /// bindings, menus and places, and can be toggled at runtime through
@@ -19,6 +20,16 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
     let outside = skwir_extend::discover(&skwir_extend::folders(), &taken);
     plugins.extend(outside.into_iter().map(|plugin| plugin as Arc<dyn Plugin>));
     plugins
+}
+
+/// What a viewer's program registers (`skwir view`, ADR-151): the plugins
+/// built in that say they serve it (`Plugin::for_viewer`), in registration
+/// order. None from outside: they are not looked for.
+pub fn viewer_plugins() -> Vec<Arc<dyn Plugin>> {
+    built_in()
+        .into_iter()
+        .filter(|plugin| plugin.for_viewer())
+        .collect()
 }
 
 /// The plugins built into skwir, in registration order.

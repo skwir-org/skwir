@@ -234,7 +234,9 @@ fn a_dialog_offers_no_trash() {
     let (dialog, _, pane) = app
         .open_window(skwir_core::Location::from_path(tmp.path()))
         .unwrap();
-    app.workspace.write().set_chooses(dialog, true);
+    app.workspace
+        .write()
+        .set_kind(dialog, skwir_core::workspace::WindowKind::Chooser);
     assert!(app.chooses_in(pane) && !app.chooses_in(own));
     let offered = |pane| {
         let args = serde_json::json!({ "text": "trash", "pane": pane });

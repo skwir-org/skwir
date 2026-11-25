@@ -34,6 +34,10 @@ impl Plugin for PreviewPlugin {
             djvu_plugin_description = "Read DjVu documents, scanned books mostly: continuous scrolling, search, text selection, links and contents; and show their first pages as thumbnails"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

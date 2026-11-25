@@ -395,17 +395,21 @@ fn a_dialog_s_window_goes_from_the_core_the_last_one_too() {
     navigate(&app, dir.path());
     let own = active_window(&app);
     let (dialog, _, _) = app.open_window(Location::from_path(dir.path())).unwrap();
-    app.workspace.write().set_chooses(dialog, true);
-    assert_eq!(app.close_dialog_window(dialog, dir.path()).unwrap(), None);
+    app.workspace
+        .write()
+        .set_kind(dialog, skwir_core::workspace::WindowKind::Chooser);
+    assert_eq!(app.close_window_apart(dialog, dir.path()).unwrap(), None);
     assert_eq!(windows(&app), [own], "gone, the user's left");
 
     let (dialog, _, _) = app.open_window(Location::from_path(dir.path())).unwrap();
-    app.workspace.write().set_chooses(dialog, true);
+    app.workspace
+        .write()
+        .set_kind(dialog, skwir_core::workspace::WindowKind::Chooser);
     // The user's window closed while the dialog's was up: it is the last.
     run(&app, "window.close", serde_json::json!({ "window": own }));
     assert_eq!(windows(&app), [dialog]);
     let placed = app
-        .close_dialog_window(dialog, dir.path())
+        .close_window_apart(dialog, dir.path())
         .unwrap()
         .expect("one takes its place");
     assert_eq!(windows(&app), [placed]);
@@ -425,6 +429,52 @@ fn a_dialog_s_window_goes_from_the_core_the_last_one_too() {
     assert_eq!(windows(&app).len(), 2, "nothing more: no dialog's window");
 }
 
+/// A viewer's window (ADR-151, 2) is the program's, not the user's own: its
+/// pane shows the file's folder, it holds one tab, it is neither listed nor
+/// kept for the next start, and closed it is not reopened.
+#[test]
+fn a_viewer_s_window_is_not_the_user_s_own() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let own = active_window(&app);
+    let folder = dir.path().join("it's a folder");
+    let (viewer, tab, pane) = app
+        .open_viewer_window(Location::from_path(&folder))
+        .unwrap();
+    {
+        let ws = app.workspace.read();
+        let window = ws.window(viewer).unwrap();
+        assert!(window.views() && !window.is_own() && !window.holds_tabs());
+        assert_eq!(ws.active_window_id(), viewer, "made active");
+    }
+    assert_eq!(location_of(&app, pane), Some(Location::from_path(&folder)));
+    // A tab asked there opens in place: it holds one.
+    let second = Location::from_path(dir.path().join("second folder"));
+    assert_eq!(
+        app.new_tab(Some(pane), Some(second.clone()), false)
+            .unwrap(),
+        (tab, pane)
+    );
+    assert_eq!(tabs_of(&app, viewer), [tab]);
+    // Not the user's: neither listed nor kept.
+    let listed = value(&app, "window.list", serde_json::json!({}));
+    let listed: Vec<WindowId> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| id(w, "id"))
+        .collect();
+    assert_eq!(listed, [own]);
+    assert_eq!(app.saved_windows().windows.len(), 1, "the user's alone");
+    // Closed, it goes, and what comes back is never it.
+    assert_eq!(app.close_window_apart(viewer, dir.path()).unwrap(), None);
+    assert_eq!(windows(&app), [own]);
+    let _ = app.dispatch(&Invocation::new("tab.reopen"));
+    assert_eq!(windows(&app), [own], "no viewer's window again");
+}
+
 /// A dialog's window holds one tab (ADR-144, 2): a place asked in a tab
 /// there (a middle click, Ctrl+Enter, a volume mounted for a tab) opens in
 /// place, a step Back returns from, and no tab moves into it, so its
@@ -437,7 +487,9 @@ fn a_dialog_s_window_opens_a_tab_asked_in_place() {
     navigate(&app, dir.path());
     let own = active_window(&app);
     let (dialog, tab, pane) = app.open_window(Location::from_path(dir.path())).unwrap();
-    app.workspace.write().set_chooses(dialog, true);
+    app.workspace
+        .write()
+        .set_kind(dialog, skwir_core::workspace::WindowKind::Chooser);
     let second = Location::from_path(dir.path().join("second folder"));
     let opened = app
         .new_tab(Some(pane), Some(second.clone()), false)
@@ -572,7 +624,9 @@ fn a_dialog_s_undo_takes_back_what_it_did_alone() {
     let app = app(dir.path());
     let own = active(&app);
     let (dialog_window, _, dialog) = app.open_window(Location::from_path(dir.path())).unwrap();
-    app.workspace.write().set_chooses(dialog_window, true);
+    app.workspace
+        .write()
+        .set_kind(dialog_window, skwir_core::workspace::WindowKind::Chooser);
     let finished = || {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
@@ -841,7 +895,9 @@ fn windows_come_back_beside_a_dialog_s_window() {
     let (dialog, dialog_tab, _) = next
         .open_window(Location::from_path(dir.path().join("second folder")))
         .unwrap();
-    next.workspace.write().set_chooses(dialog, true);
+    next.workspace
+        .write()
+        .set_kind(dialog, skwir_core::workspace::WindowKind::Chooser);
     assert_eq!(active_window(&next), dialog, "the dialog's is in use");
     assert!(next.restore_windows(&saved));
 
@@ -1073,9 +1129,13 @@ fn a_window_with_the_keyboard_is_looked_at_and_tells_the_plugins() {
     assert!(app.looked_at_own(), "a window of the user's own");
     // Answering another program's dialog (ADR-141), it is looked at, but
     // not as the user's own: what asks the user waits.
-    app.workspace.write().set_chooses(second, true);
+    app.workspace
+        .write()
+        .set_kind(second, skwir_core::workspace::WindowKind::Chooser);
     assert!(app.looked_at() && !app.looked_at_own());
-    app.workspace.write().set_chooses(second, false);
+    app.workspace
+        .write()
+        .set_kind(second, skwir_core::workspace::WindowKind::Own);
     app.set_window_focused(second, false);
     assert!(!app.looked_at(), "another program has it");
     assert!(!app.looked_at_own());

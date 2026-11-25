@@ -622,8 +622,9 @@ impl App {
         }
         drop(panes_by_id);
         drop(panes);
-        // A dialog's window is never reopened (ADR-141).
-        let item = (!tabs.is_empty() && !closed.chooses()).then(|| ClosedItem::Window {
+        // A dialog's window is never reopened (ADR-141), nor a viewer's
+        // (ADR-151).
+        let item = (!tabs.is_empty() && closed.is_own()).then(|| ClosedItem::Window {
             tabs,
             shown,
             shape: closed.shape().cloned(),
@@ -845,7 +846,7 @@ impl App {
             let from = ws.active_window_id();
             let sort = ws.dialog_order();
             let (window, tab, panes) = ws.add_window(Some(from), vec![(location, sort)]);
-            ws.set_chooses(window, true);
+            ws.set_kind(window, crate::workspace::WindowKind::Chooser);
             // Made as the user's panes are (`push_pane`): the dialogs' own.
             if let Some(pane) = ws.pane_mut(panes[0]) {
                 pane.sort.folders_first = sort.folders_first;
@@ -857,14 +858,36 @@ impl App {
         Ok((window, tab, pane))
     }
 
-    /// Close window `id`, which answered another program's dialog
-    /// (ADR-141): it goes from the core whatever else is there, never kept
-    /// as the last window. Were it the last, a window of the user's own on
-    /// `folder` takes its place first: its id, which the UI keeps asleep.
+    /// A new window viewing the file at `location`'s path (`skwir view`,
+    /// ADR-151): its one pane on the file's folder, shown in the order the
+    /// folder is shown in (ADR-132), the window marked a viewer's before
+    /// anything is listed and made active. A location that is no path is
+    /// shown itself. What selects the file there is the caller's
+    /// (`App::reveal_names`), once the folder is listed.
+    pub fn open_viewer_window(
+        &self,
+        location: Location,
+    ) -> anyhow::Result<(WindowId, TabId, PaneId)> {
+        let (window, tab, pane) = {
+            let mut ws = self.workspace.write();
+            let (window, tab, panes) = ws.add_window(None, vec![(location, SortSpec::default())]);
+            ws.set_kind(window, crate::workspace::WindowKind::Viewer);
+            ws.set_active_window(window);
+            (window, tab, panes[0])
+        };
+        self.resume_shown()?;
+        Ok((window, tab, pane))
+    }
+
+    /// Close window `id`, which is not the user's own: it answered another
+    /// program's dialog (ADR-141), or viewed files (ADR-151). It goes from
+    /// the core whatever else is there, never kept as the last window. Were
+    /// it the last, a window of the user's own on `folder` takes its place
+    /// first: its id, which the UI keeps asleep.
     ///
     /// # Errors
     /// When there is no window `id`, or none can take its place.
-    pub fn close_dialog_window(
+    pub fn close_window_apart(
         &self,
         id: WindowId,
         folder: &std::path::Path,
@@ -956,7 +979,7 @@ impl App {
         let active = ws.active_window_id();
         ws.windows()
             .iter()
-            .filter(|w| !w.chooses())
+            .filter(|w| w.is_own())
             .map(|w| WindowInfo {
                 id: w.id,
                 tabs: w.tabs().iter().map(|t| t.id).collect(),
@@ -974,7 +997,7 @@ impl App {
             let ws = self.workspace.read();
             ws.windows()
                 .iter()
-                .filter(|w| !w.chooses())
+                .filter(|w| w.is_own())
                 .flat_map(|w| {
                     let shown = w.shown().id;
                     let ws = &ws;
@@ -1009,9 +1032,10 @@ impl App {
     }
 
     /// Whether `args` name the window answering another program's dialog
-    /// (ADR-141, 8), or a tab or a pane of it, by `window`, `tab` or
-    /// `pane`: refused to a call from elsewhere (an agent's, a script's),
-    /// which neither acts in that window nor sees what it asks.
+    /// (ADR-141, 8) or a viewer's (ADR-151, 2), or a tab or a pane of it,
+    /// by `window`, `tab` or `pane`: refused to a call from elsewhere (an
+    /// agent's, a script's), which neither acts in that window nor sees
+    /// what it asks.
     pub fn names_a_dialog(&self, args: &serde_json::Value) -> bool {
         let ws = self.workspace.read();
         let id = |key: &str| args.get(key).filter(|value| !value.is_null()).cloned();
@@ -1028,10 +1052,7 @@ impl App {
                     .and_then(|p| serde_json::from_value::<PaneId>(p).ok())
                     .and_then(|p| ws.window_of(p)),
             )
-            .any(|w| {
-                ws.window(w)
-                    .is_some_and(crate::workspace::WindowTabs::chooses)
-            })
+            .any(|w| ws.window(w).is_some_and(|w| !w.is_own()))
     }
 
     /// Put the windows of `saved` in place of the workspace's one untouched
@@ -1067,7 +1088,7 @@ impl App {
         let Some((first_window, first_tab)) = ws
             .windows()
             .iter()
-            .find(|w| !w.chooses())
+            .find(|w| w.is_own())
             .and_then(|w| Some((w.id, w.tabs().first()?.id)))
         else {
             return false;
@@ -1105,8 +1126,9 @@ impl App {
         let ws = self.workspace.read();
         let active = ws.active_window_id();
         let mut saved = SavedWindows::default();
-        // A dialog's window goes with its answer (ADR-141).
-        for window in ws.windows().iter().filter(|window| !window.chooses()) {
+        // A dialog's window goes with its answer (ADR-141), a viewer's once
+        // closed (ADR-151).
+        for window in ws.windows().iter().filter(|window| window.is_own()) {
             let kept = self.saved_window(&ws, window);
             if kept.tabs.is_empty() {
                 continue;
@@ -1355,12 +1377,12 @@ pub fn record(app: &App) -> bool {
     // A remote folder is kept by its tab's address, which connects
     // again (ADR-077); its mount's path may name nothing next time.
     // Nor where a dialog chose (ADR-141): another program's folders are
-    // not the user's last.
+    // not the user's last; nor a viewed file's (ADR-151).
     let folder = {
         let ws = app.workspace.read();
         let dialog = ws
             .window(ws.active_window_id())
-            .is_some_and(crate::workspace::WindowTabs::chooses);
+            .is_some_and(|w| !w.is_own());
         ws.active()
             .location()
             .and_then(Location::path)
@@ -1514,13 +1536,14 @@ fn tab_position(len: usize, from: usize, index: Option<i64>, delta: Option<i64>)
 }
 
 impl WindowTabs {
-    /// Whether it holds tabs beside the one it shows: every window but one
-    /// answering another program's dialog, which shows one folder at a time
-    /// (ADR-144, 2). Opened in a tab there, a place opens in place
-    /// (`App::new_tab`), and no tab is moved into it, so its Close tab is
-    /// its last and cancels the dialog.
+    /// Whether it holds tabs beside the one it shows: the user's own
+    /// window, not one answering another program's dialog, which shows one
+    /// folder at a time (ADR-144, 2), nor a viewer's (ADR-151, 2). Opened
+    /// in a tab there, a place opens in place (`App::new_tab`), and no tab
+    /// is moved into it, so its Close tab is its last and cancels the
+    /// dialog, or closes the viewer.
     pub fn holds_tabs(&self) -> bool {
-        !self.chooses()
+        self.is_own()
     }
 }
 

@@ -348,6 +348,10 @@ impl Plugin for PrintPlugin {
         )
     }
 
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Files
     }

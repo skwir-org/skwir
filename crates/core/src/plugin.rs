@@ -86,6 +86,15 @@ pub trait Plugin: Send + Sync {
     fn enabled_by_default(&self) -> bool {
         true
     }
+    /// Whether a viewer's program registers it (`skwir view`, ADR-151): it
+    /// shows files (a preview, a way of looking, a thumbnail, a map's
+    /// background) or acts on the file shown (Open With, Print). The others
+    /// are the file manager's, never started there. One that registers a
+    /// preview, a thumbnail or map tiles says yes
+    /// (`crates/skwir/tests/plugins_toggle.rs`).
+    fn for_viewer(&self) -> bool {
+        false
+    }
     /// Contribute to the app. Called on enable.
     fn register(&self, app: &App);
     /// Apply changed preferences on a worker. Read-through settings need no hook.

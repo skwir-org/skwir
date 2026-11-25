@@ -21,6 +21,10 @@ impl Plugin for PreviewPlugin {
             structured_data_plugin_description = "Show JSON (with comments, and JSON5), YAML and TOML with syntax colors and foldable blocks"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

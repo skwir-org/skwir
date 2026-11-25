@@ -22,6 +22,7 @@ usage: skwir [<folder>]        open a window on the folder (the last one, or hom
        skwir cmd [--apply] <command> [<arguments, a JSON object>]
                                run a command in the open window, print its result
        skwir mcp               serve an agent's MCP to the open window
+       skwir view [<file>…]    a file's preview in a window of its own (skw for short)
        skwir --version         say which version this is
 
 Agents and scripts reach the window once Settings › Plugins › Agents and

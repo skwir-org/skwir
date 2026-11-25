@@ -5821,9 +5821,24 @@ pub struct WindowTabs {
     shape: Option<toml::Value>,
     /// The window this one was made from: a UI starts it as that one is.
     from: Option<WindowId>,
+    /// What it is for: the user's own, another program's dialog, or a
+    /// viewer's (ADR-151).
+    kind: WindowKind,
+}
+
+/// What a window is for (ADR-151). Only the user's own is kept for the next
+/// start and reopened, listed to agents and scripts, and where a launch or
+/// a command naming no window goes; the others go once they are done.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowKind {
+    /// The user's own.
+    #[default]
+    Own,
     /// Opened for another program's Open or Save dialog (ADR-141): it goes
-    /// with its answer, never kept for the next start nor to be reopened.
-    chooses: bool,
+    /// with its answer.
+    Chooser,
+    /// Opened to view files (`skwir view`, ADR-151): it goes once closed.
+    Viewer,
 }
 
 impl WindowTabs {
@@ -5836,7 +5851,7 @@ impl WindowTabs {
             leaving: Vec::new(),
             shape: None,
             from,
-            chooses: false,
+            kind: WindowKind::Own,
         }
     }
 
@@ -5865,9 +5880,25 @@ impl WindowTabs {
         self.from
     }
 
+    /// What it is for (ADR-151).
+    pub fn kind(&self) -> WindowKind {
+        self.kind
+    }
+
+    /// Whether it is the user's own: neither another program's dialog nor
+    /// a viewer's (ADR-151).
+    pub fn is_own(&self) -> bool {
+        self.kind == WindowKind::Own
+    }
+
     /// Whether it was opened for another program's dialog (ADR-141).
     pub fn chooses(&self) -> bool {
-        self.chooses
+        self.kind == WindowKind::Chooser
+    }
+
+    /// Whether it was opened to view files (ADR-151).
+    pub fn views(&self) -> bool {
+        self.kind == WindowKind::Viewer
     }
 
     fn tab_index(&self, id: TabId) -> Option<usize> {
@@ -5998,7 +6029,7 @@ impl Workspace {
     fn dialog_panes(&self) -> crate::hashing::Set<PaneId> {
         self.windows
             .iter()
-            .filter(|w| w.chooses)
+            .filter(|w| w.chooses())
             .flat_map(|w| w.tabs.iter().flat_map(|t| t.panes.iter().copied()))
             .collect()
     }
@@ -6021,7 +6052,7 @@ impl Workspace {
                 .iter()
                 .rev()
                 .filter_map(|id| self.window(*id))
-                .find(|w| !w.chooses)
+                .find(|w| w.is_own())
                 .and_then(|w| self.pane(w.active_pane()))
                 .map(Pane::own_sort)
                 .unwrap_or_default();
@@ -6634,9 +6665,10 @@ impl Workspace {
     /// Where the active window is: the one used last; for a call from
     /// elsewhere (an agent's, a script's, `permissions::from_elsewhere`),
     /// the one used last of the user's own, never the window answering
-    /// another program's dialog, which only the user reaches (ADR-141, 8).
+    /// another program's dialog, which only the user reaches (ADR-141, 8),
+    /// nor a viewer's (ADR-151, 2).
     fn active_index(&self) -> usize {
-        if !self.windows[self.active_window].chooses || !crate::permissions::from_elsewhere() {
+        if self.windows[self.active_window].is_own() || !crate::permissions::from_elsewhere() {
             return self.active_window;
         }
         self.used
@@ -6644,7 +6676,7 @@ impl Workspace {
             .rev()
             .filter_map(|id| self.window_index(*id))
             .chain(0..self.windows.len())
-            .find(|i| !self.windows[*i].chooses)
+            .find(|i| self.windows[*i].is_own())
             .unwrap_or(self.active_window)
     }
 
@@ -6670,11 +6702,12 @@ impl Workspace {
         }
     }
 
-    /// Window `id` is another program's dialog (ADR-141), or no longer:
-    /// one left as the last window stays as an ordinary one.
-    pub fn set_chooses(&mut self, id: WindowId, chooses: bool) {
+    /// Window `id` is for `kind` (ADR-151): another program's dialog
+    /// (ADR-141), a viewer's, or no longer, one left as the last window
+    /// staying as an ordinary one.
+    pub fn set_kind(&mut self, id: WindowId, kind: WindowKind) {
         if let Some(i) = self.window_index(id) {
-            self.windows[i].chooses = chooses;
+            self.windows[i].kind = kind;
         }
     }
 

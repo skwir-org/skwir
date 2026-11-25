@@ -32,6 +32,7 @@
 //! takes nothing more (`Shell::leave`).
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -43,7 +44,7 @@ use gpui::{App, AppContext, Global, WindowHandle};
 use parking_lot::Mutex;
 use skwir_core::Location;
 use skwir_core::op::PlanId;
-use skwir_core::workspace::{PaneId, WindowId, WindowTabs};
+use skwir_core::workspace::{PaneId, WindowId, WindowKind, WindowTabs};
 use skwir_platform::chooser::Answer;
 use skwir_platform::desktop::{Asked, Presence, Standing};
 use skwir_platform::handover::{NotTaken, Opening, TakingOver};
@@ -120,8 +121,9 @@ pub(crate) struct Finishing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Opened {
     Never,
-    /// Only windows answering other programs' dialogs.
-    Dialogs,
+    /// Only windows that are not the user's own: answering other
+    /// programs' dialogs (ADR-141), viewing files (ADR-151).
+    Apart,
     Own,
 }
 
@@ -294,6 +296,10 @@ pub(crate) struct Launch {
     /// was asked, started by the session bus without a window
     /// (`wait_asked`): such a start always waited there first.
     pub(crate) takers: Option<Takers>,
+    /// What a viewer's program was asked to view (`skwir view`, ADR-151):
+    /// its window alone opens, the user's windows neither opened nor
+    /// recorded, and nothing is taken over.
+    pub(crate) view: Option<crate::viewer::Viewing>,
 }
 
 /// Why the session bus started the program without a window: a request
@@ -342,6 +348,7 @@ pub(crate) fn start(
         initial,
         asked,
         takers,
+        view,
     } = launch;
     // Waited without a window for what woke it (`wait_asked`): taking
     // over already, what it was asked queued for the next wake.
@@ -376,10 +383,30 @@ pub(crate) fn start(
         shown: None,
         opened: Opened::Never,
     });
+    // A viewer's program takes nothing over (ADR-151, 1) and reads only
+    // what its window needs: its window, else the system's dialog first.
+    if let Some(view) = view {
+        prepare_viewer(&prepared);
+        cx.on_window_closed(|cx, _| {
+            if cx.windows().is_empty() {
+                closed(cx);
+            }
+        })
+        .detach();
+        listen(cx, wakes);
+        view_files(cx, view.files);
+        return;
+    }
     // Later launches of this Skwir (ADR-122) come here, for its life. Asked
     // first: a launch that started with this one finds this one's marker
     // sooner, and one that lost to it finds out before it shows anything
     // (`handed_away`).
+    // A file the launch named, selected in its folder once shown (ADR-151,
+    // 5).
+    let select = asked
+        .as_ref()
+        .map(|asked| asked.select.clone())
+        .unwrap_or_default();
     if !waited {
         let state = cx.global::<Finishing>();
         take_over(&state.app, &state.takers, asked, None);
@@ -395,8 +422,10 @@ pub(crate) fn start(
     if waited {
         // What it was asked opens its window at once.
         cx.global::<Finishing>().app.wake();
-    } else if !handed_away(cx) {
-        show(cx, initial, None, false);
+    } else if !handed_away(cx)
+        && let Some(pane) = show(cx, initial, None, false)
+    {
+        prepared.reveal_names(pane, select);
     }
 }
 
@@ -438,6 +467,105 @@ fn handed_away(cx: &mut App) -> bool {
     tracing::info!("another Skwir took this launch over");
     quit(cx);
     true
+}
+
+/// What a viewer's program reads once (ADR-151, 1): the settings the window
+/// declares and what it keeps, and how code is colored. Not what the file
+/// manager's own parts read (the themes and fonts Settings lists, owner
+/// names for Properties, the members a killed program extracted, which
+/// another Skwir may be showing).
+fn prepare_viewer(app: &Arc<skwir_core::App>) {
+    crate::settings::declare(app);
+    skwir_platform::highlight::added::keep_in(app.cache.namespace("grammars"));
+    skwir_platform::tree_sitter::keep_compiled_in(
+        app.cache.namespace("wasmtime").folder("tree-sitter"),
+    );
+    crate::session::declare(app);
+}
+
+/// A viewer's window on `files` (ADR-151): none given, the system's dialog
+/// asks which first, several taken; cancelled, or none it can show, the
+/// program ends.
+fn view_files(cx: &mut App, files: Vec<PathBuf>) {
+    if !files.is_empty() {
+        open_viewer(cx, files);
+        return;
+    }
+    let chosen = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: true,
+        prompt: None,
+    });
+    cx.spawn(async move |cx| {
+        let files = match chosen.await {
+            Ok(Ok(Some(files))) => files,
+            Ok(Err(error)) => {
+                tracing::warn!("the system's dialog did not open: {error:#}");
+                Vec::new()
+            }
+            // Cancelled, or the dialog gone.
+            Ok(Ok(None)) | Err(_) => Vec::new(),
+        };
+        cx.update(|cx| {
+            if files.is_empty() {
+                quit(cx);
+            } else {
+                open_viewer(cx, files);
+            }
+        });
+    })
+    .detach();
+}
+
+/// Open a viewer's window on `files`, the first shown (ADR-151, 2): its
+/// pane on that file's folder, the file selected once listed.
+fn open_viewer(cx: &mut App, files: Vec<PathBuf>) {
+    let app = Arc::clone(&cx.global::<Finishing>().app);
+    let Some(first) = files.first() else {
+        quit(cx);
+        return;
+    };
+    let (folder, name) = crate::viewer::place_of(first);
+    // The core's other windows (its first, untouched) stay asleep: a
+    // viewer's program opens its window alone (ADR-151, 1).
+    {
+        let state = cx.global_mut::<Finishing>();
+        let up: HashSet<WindowId> = state.windows.iter().map(|(id, _)| *id).collect();
+        let ws = app.workspace.read();
+        state.asleep.extend(
+            ws.windows()
+                .iter()
+                .map(|w| w.id)
+                .filter(|id| !up.contains(id)),
+        );
+    }
+    let opened = app.open_viewer_window(Location::from_path(folder));
+    let (id, pane) = match opened {
+        Ok((id, _, pane)) => (id, pane),
+        Err(error) => {
+            tracing::error!("a viewer's window has no pane: {error:#}");
+            quit(cx);
+            return;
+        }
+    };
+    if !open_window(cx, id, false, None, false, None) {
+        quit(cx);
+        return;
+    }
+    app.reveal_names(pane, name.into_iter().collect());
+    let window = cx
+        .global::<Finishing>()
+        .windows
+        .iter()
+        .find(|(up, _)| *up == id)
+        .map(|(_, handle)| *handle);
+    if let Some(window) = window {
+        let _ = window.update(cx, |shell, window, cx| {
+            shell.view_files(files, cx);
+            shell.viewer_focus(window, cx);
+        });
+    }
 }
 
 /// What the program reads once, whatever windows it opens: the settings the
@@ -512,7 +640,7 @@ fn show(
         let ids: Vec<WindowId> = ws
             .windows()
             .iter()
-            .filter(|w| !w.chooses() && !up.contains(&w.id))
+            .filter(|w| w.is_own() && !up.contains(&w.id))
             .map(|w| w.id)
             .collect();
         let active = ws.active_window_id();
@@ -2272,7 +2400,7 @@ fn open_chooser(cx: &mut App, asking: crate::chooser::Asking) {
         let ws = app.workspace.read();
         let own_up = up
             .iter()
-            .any(|id| ws.window(*id).is_some_and(|w| !w.chooses()));
+            .any(|id| ws.window(*id).is_some_and(WindowTabs::is_own));
         if !own_up {
             state.asleep.extend(
                 ws.windows()
@@ -2311,7 +2439,7 @@ fn own_windows(state: &Finishing) -> Vec<(WindowId, WindowHandle<Shell>)> {
     state
         .windows
         .iter()
-        .filter(|(id, _)| !ws.window(*id).is_some_and(WindowTabs::chooses))
+        .filter(|(id, _)| ws.window(*id).is_none_or(WindowTabs::is_own))
         .copied()
         .collect()
 }
@@ -2323,7 +2451,7 @@ fn asleep_windows(cx: &App) -> bool {
     let ws = state.app.workspace.read();
     ws.windows()
         .iter()
-        .any(|w| !w.chooses() && !state.windows.iter().any(|(up, _)| *up == w.id))
+        .any(|w| w.is_own() && !state.windows.iter().any(|(up, _)| *up == w.id))
 }
 
 /// What a launch asks of its folder once shown: another program's files
@@ -2367,22 +2495,23 @@ const DIALOG_HEIGHT: f32 = 680.;
 /// configuration names: never translated, and renamed only as a breaking
 /// change. Every window of the user's own is the main window; every window
 /// answering another program's Open or Save dialog, its file chooser,
-/// whichever it asks.
+/// whichever it asks; every window viewing files, a viewer (ADR-151, 3).
 const MAIN_WINDOW_TAG: &str = "main window";
 const CHOOSER_TAG: &str = "file chooser";
+const VIEWER_TAG: &str = "viewer";
 
-/// The tag of a window (`MAIN_WINDOW_TAG`, `CHOOSER_TAG`; `chooses`, as
-/// the core's window says it, `WindowTabs::chooses`), and what it means in
-/// the reader's language, which the compositor may show or a screen reader
-/// read. Said once each time the languages move (`locale::revision`), as
-/// the window's language for assistive technology is
-/// (`a11y_language::of_window`): a frame asks it.
-fn window_tag(chooses: bool) -> gpui::WindowTag {
+/// The tag of a window of `kind` (`MAIN_WINDOW_TAG`, `CHOOSER_TAG`,
+/// `VIEWER_TAG`, as the core's window says it, `WindowTabs::kind`), and
+/// what it means in the reader's language, which the compositor may show
+/// or a screen reader read. Said once each time the languages move
+/// (`locale::revision`), as the window's language for assistive technology
+/// is (`a11y_language::of_window`): a frame asks it.
+fn window_tag(kind: WindowKind) -> gpui::WindowTag {
     thread_local! {
-        static SAID: RefCell<Option<(u64, [gpui::SharedString; 2])>> = const { RefCell::new(None) };
+        static SAID: RefCell<Option<(u64, [gpui::SharedString; 3])>> = const { RefCell::new(None) };
     }
     let now = skwir_core::locale::revision();
-    let [main, dialog] = SAID.with(|said| {
+    let [main, dialog, viewer] = SAID.with(|said| {
         if let Some((at, descriptions)) = said.borrow().as_ref()
             && *at == now
         {
@@ -2402,20 +2531,24 @@ fn window_tag(chooses: bool) -> gpui::WindowTag {
             )
             .say_plain()
             .into(),
+            skwir_core::words!(
+                window_tag_viewer = "File viewer",
+                note = "What a window showing one file's preview alone (skwir view) is for, as the desktop may show it (a window rule's list, a screen reader)."
+            )
+            .say_plain()
+            .into(),
         ];
         *said.borrow_mut() = Some((now, descriptions.clone()));
         descriptions
     });
-    if chooses {
-        gpui::WindowTag {
-            tag: CHOOSER_TAG.into(),
-            description: dialog,
-        }
-    } else {
-        gpui::WindowTag {
-            tag: MAIN_WINDOW_TAG.into(),
-            description: main,
-        }
+    let (tag, description) = match kind {
+        WindowKind::Own => (MAIN_WINDOW_TAG, main),
+        WindowKind::Chooser => (CHOOSER_TAG, dialog),
+        WindowKind::Viewer => (VIEWER_TAG, viewer),
+    };
+    gpui::WindowTag {
+        tag: tag.into(),
+        description,
     }
 }
 
@@ -2424,10 +2557,14 @@ fn window_tag(chooses: bool) -> gpui::WindowTag {
 /// title is (`Shell::sync_title`), gpui telling the compositor only when it
 /// changed. The tag stays the one it opened with.
 pub(crate) fn tag_again(window: &mut gpui::Window) {
-    let Some(chooses) = window.tag().map(|tag| tag.tag == CHOOSER_TAG) else {
+    let Some(kind) = window.tag().map(|tag| match &*tag.tag {
+        CHOOSER_TAG => WindowKind::Chooser,
+        VIEWER_TAG => WindowKind::Viewer,
+        _ => WindowKind::Own,
+    }) else {
         return;
     };
-    window.set_tag(window_tag(chooses));
+    window.set_tag(window_tag(kind));
 }
 
 /// Open a window drawing the core's window `id`, shaped and placed as it
@@ -2462,13 +2599,13 @@ fn open_window(
         }
     };
     let work = Rc::clone(&state.work);
-    let (own, from, chooses) = {
+    let (own, from, kind) = {
         let ws = app.workspace.read();
         let window = ws.window(id);
         (
             window.and_then(|w| w.shape().cloned()),
             window.and_then(WindowTabs::made_from),
-            window.is_some_and(WindowTabs::chooses),
+            window.map_or(WindowKind::Own, WindowTabs::kind),
         )
     };
     let source = from.and_then(|from| {
@@ -2484,10 +2621,17 @@ fn open_window(
     // windows are up, where it was when none is.
     let up = !state.windows.is_empty();
     // A dialog's window takes the dialogs' layout (ADR-144, 4 and 5), the
-    // compositor placing it.
-    let dialog = choosing
-        .as_ref()
-        .map(|c| crate::session::dialog_shape(&app, crate::chooser::asks_pictures(c.asked())));
+    // compositor placing it; a viewer's, the size the last was left at
+    // (ADR-151, 3).
+    let dialog = match kind {
+        WindowKind::Viewer => Some(crate::session::Session {
+            window: Some(crate::viewer::placement(&app)),
+            ..crate::session::Session::default()
+        }),
+        _ => choosing
+            .as_ref()
+            .map(|c| crate::session::dialog_shape(&app, crate::chooser::asks_pictures(c.asked()))),
+    };
     let (shape, cascade) = match own.and_then(crate::session::from_value) {
         _ if dialog.is_some() => (dialog, false),
         Some(own) => {
@@ -2561,7 +2705,7 @@ fn open_window(
                 .and_then(|c| crate::chooser::foreign_parent(&c.asked().parent_window)),
             // Whether or not it found a parent: where the compositor does
             // not keep a dialog over its asker, a rule naming the tag can.
-            tag: Some(window_tag(chooses)),
+            tag: Some(window_tag(kind)),
             ..Default::default()
         },
         |window, cx| {
@@ -2573,6 +2717,11 @@ fn open_window(
                 shell.title_bar.answered = title_bar;
                 if let Some(asking) = asking.clone() {
                     shell.answer_dialog(asking, window, cx);
+                }
+                // A viewer's draws its preview alone from its first frame
+                // (ADR-151, 3); its files follow (`open_viewer`).
+                if kind == WindowKind::Viewer {
+                    shell.view_files(Vec::new(), cx);
                 }
                 shell
             })
@@ -2601,11 +2750,13 @@ fn open_window(
         "window opened"
     );
     let state = cx.global_mut::<Finishing>();
-    state.opened = state.opened.max(if choosing.is_some() {
-        Opened::Dialogs
-    } else {
-        Opened::Own
-    });
+    state.opened = state
+        .opened
+        .max(if choosing.is_some() || kind != WindowKind::Own {
+            Opened::Apart
+        } else {
+            Opened::Own
+        });
     // A request that came as the program ended unasked opened this: it
     // was asked after all.
     ENDED_UNASKED.store(false, Ordering::Release);
@@ -2625,7 +2776,7 @@ fn open_window(
     let _ = window.update(cx, |shell, window, cx| {
         // Saving for another program, the name it is saved under takes the
         // keyboard; else the files.
-        if !shell.chooser_focus(window, cx) {
+        if !shell.chooser_focus(window, cx) && !shell.viewer_focus(window, cx) {
             window.focus(&shell.ui().focus, cx);
         }
         cx.activate(true);
@@ -3035,23 +3186,27 @@ mod tests {
     /// beside is the reader's language, said again when it moves.
     #[test]
     fn a_window_s_tag_stays_and_its_description_follows_the_language() {
-        use super::{CHOOSER_TAG, MAIN_WINDOW_TAG, window_tag};
+        use super::{CHOOSER_TAG, MAIN_WINDOW_TAG, VIEWER_TAG, WindowKind, window_tag};
         assert_eq!(MAIN_WINDOW_TAG, "main window");
         assert_eq!(CHOOSER_TAG, "file chooser");
+        assert_eq!(VIEWER_TAG, "viewer");
         skwir_core::locale::set_chosen(None);
         skwir_core::locale::set_system(Vec::new());
-        let main = window_tag(false);
-        let chooser = window_tag(true);
+        let main = window_tag(WindowKind::Own);
+        let chooser = window_tag(WindowKind::Chooser);
+        let viewer = window_tag(WindowKind::Viewer);
         assert_eq!(&*main.tag, "main window");
         assert_eq!(&*main.description, "Main window");
         assert_eq!(&*chooser.tag, "file chooser");
         assert_eq!(&*chooser.description, "File chooser");
+        assert_eq!(&*viewer.tag, "viewer");
+        assert_eq!(&*viewer.description, "File viewer");
         skwir_core::locale::set_chosen(Some(skwir_core::words::PSEUDO.into()));
-        let pseudo = window_tag(true);
+        let pseudo = window_tag(WindowKind::Chooser);
         assert_eq!(pseudo.tag, chooser.tag, "never translated");
         assert_ne!(pseudo.description, chooser.description, "said again");
         skwir_core::locale::set_chosen(None);
-        assert_eq!(window_tag(true), chooser);
+        assert_eq!(window_tag(WindowKind::Chooser), chooser);
     }
 
     /// What scripts ask of the window while none of the user's own is up:

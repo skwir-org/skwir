@@ -988,11 +988,17 @@ fn a_question_waits_for_a_window_of_the_users_own() {
     let site = Site::new(&file("0.6.2"));
     let f = Fixture::new(&site.address, Version(0, 5, 1), DOWNLOADED);
     f.look_on(20_000);
-    f.app.workspace.write().set_chooses(f.window, true);
+    f.app
+        .workspace
+        .write()
+        .set_kind(f.window, skwir_core::workspace::WindowKind::Chooser);
     f.look_on(20_002);
     assert!(f.said().iter().all(|n| !n.stays), "nothing asked");
     assert_eq!(f.kept().asked, 0, "nothing counted");
-    f.app.workspace.write().set_chooses(f.window, false);
+    f.app
+        .workspace
+        .write()
+        .set_kind(f.window, skwir_core::workspace::WindowKind::Own);
     f.look_on(20_002);
     assert!(f.said().iter().any(|n| n.stays), "asked");
     assert_eq!(f.kept().asked, 1);
@@ -1010,13 +1016,19 @@ fn a_dialogs_window_is_told_nothing() {
     kept.first_seen = Some(20_000);
     kept.write(&f.app.settings);
     f.app.settings.set(TELL, toml::Value::Boolean(true));
-    f.app.workspace.write().set_chooses(f.window, true);
+    f.app
+        .workspace
+        .write()
+        .set_kind(f.window, skwir_core::workspace::WindowKind::Chooser);
     f.look_on(20_002);
     f.settled();
     assert!(f.said().is_empty(), "nothing said in a dialog's window");
     assert!(site.heads().is_empty(), "no check");
 
-    f.app.workspace.write().set_chooses(f.window, false);
+    f.app
+        .workspace
+        .write()
+        .set_kind(f.window, skwir_core::workspace::WindowKind::Own);
     f.look_on(20_002);
     f.settled();
     assert_eq!(

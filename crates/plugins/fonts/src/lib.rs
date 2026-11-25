@@ -23,6 +23,10 @@ impl Plugin for PreviewPlugin {
             fonts_plugin_description = "Show a specimen of font files without installing them"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

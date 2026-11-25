@@ -70,6 +70,9 @@ pub const CONFIRM: &str = "Confirm";
 /// what Escape does in the window behind it.
 pub const MODAL: &str = "Modal";
 pub const PEEK: &str = "Peek";
+/// A viewer's window (`skwir view`, ADR-151, 4): its card, the file's
+/// bar and its preview.
+pub const VIEWER: &str = "Viewer";
 pub const READER: &str = "DocumentReader";
 /// A preview with something to find in and copy from (a document, a
 /// structured preview): the same keys, one command each, whichever.
@@ -350,6 +353,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),
+    // A viewer's window closes as a dialog does (ADR-151, 4).
+    ("escape", "ui.close_window", Some("viewer")),
+    ("secondary-w", "ui.close_window", Some("viewer")),
     ("secondary-shift-d", "ui.split", None),
     ("tab", "ui.focus_other_pane", Some("pane split")),
     ("shift-tab", "ui.focus_other_pane", Some("pane split")),
@@ -694,6 +700,12 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("up", "ui.cursor", r#"{"to":"previous"}"#, Some("peek")),
     ("right", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
     ("down", "ui.cursor", r#"{"to":"next"}"#, Some("peek")),
+    // A viewer's window steps through its folder, or the files it was
+    // given (ADR-151, 4).
+    ("left", "ui.viewer_step", r#"{"delta":-1}"#, Some("viewer")),
+    ("up", "ui.viewer_step", r#"{"delta":-1}"#, Some("viewer")),
+    ("right", "ui.viewer_step", r#"{"delta":1}"#, Some("viewer")),
+    ("down", "ui.viewer_step", r#"{"delta":1}"#, Some("viewer")),
     // Answering another program's dialog, Escape cancels it, as a
     // dialog's does, wherever the keyboard is in its window, whose root
     // says `choosing`. What is open or typed there takes it first: a
@@ -916,6 +928,7 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     ("f", "ui.preview_fullscreen", "{}", Some("image")),
     ("f", "ui.preview_fullscreen", "{}", Some("preview")),
     ("f", "ui.preview_fullscreen", "{}", Some("peek")),
+    ("f", "ui.preview_fullscreen", "{}", Some("viewer")),
     ("f", "ui.preview_fullscreen", "{}", Some("fullscreen")),
     ("escape", "ui.preview_fullscreen", "{}", Some("fullscreen")),
     ("c", "ui.fullscreen_controls", "{}", Some("fullscreen")),
@@ -1675,6 +1688,10 @@ fn group_words(group: &str) -> Option<Words> {
         ),
         "fullscreen" => words!(keymap_place_fullscreen = "Preview on the whole screen"),
         "slideshow" => words!(keymap_place_slideshow = "Picture on the whole screen"),
+        "viewer" => words!(
+            keymap_place_viewer = "File viewer",
+            note = "A place: a window showing one file's preview alone, opened from a terminal (skwir view)."
+        ),
         "player" => words!(
             keymap_place_player = "Pinned player",
             note = "A place in the window: the player kept playing while one browses."
@@ -1734,6 +1751,7 @@ pub(crate) const PLACES: &[Place] = &[
     place("address", ADDRESS),
     place("view_buttons", VIEW_BUTTONS),
     place("peek", PEEK),
+    place("viewer", VIEWER),
     place("preview", PREVIEW),
     place("reader", READER),
     place("inspector", INSPECTOR),

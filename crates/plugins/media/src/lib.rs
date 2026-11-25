@@ -236,6 +236,10 @@ impl Plugin for PreviewPlugin {
             media_plugin_description = "Play audio and video files in the preview panel: audio with its cover and a spectrum, video with a still frame when playback is unavailable"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

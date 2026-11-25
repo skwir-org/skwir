@@ -132,6 +132,10 @@ impl Plugin for GeoPlugin {
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         vec![geotag::requirement()]
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

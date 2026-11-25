@@ -43,6 +43,10 @@ impl Plugin for GitPlugin {
             git_plugin_description = "A folder's and a file's history of commits in a Git repository, the graph of its merges and what each commit changed, and the files' state marked in the views"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }

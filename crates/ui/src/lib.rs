@@ -126,6 +126,7 @@ pub mod treemap;
 pub mod typenames;
 pub mod usage;
 pub mod view;
+pub mod viewer;
 pub mod views;
 mod weight;
 mod work;
@@ -207,6 +208,28 @@ pub fn run_from(
     launch: Option<skwir_platform::handover::Opening>,
     windowless: Option<Windowless>,
 ) -> anyhow::Result<()> {
+    run_as(app, initial, started, launch, windowless, None);
+    Ok(())
+}
+
+/// Run a viewer's program (`skwir view`, ADR-151) until its window closes:
+/// a window on `viewing`'s files (none: the system's dialog asks first), in
+/// a program that takes nothing over and starts only what viewing needs;
+/// the file standing for standard input removed as it ends.
+pub fn view(app: Arc<App>, viewing: viewer::Viewing, started: Instant) -> anyhow::Result<()> {
+    run_as(app, None, started, None, None, Some(viewing));
+    Ok(())
+}
+
+fn run_as(
+    app: Arc<App>,
+    initial: Option<Location>,
+    started: Instant,
+    launch: Option<skwir_platform::handover::Opening>,
+    windowless: Option<Windowless>,
+    view: Option<viewer::Viewing>,
+) {
+    let viewing = view.is_some();
     // Commands that may wait move their waiting off this thread.
     skwir_core::scheduler::mark_window_thread(&app.scheduler);
     let (wake_tx, wake_rx) = flume::bounded::<()>(1);
@@ -231,11 +254,13 @@ pub fn run_from(
     // The shell's own commands, known to every surface as the others are.
     commands::declare_all(&app);
     // What answers other programs' Open and Save dialogs, in Settings
-    // (ADR-141, 10).
-    #[cfg(target_os = "linux")]
-    dialogs_setting::register(&app);
-    // What the shell offers the address field (ADR-098).
-    suggestions::register(&app);
+    // (ADR-141, 10), and what the shell offers the address field
+    // (ADR-098): the file manager's, not a viewer's (ADR-151, 1).
+    if !viewing {
+        #[cfg(target_os = "linux")]
+        dialogs_setting::register(&app);
+        suggestions::register(&app);
+    }
     // Started by the bus without a window: what takes requests over is up
     // before the window system, which starts once one comes; asked nothing,
     // the program ends having reached no display (`finishing::wait_asked`).
@@ -244,7 +269,7 @@ pub fn run_from(
         Some(windowless) => {
             match finishing::wait_asked(&app, &wake_rx, Arc::clone(&openings), windowless) {
                 Some(takers) => Some(takers),
-                None => return Ok(()),
+                None => return,
             }
         }
         None => None,
@@ -259,10 +284,13 @@ pub fn run_from(
     // The system's backend, with AccessKit (ADR-064).
     let application = gpui_platform::application().with_assets(icons::FsAssets);
     // macOS: the Dock's icon clicked with no window up (ADR-115).
-    application.on_reopen(|cx| finishing::reopen(cx, None, false));
+    if !viewing {
+        application.on_reopen(|cx| finishing::reopen(cx, None, false));
+    }
     // macOS: folders the Finder or the Dock opens in the running program
-    // (ADR-122), handed in as a launch's are, at the next wake.
-    {
+    // (ADR-122), handed in as a launch's are, at the next wake. A viewer's
+    // program takes nothing in (ADR-151, 1).
+    if !viewing {
         let (openings, wake) = (Arc::clone(&openings), app.waker_handle());
         application.on_open_urls(move |urls| {
             let opened: Vec<skwir_platform::handover::Opening> = urls
@@ -305,8 +333,14 @@ pub fn run_from(
         // Every way out passes here: Quit and Stop and quit, the last
         // window closing with nothing left, a signal (`finishing.rs`).
         let quitting = Arc::clone(&app);
+        // What a viewer's program read from standard input goes with it
+        // (ADR-151, 7).
+        let piped = view.as_ref().and_then(|view| view.piped.clone());
         cx.on_app_quit(move |_| {
             wind_down(&quitting);
+            if let Some(piped) = &piped {
+                viewer::let_go_of_piped(piped);
+            }
             async {}
         })
         .detach();
@@ -315,10 +349,10 @@ pub fn run_from(
             initial,
             asked: launch,
             takers,
+            view,
         };
         finishing::start(cx, app, keymap, started, wake_rx, openings, launch);
     });
-    Ok(())
 }
 
 /// How long the process may stay after its last window closed, for the

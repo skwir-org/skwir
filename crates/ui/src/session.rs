@@ -516,6 +516,11 @@ impl Shell {
         if let Some(pictures) = self.chooser.as_ref().map(|c| c.pictures) {
             return self.remember_dialog_shape(pictures);
         }
+        // A viewer's keeps its size alone, as it closes (`viewer_let_go`,
+        // ADR-151, 3): its shape is no window of the user's.
+        if self.viewer.is_some() {
+            return;
+        }
         // Nothing is written before the window's shape was read: the
         // tabs are put in place (and present themselves) before the shape
         // is restored, and writing then would replace it with defaults.
@@ -691,6 +696,8 @@ pub fn former_quick_filters(app: &skwir_core::App) -> Option<bool> {
 }
 
 pub fn declare(app: &skwir_core::App) {
+    // A viewer's size, in the state file every Skwir reads (ADR-151, 3).
+    crate::viewer::declare(app);
     app.settings
         .declare(skwir_core::settings::SettingSpec::state(
             SESSION_KEY,

@@ -1033,7 +1033,7 @@ impl Shell {
         }
         let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/"));
         let folder = skwir_core::settings::startup_folder(&self.app.settings, &home);
-        match self.app.close_dialog_window(self.window_id, &folder) {
+        match self.app.close_window_apart(self.window_id, &folder) {
             // The core's last, a window of the user's own took its place:
             // asleep until one is asked, as the others.
             Ok(Some(placed)) => crate::finishing::sleeps(cx, placed),

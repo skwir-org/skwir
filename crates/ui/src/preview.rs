@@ -9597,6 +9597,71 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     )
 }
 
+/// A viewer's window (`skwir view`, ADR-151, 3): peek's card filling the
+/// window, the file's bar and its preview, with the whole screen in its
+/// place while it shows. Its keys are the viewer's (`keymap::VIEWER`), and
+/// the window's buttons stand at the end of a row above the card where
+/// skwir draws them in the top row (ADR-138).
+pub(crate) fn render_viewed(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+    if shell.preview.fullscreen.is_some()
+        && let Some(whole) = crate::fullscreen::render(shell, cx)
+    {
+        return whole;
+    }
+    let theme = cx.global::<Theme>().clone();
+    let buttons = (shell.title_bar.drawn == crate::title_bar::Drawn::TopRow).then(|| {
+        div()
+            .id("viewer-buttons")
+            .relative()
+            .flex_none()
+            .w_full()
+            .h(sized(crate::address::PANE_ROW_HEIGHT))
+            .px(sized(6.))
+            .flex()
+            .items_center()
+            .children(crate::title_bar::top_row_drag(shell, true))
+            .child(div().flex_1())
+            .children(crate::title_bar::top_row_buttons(
+                shell,
+                crate::title_bar::End::End,
+                cx,
+            ))
+    });
+    let card = div()
+        .id("viewer")
+        .role(gpui::Role::Main)
+        .when_some(said(shell), |d, (name, facts)| {
+            d.aria_label(name).aria_description(facts)
+        })
+        .when_some(shell.preview.peek_focus.as_ref(), |d, focus| {
+            d.track_focus(focus)
+        })
+        .key_context(keymap::VIEWER)
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .flex()
+        .flex_col()
+        .bg(theme.surface)
+        .child(header(shell, &theme, true, None, cx))
+        .child(under_card(
+            shell,
+            &theme,
+            true,
+            true,
+            true,
+            theme.grounds(),
+            cx,
+        ));
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .children(buttons)
+        .child(card)
+        .into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

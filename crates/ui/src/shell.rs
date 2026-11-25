@@ -777,6 +777,8 @@ pub struct Shell {
     pub(crate) title: gpui::SharedString,
     /// Another program's Open or Save dialog this window answers (ADR-141).
     pub(crate) chooser: Option<crate::chooser::Chooser>,
+    /// The files this window views, a viewer's (`skwir view`, ADR-151).
+    pub(crate) viewer: Option<crate::viewer::Viewer>,
     /// What of Skwir's the system's clipboard may hold (ADR-062).
     pub(crate) clipboard_holds: crate::clipboard::Held,
     _subscriptions: Vec<Subscription>,
@@ -1065,6 +1067,7 @@ impl Shell {
             draws_meshes: turns_models(window),
             title: gpui::SharedString::default(),
             chooser: None,
+            viewer: None,
             clipboard_holds: crate::clipboard::Held::Nothing,
             _subscriptions: subs,
         };
@@ -3052,6 +3055,14 @@ impl Shell {
     /// asks: keys and F1's list, the palette, menus, buttons and the
     /// address field's rows, pickers, Properties' links, toasts' buttons.
     pub(crate) fn in_window(&self, name: &str, args: &serde_json::Value) -> InDialogs {
+        // A viewer's window views (ADR-151, 5), and its own buttons close,
+        // maximize and minimize it.
+        if self.viewer.is_some() {
+            if WINDOW_BUTTONS.contains(&name) {
+                return InDialogs::Offered;
+            }
+            return self.app.in_viewer(name);
+        }
         if self.chooser.is_none() {
             return InDialogs::Offered;
         }
@@ -3399,7 +3410,6 @@ impl Shell {
     /// (gpui removes it in a task of its own), and what is asked meanwhile
     /// waits for the next window rather than going with this one.
     pub(crate) fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = window;
         if self.left {
             return;
         }
@@ -3408,6 +3418,8 @@ impl Shell {
         // window goes (its close button, Ctrl+W, Quit and its answers,
         // ADR-141).
         self.chooser_let_go(skwir_platform::chooser::Answer::Cancelled, cx);
+        // A viewer's window keeps its size and goes from the core (ADR-151).
+        self.viewer_let_go(window);
         let held = self.take_held();
         self.left = true;
         // A plan being made for it, and what waited, go with it.
@@ -3434,6 +3446,7 @@ impl Shell {
     /// goes from the core as it leaves (ADR-141).
     pub(crate) fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.chooser.is_none()
+            && self.viewer.is_none()
             && crate::finishing::own_window_count(cx) > 1
             && let Err(error) = self.app.close_window(self.window_id)
         {
@@ -3448,7 +3461,9 @@ impl Shell {
     /// another program's dialog.
     fn closes_last_window(&self, args: &serde_json::Value, cx: &gpui::App) -> bool {
         closes_last_tab(&self.app, self.window_id, args)
-            && (self.chooser.is_some() || crate::finishing::own_window_count(cx) <= 1)
+            && (self.chooser.is_some()
+                || self.viewer.is_some()
+                || crate::finishing::own_window_count(cx) <= 1)
     }
 
     /// Quit's windows: every one goes, this one first, none forgotten by
@@ -4328,7 +4343,25 @@ impl Shell {
             ),
             "cursor_toggle" => self.toggle_cursor(window, cx),
             "peek" => self.peek_command(window, cx),
+            // A viewer's card is its window: its × closes it (ADR-151, 4).
+            "peek_close" if self.viewer.is_some() => {
+                self.close_window(window, cx);
+                window.remove_window();
+            }
             "peek_close" => self.close_peek(window, cx),
+            "viewer_step" => {
+                // Given one file, the steps go through its folder, as
+                // peek's do (ADR-151, 4).
+                let delta = args
+                    .get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(1);
+                if !self.viewer_step(delta, cx) {
+                    let to = if delta < 0 { "previous" } else { "next" };
+                    self.run_ui("cursor", &serde_json::json!({ "to": to }), window, cx);
+                }
+            }
+            "viewer_reveal" => self.viewer_reveal(cx),
             "quit" => self.quit(window, cx),
             "close_window" => {
                 self.close_window(window, cx);
@@ -4890,9 +4923,11 @@ impl Shell {
         crate::finishing::tag_again(window);
         // Said now, so that a language chosen since shows too; another
         // program's dialog by its own title (ADR-141, 4).
-        let title: gpui::SharedString = match &self.chooser {
-            Some(chooser) => crate::chooser::title(chooser.choosing.asked()).say().into(),
-            None => crate::title_bar::window_title(&self.ui().place.title)
+        let title: gpui::SharedString = match (&self.chooser, &self.viewer) {
+            (Some(chooser), _) => crate::chooser::title(chooser.choosing.asked()).say().into(),
+            // A viewer's by the file it shows (ADR-151, 3).
+            (None, Some(_)) => crate::viewer::title(self).say().into(),
+            (None, None) => crate::title_bar::window_title(&self.ui().place.title)
                 .say()
                 .into(),
         };
@@ -5279,6 +5314,10 @@ impl Render for Shell {
         }
         // Files' own icons (an application's, a shortcut's) drawn no more.
         crate::icons::let_go(self.icons.begin_frame(), window, cx);
+        // A viewer's window draws the file's preview alone (ADR-151, 3).
+        if self.viewer.is_some() {
+            return self.render_viewer(window, cx);
+        }
         // While the tab shown gets ready, the whole window draws the tab left
         // as it was: its panes, toolbars, status and preview.
         let held = self.presented.take().map(|mut panes| {
@@ -5514,6 +5553,89 @@ impl Render for Shell {
             self.presented = Some(std::mem::replace(&mut self.panes, current));
             self.pane = pane;
         }
+        let root = self.resize_hook(root, cx).into_any_element();
+        crate::title_bar::framed(&self.title_bar, &theme, window, root)
+    }
+}
+
+/// The window's own buttons (ADR-138), which every window offers.
+const WINDOW_BUTTONS: &[&str] = &[
+    "ui.close_window",
+    "ui.maximize_window",
+    "ui.minimize_window",
+];
+
+impl Shell {
+    /// A viewer's window (ADR-151, 3): the file's bar and its preview
+    /// filling it (`preview::render_viewed`), under skwir's own title bar
+    /// where it draws one, with what answers and asks over it. No sidebar,
+    /// tabs, panes, panels, terminal or Activity.
+    fn render_viewer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.sync_title(window);
+        let theme = cx.global::<Theme>().clone();
+        let title_bar = crate::title_bar::bar(self, cx);
+        let (above, band) = match self.title_bar.drawn {
+            crate::title_bar::Drawn::System => (title_bar, None),
+            _ => (None, title_bar),
+        };
+        let toast_over =
+            crate::toast::render_answer(self, crate::toast::AnswerAt::Screen, cx).map(|answer| {
+                div()
+                    .absolute()
+                    .bottom(crate::sizes::sized(38.))
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .child(answer)
+            });
+        let sequence = crate::sequence::render(self, cx);
+        let shortcuts = crate::shortcuts::render(self, window, cx);
+        let overlays = [
+            menu::render(self, cx),
+            prompts::render_prompt(self, window, cx),
+            crate::form::render(self, window, cx),
+            prompts::render_confirm(self, cx),
+            crate::choose::render(self, cx),
+            review::render(self, cx),
+        ];
+        let viewed = preview::render_viewed(self, cx);
+        let root = div()
+            .key_context(keymap::ROOT)
+            .capture_action(cx.listener(Self::capture_run_command))
+            .on_action(cx.listener(Self::on_run_command))
+            .on_modifiers_changed(cx.listener(Self::on_modifiers))
+            .capture_any_mouse_down(cx.listener(|this, _, _, _| this.presses += 1))
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .font_family(theme.font.clone())
+            .text_body()
+            .map(crate::sides::Sides::window_direction)
+            .text_color(theme.text)
+            .children(above)
+            .child(
+                self.framed(
+                    &theme,
+                    window,
+                    band,
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .child(viewed),
+                ),
+            )
+            .children(sequence)
+            .children(overlays.into_iter().flatten())
+            .children(toast_over)
+            .children(shortcuts)
+            .child(div().h(px(0.)));
+        let app = Arc::clone(&self.app);
+        self.icons.request(&app);
         let root = self.resize_hook(root, cx).into_any_element();
         crate::title_bar::framed(&self.title_bar, &theme, window, root)
     }

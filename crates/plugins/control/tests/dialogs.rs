@@ -28,7 +28,7 @@ fn the_window_answering_a_dialog_is_out_of_reach() {
         app.open_window(Location::from_path(tmp.path())).unwrap();
     {
         let mut ws = app.workspace.write();
-        ws.set_chooses(dialog, true);
+        ws.set_kind(dialog, skwir_core::workspace::WindowKind::Chooser);
         // The user is in it: the core's window used last.
         assert!(ws.set_active_window(dialog));
     }

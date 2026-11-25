@@ -158,6 +158,39 @@ fn all_plugins() -> Vec<Arc<dyn Plugin>> {
     skwir::plugins()
 }
 
+/// A viewer's program registers only the plugins that say they serve it
+/// (`Plugin::for_viewer`, ADR-151): one that shows files (a preview, a way
+/// of looking, a thumbnail, a map's background) and does not say so would
+/// be missing there.
+#[test]
+fn every_plugin_that_shows_files_serves_the_viewer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut serving = Vec::new();
+    for plugin in all_plugins() {
+        let id = plugin.id();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join(id))).unwrap();
+        app.plugins.add(Arc::clone(&plugin), &app);
+        if !plugin.enabled_by_default() {
+            assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        }
+        let registered = snapshot(&app);
+        let shows = !registered.previews.is_empty()
+            || !registered.thumbs.is_empty()
+            || registered.tiles.is_some();
+        assert!(
+            !shows || plugin.for_viewer(),
+            "{id} shows files: it serves the viewer (`Plugin::for_viewer`)"
+        );
+        if plugin.for_viewer() {
+            serving.push(id);
+        }
+    }
+    // What the file manager alone has is never started for a viewer.
+    for id in ["remote", "query", "skwird", "places", "terminal", "control"] {
+        assert!(!serving.contains(&id), "{id} is the file manager's");
+    }
+}
+
 #[test]
 fn every_plugin_disables_without_a_trace_and_re_enables() {
     let tmp = tempfile::tempdir().unwrap();

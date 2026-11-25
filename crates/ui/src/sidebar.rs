@@ -260,7 +260,7 @@ fn keep_names(app: &skwir_core::App, names: &Names) {
         let shapes: Vec<_> = ws
             .windows()
             .iter()
-            .filter(|window| !window.chooses())
+            .filter(|window| window.is_own())
             .filter_map(|window| Some((window.id, window.shape()?.clone())))
             .collect();
         for (window, mut shape) in shapes {
@@ -713,7 +713,7 @@ impl Shell {
     fn tab_locations(&self) -> Vec<Location> {
         let shown: Vec<Location> = {
             let ws = self.app.workspace.read();
-            ws.tabs_by_use(|window| !window.chooses())
+            ws.tabs_by_use(skwir_core::workspace::WindowTabs::is_own)
                 .iter()
                 .filter_map(|tab| ws.pane(tab.active).and_then(|pane| pane.shown()).cloned())
                 .collect()

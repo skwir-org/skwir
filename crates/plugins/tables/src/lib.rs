@@ -39,6 +39,10 @@ impl Plugin for PreviewPlugin {
             tables_plugin_description = "Show CSV, TSV and JSON Lines files, spreadsheets and SQLite databases as aligned tables"
         )
     }
+    fn for_viewer(&self) -> bool {
+        true
+    }
+
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }
