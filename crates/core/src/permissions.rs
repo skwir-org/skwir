@@ -309,6 +309,48 @@ fn path_named(text: &str) -> Option<PathBuf> {
     None
 }
 
+/// Why an agent's call is refused where what it would read was resolved
+/// (`Checker::admits`: a relative path read in the pane's folder, a
+/// location's folders, a search's `in:`), as data beside its words
+/// (`docs/invariants/words.md`, "An error is data with words"). Its words
+/// name the path, for its `Display` (a log); what tells an agent of it
+/// (the control plugin's `run`) finds it in the call's error and says why
+/// without the path, which was resolved from what the agent sent, not
+/// written by it, and may name what the agent may not read.
+#[derive(Debug)]
+pub enum Refused {
+    /// Looking the path up would make the system reach another machine.
+    Elsewhere(PathBuf),
+    /// The path is private, by its name or what it resolves to.
+    Private(PathBuf),
+}
+
+impl Refused {
+    /// The path refused.
+    pub fn path(&self) -> &Path {
+        match self {
+            Refused::Elsewhere(path) | Refused::Private(path) => path,
+        }
+    }
+
+    /// Why, naming the path.
+    pub fn words(&self) -> crate::words::Words {
+        match self {
+            Refused::Elsewhere(path) => reaches_another_machine(path),
+            Refused::Private(_) => names_private(),
+        }
+    }
+}
+
+impl std::fmt::Display for Refused {
+    /// Its words, in the languages an error's chain is said in.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.words().fmt(f)
+    }
+}
+
+impl std::error::Error for Refused {}
+
 /// What an agent is told of a path that would reach another machine.
 fn reaches_another_machine(path: &Path) -> crate::words::Words {
     crate::words!(
@@ -372,7 +414,7 @@ fn written_paths(text: &str) -> Vec<&Path> {
 /// Anyone else's call reads what it reads.
 ///
 /// # Errors
-/// Saying why, as an agent is told.
+/// A [`Refused`], saying why.
 pub fn agent_may_read(path: &Path) -> anyhow::Result<()> {
     match agent_call() {
         Some(privacy) => privacy.checker().admits(path),
@@ -541,12 +583,14 @@ impl Checker<'_> {
     /// argument's text.
     ///
     /// # Errors
-    /// Saying why, as an agent is told.
+    /// A [`Refused`], saying why.
     pub fn admits(&mut self, path: &Path) -> anyhow::Result<()> {
         if self.reaches_elsewhere(path) {
-            anyhow::bail!(reaches_another_machine(path));
+            return Err(Refused::Elsewhere(path.to_owned()).into());
         }
-        anyhow::ensure!(!self.holds(path), names_private());
+        if self.holds(path) {
+            return Err(Refused::Private(path.to_owned()).into());
+        }
         Ok(())
     }
 

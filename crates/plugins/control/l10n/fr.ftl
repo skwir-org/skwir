@@ -68,6 +68,12 @@ control_private = ceci nomme un dossier privé, que Skwir tient à l’écart de
 control_proposer = Un agent
 
 # draft
+control_reads_elsewhere = consulter un chemin que lit cet appel amènerait le système à joindre une autre machine, ce qu’un agent ne peut pas faire sans qu’on le lui demande : l’utilisateur doit d’abord l’ouvrir dans Skwir
+
+# draft
+control_reads_private = un chemin que lit cet appel est privé : Skwir le tient à l’écart des agents (Paramètres, Confidentialité)
+
+# draft
 control_status = Agents et scripts
 
 # draft

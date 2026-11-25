@@ -68,6 +68,12 @@ control_private = questo indica una cartella privata, che Skwir tiene lontana da
 control_proposer = Un agente
 
 # draft
+control_reads_elsewhere = cercare un percorso che questa chiamata legge farebbe raggiungere al sistema un’altra macchina, cosa che un agente non può fare senza permesso: l’utente lo apre prima in Skwir
+
+# draft
+control_reads_private = un percorso che questa chiamata legge è privato: Skwir lo tiene lontano dagli agenti (Impostazioni, Privacy)
+
+# draft
 control_status = Agenti e script
 
 # draft

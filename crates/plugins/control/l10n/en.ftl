@@ -65,6 +65,12 @@ control_private = this names a private folder, which Skwir keeps from agents (Se
 # Who proposes a plan, in its review: an AI agent.
 control_proposer = An agent
 
+# Read by agents: why their command is refused, a path being found from what they gave (a name in the folder shown, a location), which is not said.
+control_reads_elsewhere = looking up a path this call reads would make the system reach another machine, which an agent may not do unasked: the user opens it in Skwir first
+
+# Read by agents: why their command is refused, a path being found from what they gave (a name in the folder shown, a location), which is not said. Settings, Privacy is where the user keeps folders from agents.
+control_reads_private = a path this call reads is private: Skwir keeps it from agents (Settings, Privacy)
+
 # A command's title: whether this window listens for AI agents and scripts.
 control_status = Agents and scripts
 

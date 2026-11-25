@@ -68,6 +68,12 @@ control_private = 这里指明了一个私密文件夹，Skwir 不让智能体�
 control_proposer = 一个智能体
 
 # draft
+control_reads_elsewhere = 查找此调用读取的路径会使系统访问另一台计算机，智能体未经请求不得这样做：请用户先在 Skwir 中打开它
+
+# draft
+control_reads_private = 此调用读取的路径是私密的：Skwir 不让智能体访问它（设置 › 隐私）
+
+# draft
 control_status = 智能体与脚本
 
 # draft

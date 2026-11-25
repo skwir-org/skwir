@@ -518,13 +518,43 @@ pub fn run(
             value: check.redact(answer.value),
             failed: answer.failed,
         }),
-        // An error can name what the command touched: said for the agent,
-        // in English, then redacted.
-        Err(error) => match check.redact(Value::String(Words::of_error(error).english())) {
-            Value::String(said) => Err(anyhow::anyhow!(said)),
-            // A text is redacted as a text.
-            other => Err(anyhow::anyhow!(other.to_string())),
+        // Refused where what it reads was resolved (a relative path read in
+        // the pane's folder, a location's folders): the agent is told why,
+        // never the path resolved, which it did not write (`admit` refused
+        // what it wrote), nor what was said around it, which may name it.
+        Err(error) => match refused_in(&error) {
+            Some(refused) => Err(anyhow::anyhow!(refused_unnamed(refused).english())),
+            // An error can name what the command touched: said for the
+            // agent, in English, then redacted.
+            None => match check.redact(Value::String(Words::of_error(error).english())) {
+                Value::String(said) => Err(anyhow::anyhow!(said)),
+                // A text is redacted as a text.
+                other => Err(anyhow::anyhow!(other.to_string())),
+            },
         },
+    }
+}
+
+/// The refusal of what a call would read (`permissions::Refused`) among
+/// the links of `error`'s chain.
+fn refused_in(error: &anyhow::Error) -> Option<&permissions::Refused> {
+    error
+        .chain()
+        .find_map(|link| link.downcast_ref::<permissions::Refused>())
+}
+
+/// Why `refused` was refused, as an agent is told: its path left out.
+fn refused_unnamed(refused: &permissions::Refused) -> Words {
+    match refused {
+        permissions::Refused::Elsewhere(_) => words!(
+            control_reads_elsewhere = "looking up a path this call reads would make the system reach another machine, which an agent may not do unasked: the user opens it in Skwir first",
+            note = "Read by agents: why their command is refused, a path being found from what they gave (a name in the folder shown, a location), which is not said."
+        ),
+        permissions::Refused::Private(_) => words!(
+            control_reads_private =
+                "a path this call reads is private: Skwir keeps it from agents (Settings, Privacy)",
+            note = "Read by agents: why their command is refused, a path being found from what they gave (a name in the folder shown, a location), which is not said. Settings, Privacy is where the user keeps folders from agents."
+        ),
     }
 }
 
