@@ -150,4 +150,32 @@ mod tests {
         assert_eq!(folder("~letters/"), None, "no one's home");
         assert_eq!(save_folder("~/x/", None), None, "no home folder");
     }
+
+    /// On Windows a Save field's folder is whole from a drive or a share,
+    /// written with `\` or `/`, or from `~` with either; one from a drive
+    /// without its root, or from a root without its drive, is relative.
+    #[cfg(windows)]
+    #[test]
+    fn a_save_field_s_folder_is_read_on_windows_as_cd_reads_it() {
+        let home = Path::new(r"C:\example\home");
+        let folder = |text| save_folder(text, Some(home));
+        let path = |text: &str| Some(PathBuf::from(text));
+        assert_eq!(folder("C:/a/"), path(r"C:\a"));
+        assert_eq!(folder(r"C:\a\..\b\"), path(r"C:\b"));
+        assert_eq!(folder(r"C:\..\a\"), path(r"C:\a"), "nothing above a drive");
+        assert_eq!(folder(r"~\x\"), path(r"C:\example\home\x"));
+        assert_eq!(folder("~/x/"), path(r"C:\example\home\x"));
+        assert_eq!(folder("~"), path(r"C:\example\home"));
+        assert_eq!(folder(r"\\server\share\x\"), path(r"\\server\share\x"));
+        assert_eq!(folder("//server/share/x/"), path(r"\\server\share\x"));
+        assert_eq!(folder(r"C:a\"), None, "a drive's folder of the moment");
+        assert_eq!(folder(r"\a\"), None, "the root of the drive of the moment");
+        assert_eq!(folder(r"letters\"), None, "relative");
+        // The folder part a name is put after, read back.
+        let (part, name) = save_split(r"\\server\share\x\notes.pdf");
+        assert_eq!((part, name), (r"\\server\share\x\", "notes.pdf"));
+        assert_eq!(folder(part), path(r"\\server\share\x"));
+        assert_eq!(save_join(r"C:\a", "notes.pdf"), r"C:\a\notes.pdf");
+        assert_eq!(save_join("C:/a", "notes.pdf"), "C:/a/notes.pdf");
+    }
 }
