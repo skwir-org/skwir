@@ -24186,3 +24186,77 @@ same day.
     engine;
   - real Windows and macOS;
   - `idle-pss`, which needs the user's display.
+
+## 2026-11-25: 0.7.0 released
+
+On the user's go ("2-7" of the list the night's record ends with): the
+tag, the signed build, the push, the draft, the publication of skwird
+0.2.0 and of Skwir, Homebrew, the repositories, the AUR and winget's
+files.
+
+- **Tagged** v0.7.0 (annotated) on 66574ee5, after a scan of the 84
+  unpushed commits for personal data (none) and a key check that
+  signed without asking.
+- **The first `release-build`** stopped after 31 min, in test-windows:
+  skwir's `changing_document_engine_refreshes_only_document_previews`
+  passed, then Wine crashed (SIGSEGV) as its program exited, on its try
+  and its retry. Every Wine failure of the day's three gate runs was
+  that crash, three or four a run, each passing on its retry. The test
+  alone, 240 times under the same Wine, 16 at once among them, never
+  crashed: chance, not a test that crashes more. The second run kept
+  the gate as it is.
+- **The second run** (16:35–17:59) passed whole: release-check, no test
+  under Wine needing its retry; the AppImage and the tarball; Debian's,
+  Ubuntu's, Fedora's (each `.rpm` signed by the repositories' key) and
+  Arch's packages; Windows' under Wine; the Mac's looked over.
+  `release-verify`: 44 files, 1.1 GB.
+- **Pushed** main (4b935ab4..66574ee5) and the tag. `release-upload`
+  made one draft: 44 assets, 2.2 KB of notes, linking skwird 0.2.0's
+  release.
+- **Published** skwird v0.2.0 (17:01:21 UTC, 7 assets, its try on
+  GitHub's Windows and macOS runners passed), then Skwir 0.7.0
+  (17:01:34 UTC, Latest), so the notes' link to skwird's release worked
+  at once.
+- **Homebrew's tap:** its main fast-forwarded to skwird 0.2.0's formula
+  (its source's SHA-256 checked against GitHub's archive); its branch
+  `cask/skwir` brought up to date with main, and skwir's first cask
+  written there by `just cask v0.7.0`, its zip's SHA-256 the published
+  zip's. Both pushed. The cask's job on GitHub's macOS runner, its first
+  run, failed three times, each further on:
+  - `brew style`: Homebrew's cop Homebrew/OSDependsOn, on since
+    2026-11-22, refuses `depends_on macos: ">= :monterey"` for
+    `:monterey`. `cask.py` writes it so (ede37e36), the cask written
+    again.
+  - `brew audit --online`: GitHub's API refused the runner's address,
+    whose jobs share 60 unauthenticated requests an hour. The workflow
+    now gives Homebrew its run's own token, read-only (the tap's
+    6251b24).
+  - **After installing, `codesign --verify --deep --strict` refused the
+    app**: "a sealed resource is missing or invalid", in
+    `GStreamer.framework`. Read here from the published zip: the
+    framework's main binary `Versions/1.0/GStreamer` is a link to
+    `lib/libgstreamer-1.0.0.dylib`; rcodesign sealed that file signed
+    once as a library (bd5b19b5…), then signed it again through the
+    link as the framework's binary (708ac7c0…), so its seal no longer
+    matches. 0.6.1's zip is the same: every Mac build since GStreamer
+    came into it (285f685b, 2026-10-21). The zip keeps the links as
+    they are; the .dmg holds the same app. `package-macos`'s look-over
+    checks the app's own seal, not each framework's.
+
+  skwird's job passed. The cask stays on `cask/skwir`, off the tap's
+  main, until a Mac build passes that check.
+- **The repositories:** `just repositories v0.7.0` wrote the apt and
+  dnf indexes into the site, which the site's session checked
+  (signatures, hashes, sizes against the manifest; `skwir-repository`
+  still 2) and committed with its "Offer Skwir 0.7.0" (the manifest,
+  the languages at v0.7.0, the install commands). The user deploys the
+  site.
+- **The AUR:** `aur-prepare` changed each base's version and checksums
+  alone, each checksum the published file's; `aur-publish` pushed
+  skwir 9e61228, skwir-bin c5b81ea, skwir-git 7d650e5.
+- **winget:** `just winget v0.7.0` wrote the three manifests in
+  `target/releases/v0.7.0-winget`. Skwir was never submitted to
+  `microsoft/winget-pkgs`; a first submission is the user's to make.
+- **Not done:** skwird has no AUR package base (its first push is the
+  user's, with its checksum filled, as skwird's RELEASING says), nor a
+  nixpkgs package; `idle-pss` and the AppImage on the user's desktop.

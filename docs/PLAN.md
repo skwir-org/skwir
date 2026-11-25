@@ -34,16 +34,17 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 ## Current status (2026-11-25)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.7.0, its source made ready on 2026-11-25 (the two reviews of
-  the night before it fixed, its changelog section dated, every package
-  built unsigned), skwird 0.2.0 shipping with it; its tag, signed build
-  and GitHub draft made from it next, its publication the user's; 0.6.1
-  was released 2026-11-23 on GitHub, the AUR and the repositories, 0.6.0
-  2026-11-21 on GitHub and the AUR's three bases, 0.5.1 2026-11-16,
-  0.5.0 2026-11-14, 0.4.0 2026-11-10, 0.3.1 2026-11-05, 0.3.0
-  2026-11-03, 0.2.0 2026-10-20, 0.1.0 [released](#release-01-linux)
-  2026-10-13. Since 2026-11-20 skwir.org also serves signed apt and dnf
-  repositories (ADR-142), holding 0.6.0. Phases 0 to 4, 5a and 6 pass
+  version 0.7.0, released 2026-11-25 on GitHub, the AUR and the
+  repositories, skwird 0.2.0 published the same day (Homebrew's cask
+  held: on a Mac, the app's GStreamer framework fails its seal, as in
+  every Mac build since 2026-10-21; STATUS-LOG, 2026-11-25: 0.7.0
+  released); 0.6.1 2026-11-23 on GitHub, the AUR and the
+  repositories, 0.6.0 2026-11-21 on GitHub and the AUR's three bases,
+  0.5.1 2026-11-16, 0.5.0 2026-11-14, 0.4.0 2026-11-10, 0.3.1
+  2026-11-05, 0.3.0 2026-11-03, 0.2.0 2026-10-20, 0.1.0
+  [released](#release-01-linux) 2026-10-13. Since 2026-11-20 skwir.org
+  also serves signed apt and dnf repositories (ADR-142), holding the
+  last release. Phases 0 to 4, 5a and 6 pass
   their gates. Maps and Notes everywhere are built, their gates not
   closed, as is much that no phase planned ([Built beyond the
   plan](#built-beyond-the-plan)).
@@ -1425,6 +1426,17 @@ Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**The Mac app's GStreamer framework fails its seal** (found 2026-11-25
+by the tap's first cask job, the first Mac ever to check a release):
+`codesign --verify --deep --strict` refuses it, as every Mac build
+since 285f685b (2026-10-21) is. The framework's main binary is a link
+to `lib/libgstreamer-1.0.0.dylib`, which rcodesign signs as a library,
+seals, then signs again through the link. Left: a framework rcodesign
+seals once (its binary a file, not a link), a look-over in
+`package-macos` that checks every bundle's seal as codesign does, a Mac
+build that passes the tap's job, and then the cask on the tap's main
+(it waits on `cask/skwir`).
 
 **A folder comes back with its volume** (ADR-149, built and amended
 twice 2026-11-22). Left: a folder deleted and made again at its path is
