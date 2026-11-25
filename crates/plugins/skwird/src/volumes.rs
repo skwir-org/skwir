@@ -14,8 +14,11 @@
 //!   never a drive skwird came to see otherwise (an engine started since,
 //!   another mount made): its menu offers it. Its identity is counted asked
 //!   as it is asked, so a question closed unanswered is a No. One question
-//!   stands at a time: the next waits for its answer, and a drive plugged in
-//!   meanwhile takes its place, the one it replaces counted asked. The
+//!   stands at a time: the next waits for its answer, as does a drive the
+//!   same plug-in finds a moment later (the other volume of its disk). A
+//!   drive plugged in later takes its place, the one it replaces counted
+//!   asked: a question closed is never told, so a drive waiting behind one
+//!   would wait for the rest of the run, and every drive after it. The
 //!   question waits for a window of the user's own (ADR-141, 8), and asks
 //!   only of what skwird said last: none while no engine answers, a drive
 //!   gone from the mount table then let go of.
@@ -83,8 +86,10 @@ const LISTED_EVERY: Duration = Duration::from_secs(5);
 /// says what it sees at once, its reads of a drive coming after.
 const VOLUMES_SILENCE: Duration = Duration::from_secs(8);
 
-/// Where filesystems of files kept are mounted now: the system's table
-/// ([`table`]), or a test's.
+/// Where filesystems of files kept are mounted now: a test's table, which
+/// the test changes and tells each change of itself
+/// (`Volumes::mounts_changed`). The system's ([`table`]) is no `Mounted`
+/// given (`register`): it alone is followed (`reach::follow`).
 pub(crate) type Mounted = Arc<dyn Fn() -> HashSet<PathBuf> + Send + Sync>;
 
 /// The mount points of filesystems of files kept, from the table in memory
@@ -415,7 +420,7 @@ impl Volumes {
     pub(crate) fn looked_at(self: &Arc<Self>) {
         if self.looked.swap(true, Ordering::AcqRel) {
             self.spawn(Priority::Background, "skwird.volumes_look", |this, app| {
-                this.ask_next(app, &[]);
+                this.ask_next(app, &[], None);
             });
         } else {
             self.request(Asking {
@@ -479,7 +484,9 @@ impl Volumes {
 
     /// What skwird sees, its drives found as `asking` says; asked once more
     /// a moment later where a mount just made, which may be a drive, is one
-    /// skwird does not see yet.
+    /// skwird does not see yet. Both are one plug-in: a drive the second
+    /// finds waits behind the question the first asked (`ask_next`), as a
+    /// disk of two volumes is described one volume at a time.
     fn check(self: &Arc<Self>, app: &App, asking: Asking) {
         let finds = if asking.first_look || asking.mounts {
             match self.points_since() {
@@ -489,7 +496,8 @@ impl Volumes {
         } else {
             Finds::Nothing
         };
-        let answer = self.check_once(app, &finds);
+        let mut asked_here = HashSet::new();
+        let answer = self.check_once(app, &finds, &mut asked_here);
         let late = match (&finds, &answer) {
             (Finds::At(fresh), Some(answer)) => {
                 let seen: HashSet<PathBuf> = answer.seen.iter().map(|s| s.at.to_path()).collect();
@@ -507,11 +515,18 @@ impl Volumes {
                 .recv_timeout(AGAIN)
                 .is_err()
         {
-            self.check_once(app, &finds);
+            self.check_once(app, &finds, &mut asked_here);
         }
     }
 
-    fn check_once(self: &Arc<Self>, app: &App, finds: &Finds) -> Option<protocol::Volumes> {
+    /// One ask of a check, the drives it finds offered; `asked_here`, the
+    /// drives the check asked about, grown by the one it asks.
+    fn check_once(
+        self: &Arc<Self>,
+        app: &App,
+        finds: &Finds,
+        asked_here: &mut HashSet<String>,
+    ) -> Option<protocol::Volumes> {
         let (ticket, answer) = self.with_engine(false, |client| client.volumes(&[], &[], &[]));
         let answer = answer.ok();
         let took = self.took(app, ticket, answer.clone());
@@ -524,7 +539,7 @@ impl Volumes {
         if let Some(answer) = &answer {
             if !matches!(finds, Finds::Nothing) {
                 let plugged = self.offers(app, answer, finds);
-                self.ask_next(app, &plugged);
+                self.ask_next(app, &plugged, Some(asked_here));
             }
         } else {
             // No engine to say which drives went: the table says it.
@@ -741,10 +756,15 @@ impl Volumes {
 
     /// Ask about the next drive waiting, where a window of the user's own is
     /// looked at and skwird's last answer still offers it: one of `plugged`
-    /// first, taking the place of a question up, else the first found while
-    /// none is up. Counted asked as it is asked, and kept so. None while no
-    /// engine answers. On a worker: it reads and writes the state file.
-    fn ask_next(&self, app: &App, plugged: &[String]) {
+    /// first, taking the place of a question up that an earlier plug-in
+    /// asked, else the first found while none is up. A check's (`asked_here`,
+    /// the drives it asked about, its ask a moment later included) never
+    /// takes the place of its own: the drive found with it waits behind it,
+    /// for its answer, as drives found together do; a question is never
+    /// taken away a moment after it was asked. Counted asked as it is asked,
+    /// and kept so. None while no engine answers. On a worker: it reads and
+    /// writes the state file.
+    fn ask_next(&self, app: &App, plugged: &[String], asked_here: Option<&mut HashSet<String>>) {
         if self.lifetime.is_cancelled()
             || !app.looked_at_own()
             || self.questions.lock().waiting.is_empty()
@@ -765,12 +785,24 @@ impl Volumes {
             questions.waiting.retain(|offer| {
                 seen.contains(offer.id.as_str()) && !kept.contains(offer.id.as_str())
             });
-            let at = questions
-                .waiting
-                .iter()
-                .position(|offer| plugged.contains(offer.id.as_str()))
+            let own = |up: &Offer| {
+                asked_here
+                    .as_ref()
+                    .is_some_and(|here| here.contains(&up.id))
+            };
+            let at = (!questions.up.as_ref().is_some_and(own))
+                .then(|| {
+                    questions
+                        .waiting
+                        .iter()
+                        .position(|offer| plugged.contains(offer.id.as_str()))
+                })
+                .flatten()
                 .or_else(|| (questions.up.is_none() && !questions.waiting.is_empty()).then_some(0));
             if let Some(offer) = at.and_then(|at| questions.waiting.remove(at)) {
+                if let Some(here) = asked_here {
+                    here.insert(offer.id.clone());
+                }
                 questions.up = Some(offer);
             }
         });
@@ -787,7 +819,7 @@ impl Volumes {
             });
             Ok(())
         };
-        self.ask_next(app, &[]);
+        self.ask_next(app, &[], None);
         kept
     }
 
@@ -1147,8 +1179,12 @@ fn carried(
 /// Declare what Skwir keeps of the drives, the list, the commands and the
 /// menu's entry, and follow the mounts where an engine may be asked: the
 /// drives' keeper of this run, reading where filesystems are mounted from
-/// `mounted`.
-pub(crate) fn register(app: &App, engines: &Engines, mounted: Mounted) -> Arc<Volumes> {
+/// the system's table, which it follows, or from a test's `mounted`, whose
+/// changes the test tells (a test never meets the machine's mounts: another
+/// test's FUSE folder, made meanwhile, would be a check it did not start).
+pub(crate) fn register(app: &App, engines: &Engines, mounted: Option<Mounted>) -> Arc<Volumes> {
+    let follows_system = mounted.is_none();
+    let mounted = mounted.unwrap_or_else(|| Arc::new(table));
     app.settings.declare(SettingSpec::state(
         STATE,
         skwir_core::words!(
@@ -1230,7 +1266,7 @@ pub(crate) fn register(app: &App, engines: &Engines, mounted: Mounted) -> Arc<Vo
             replaces: Vec::new(),
         },
     );
-    if !matches!(engines, Engines::None) {
+    if follows_system && !matches!(engines, Engines::None) {
         let weak = Arc::downgrade(&volumes);
         // On the table's own thread: a check is only started there.
         skwir_core::fs::reach::follow(&volumes.lifetime, move || {
@@ -1388,7 +1424,7 @@ mod tests {
     fn an_answer_asked_before_another_taken_is_let_go_of() {
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        let volumes = register(&app, &Engines::None, Arc::new(HashSet::new));
+        let volumes = register(&app, &Engines::None, Some(Arc::new(HashSet::new)));
         let kept = |ids: &[&str]| protocol::Volumes {
             kept: ids
                 .iter()

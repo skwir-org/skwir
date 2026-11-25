@@ -86,7 +86,8 @@ pub struct SkwirdPlugin {
     /// The removable drives' keeper of this run, while the plugin is on.
     volumes: Mutex<Option<Arc<volumes::Volumes>>>,
     /// Where filesystems are mounted, read in place of the system's table
-    /// (`volumes::table`): a test's.
+    /// (`volumes::table`): a test's, whose changes the test tells, the
+    /// system's not followed (`volumes::register`).
     mounted: Option<volumes::Mounted>,
 }
 
@@ -151,11 +152,7 @@ impl Plugin for SkwirdPlugin {
         };
         let kept = kept::Kept::new(app.weak(), engines.clone());
         kept::register(&kept, app);
-        let mounted = self
-            .mounted
-            .clone()
-            .unwrap_or_else(|| Arc::new(volumes::table));
-        let volumes = volumes::register(app, &engines, mounted);
+        let volumes = volumes::register(app, &engines, self.mounted.clone());
         if let Some(before) = self.volumes.lock().replace(volumes) {
             before.stop();
         }

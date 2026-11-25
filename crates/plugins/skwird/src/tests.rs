@@ -974,6 +974,9 @@ struct Drive {
     refuse: Option<String>,
     /// Keep and forget answered as if nothing was asked.
     deaf: bool,
+    /// What it sees once it answered one `volumes` more: the other volume
+    /// of a disk, described a moment after the first.
+    then_seen: Option<Vec<protocol::SeenVolume>>,
 }
 
 /// An engine of the test's own on `dir`'s socket for drives: its hello says
@@ -1109,10 +1112,14 @@ fn serve_drives(
                                 });
                             }
                         }
-                        protocol::Answer::Volumes(protocol::Volumes {
+                        let answer = protocol::Answer::Volumes(protocol::Volumes {
                             kept: drive.kept.clone(),
                             seen: drive.seen.clone(),
-                        })
+                        });
+                        if let Some(then) = drive.then_seen.take() {
+                            drive.seen = then;
+                        }
+                        answer
                     }
                 },
             },
@@ -1171,12 +1178,14 @@ struct Drives {
 }
 
 impl Drives {
+    /// Its table of mounts one of its own, empty and never changed: a test
+    /// never meets the machine's mounts (another test's FUSE folder).
     fn at(dir: &Path, run: &str, socket: &Path) -> Drives {
-        Drives::mounted(dir, run, socket, None)
+        Drives::with_table(dir, run, socket, &Arc::default())
     }
 
-    /// [`at`](Self::at), the mount points read from `table` in place of
-    /// the system's.
+    /// [`at`](Self::at), the mount points read from `table`, which the test
+    /// changes, telling each change ([`plugged`](Self::plugged)).
     fn with_table(
         dir: &Path,
         run: &str,
@@ -1184,15 +1193,10 @@ impl Drives {
         table: &Arc<Mutex<HashSet<PathBuf>>>,
     ) -> Drives {
         let table = Arc::clone(table);
-        Drives::mounted(
-            dir,
-            run,
-            socket,
-            Some(Arc::new(move || table.lock().clone())),
-        )
+        Drives::mounted(dir, run, socket, Arc::new(move || table.lock().clone()))
     }
 
-    fn mounted(dir: &Path, run: &str, socket: &Path, mounted: Option<volumes::Mounted>) -> Drives {
+    fn mounted(dir: &Path, run: &str, socket: &Path, mounted: volumes::Mounted) -> Drives {
         let config = skwir_core::app::AppConfig {
             settings_path: Some(dir.join("settings.toml")),
             state_path: Some(dir.join("state.toml")),
@@ -1200,7 +1204,7 @@ impl Drives {
         };
         let app = App::new(config).unwrap();
         let plugin = Arc::new(SkwirdPlugin {
-            mounted,
+            mounted: Some(mounted),
             ..SkwirdPlugin::at(socket.to_path_buf())
         });
         app.plugins.add(
@@ -1816,6 +1820,81 @@ fn only_a_drive_plugged_in_is_asked_about() {
     let before = volumes_count(&engine);
     drives.plugged();
     assert_eq!(volumes_count(&engine), before + 2, "asked once more");
+}
+
+/// A disk of two volumes plugged in, skwird describing the second a moment
+/// after the first (a Ventoy stick's): the first one's question stands, the
+/// second waits behind it and is asked once it is answered, never taking
+/// its place a moment after it was asked. A drive plugged in later takes
+/// the place of a question up.
+#[test]
+fn a_volume_described_a_moment_later_waits_behind_its_disk_s_question() {
+    let tmp = tempfile::tempdir().unwrap();
+    let table = Arc::new(Mutex::new(HashSet::new()));
+    let engine = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: Vec::new(),
+        }),
+    );
+    let drives = Drives::with_table(tmp.path(), "run", &engine.socket, &table);
+    drives.look();
+    assert!(drives.questions().is_empty());
+    let (data, efi) = (
+        PathBuf::from("/media/someone/DATA"),
+        PathBuf::from("/media/someone/VTOYEFI"),
+    );
+    table.lock().extend([data.clone(), efi.clone()]);
+    let first = seen(Some(STICK), &data, Some("DATA"));
+    let second = seen(Some("5e6f-7a8b"), &efi, Some("VTOYEFI"));
+    engine.with(|drive| {
+        drive.seen = vec![first.clone()];
+        drive.then_seen = Some(vec![first.clone(), second.clone()]);
+    });
+    let before = volumes_count(&engine);
+    drives.plugged();
+    assert_eq!(volumes_count(&engine), before + 2, "asked once more");
+    let asked = drives.questions();
+    assert_eq!(asked.len(), 1);
+    assert!(
+        asked[0].text.english().contains("\u{201c}DATA\u{201d}"),
+        "the first one's stands: {}",
+        asked[0].text.english()
+    );
+    assert!(
+        drives
+            .app
+            .question_stands(ID, asked[0].question.expect("a question")),
+        "not taken away"
+    );
+    drives.press(&asked[0], 1);
+    let next = drives.questions();
+    assert_eq!(next.len(), 1, "the second once it is answered");
+    assert!(
+        next[0].text.english().contains("\u{201c}VTOYEFI\u{201d}"),
+        "{}",
+        next[0].text.english()
+    );
+    // Another drive plugged in later: asked in its place.
+    let card = PathBuf::from("/media/someone/CARD");
+    table.lock().insert(card.clone());
+    engine.see(vec![
+        first,
+        second,
+        seen(Some("9c0d-1e2f"), &card, Some("CARD")),
+    ]);
+    drives.plugged();
+    let later = drives.questions();
+    assert_eq!(later.len(), 1);
+    assert!(later[0].text.english().contains("\u{201c}CARD\u{201d}"));
+    assert!(
+        !drives
+            .app
+            .question_stands(ID, next[0].question.expect("a question")),
+        "its place taken"
+    );
 }
 
 /// While no engine answers, nothing is asked, and a drive the mount table
