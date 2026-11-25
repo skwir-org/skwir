@@ -1,9 +1,10 @@
-"""The desktop entry's and the AppStream metainfo's translations
-(tools/package/linux/l10n.sh, ADR-139): po/skwir.pot is what the two files
+"""The desktop entries' and the AppStream metainfo's translations
+(tools/package/linux/l10n.sh, ADR-139): po/skwir.pot is what the files
 say, each language's PO is sound and merged with it, and they merge into
 files that speak each language po/LINGUAS names (validated where
 desktop-file-validate and appstreamcli are on PATH); a package's file
-without one of them is told apart."""
+without one of them is told apart, and so is a package without Skwir
+Preview's entry (ADR-151, 8), or with one speaking some languages only."""
 
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ import tempfile
 import unittest
 
 L10N = Path(__file__).resolve().parent / "linux/l10n.sh"
+VIEWER = L10N.parent / "org.skwir.skwir.view.desktop"
 GETTEXT = all(shutil.which(tool) for tool in ("msgfmt", "xgettext", "msgmerge", "msgcmp"))
 
 
@@ -37,6 +39,40 @@ class Translations(unittest.TestCase):
             told = run("installed", share)
             self.assertNotEqual(told.returncode, 0)
             self.assertIn("missing: the desktop entry or the metainfo in", told.stdout)
+
+    @unittest.skipUnless(GETTEXT, "gettext is in the Nix shell")
+    def test_skwir_preview_is_merged_with_its_types(self):
+        # Its MimeType line, longer than any other, as the English says it
+        # (viewer_types.py checks the English against the database).
+        with tempfile.TemporaryDirectory() as share:
+            self.assertEqual(run("merge", share).returncode, 0)
+            merged = Path(share, "applications", VIEWER.name).read_text().splitlines()
+            english = VIEWER.read_text().splitlines()
+            for key in ("MimeType=", "Exec=", "NoDisplay=", "Name="):
+                with self.subTest(key=key):
+                    self.assertEqual([row for row in merged if row.startswith(key)],
+                                     [row for row in english if row.startswith(key)])
+
+    @unittest.skipUnless(GETTEXT, "gettext is in the Nix shell")
+    def test_skwir_preview_missing_or_short_of_a_language_is_told(self):
+        with tempfile.TemporaryDirectory() as share:
+            self.assertEqual(run("merge", share).returncode, 0)
+            viewer = Path(share, "applications", VIEWER.name)
+            english = viewer.read_text()
+            viewer.unlink()
+            told = run("installed", share)
+            self.assertNotEqual(told.returncode, 0)
+            self.assertIn("missing: Skwir Preview's desktop entry", told.stdout)
+            # Once it speaks one language, it speaks each.
+            languages = [word for row in (L10N.parent / "po/LINGUAS").read_text().splitlines()
+                         for word in row.split("#")[0].split()]
+            viewer.write_text(english + f"GenericName[{languages[0]}]=…\n")
+            told = run("installed", share)
+            self.assertNotEqual(told.returncode, 0)
+            self.assertIn(f"missing: Skwir Preview's desktop entry in {languages[-1]}", told.stdout)
+            viewer.write_text(english + "".join(f"GenericName[{language}]=…\n" for language in languages))
+            installed = run("installed", share)
+            self.assertEqual(installed.returncode, 0, installed.stdout)
 
     @unittest.skipUnless(GETTEXT, "gettext is in the Nix shell")
     def test_a_language_named_as_its_po_file_is_installed(self):

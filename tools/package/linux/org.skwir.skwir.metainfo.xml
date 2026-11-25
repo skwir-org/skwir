@@ -27,6 +27,7 @@
   <url type="vcs-browser">https://skwir.org/source</url>
   <provides>
     <binary>skwir</binary>
+    <binary>skw</binary>
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>

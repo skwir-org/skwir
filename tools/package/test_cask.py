@@ -69,6 +69,10 @@ class Cask(unittest.TestCase):
                           'skwir-#{version}-macos-arm64.zip",\n'
                           '      verified: "github.com/skwir-org/skwir/"\n', text)
             self.assertIn('  app "skwir.app"\n', text)
+            # The program on the PATH, and `skw`, a link to it that starts
+            # it as `skwir view` (ADR-151).
+            self.assertIn('  binary "#{appdir}/skwir.app/Contents/MacOS/skwir"\n'
+                          '  binary "#{appdir}/skwir.app/Contents/MacOS/skwir", target: "skw"\n', text)
             self.assertIn('  depends_on arch: :arm64\n  depends_on macos: :monterey\n', text)
             self.assertIn('  desc "Browse, find and organize your files"\n', text)
             self.assertIn("brew trust skwir-org/tap", text)

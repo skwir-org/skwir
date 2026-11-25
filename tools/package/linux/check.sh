@@ -10,8 +10,9 @@
 # says, as skwir's settings do. One that needs FUSE (tools/package/fuse)
 # may say it cannot work where the system has none, as a test root has
 # not. skwir's licence and PDFium's notices are installed, and the
-# libraries skwir opens at run time are there, and so are the desktop
-# entry and the metainfo, in every language translated, and the icon.
+# libraries skwir opens at run time are there, and so are `skw`, a link
+# to skwir (ADR-151), the desktop entries (skwir's and Skwir Preview's)
+# and the metainfo, in every language translated, and the icon.
 # Skwir's own fonts are where skwir finds those a
 # package carries (ADR-118); with `system-fonts`, for a package that
 # carries none (the AUR's source package), they are the system's optional
@@ -144,8 +145,17 @@ elif [ -n "$channel" ]; then
         failed=1
     fi
 fi
-# The desktop entry and the icon it names, where the desktop finds them.
+# `skw`, the program under the name that makes it `skwir view` (ADR-151):
+# a link, leading where skwir does.
+if [ -L /usr/bin/skw ] && [ "$(readlink -f /usr/bin/skw)" = "$(readlink -f /usr/bin/skwir)" ]; then
+    echo "ok: /usr/bin/skw, a link to skwir"
+else
+    echo "missing: /usr/bin/skw, a link to skwir"
+    failed=1
+fi
+# The desktop entries and the icon they name, where the desktop finds them.
 for file in /usr/share/applications/org.skwir.skwir.desktop \
+    /usr/share/applications/org.skwir.skwir.view.desktop \
     /usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg \
     /usr/share/xdg-desktop-portal/portals/skwir.portal \
     /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service; do

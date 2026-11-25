@@ -145,11 +145,13 @@ def unpack(artifact, work):
             target = pathlib.PurePosixPath(member.linkname)
             assert target.parts[0] == top and ".." not in target.parts, (member.name, member.linkname)
         assert (member.uid, member.gid, member.uname, member.gname) == (0, 0, "", ""), (member.name, "owner")
-    assert {pathlib.PurePosixPath(m.name).parts[1:2] for m in members} == {(), ("skwir",), ("usr",)}, \
-        "the tarball holds more than the program and its usr tree"
+    assert {pathlib.PurePosixPath(m.name).parts[1:2] for m in members} == {(), ("skwir",), ("skw",), ("usr",)}, \
+        "the tarball holds more than the program, its viewer's name and its usr tree"
     run(["tar", "-xzf", artifact], cwd=work)
-    assert os.readlink(work / top / "skwir") == "usr/bin/skwir"
-    print("ok: the tarball holds one folder, its program and usr tree, owned by root", flush=True)
+    # `skw` is the program under the name that makes it `skwir view` (ADR-151).
+    for name in ("skwir", "skw"):
+        assert os.readlink(work / top / name) == "usr/bin/skwir", name
+    print("ok: the tarball holds one folder, its program, skw and usr tree, owned by root", flush=True)
     return work / top, "skwir"
 
 

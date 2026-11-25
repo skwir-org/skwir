@@ -9,9 +9,10 @@
 # Rust toolchain is in its closure, nor a library of a helper it leaves
 # out; skwir opens the window's libraries through its own search path,
 # not LD_LIBRARY_PATH, and names no GStreamer plugins for what it starts;
-# its fonts, notices, icon, desktop entry and metainfo (in every language
-# translated) are there, and no word of how the copy came (ADR-142); and it
-# checks a settings file without a window.
+# `skw` is a link to it (ADR-151); its fonts, notices, icon, desktop
+# entries and metainfo (in every language translated) are there, and no
+# word of how the copy came (ADR-142); and it checks a settings file
+# without a window.
 # Each closure's size is printed, for the STATUS-LOG.
 #
 #     tools/package/nix/check.sh [variant…]    (default: minimal default)
@@ -92,10 +93,17 @@ for variant in "$@"; do
         failed=1
     fi
 
-    ls "$out/bin" | grep -vx -e skwir -e .skwir-wrapped && {
+    ls "$out/bin" | grep -vx -e skwir -e .skwir-wrapped -e skw && {
         echo "programs on the PATH beside skwir"
         failed=1
     }
+    # `skwir view` under a name of its own (ADR-151): a link to skwir.
+    if [ -L "$out/bin/skw" ] && [ "$(readlink "$out/bin/skw")" = skwir ]; then
+        echo "ok: bin/skw, a link to skwir"
+    else
+        echo "missing: bin/skw, a link to skwir"
+        failed=1
+    fi
     while read -r program; do
         [ "$program" = skwir ] && continue
         found="$out/libexec/skwir/$program"
@@ -135,7 +143,8 @@ for variant in "$@"; do
     for file in share/skwir/fonts/Inter-Regular.ttf share/skwir/fonts/JetBrainsMono-Regular.ttf \
         share/licenses/skwir/LICENSE share/licenses/skwir/fonts/Inter/LICENSE.txt \
         share/licenses/skwir/THIRD-PARTY-NOTICES \
-        share/applications/org.skwir.skwir.desktop share/metainfo/org.skwir.skwir.metainfo.xml \
+        share/applications/org.skwir.skwir.desktop share/applications/org.skwir.skwir.view.desktop \
+        share/metainfo/org.skwir.skwir.metainfo.xml \
         share/icons/hicolor/scalable/apps/org.skwir.skwir.svg \
         share/xdg-desktop-portal/portals/skwir.portal \
         share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service; do

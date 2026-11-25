@@ -114,6 +114,7 @@ cask "skwir" do
 
   app "skwir.app"
   binary "#{{appdir}}/skwir.app/Contents/MacOS/skwir"
+  binary "#{{appdir}}/skwir.app/Contents/MacOS/skwir", target: "skw"
 
   zap trash: [
     "~/Library/Application Support/skwir",

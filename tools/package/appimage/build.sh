@@ -37,6 +37,7 @@ python3 tools/package/appimage/stage.py
 rm -f /build/AppDir/AppRun
 install -m755 tools/package/appimage/AppRun /build/AppDir/AppRun
 desktop-file-validate /build/AppDir/usr/share/applications/org.skwir.skwir.desktop
+desktop-file-validate /build/AppDir/usr/share/applications/org.skwir.skwir.view.desktop
 tools/package/linux/l10n.sh installed /build/AppDir/usr/share
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
 site="$(sed -n 's/^homepage = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
@@ -54,9 +55,9 @@ ARCH=x86_64 /opt/appimagetool/squashfs-root/AppRun \
 rm -f "$image.zsync" "./$(basename "$image").zsync"
 zsyncmake -u "$site/files/v$version/$(basename "$image")" -o "/build/$zsync" "$image"
 # The same usr tree as a tarball, for a system without FUSE or a folder
-# of the user's choosing: the program at its top, none of the AppImage's
-# own files. Names sorted, owned by root and dated by the source, so the
-# archive depends on the tree alone.
+# of the user's choosing: the program at its top, and `skw` beside it,
+# none of the AppImage's own files. Names sorted, owned by root and dated
+# by the source, so the archive depends on the tree alone.
 tarball="skwir-$version-linux-x86_64"
 rm -rf /build/tarball
 mkdir -p "/build/tarball/$tarball"
@@ -66,6 +67,8 @@ cp -al /build/AppDir/usr "/build/tarball/$tarball/usr"
 rm "/build/tarball/$tarball/usr/share/skwir/channel"
 install -m644 tools/package/channel/tarball "/build/tarball/$tarball/usr/share/skwir/channel"
 ln -s usr/bin/skwir "/build/tarball/$tarball/skwir"
+# Started under this name, skwir is `skwir view` (ADR-151).
+ln -s usr/bin/skwir "/build/tarball/$tarball/skw"
 tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$source_date" \
     -C /build/tarball -cf - "$tarball" | gzip -n > "/build/$tarball.tar.gz"
 # The caller checks these in a separate runtime-only root.

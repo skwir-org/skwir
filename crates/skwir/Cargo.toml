@@ -124,10 +124,12 @@ skwird-client.workspace = true
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
-# The Linux packages (ADR-040, ADR-041): skwir in /usr/bin, its helpers
-# where a distribution keeps a program's own (`process::helper_folders`),
-# PDFium beside its helper, the desktop entry, the metainfo and the icon
-# (the UI's own, crates/ui/assets/org.skwir.skwir.svg). Built on
+# The Linux packages (ADR-040, ADR-041): skwir in /usr/bin, and `skw`
+# beside it, a link to it (started under that name, skwir is `skwir
+# view`, ADR-151), its helpers where a distribution keeps a program's own
+# (`process::helper_folders`), PDFium beside its helper, the desktop
+# entries (skwir's and Skwir Preview's), the metainfo and the icon (the
+# UI's own, crates/ui/assets/org.skwir.skwir.svg). Built on
 # the distribution each is for, whose libraries they depend on:
 # tools/package/deb.sh, rpm.sh, and the AUR's tools/package/aur/PKGBUILD,
 # which lists the same files. A helper whose libraries most systems do
@@ -157,6 +159,9 @@ recommends = "skwir-media, skwir-heif, mesa-vulkan-drivers, bubblewrap, udisks2"
 suggests = "skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-math, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate, sshfs, rclone, gvfs-fuse, gvfs-backends, kio-fuse, rsync, fuse3, avahi-daemon, wsdd"
 assets = [
     ["target/release/skwir", "usr/bin/", "755"],
+    # A link, as cargo-deb writes one from `dest` and `link_name` (relative,
+    # as Debian's policy has links within a folder).
+    { dest = "usr/bin/skw", link_name = "skwir" },
     ["target/release/skwir-pdf-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-djvu-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-archive-worker", "usr/lib/skwir/", "755"],
@@ -175,6 +180,7 @@ assets = [
     ["../../target/fonts/licenses/fonts/Inter/*", "usr/share/doc/skwir/fonts/Inter/", "644"],
     ["../../target/fonts/licenses/fonts/JetBrainsMono/*", "usr/share/doc/skwir/fonts/JetBrainsMono/", "644"],
     ["../../target/l10n/applications/org.skwir.skwir.desktop", "usr/share/applications/", "644"],
+    ["../../target/l10n/applications/org.skwir.skwir.view.desktop", "usr/share/applications/", "644"],
     ["../../target/l10n/metainfo/org.skwir.skwir.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../tools/package/linux/skwir.portal", "usr/share/xdg-desktop-portal/portals/", "644"],
     ["../../tools/package/linux/org.freedesktop.impl.portal.desktop.skwir.service", "usr/share/dbus-1/services/", "644"],
@@ -301,6 +307,7 @@ assets = [
     { source = "../../target/fonts/licenses/fonts/Inter/*", dest = "/usr/share/licenses/skwir/fonts/Inter/", mode = "644" },
     { source = "../../target/fonts/licenses/fonts/JetBrainsMono/*", dest = "/usr/share/licenses/skwir/fonts/JetBrainsMono/", mode = "644" },
     { source = "../../target/l10n/applications/org.skwir.skwir.desktop", dest = "/usr/share/applications/org.skwir.skwir.desktop", mode = "644" },
+    { source = "../../target/l10n/applications/org.skwir.skwir.view.desktop", dest = "/usr/share/applications/org.skwir.skwir.view.desktop", mode = "644" },
     { source = "../../target/l10n/metainfo/org.skwir.skwir.metainfo.xml", dest = "/usr/share/metainfo/org.skwir.skwir.metainfo.xml", mode = "644" },
     { source = "../../tools/package/linux/skwir.portal", dest = "/usr/share/xdg-desktop-portal/portals/skwir.portal", mode = "644" },
     { source = "../../tools/package/linux/org.freedesktop.impl.portal.desktop.skwir.service", dest = "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.skwir.service", mode = "644" },
@@ -309,6 +316,16 @@ assets = [
     { source = "../../tools/package/notices/skwir/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir/THIRD-PARTY-NOTICES", mode = "644" },
     { source = "../../README.md", dest = "/usr/share/doc/skwir/README.md", mode = "644", doc = true },
 ]
+# `skw`, a link to skwir beside it (ADR-151). cargo-generate-rpm puts no
+# link in a package (0.21.1: an asset is a folder, or a file read whole,
+# a link's target copied), so skwir's scriptlets make it, relative as
+# Debian's, where nothing is, and take it away once it leads nowhere:
+# skwir erased, not upgraded (the old package's %postun runs once the new
+# one's skwir is in place). A variant inherits them, as it inherits what
+# it does not set; there they find skwir, which it requires, and do
+# nothing.
+post_install_script = "[ -e /usr/bin/skw ] || [ -L /usr/bin/skw ] || ln -s skwir /usr/bin/skw"
+post_uninstall_script = "if [ -L /usr/bin/skw ] && [ ! -e /usr/bin/skw ] && [ \"$(readlink /usr/bin/skw)\" = skwir ]; then rm -f /usr/bin/skw; fi"
 
 [package.metadata.generate-rpm.requires]
 vulkan-loader = "*"

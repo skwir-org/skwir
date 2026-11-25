@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: skwir\n"
 "Report-Msgid-Bugs-To: https://skwir.org/issues\n"
-"POT-Creation-Date: 2026-11-17 19:27+0100\n"
+"POT-Creation-Date: 2026-11-25 22:13+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -30,6 +30,18 @@ msgstr ""
 #. in your language; they need not be the English words one for one.
 #: org.skwir.skwir.desktop:17
 msgid "files;folders;browser;tags;search;"
+msgstr ""
+
+#. Translators: what kind of program Skwir Preview is, shown under its
+#. name. It shows one file, or several, in a window of its own.
+#: org.skwir.skwir.view.desktop:6
+msgid "File Viewer"
+msgstr ""
+
+#. Translators: what Skwir Preview does, shown where a file is opened with
+#. it (Open With).
+#: org.skwir.skwir.view.desktop:9
+msgid "Show a file's preview"
 msgstr ""
 
 #. Translators: who makes skwir, as software centres say it.

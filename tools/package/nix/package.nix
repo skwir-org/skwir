@@ -255,6 +255,10 @@ rustPlatform.buildRustPackage {
     # (process::helper_folders: <prefix>/libexec/skwir).
     mkdir -p $out/libexec/skwir
     ${lib.concatMapStrings (helper: "mv $out/bin/${helper} $out/libexec/skwir/\n") helpers}
+    # Started under this name, skwir is `skwir view` (ADR-151): a link to
+    # skwir, the wrapper once postFixup makes one, which starts the
+    # program under the name it was started by (`exec -a "$0"`).
+    ln -s skwir $out/bin/skw
 
     mkdir -p fonts/.downloads
     ${lib.concatStrings (

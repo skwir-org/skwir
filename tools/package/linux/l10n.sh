@@ -1,12 +1,13 @@
 #!/bin/sh
-# skwir's desktop entry and AppStream metainfo in each language they are
-# translated to (ADR-139, 13), merged where each package is made.
+# skwir's desktop entries and AppStream metainfo in each language they
+# are translated to (ADR-139, 13), merged where each package is made.
 #
-# The English is the two files beside this script, valid as they are:
-# org.skwir.skwir.desktop and org.skwir.skwir.metainfo.xml. What of them
-# is translated is extracted by xgettext into po/skwir.pot: the desktop
-# entry's GenericName, Comment and Keywords (its Name is the brand, never
-# translated), and the metainfo's text as AppStream's own rules say
+# The English is the files beside this script, valid as they are:
+# org.skwir.skwir.desktop, Skwir Preview's org.skwir.skwir.view.desktop
+# (ADR-151, 8) and org.skwir.skwir.metainfo.xml. What of them is
+# translated is extracted by xgettext into po/skwir.pot: the desktop
+# entries' GenericName, Comment and Keywords (their Name is the brand,
+# never translated), and the metainfo's text as AppStream's own rules say
 # (po/its: carried, so that every system extracts and merges alike,
 # whichever gettext and AppStream it has; `translate="no"` keeps the
 # brand out there). Each language is a PO file, po/<language>.po, that
@@ -17,7 +18,7 @@
 # its translation obsolete, never a stale one shipped under new English.
 #
 #     tools/package/linux/l10n.sh merge <share>      # into <share>/applications and <share>/metainfo
-#     tools/package/linux/l10n.sh installed <share>  # whether those speak every language of po/LINGUAS
+#     tools/package/linux/l10n.sh installed <share>  # whether those are there and speak every language of po/LINGUAS
 #     tools/package/linux/l10n.sh update             # po/skwir.pot made again, each PO merged with it
 #     tools/package/linux/l10n.sh check              # po/ current and sound, merging into valid files
 #
@@ -29,6 +30,7 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 po="$here/po"
 desktop=org.skwir.skwir.desktop
+viewer=org.skwir.skwir.view.desktop
 metainfo=org.skwir.skwir.metainfo.xml
 
 # The languages po/LINGUAS names, one a line.
@@ -36,15 +38,17 @@ languages() {
     sed 's/#.*//' "$po/LINGUAS" | tr -s ' \t' '\n\n' | grep -v '^$' || :
 }
 
-# The two files in every language, drafts included.
+# The files in every language, drafts included.
 merge() {
     mkdir -p "$1/applications" "$1/metainfo"
-    msgfmt --desktop --use-fuzzy --template="$here/$desktop" -d "$po" \
-        -o "$1/applications/$desktop"
+    for entry in "$desktop" "$viewer"; do
+        msgfmt --desktop --use-fuzzy --template="$here/$entry" -d "$po" \
+            -o "$1/applications/$entry"
+    done
     GETTEXTDATADIRS="$po${GETTEXTDATADIRS:+:$GETTEXTDATADIRS}" \
         msgfmt --xml --use-fuzzy -L skwir-metainfo --template="$here/$metainfo" -d "$po" \
         -o "$1/metainfo/$metainfo"
-    chmod 644 "$1/applications/$desktop" "$1/metainfo/$metainfo"
+    chmod 644 "$1/applications/$desktop" "$1/applications/$viewer" "$1/metainfo/$metainfo"
 }
 
 # Whether the files installed in $1 hold each language: a key of the
@@ -52,9 +56,17 @@ merge() {
 # names it as its PO file does (zh_CN), the metainfo as BCP 47 does, which
 # msgfmt writes with the script CLDR gives it (zh-Hans-CN), or, from
 # gettext 0.21 (Ubuntu 22.04's, which the AppImage is built on), as the PO
-# file does (zh_CN), which AppStream reads as well.
+# file does (zh_CN), which AppStream reads as well. Skwir Preview's entry
+# is there too, and speaks each language once it speaks one: its words
+# wait for their translations, which msgfmt leaves out until then.
 installed() {
     missing=0
+    if [ -s "$1/applications/$viewer" ]; then
+        echo "ok: Skwir Preview's desktop entry"
+    else
+        echo "missing: Skwir Preview's desktop entry, $1/applications/$viewer"
+        missing=1
+    fi
     for language in $(languages); do
         tag="$(printf '%s' "$language" | sed 's/_/((-[A-Z][a-z][a-z][a-z])?-|_)/')"
         if grep -q "^[A-Za-z-]*\[$language\]=" "$1/applications/$desktop" &&
@@ -64,18 +76,23 @@ installed() {
             echo "missing: the desktop entry or the metainfo in $language, in $1"
             missing=1
         fi
+        if grep -q '^[A-Za-z-]*\[[^]]*\]=' "$1/applications/$viewer" 2>/dev/null &&
+            ! grep -q "^[A-Za-z-]*\[$language\]=" "$1/applications/$viewer"; then
+            echo "missing: Skwir Preview's desktop entry in $language, in $1"
+            missing=1
+        fi
     done
     return "$missing"
 }
 
-# What to translate, from the two files, into $1.
+# What to translate, from the files, into $1.
 extract() {
     (
         cd "$here"
         xgettext --from-code=UTF-8 -L Desktop -k -kGenericName -kComment -kKeywords \
             --add-comments=Translators: --package-name=skwir \
             --copyright-holder='The skwir authors' \
-            --msgid-bugs-address=https://skwir.org/issues -o "$1.desktop" "$desktop"
+            --msgid-bugs-address=https://skwir.org/issues -o "$1.desktop" "$desktop" "$viewer"
         # The charset named, as gettext 0.22 and later name it where all is
         # ASCII; then the metainfo's messages added.
         sed 's/charset=CHARSET/charset=UTF-8/' "$1.desktop" > "$1.made"
@@ -143,7 +160,8 @@ check)
     merge "$work/share"
     installed "$work/share" || failed=1
     if command -v desktop-file-validate >/dev/null; then
-        for file in "$here/$desktop" "$work/share/applications/$desktop"; do
+        for file in "$here/$desktop" "$work/share/applications/$desktop" \
+            "$here/$viewer" "$work/share/applications/$viewer"; do
             if desktop-file-validate "$file"; then
                 echo "ok: desktop-file-validate $file"
             else
