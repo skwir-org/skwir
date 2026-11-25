@@ -13,10 +13,12 @@
 //! (ADR-125) are kept out of the index through `exclude`, once a run and
 //! again once the exclusions change. Where none runs, the first search
 //! starts one unless the Index page's switch says not (`skwird.start`).
-//! What the user keeps live is `kept`'s (ADR-150, 6).
+//! What the user keeps live is `kept`'s (ADR-150, 6); the removable drives
+//! skwird indexes, `volumes`' (ADR-150, 18).
 
 mod alarm;
 mod kept;
+mod volumes;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -80,6 +82,8 @@ pub struct SkwirdPlugin {
     /// The engine asked in place of the machine's, none started: a test's
     /// fake, or a check's real engine.
     socket: Option<PathBuf>,
+    /// The removable drives' keeper of this run, while the plugin is on.
+    volumes: Mutex<Option<Arc<volumes::Volumes>>>,
 }
 
 impl SkwirdPlugin {
@@ -87,6 +91,7 @@ impl SkwirdPlugin {
     pub fn at(socket: PathBuf) -> Self {
         SkwirdPlugin {
             socket: Some(socket),
+            volumes: Mutex::default(),
         }
     }
 }
@@ -141,6 +146,10 @@ impl Plugin for SkwirdPlugin {
         };
         let kept = kept::Kept::new(app.weak(), engines.clone());
         kept::register(&kept, app);
+        let volumes = volumes::register(app, &engines);
+        if let Some(before) = self.volumes.lock().replace(volumes) {
+            before.stop();
+        }
         app.names.register(
             ID,
             Arc::new(Index {
@@ -151,6 +160,23 @@ impl Plugin for SkwirdPlugin {
                 hello: HELLO,
             }),
         );
+    }
+
+    /// A drive mounted before Skwir started is offered at the first look,
+    /// one found unlooked at, at a look of the user's own (`volumes`).
+    fn on_looked_at(&self, _app: &App) {
+        let volumes = self.volumes.lock().clone();
+        if let Some(volumes) = volumes {
+            volumes.looked_at();
+        }
+    }
+
+    /// What follows the mounts, and asks or keeps for the drives, ends.
+    fn on_disable(&self, _app: &App) {
+        let volumes = self.volumes.lock().take();
+        if let Some(volumes) = volumes {
+            volumes.stop();
+        }
     }
 }
 

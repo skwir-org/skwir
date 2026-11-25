@@ -1,6 +1,12 @@
 # French catalog of skwir-plugin-skwird, drafted by a model from en.ftl (ADR-139, step G): every message is a draft until reviewed.
 
 # draft
+skwird_forget_volume = Oublier l’index d’un disque
+
+# draft
+skwird_forget_volume_description = Faire que skwird n’indexe plus un disque amovible, désigné par l’identité que skwird lui donne, et supprime son index
+
+# draft
 skwird_index = l’index de skwird
 
 # draft
@@ -20,6 +26,12 @@ skwird_keep_live_menu_description = L’élément du menu qui suit un dossier en
 
 # draft
 skwird_keep_live_one = Sélectionnez un seul dossier à suivre en direct
+
+# draft
+skwird_keep_volume = Indexer les noms d’un disque
+
+# draft
+skwird_keep_volume_description = Faire indexer par skwird les noms des fichiers d’un disque amovible, désigné par l’identité que skwird lui donne, désormais chaque fois qu’il est branché
 
 # draft
 skwird_kept_add = Ajouter un dossier…
@@ -155,3 +167,84 @@ skwird_start_description = La première recherche lance un moteur de skwird, qui
 
 # draft
 skwird_start_description_more = Un premier lancement lit tout votre dossier personnel : cela prend quelques secondes, et de la mémoire le temps de construire l’index. Désactivé, seul un moteur déjà en marche est interrogé.
+
+# draft
+skwird_volume_answer = Répondre s’il faut indexer un disque
+
+# draft
+skwird_volume_answer_description = La réponse à la question posée une fois quand un disque amovible est branché : si skwird indexe ses noms
+
+# draft
+skwird_volume_as_of = Indexé, mis à jour le { $when }, vérification en cours
+
+# draft
+skwird_volume_ask = Indexer les noms sur { $label } pour que les recherches les trouvent aussitôt ? L’index reste sur cet ordinateur, jamais sur le disque.
+
+# draft
+skwird_volume_away = Non branché
+
+# draft
+skwird_volume_checked = Indexé, vérifié le { $when }
+
+# draft
+skwird_volume_forget = Oublier
+
+# draft
+skwird_volume_indexed = Indexé
+
+# draft
+skwird_volume_item = Indexer ses noms
+
+# draft
+skwird_volume_live = Indexé, en direct depuis le { $when }
+
+# draft
+skwird_volume_menu = Proposer « Indexer ses noms » dans le menu d’un disque
+
+# draft
+skwird_volume_menu_description = L’élément du menu d’un disque dans la barre latérale qui indexe ses noms, ou oublie son index, là où skwird l’a vu monté avec une identité pour la dernière fois. Répond de mémoire
+
+# draft
+skwird_volume_no = Non
+
+# draft
+skwird_volume_not_forgotten = L’index de { $name } n’est pas supprimé : aucun moteur de skwird qui indexe les disques n’a répondu.
+
+# draft
+skwird_volume_not_kept = Les noms sur { $name } ne sont pas indexés : aucun moteur de skwird qui indexe les disques n’a répondu.
+
+# draft
+skwird_volume_reading = Indexé, lecture en cours
+
+# draft
+skwird_volume_released = Libéré pour une éjection
+
+# draft
+skwird_volume_twin = Refusé : un autre disque de même identité est indexé
+
+# draft
+skwird_volume_unknown = Indexé quand skwird tournera
+
+# draft
+skwird_volume_yes = Oui
+
+# draft
+skwird_volumes_description = Les disques amovibles dont skwird indexe les noms de fichiers, chacun reconnu à sa propre identité ; leur index reste sur cet ordinateur, jamais sur le disque.
+
+# draft
+skwird_volumes_description_more = Skwir pose la question une fois, quand un disque est branché pendant que skwird tourne ; le menu d’un disque dans la barre latérale l’indexe aussi, ou oublie son index.
+
+# draft
+skwird_volumes_list = Disques indexés
+
+# draft
+skwird_volumes_list_description = Les disques amovibles dont skwird indexe les noms, tels que les liste la page Index : l’identité, le nom et l’état de chacun, de mémoire
+
+# draft
+skwird_volumes_name = Disque
+
+# draft
+skwird_volumes_state_description = Ce que le module de skwird garde des disques amovibles : ceux sur lesquels la question a été posée, et les noms de ceux qui sont indexés.
+
+# draft
+skwird_volumes_title = Disques indexés

@@ -18,7 +18,7 @@ same evening (the Index page, steps E and F, the footer's
 words), and again (13 to 15: step D's whole disk as typed, sizes
 and times, the journal), and on 2026-11-24 (16: Usage from folder
 totals; 17: names in both forms; 18: removable volumes let go of
-before an eject). Amends
+before an eject; 19: a drive's index asked once, the user's choice). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 
@@ -313,6 +313,19 @@ user's engine, never the system service.
     (`release_at`, the mount point), never starting one, its wait
     bounded by its own silence (8 s). An engine that does not say it
     keeps no removable volume, and stops at a mount below its roots.
-    Asking the user whether to keep a volume waits for their choice of
-    how (`docs/PLAN.md`).
+19. **Skwir asks once a volume** (the user's choice, 2026-11-25), by the
+    identity the engine spells: as one is mounted while it runs
+    (`reach::follow`), or at the first look of a window for one mounted
+    before. It asks only where an engine already runs and says `volumes`,
+    the volume has an identity, this client keeps it not, and it was
+    never asked of it. The question is a message that stays ("Index the
+    names on “STICK” so searches find them at once? The index stays on
+    this computer, never on the drive."), counted asked as it is asked
+    (closed unanswered is a No), one at a time.
+    - A drive's place offers Index Its Names, checked while kept.
+    - Settings › Index lists those kept, each with Forget.
+    - `skwird.keep_volume` is the user's alone; keep and forget start an
+      engine as a search does.
+    - Kept in the state file (`skwird.volumes`): the identities asked,
+      each kept drive's label.
 

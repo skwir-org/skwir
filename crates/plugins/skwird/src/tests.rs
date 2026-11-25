@@ -941,3 +941,571 @@ fn a_folder_is_summed_as_skwird_sums_it() {
             .is_none()
     );
 }
+
+/// A removable drive skwird sees mounted at `at`.
+fn seen(id: Option<&str>, at: &Path, label: Option<&str>) -> protocol::SeenVolume {
+    protocol::SeenVolume {
+        id: id.map(str::to_owned),
+        at: protocol::WirePath::of(at),
+        filesystem: "vfat".into(),
+        label: label.map(str::to_owned),
+        kept: false,
+    }
+}
+
+/// A drive this client keeps, standing as `standing`.
+fn kept_drive(id: &str, standing: protocol::Standing, at: Option<&Path>) -> protocol::KeptVolume {
+    protocol::KeptVolume {
+        id: id.to_owned(),
+        standing,
+        at: at.map(protocol::WirePath::of),
+        coverage: None,
+    }
+}
+
+/// An engine whose hello says `features`, answering every `volumes` with
+/// `volumes` (refusing it where none is given), heard on its way.
+fn drives_engine(
+    dir: &Path,
+    features: &[&str],
+    volumes: Option<protocol::Volumes>,
+) -> (Fake, Heard) {
+    let fake = Fake::start(
+        dir.join("socket"),
+        Script {
+            roots: vec![PathBuf::from("/fixture")],
+            features: features.iter().map(|w| (*w).to_owned()).collect(),
+            volumes,
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    let heard = Heard::before(&fake, dir);
+    (fake, heard)
+}
+
+/// The `volumes` asked that keep, forget or release something.
+fn volumes_asked(heard: &Heard) -> Vec<protocol::Ask> {
+    heard
+        .asked()
+        .into_iter()
+        .filter(|ask| {
+            matches!(ask, protocol::Ask::Volumes { keep, forget, release, release_at }
+                if !(keep.is_empty() && forget.is_empty() && release.is_empty() && release_at.is_empty()))
+        })
+        .collect()
+}
+
+/// skwird's plugin turned on in an app of its own, asking the engine at
+/// `socket`, its settings and state files in `dir`, which another run (an
+/// app made later, `run` another name) reads again; its window the one a
+/// look looks at, of the user's own.
+struct Drives {
+    app: Arc<App>,
+    plugin: Arc<SkwirdPlugin>,
+    window: skwir_core::workspace::WindowId,
+}
+
+impl Drives {
+    fn at(dir: &Path, run: &str, socket: &Path) -> Drives {
+        let config = skwir_core::app::AppConfig {
+            settings_path: Some(dir.join("settings.toml")),
+            state_path: Some(dir.join("state.toml")),
+            ..skwir_core::app::AppConfig::ephemeral(dir.join(run))
+        };
+        let app = App::new(config).unwrap();
+        let plugin = Arc::new(SkwirdPlugin::at(socket.to_path_buf()));
+        app.plugins.add(
+            Arc::clone(&plugin) as Arc<dyn skwir_core::plugin::Plugin>,
+            &app,
+        );
+        let window = app.workspace.read().active_window_id();
+        Drives {
+            app,
+            plugin,
+            window,
+        }
+    }
+
+    fn volumes(&self) -> Arc<volumes::Volumes> {
+        self.plugin
+            .volumes
+            .lock()
+            .clone()
+            .expect("the plugin is on")
+    }
+
+    /// The window looked at, as it tells it, until what the look started
+    /// ended. It stays looked at.
+    fn look(&self) {
+        let volumes = self.volumes();
+        let before = volumes.looks.load(std::sync::atomic::Ordering::Acquire);
+        self.app.set_window_focused(self.window, true);
+        until(|| {
+            volumes.looks.load(std::sync::atomic::Ordering::Acquire) > before && volumes.idle()
+        });
+    }
+
+    /// A mount made, as the table of mounts tells it, until what it
+    /// started ended.
+    fn plugged(&self) {
+        let volumes = self.volumes();
+        volumes.mounts_changed();
+        until(|| volumes.idle());
+    }
+
+    /// The questions asked since the last call.
+    fn questions(&self) -> Vec<skwir_core::app::Notification> {
+        self.app
+            .take_notifications()
+            .into_iter()
+            .filter(|said| said.stays)
+            .collect()
+    }
+
+    /// A question's button pressed, as the window runs it (here, off its
+    /// thread: at once).
+    fn press(&self, question: &skwir_core::app::Notification, button: usize) {
+        self.app
+            .dispatch(&question.actions[button].command)
+            .unwrap();
+    }
+
+    fn value(&self, command: &str, args: &serde_json::Value) -> serde_json::Value {
+        match self
+            .app
+            .dispatch(&skwir_core::command::Invocation::with_args(command, args))
+            .unwrap()
+        {
+            skwir_core::command::Outcome::Value(value) => value,
+            other => panic!("{command}: {other:?}"),
+        }
+    }
+}
+
+const STICK: &str = "0a1b-2c3d";
+
+fn stick_point() -> PathBuf {
+    PathBuf::from("/media/someone/it's a stick, \u{e9}t\u{e9}")
+}
+
+/// A drive plugged in that has an identity, from an engine that says
+/// `volumes`, not kept and never asked about, is asked about once, at the
+/// first look, in a message that stays; and never again, after Yes, No or
+/// the message closed unanswered, at a mount, a look, or in another run.
+/// Yes alone has skwird keep it, by its identity.
+#[test]
+fn a_drive_plugged_in_is_asked_about_once_whatever_the_answer() {
+    for answer in [Some(true), Some(false), None] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_fake, heard) = drives_engine(
+            tmp.path(),
+            &["volumes"],
+            Some(protocol::Volumes {
+                kept: Vec::new(),
+                seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+            }),
+        );
+        let drives = Drives::at(tmp.path(), "first", &heard.socket);
+        drives.look();
+        let asked = drives.questions();
+        assert_eq!(asked.len(), 1, "{answer:?}: asked once");
+        assert_eq!(
+            asked[0].text.english(),
+            "Index the names on \u{201c}STICK\u{201d} so searches find them at once? The index stays on this computer, never on the drive."
+        );
+        let buttons: Vec<String> = asked[0].actions.iter().map(|a| a.label.english()).collect();
+        assert_eq!(buttons, ["Yes", "No"]);
+        if let Some(keep) = answer {
+            drives.press(&asked[0], usize::from(!keep));
+        }
+        let keep = protocol::Ask::Volumes {
+            keep: vec![STICK.to_owned()],
+            forget: Vec::new(),
+            release: Vec::new(),
+            release_at: Vec::new(),
+        };
+        if answer == Some(true) {
+            assert_eq!(volumes_asked(&heard), [keep], "kept by its identity");
+        } else {
+            assert!(volumes_asked(&heard).is_empty(), "{answer:?}: nothing kept");
+        }
+        drives.plugged();
+        drives.look();
+        assert!(drives.questions().is_empty(), "{answer:?}: never again");
+        // Another run, on the same state.
+        let again = Drives::at(tmp.path(), "second", &heard.socket);
+        again.look();
+        again.plugged();
+        assert!(
+            again.questions().is_empty(),
+            "{answer:?}: never again in another run"
+        );
+    }
+}
+
+/// A drive plugged in while Skwir runs is asked about at once; one waiting
+/// behind another is asked once that one is answered; a question about a
+/// drive no longer mounted is taken back.
+#[test]
+fn drives_are_asked_about_one_at_a_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (other, other_at) = ("5e6f-7a8b", PathBuf::from("/media/someone/CARD"));
+    let both = protocol::Volumes {
+        kept: Vec::new(),
+        // No label: called by its mount point's name.
+        seen: vec![
+            seen(Some(STICK), &stick_point(), Some("STICK")),
+            seen(Some(other), &other_at, None),
+        ],
+    };
+    let (fake, heard) = drives_engine(tmp.path(), &["volumes"], Some(both));
+    let drives = Drives::at(tmp.path(), "run", &heard.socket);
+    drives.look();
+    let first = drives.questions();
+    assert_eq!(first.len(), 1, "one at a time");
+    assert!(first[0].text.english().contains("STICK"));
+    drives.press(&first[0], 1);
+    let second = drives.questions();
+    assert_eq!(second.len(), 1, "the next once answered");
+    assert!(
+        second[0].text.english().contains("\u{201c}CARD\u{201d}"),
+        "{}",
+        second[0].text.english()
+    );
+    assert!(
+        drives
+            .app
+            .question_stands(ID, second[0].question.expect("a question")),
+        "it stands"
+    );
+    // Its drive pulled out: taken back.
+    drop(fake);
+    let _pulled = Fake::start(
+        tmp.path().join("socket"),
+        Script {
+            features: vec!["volumes".to_owned()],
+            volumes: Some(protocol::Volumes {
+                kept: Vec::new(),
+                seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+            }),
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    drives.plugged();
+    assert!(
+        !drives
+            .app
+            .question_stands(ID, second[0].question.expect("a question")),
+        "taken back"
+    );
+}
+
+/// No question where it cannot be answered so: a drive with no identity,
+/// an engine whose hello says no `volumes` (asked nothing of drives), no
+/// engine at all.
+#[test]
+fn no_identity_no_word_or_no_engine_asks_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let anonymous = protocol::Volumes {
+        kept: Vec::new(),
+        seen: vec![seen(None, &stick_point(), Some("STICK"))],
+    };
+    let (_fake, heard) = drives_engine(tmp.path(), &["volumes"], Some(anonymous));
+    let drives = Drives::at(tmp.path(), "run", &heard.socket);
+    drives.look();
+    drives.plugged();
+    assert!(drives.questions().is_empty(), "no identity");
+    let menu = drives.value(
+        "skwird.volume_menu",
+        &serde_json::json!({ "location": stick_point() }),
+    );
+    assert_eq!(
+        menu["items"],
+        serde_json::json!([]),
+        "nor offered in its menu"
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let wordless = protocol::Volumes {
+        kept: Vec::new(),
+        seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+    };
+    let (_fake, heard) = drives_engine(tmp.path(), &[], Some(wordless));
+    let drives = Drives::at(tmp.path(), "run", &heard.socket);
+    drives.look();
+    drives.plugged();
+    assert!(drives.questions().is_empty(), "no word");
+    assert!(
+        !heard
+            .asked()
+            .iter()
+            .any(|ask| matches!(ask, protocol::Ask::Volumes { .. })),
+        "asked nothing of drives"
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let drives = Drives::at(tmp.path(), "run", &tmp.path().join("no engine"));
+    let started = std::time::Instant::now();
+    drives.look();
+    drives.plugged();
+    assert!(drives.questions().is_empty(), "no engine");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "nothing waited for"
+    );
+}
+
+/// A drive's place offers Index Its Names where skwird last saw it mounted
+/// with an identity, checked while it is kept: Yes keeps it, checked forgets
+/// it. Elsewhere, nothing.
+#[test]
+fn a_drive_s_menu_indexes_its_names_or_forgets_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let card = PathBuf::from("/media/someone/CARD");
+    let (_fake, heard) = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: vec![kept_drive(
+                "5e6f-7a8b",
+                protocol::Standing::Indexed,
+                Some(&card),
+            )],
+            seen: vec![
+                seen(Some(STICK), &stick_point(), Some("STICK")),
+                seen(Some("5e6f-7a8b"), &card, Some("CARD")),
+            ],
+        }),
+    );
+    let drives = Drives::at(tmp.path(), "run", &heard.socket);
+    drives.look();
+    let item = |location: &serde_json::Value| -> Vec<(String, String, serde_json::Value, serde_json::Value)> {
+        let menu = drives.value(
+            "skwird.volume_menu",
+            &serde_json::json!({ "location": location }),
+        );
+        menu["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| {
+                let title: Words = serde_json::from_value(item["title"].clone()).unwrap();
+                (
+                    title.english(),
+                    item["command"]["name"].as_str().unwrap().to_owned(),
+                    item["command"]["args"].clone(),
+                    item["checked"].clone(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        item(&serde_json::json!(stick_point())),
+        [(
+            "Index Its Names".to_owned(),
+            "skwird.keep_volume".to_owned(),
+            serde_json::json!({ "id": STICK }),
+            serde_json::json!("off"),
+        )]
+    );
+    assert_eq!(
+        item(&serde_json::json!(card)),
+        [(
+            "Index Its Names".to_owned(),
+            "skwird.forget_volume".to_owned(),
+            serde_json::json!({ "id": "5e6f-7a8b" }),
+            serde_json::json!("on"),
+        )]
+    );
+    assert!(
+        item(&serde_json::json!("/media/someone")).is_empty(),
+        "no drive there"
+    );
+    assert!(
+        item(&serde_json::json!("device:/dev/sdz1")).is_empty(),
+        "not mounted"
+    );
+    assert!(item(&serde_json::json!("/fixture")).is_empty(), "a folder");
+}
+
+/// The Index page lists the drives kept, each by its label (as mounted
+/// now, else as remembered when it was kept, which a drive away has not
+/// in skwird's answer) and where it stands; Forget has skwird forget it,
+/// by its identity, and Skwir its label. With no engine, what is
+/// remembered.
+#[test]
+fn the_index_page_lists_the_drives_kept_and_forgets_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (photos, photos_at) = ("9c8d-7e6f", PathBuf::from("/media/someone/PHOTOS"));
+    let card = PathBuf::from("/media/someone/COPY");
+    // Kept in a first run, mounted then.
+    {
+        let first = tmp.path().join("first");
+        std::fs::create_dir(&first).unwrap();
+        let (_fake, heard) = drives_engine(
+            &first,
+            &["volumes"],
+            Some(protocol::Volumes {
+                kept: vec![kept_drive(
+                    photos,
+                    protocol::Standing::Indexed,
+                    Some(&photos_at),
+                )],
+                seen: vec![seen(Some(photos), &photos_at, Some("Holiday photos"))],
+            }),
+        );
+        let drives = Drives::at(tmp.path(), "first", &heard.socket);
+        drives.look();
+    }
+    let checked = protocol::Coverage {
+        names: protocol::Proof::Checked(instant()),
+        attrs: protocol::Proof::Checked(instant()),
+        holes: Vec::new(),
+    };
+    let (_fake, heard) = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: vec![
+                protocol::KeptVolume {
+                    coverage: Some(checked),
+                    ..kept_drive(STICK, protocol::Standing::Indexed, Some(&stick_point()))
+                },
+                kept_drive(photos, protocol::Standing::Away, None),
+                kept_drive("5e6f-7a8b", protocol::Standing::Twin, Some(&card)),
+            ],
+            seen: vec![
+                seen(Some(STICK), &stick_point(), Some("STICK")),
+                seen(Some("5e6f-7a8b"), &card, None),
+            ],
+        }),
+    );
+    let drives = Drives::at(tmp.path(), "second", &heard.socket);
+    drives.look();
+    let rows = |drives: &Drives| -> Vec<(String, String, String)> {
+        let listed = drives.value("skwird.volumes_list", &serde_json::json!({}));
+        listed["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| {
+                let said = |field: &str| -> String {
+                    serde_json::from_value::<Words>(record[field].clone())
+                        .unwrap()
+                        .english()
+                };
+                (
+                    record["id"].as_str().unwrap().to_owned(),
+                    said("name"),
+                    said("state"),
+                )
+            })
+            .collect()
+    };
+    let listed = rows(&drives);
+    assert_eq!(listed.len(), 3, "{listed:?}");
+    assert_eq!(listed[0].0, STICK);
+    assert_eq!(listed[0].1, "STICK");
+    assert!(
+        listed[0].2.starts_with("Indexed, checked "),
+        "{}",
+        listed[0].2
+    );
+    assert_eq!(
+        listed[1],
+        (
+            photos.to_owned(),
+            "Holiday photos".to_owned(),
+            "Not plugged in".to_owned()
+        ),
+        "remembered when it was kept"
+    );
+    assert_eq!(
+        listed[2],
+        (
+            "5e6f-7a8b".to_owned(),
+            "COPY".to_owned(),
+            "Refused: another drive of the same identity is indexed".to_owned()
+        ),
+        "no label: its mount point's name"
+    );
+    let record = &drives.value("skwird.volumes_list", &serde_json::json!({}))["records"][1];
+    let forget = &record["actions"][0];
+    assert_eq!(
+        serde_json::from_value::<Words>(forget["label"].clone())
+            .unwrap()
+            .english(),
+        "Forget"
+    );
+    drives
+        .app
+        .dispatch(&skwir_core::command::Invocation::with_args(
+            forget["command"].as_str().unwrap(),
+            &forget["args"],
+        ))
+        .unwrap();
+    assert_eq!(
+        volumes_asked(&heard),
+        [protocol::Ask::Volumes {
+            keep: Vec::new(),
+            forget: vec![photos.to_owned()],
+            release: Vec::new(),
+            release_at: Vec::new(),
+        }],
+        "forgotten by its identity"
+    );
+    let on_disk: volumes::Remembered = drives
+        .app
+        .settings
+        .kept_on_disk(volumes::STATE)
+        .and_then(|value| value.try_into().ok())
+        .expect("kept");
+    assert!(!on_disk.labels.contains_key(photos), "{on_disk:?}");
+    assert_eq!(on_disk.labels.get(STICK).map(String::as_str), Some("STICK"));
+
+    // No engine: what is remembered, said to stand once skwird runs.
+    let nobody = Drives::at(tmp.path(), "third", &tmp.path().join("no engine"));
+    nobody.look();
+    let _ = rows(&nobody);
+    until(|| nobody.volumes().idle());
+    let listed = rows(&nobody);
+    let names: Vec<&str> = listed.iter().map(|(_, name, _)| name.as_str()).collect();
+    assert_eq!(names, ["STICK", "COPY"], "by identity: {listed:?}");
+    assert!(
+        listed
+            .iter()
+            .all(|(_, _, state)| state == "Indexed when skwird runs"),
+        "{listed:?}"
+    );
+}
+
+/// Turned off, the plugin follows no mount and asks nothing more: what
+/// told the run before of a mount does nothing; turned on again, its run
+/// is new, and asks as the first did.
+#[test]
+fn turned_off_it_asks_nothing_and_on_again_it_asks_anew() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_fake, heard) = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+        }),
+    );
+    let drives = Drives::at(tmp.path(), "run", &heard.socket);
+    let before = drives.volumes();
+    assert!(drives.app.plugins.set_enabled(ID, false, &drives.app));
+    assert!(drives.plugin.volumes.lock().is_none(), "let go of");
+    let asked = heard.asked().len();
+    drives.app.set_window_focused(drives.window, true);
+    before.mounts_changed();
+    until(|| before.idle());
+    assert!(drives.questions().is_empty(), "nothing asked");
+    assert_eq!(heard.asked().len(), asked, "nothing asked of skwird");
+    assert!(drives.app.plugins.set_enabled(ID, true, &drives.app));
+    drives.look();
+    assert_eq!(drives.questions().len(), 1, "asked by the new run");
+}

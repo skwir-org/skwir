@@ -1,6 +1,12 @@
 # Italian catalog of skwir-plugin-skwird, drafted by a model from en.ftl (ADR-139, docs/glossary-it.md): every message is a draft until reviewed.
 
 # draft
+skwird_forget_volume = Dimentica l’indice di un’unità
+
+# draft
+skwird_forget_volume_description = Fa sì che skwird non indicizzi più un’unità rimovibile, indicata dall’identità che skwird le dà, e ne rimuova l’indice
+
+# draft
 skwird_index = l’indice di skwird
 
 # draft
@@ -20,6 +26,12 @@ skwird_keep_live_menu_description = La voce del menu per seguire in tempo reale 
 
 # draft
 skwird_keep_live_one = Seleziona una sola cartella da seguire in tempo reale
+
+# draft
+skwird_keep_volume = Indicizza i nomi di un’unità
+
+# draft
+skwird_keep_volume_description = Fa indicizzare a skwird i nomi dei file di un’unità rimovibile, indicata dall’identità che skwird le dà, d’ora in poi ogni volta che è collegata
 
 # draft
 skwird_kept_add = Aggiungi cartella…
@@ -155,3 +167,84 @@ skwird_start_description = La prima ricerca avvia un motore di skwird, che termi
 
 # draft
 skwird_start_description_more = Il primo avvio legge tutta la tua cartella personale: qualche secondo, e memoria mentre costruisce l’indice. Se disattivato, si interpella solo un motore già in esecuzione.
+
+# draft
+skwird_volume_answer = Rispondi se indicizzare un’unità
+
+# draft
+skwird_volume_answer_description = La risposta alla domanda posta una volta quando si collega un’unità rimovibile: se skwird ne indicizza i nomi
+
+# draft
+skwird_volume_as_of = Indicizzata, aggiornata al { $when }, in verifica
+
+# draft
+skwird_volume_ask = Indicizzare i nomi su { $label } perché le ricerche li trovino subito? L’indice resta su questo computer, mai sull’unità.
+
+# draft
+skwird_volume_away = Non collegata
+
+# draft
+skwird_volume_checked = Indicizzata, verificata il { $when }
+
+# draft
+skwird_volume_forget = Dimentica
+
+# draft
+skwird_volume_indexed = Indicizzata
+
+# draft
+skwird_volume_item = Indicizza i suoi nomi
+
+# draft
+skwird_volume_live = Indicizzata, in tempo reale dal { $when }
+
+# draft
+skwird_volume_menu = Offri «Indicizza i suoi nomi» nel menu di un’unità
+
+# draft
+skwird_volume_menu_description = La voce del menu di un’unità nella barra laterale che ne indicizza i nomi, o ne dimentica l’indice, dove skwird l’ha vista montata con un’identità l’ultima volta. Risponde dalla memoria
+
+# draft
+skwird_volume_no = No
+
+# draft
+skwird_volume_not_forgotten = L’indice di { $name } non è stato rimosso: nessun motore di skwird che indicizza le unità ha risposto.
+
+# draft
+skwird_volume_not_kept = I nomi su { $name } non sono indicizzati: nessun motore di skwird che indicizza le unità ha risposto.
+
+# draft
+skwird_volume_reading = Indicizzata, lettura in corso
+
+# draft
+skwird_volume_released = Rilasciata per l’espulsione
+
+# draft
+skwird_volume_twin = Rifiutata: un’altra unità con la stessa identità è indicizzata
+
+# draft
+skwird_volume_unknown = Indicizzata quando skwird sarà in esecuzione
+
+# draft
+skwird_volume_yes = Sì
+
+# draft
+skwird_volumes_description = Le unità rimovibili di cui skwird indicizza i nomi dei file, ciascuna riconosciuta dalla propria identità; il loro indice resta su questo computer, mai sull’unità.
+
+# draft
+skwird_volumes_description_more = Skwir lo chiede una volta quando si collega un’unità mentre skwird è in esecuzione; anche il menu di un’unità nella barra laterale la indicizza, o ne dimentica l’indice.
+
+# draft
+skwird_volumes_list = Unità indicizzate
+
+# draft
+skwird_volumes_list_description = Le unità rimovibili di cui skwird indicizza i nomi, come le elenca la pagina Indice: l’identità, il nome e lo stato di ciascuna, dalla memoria
+
+# draft
+skwird_volumes_name = Unità
+
+# draft
+skwird_volumes_state_description = Ciò che il plugin di skwird conserva delle unità rimovibili: quelle per cui è già stata posta la domanda, e i nomi di quelle indicizzate.
+
+# draft
+skwird_volumes_title = Unità indicizzate

@@ -1,5 +1,9 @@
 # Made from the code by `just words` (tools/words/extract.py): never edit by hand.
 
+skwird_forget_volume = Forget a Drive's Index
+
+skwird_forget_volume_description = Have skwird index a removable drive no more, by the identity skwird spells, and remove its index
+
 # What a search's answer rests on, said in its footer's tooltip: the index skwird keeps of every file's name. skwird is a program's name, as written.
 skwird_index = skwird's index
 
@@ -16,6 +20,10 @@ skwird_keep_live_menu_description = The menu's entry keeping a folder live: only
 
 # An error of the command keeping a folder live, asked with no folder named and none or several selected.
 skwird_keep_live_one = Select one folder to keep live
+
+skwird_keep_volume = Index a Drive's Names
+
+skwird_keep_volume_description = Have skwird index the file names on a removable drive, by the identity skwird spells, from now on whenever it is plugged in
 
 # The button adding a folder to the folders kept live.
 skwird_kept_add = Add Folder…
@@ -139,3 +147,77 @@ skwird_start_description = The first search starts an engine of skwird's, which 
 
 # What a setting's description says after its first sentence, in its tooltip.
 skwird_start_description_more = A first start reads your whole home: seconds, and memory while it builds. Off, only an engine already running is asked.
+
+skwird_volume_answer = Answer Whether to Index a Drive
+
+skwird_volume_answer_description = The answer to the question asked once as a removable drive is plugged in: whether skwird indexes its names
+
+# Under a drive's name in the list of drives indexed: its index was read back as it was then, and is being compared with its folders. when: the date and time.
+skwird_volume_as_of = Indexed as of { $when }, being checked
+
+# Asked once, in a message that stays, as a removable drive (a USB stick, a card) is plugged in: whether skwird indexes the names of its files. label: the drive's label, else the name of the folder it is mounted on.
+skwird_volume_ask = Index the names on { $label } so searches find them at once? The index stays on this computer, never on the drive.
+
+# Under a drive's name in the list of drives indexed: not mounted now; its index is kept.
+skwird_volume_away = Not plugged in
+
+# Under a drive's name in the list of drives indexed: its index was compared with its folders then. when: the date and time.
+skwird_volume_checked = Indexed, checked { $when }
+
+# A button on a drive's line in Settings › Index: skwird indexes its names no more and removes its index.
+skwird_volume_forget = Forget
+
+# Under a drive's name in the list of drives indexed: plugged in, a root of skwird's index.
+skwird_volume_indexed = Indexed
+
+# An entry of a drive's menu in the sidebar: skwird indexes the names of the files on it, so that searches find them at once. Checked while it does.
+skwird_volume_item = Index Its Names
+
+# Under a drive's name in the list of drives indexed: every change on it heard as it comes since then. when: the date and time.
+skwird_volume_live = Indexed, live since { $when }
+
+skwird_volume_menu = Index Its Names in a Drive's Menu
+
+skwird_volume_menu_description = A sidebar drive's entry indexing its names, or forgetting its index, where skwird last saw it mounted with an identity. Answers from memory
+
+# The button saying no to indexing the names on a drive just plugged in.
+skwird_volume_no = No
+
+# An error, once the user asked to forget a drive's index: name is the drive's label. skwird is a program's name, as written.
+skwird_volume_not_forgotten = The index of { $name } is not removed: no engine of skwird's that indexes drives answered.
+
+# An error, once the user said yes to indexing a drive's names: name is the drive's label. skwird is a program's name, as written.
+skwird_volume_not_kept = The names on { $name } are not indexed: no engine of skwird's that indexes drives answered.
+
+# Under a drive's name in the list of drives indexed: plugged in, skwird reads its names for the first time or checks them.
+skwird_volume_reading = Indexed, being read
+
+# Under a drive's name in the list of drives indexed: skwird closed all it held on it before it was ejected, and reads nothing there until it is plugged in again.
+skwird_volume_released = Let go of for an eject
+
+# Under a drive's name in the list of drives indexed: a copy of a drive, or two drives whose serial numbers are alike; the one indexed first is kept.
+skwird_volume_twin = Refused: another drive of the same identity is indexed
+
+# Under a drive's name in the list of drives indexed, while no engine of skwird's answers. skwird is a program's name, as written.
+skwird_volume_unknown = Indexed when skwird runs
+
+# The button saying yes to indexing the names on a drive just plugged in.
+skwird_volume_yes = Yes
+
+# What the list of drives indexed says. skwird is a program's name, as written.
+skwird_volumes_description = The removable drives whose file names skwird indexes, each known by its own identity; their index stays on this computer, never on the drive.
+
+# What a setting's description says after its first sentence, in its tooltip.
+skwird_volumes_description_more = Skwir asks once as a drive is plugged in while skwird runs; a drive's menu in the sidebar also indexes it, or forgets its index.
+
+skwird_volumes_list = Drives Indexed
+
+skwird_volumes_list_description = The removable drives whose names skwird indexes, as the Index page lists them: each one's identity, label and standing, from memory
+
+# A field of a line in the list of drives indexed: the drive's label.
+skwird_volumes_name = Drive
+
+skwird_volumes_state_description = What skwird's plugin keeps of removable drives: those asked about once, and the labels of those indexed.
+
+# A setting's title on the Index page: the removable drives (USB sticks, cards) whose file names skwird indexes.
+skwird_volumes_title = Drives indexed

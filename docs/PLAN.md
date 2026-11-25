@@ -1636,9 +1636,17 @@ Inter and JetBrains Mono, which `print_job::faces` could fall back to.
 
 **Removable volumes in skwird** (designed with skwird's session,
 2026-11-24: `volumes {keep, forget, release}`, the engine listing the
-volumes it sees mounted with their ids, released before an eject): skwird
-builds it for its 0.2, after its 0.1.0; nothing on Skwir's side until
-then.
+volumes it sees mounted with their ids, released before an eject):
+built in skwird 0.2 (its main e650eb3), and on Skwir's side 2026-11-25
+(ADR-150 18 and 19). Eject lets a running engine go of a drive first,
+and Skwir asks once per drive whether to index it, with a drive's menu
+entry and Settings › Index's list. Left: a question closed in the window
+is told to no one, so a second drive waiting behind it is asked at the
+next drive plugged in or the next run; with `skwird.start` off and no
+engine running, Yes says the drive is not indexed, and nothing waits to
+keep it later; tried against the fake engine only, never with a real
+drive or in a window, and Eject's release never against a real
+engine.
 
 **From the review of 2026-11-24** (45 findings on the night's work, all
 fixed but these). Usage from an index: a file of several names that
