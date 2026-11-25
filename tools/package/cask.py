@@ -36,6 +36,10 @@ REPOSITORY = "https://github.com/skwir-org/skwir"
 TAP = "skwir-org/tap"
 # The app's own Info.plist in the release's zip, which has `skwir.app` at its root.
 INFO_PLIST = "skwir.app/Contents/Info.plist"
+# Homebrew's name of each macOS. A cask names the oldest it runs on by
+# that name alone (`depends_on macos: :monterey`): its style refuses the
+# string `">= :monterey"` since 2026-11-22 (its cop Homebrew/OSDependsOn),
+# and the tap's workflow runs that style.
 MACOS_NAMES = {"12": "monterey", "13": "ventura", "14": "sonoma", "15": "sequoia", "26": "tahoe"}
 
 
@@ -106,7 +110,7 @@ cask "skwir" do
   end
 
   depends_on arch: :arm64
-  depends_on macos: ">= :{oldest}"
+  depends_on macos: :{oldest}
 
   app "skwir.app"
   binary "#{{appdir}}/skwir.app/Contents/MacOS/skwir"

@@ -69,7 +69,7 @@ class Cask(unittest.TestCase):
                           'skwir-#{version}-macos-arm64.zip",\n'
                           '      verified: "github.com/skwir-org/skwir/"\n', text)
             self.assertIn('  app "skwir.app"\n', text)
-            self.assertIn('  depends_on arch: :arm64\n  depends_on macos: ">= :monterey"\n', text)
+            self.assertIn('  depends_on arch: :arm64\n  depends_on macos: :monterey\n', text)
             self.assertIn('  desc "Browse, find and organize your files"\n', text)
             self.assertIn("brew trust skwir-org/tap", text)
             self.assertIn("Open Anyway", text)
@@ -101,7 +101,7 @@ class Cask(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             bundle = bundle_of(directory, minimum="13.0")
             text = cask.cask(bundle, manifest_of(bundle))
-        self.assertIn('  depends_on macos: ">= :ventura"\n', text)
+        self.assertIn('  depends_on macos: :ventura\n', text)
 
     def test_an_app_naming_no_macos_known_or_a_zip_changed_is_refused(self):
         for app, said in [({"minimum": "11.0"}, "no Homebrew name known"),
