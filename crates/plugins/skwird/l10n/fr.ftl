@@ -190,10 +190,16 @@ skwird_volume_checked = Indexé, vérifié le { $when }
 skwird_volume_forget = Oublier
 
 # draft
+skwird_volume_forget_refused = skwird a refusé de supprimer l’index de { $name }
+
+# draft
 skwird_volume_indexed = Indexé
 
 # draft
 skwird_volume_item = Indexer ses noms
+
+# draft
+skwird_volume_keep_refused = skwird a refusé d’indexer les noms sur { $name }
 
 # draft
 skwird_volume_live = Indexé, en direct depuis le { $when }
@@ -214,10 +220,16 @@ skwird_volume_not_forgotten = L’index de { $name } n’est pas supprimé : au
 skwird_volume_not_kept = Les noms sur { $name } ne sont pas indexés : aucun moteur de skwird qui indexe les disques n’a répondu.
 
 # draft
+skwird_volume_not_taken = Les noms sur { $name } ne sont pas indexés : skwird n’a pas pris le disque.
+
+# draft
 skwird_volume_reading = Indexé, lecture en cours
 
 # draft
 skwird_volume_released = Libéré pour une éjection
+
+# draft
+skwird_volume_still_kept = L’index de { $name } n’est pas supprimé : skwird garde encore le disque.
 
 # draft
 skwird_volume_twin = Refusé : un autre disque de même identité est indexé

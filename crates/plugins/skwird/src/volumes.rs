@@ -5,38 +5,51 @@
 //! (2026-11-25):
 //!
 //! - **Once a drive, as it is plugged in.** A drive mounted while Skwir runs
-//!   (`reach::follow`), or mounted before and found at the first look of a
-//!   window (`Plugin::on_looked_at`), is offered where an engine already
-//!   runs and says `volumes`, the drive has an identity, this client keeps
-//!   it not and its user was never asked about it: a message that stays
-//!   (`App::ask_quietly`), Yes or No. Never an engine started to ask. Its
-//!   identity is counted asked as it is asked, so a question closed
-//!   unanswered is a No. One question stands at a time: the next waits for
-//!   its answer, and a drive plugged in meanwhile takes its place, the one
-//!   it replaces counted asked. The question waits for a window of the
-//!   user's own (ADR-141, 8).
+//!   (`reach::follow`: skwird sees it at a mount point made since the check
+//!   before), or mounted before and found at the first look of a window
+//!   (`Plugin::on_looked_at`), is offered where an engine already runs and
+//!   says `volumes`, the drive has an identity, this client keeps it not and
+//!   its user was never asked about it: a message that stays
+//!   (`App::ask_quietly`), Yes or No. Never an engine started to ask, and
+//!   never a drive skwird came to see otherwise (an engine started since,
+//!   another mount made): its menu offers it. Its identity is counted asked
+//!   as it is asked, so a question closed unanswered is a No. One question
+//!   stands at a time: the next waits for its answer, and a drive plugged in
+//!   meanwhile takes its place, the one it replaces counted asked. The
+//!   question waits for a window of the user's own (ADR-141, 8), and asks
+//!   only of what skwird said last: none while no engine answers, a drive
+//!   gone from the mount table then let go of.
 //! - **A drive's menu in the sidebar**, Index Its Names, checked while it is
 //!   kept: from memory, for a mount point skwird's last answer saw with an
 //!   identity.
 //! - **The Index page lists the drives kept**, each with Forget, which takes
 //!   it from what is kept and has skwird remove its index.
 //!
+//! A drive kept or forgotten by any way (its question, its menu, the Index
+//! page, a command) is decided: counted asked, waiting no more, its
+//! question taken back. What is counted asked, what waits and the question
+//! the window shows change in one place alone (`Volumes::settle`), under one
+//! lock held until the window is told, so none of them is left behind and no
+//! two askers come between each other.
+//!
 //! What Skwir keeps of it is state (ADR-056, `skwird.volumes`): the
-//! identities asked, and each kept drive's label, which a drive away has
-//! not in skwird's answer. Nothing of it goes to skwird but keep and forget,
+//! identities asked, each kept drive's label, which a drive away has not in
+//! skwird's answer, and when each label was taken or let go of, so that of
+//! two skwirs on one state file the later word on a drive stands
+//! (`Memory::merge`). Nothing of it goes to skwird but keep and forget,
 //! each a command (`skwird.keep_volume`, the user's alone, and
 //! `skwird.forget_volume`), which start an engine where none runs as a
 //! search does (`skwird.start`): the user asked. skwird is asked what it
 //! sees (`volumes` with nothing to keep or forget) as mounts change, at the
 //! first look, and as the list or a drive's menu is shown (at most every
 //! few seconds), never starting one; what it said last is what the menu and
-//! the list answer from.
+//! the list answer from, of two answers the one asked later.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -70,6 +83,20 @@ const LISTED_EVERY: Duration = Duration::from_secs(5);
 /// says what it sees at once, its reads of a drive coming after.
 const VOLUMES_SILENCE: Duration = Duration::from_secs(8);
 
+/// Where filesystems of files kept are mounted now: the system's table
+/// ([`table`]), or a test's.
+pub(crate) type Mounted = Arc<dyn Fn() -> HashSet<PathBuf> + Send + Sync>;
+
+/// The mount points of filesystems of files kept, from the table in memory
+/// (`reach::points`): no network's, no kernel's, no automount point.
+pub(crate) fn table() -> HashSet<PathBuf> {
+    skwir_core::fs::reach::points()
+        .into_iter()
+        .filter(|m| !m.remote && !m.kernel && !m.on_demand)
+        .map(|m| m.point)
+        .collect()
+}
+
 /// What Skwir keeps from one run to the next: the drives asked about, by
 /// their identity, and each kept drive's label. Another skwir's, on the
 /// same state file, is merged in before a save (`Memory::merge`).
@@ -78,6 +105,11 @@ const VOLUMES_SILENCE: Duration = Duration::from_secs(8);
 pub(crate) struct Remembered {
     pub asked: BTreeSet<String>,
     pub labels: BTreeMap<String, String>,
+    /// When each drive's label was last taken or let go of (kept, or
+    /// forgotten), in milliseconds since 1970: of two skwirs' words on a
+    /// drive, the later stands, a drive forgotten in one never brought
+    /// back by the label another still holds.
+    pub since: BTreeMap<String, i64>,
     /// What a later skwir keeps that this one does not know, kept as it is.
     #[serde(flatten)]
     pub later: toml::Table,
@@ -89,11 +121,60 @@ impl Remembered {
     }
 }
 
-/// A drive to ask about.
+/// Now, as [`Remembered::since`] counts it.
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        })
+}
+
+/// A drive to ask about, as skwird last saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Offer {
     id: String,
     label: String,
+    /// Where it was mounted then: a point the table lists no more, it went.
+    at: PathBuf,
+}
+
+/// The drives waiting to be asked about and the one asked: changed only in
+/// [`Volumes::settle`], under its lock.
+#[derive(Default)]
+struct Questions {
+    /// The drives to ask about, in the order found, none counted asked.
+    waiting: VecDeque<Offer>,
+    /// The drive whose question stands, as far as this run knows: no
+    /// answer heard for it (a question closed is never told). The window's
+    /// question is always its.
+    up: Option<Offer>,
+}
+
+impl Questions {
+    /// The user decided of `id`: kept or forgotten, by its question, its
+    /// menu, the Index page or a command. Counted asked, so never asked
+    /// again nor left waiting; its question, standing, taken back.
+    fn decided(&mut self, asked: &mut BTreeSet<String>, id: &str) {
+        asked.insert(id.to_owned());
+        self.up.take_if(|up| up.id == id);
+    }
+
+    /// Only the drives `still` holds stay, waiting or asked: the others
+    /// went, or are kept since.
+    fn moot(&mut self, still: impl Fn(&Offer) -> bool) {
+        self.waiting.retain(&still);
+        self.up.take_if(|up| !still(up));
+    }
+
+    /// The drives it holds, waiting or asked.
+    fn held(&self) -> HashSet<String> {
+        self.waiting
+            .iter()
+            .chain(&self.up)
+            .map(|offer| offer.id.clone())
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -101,34 +182,74 @@ struct Memory {
     /// What a running engine that says `volumes` last answered; none where
     /// none did.
     said: Option<protocol::Volumes>,
+    /// The ticket of the ask `said` answers (`Volumes::asks`): an answer to
+    /// one asked before it is let go of, whenever it comes.
+    said_at: u64,
     remembered: Remembered,
-    /// The labels let go of this run (a drive forgotten, or no longer
-    /// kept): a merge with another skwir's state brings none of them back.
-    dropped: HashSet<String>,
-    /// The drives to ask about, in the order found, none asked yet.
-    pending: VecDeque<Offer>,
-    /// The drive whose question stands, as far as this run knows: no
-    /// answer heard for it (a question closed is never told).
-    up: Option<String>,
     /// The mount points last seen, each a filesystem of files kept.
     points: Option<HashSet<PathBuf>>,
 }
 
 impl Memory {
-    /// Take in what `theirs` keeps (another skwir's): what it asked, and
-    /// the labels of what it kept, but those let go of here.
+    /// Take in what `theirs` keeps (another skwir's): what it asked, and of
+    /// each drive's label the one taken or let go of later, theirs where
+    /// they said so later than this one did.
     fn merge(&mut self, theirs: &Remembered) {
-        self.remembered.asked.extend(theirs.asked.iter().cloned());
+        let ours = &mut self.remembered;
+        ours.asked.extend(theirs.asked.iter().cloned());
+        for (id, &at) in &theirs.since {
+            if ours.since.get(id).is_some_and(|&ours_at| ours_at >= at) {
+                continue;
+            }
+            ours.since.insert(id.clone(), at);
+            match theirs.labels.get(id) {
+                Some(label) => ours.labels.insert(id.clone(), label.clone()),
+                None => ours.labels.remove(id),
+            };
+        }
+        // A label written with no time (a build before them): taken where
+        // nothing is known of its drive here.
         for (id, label) in &theirs.labels {
-            if !self.dropped.contains(id) && !self.remembered.labels.contains_key(id) {
-                self.remembered.labels.insert(id.clone(), label.clone());
+            if !theirs.since.contains_key(id) && !ours.since.contains_key(id) {
+                ours.labels
+                    .entry(id.clone())
+                    .or_insert_with(|| label.clone());
             }
         }
         for (key, value) in &theirs.later {
-            if !self.remembered.later.contains_key(key) {
-                self.remembered.later.insert(key.clone(), value.clone());
+            if !ours.later.contains_key(key) {
+                ours.later.insert(key.clone(), value.clone());
             }
         }
+    }
+
+    /// Remember `label` for the drive `id`, kept: whether it changed.
+    fn labelled(&mut self, id: &str, label: String) -> bool {
+        let ours = &mut self.remembered;
+        if ours.labels.get(id) == Some(&label) {
+            return false;
+        }
+        ours.labels.insert(id.to_owned(), label);
+        ours.since.insert(id.to_owned(), now());
+        true
+    }
+
+    /// Let go of the label of `id`, no longer kept: whether it held one.
+    fn unlabelled(&mut self, id: &str) -> bool {
+        let ours = &mut self.remembered;
+        if ours.labels.remove(id).is_none() {
+            return false;
+        }
+        ours.since.insert(id.to_owned(), now());
+        true
+    }
+
+    /// `id` forgotten here: its label let go of, and the word kept that it
+    /// was then, which another skwir's older label does not undo.
+    fn forgot(&mut self, id: &str) {
+        let ours = &mut self.remembered;
+        ours.labels.remove(id);
+        ours.since.insert(id.to_owned(), now());
     }
 
     /// What `id` is called: its label as mounted now, else as remembered,
@@ -143,21 +264,55 @@ impl Memory {
     }
 }
 
-/// What asks skwird: whether what it finds is offered (a mount, the first
-/// look) and whether a mount was made or let go of.
+/// What asks skwird: whether it is the first look of this run, and whether
+/// a mount was made or let go of.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Asking {
-    offer: bool,
-    plugged: bool,
+    first_look: bool,
+    mounts: bool,
 }
 
 impl Asking {
     fn with(self, other: Asking) -> Asking {
         Asking {
-            offer: self.offer || other.offer,
-            plugged: self.plugged || other.plugged,
+            first_look: self.first_look || other.first_look,
+            mounts: self.mounts || other.mounts,
         }
     }
+}
+
+/// Which drives a check finds to ask about (ADR-150, 19).
+enum Finds {
+    /// None: a listing's check.
+    Nothing,
+    /// Every one skwird sees: at the first look, for the drives mounted
+    /// before, or at a mount before any point was seen.
+    Every,
+    /// Those skwird sees at these points, mounted since the check before:
+    /// plugged in, each asked at once.
+    At(HashSet<PathBuf>),
+}
+
+impl Finds {
+    fn finds(&self, at: &Path) -> bool {
+        match self {
+            Finds::Nothing => false,
+            Finds::Every => true,
+            Finds::At(points) => points.contains(at),
+        }
+    }
+
+    fn plugs(&self, at: &Path) -> bool {
+        matches!(self, Finds::At(points) if points.contains(at))
+    }
+}
+
+/// Whether a filesystem just mounted at `point` may be a drive skwird sees:
+/// where the system mounts what the user plugs in (udisks', a Mac's
+/// `/Volumes`), or on a drive that can be unplugged. A FUSE program's, a
+/// container's layers, a loop or bind mount elsewhere, are not waited for.
+fn may_be_drive(point: &Path) -> bool {
+    skwir_core::fs::volume::user_mounted(point) || skwir_core::fs::volume::is_removable(point)
 }
 
 /// Whether a check runs, and what was asked while it did.
@@ -169,20 +324,39 @@ struct Checking {
     listed: Option<Instant>,
 }
 
-/// No engine that indexes drives answered.
-struct Unanswered;
+/// skwird did not answer as asked.
+enum Unanswered {
+    /// No engine that indexes drives answered.
+    NoEngine,
+    /// The engine refused, saying why, in its own words.
+    Refused(String),
+}
+
+/// What a check's answer did.
+struct Took {
+    /// Taken: no answer to a later ask stood already.
+    applied: bool,
+    /// The labels changed, for the caller to save.
+    relabelled: bool,
+}
 
 /// The drives' keeper for one run of the plugin.
 pub(crate) struct Volumes {
     pub(crate) source: RecordSource,
     app: Weak<App>,
     engines: Engines,
+    /// Where filesystems are mounted now.
+    mounted: Mounted,
     /// This run's: cancelled once the plugin is turned off.
     lifetime: CancelToken,
     memory: Mutex<Memory>,
+    /// Taken before memory, held until the window is told: see `settle`.
+    questions: Mutex<Questions>,
     /// One saves at a time, what it writes read under it.
     saving: Mutex<()>,
     checking: Mutex<Checking>,
+    /// The tickets of skwird's asks, one taken just before each.
+    asks: AtomicU64,
     /// Whether a window was looked at this run.
     looked: AtomicBool,
     /// How many looks were told: what a test waits on, with `idle`.
@@ -245,8 +419,8 @@ impl Volumes {
             });
         } else {
             self.request(Asking {
-                offer: true,
-                plugged: false,
+                first_look: true,
+                mounts: false,
             });
         }
         self.looks.fetch_add(1, Ordering::AcqRel);
@@ -255,8 +429,8 @@ impl Volumes {
     /// A mount was made or let go of, by any program (`reach::follow`).
     pub(crate) fn mounts_changed(self: &Arc<Self>) {
         self.request(Asking {
-            offer: true,
-            plugged: true,
+            first_look: false,
+            mounts: true,
         });
     }
 
@@ -303,20 +477,28 @@ impl Volumes {
         });
     }
 
-    /// What skwird sees, offered where `asking` says; asked once more a
-    /// moment later where a mount just made is a drive it does not see yet.
+    /// What skwird sees, its drives found as `asking` says; asked once more
+    /// a moment later where a mount just made, which may be a drive, is one
+    /// skwird does not see yet.
     fn check(self: &Arc<Self>, app: &App, asking: Asking) {
-        let fresh = if asking.offer {
-            self.points_since()
+        let finds = if asking.first_look || asking.mounts {
+            match self.points_since() {
+                Some(fresh) if !asking.first_look => Finds::At(fresh),
+                _ => Finds::Every,
+            }
         } else {
-            Vec::new()
+            Finds::Nothing
         };
-        let answer = self.check_once(app, asking);
-        let late = asking.plugged
-            && answer.as_ref().is_some_and(|answer| {
+        let answer = self.check_once(app, &finds);
+        let late = match (&finds, &answer) {
+            (Finds::At(fresh), Some(answer)) => {
                 let seen: HashSet<PathBuf> = answer.seen.iter().map(|s| s.at.to_path()).collect();
-                fresh.iter().any(|point| !seen.contains(point))
-            });
+                fresh
+                    .iter()
+                    .any(|point| !seen.contains(point) && may_be_drive(point))
+            }
+            _ => false,
+        };
         if late
             && self
                 .lifetime
@@ -325,78 +507,105 @@ impl Volumes {
                 .recv_timeout(AGAIN)
                 .is_err()
         {
-            self.check_once(app, asking);
+            self.check_once(app, &finds);
         }
     }
 
-    fn check_once(self: &Arc<Self>, app: &App, asking: Asking) -> Option<protocol::Volumes> {
-        let answer = self
-            .with_engine(false, |client| client.volumes(&[], &[], &[]))
-            .ok();
-        if self.took(app, answer.clone()) {
+    fn check_once(self: &Arc<Self>, app: &App, finds: &Finds) -> Option<protocol::Volumes> {
+        let (ticket, answer) = self.with_engine(false, |client| client.volumes(&[], &[], &[]));
+        let answer = answer.ok();
+        let took = self.took(app, ticket, answer.clone());
+        if took.relabelled {
             self.save(app);
         }
-        if asking.offer
-            && let Some(answer) = &answer
-        {
-            let found = self.offer(app, answer, asking.plugged);
-            self.ask_next(app, &found);
+        if !took.applied {
+            return answer;
+        }
+        if let Some(answer) = &answer {
+            if !matches!(finds, Finds::Nothing) {
+                let plugged = self.offers(app, answer, finds);
+                self.ask_next(app, &plugged);
+            }
+        } else {
+            // No engine to say which drives went: the table says it.
+            let mounted = (self.mounted)();
+            self.settle(app, |questions, _| {
+                questions.moot(|offer| mounted.contains(&offer.at));
+            });
         }
         answer
     }
 
     /// The mount points of files kept made since the last look at them:
-    /// none at the first.
-    fn points_since(&self) -> Vec<PathBuf> {
-        let now: HashSet<PathBuf> = skwir_core::fs::reach::points()
-            .into_iter()
-            .filter(|m| !m.remote && !m.kernel && !m.on_demand)
-            .map(|m| m.point)
-            .collect();
+    /// none where none was seen before.
+    fn points_since(&self) -> Option<HashSet<PathBuf>> {
+        let now = (self.mounted)();
         let mut memory = self.memory.lock();
         let fresh = memory
             .points
             .as_ref()
-            .map_or_else(Vec::new, |before| now.difference(before).cloned().collect());
+            .map(|before| now.difference(before).cloned().collect());
         memory.points = Some(now);
         fresh
     }
 
     /// `ask` of an engine that says `volumes`, started where none runs if
     /// `start` and the Index page's switch allows it; given up on once this
-    /// run is.
+    /// run is. With the ticket taken just before it asked (`took`).
     fn with_engine<T>(
         &self,
         start: bool,
         ask: impl FnOnce(&mut Client) -> Result<T, skwird_client::Error>,
-    ) -> Result<T, Unanswered> {
+    ) -> (u64, Result<T, Unanswered>) {
+        let ticket = || self.asks.fetch_add(1, Ordering::AcqRel) + 1;
         let start = start
             && self
                 .app
                 .upgrade()
                 .is_none_or(|app| app.settings.get::<bool>(crate::kept::START).unwrap_or(true));
-        let mut find = crate::find(&self.engines, start).ok_or(Unanswered)?;
+        let Some(mut find) = crate::find(&self.engines, start) else {
+            return (ticket(), Err(Unanswered::NoEngine));
+        };
         find.silence = Some(VOLUMES_SILENCE);
         if self.lifetime.is_cancelled() {
-            return Err(Unanswered);
+            return (ticket(), Err(Unanswered::NoEngine));
         }
-        let (mut client, _stop) = crate::connect(&find, &self.lifetime, crate::HELLO)
-            .map_err(|e| crate::said("connect", &e))
-            .map_err(|()| Unanswered)?;
+        let (mut client, _stop) = match crate::connect(&find, &self.lifetime, crate::HELLO) {
+            Ok(connected) => connected,
+            Err(error) => {
+                crate::said("connect", &error);
+                return (ticket(), Err(Unanswered::NoEngine));
+            }
+        };
         if !says_volumes(&client) {
-            return Err(Unanswered);
+            return (ticket(), Err(Unanswered::NoEngine));
         }
-        ask(&mut client)
-            .map_err(|e| crate::said("volumes", &e))
-            .map_err(|()| Unanswered)
+        let asked = ticket();
+        let answer = ask(&mut client).map_err(|error| {
+            crate::said("volumes", &error);
+            match error {
+                skwird_client::Error::Engine(failure) => Unanswered::Refused(failure.message),
+                _ => Unanswered::NoEngine,
+            }
+        });
+        (asked, answer)
     }
 
-    /// Keep what skwird said, the labels of the drives it keeps with it
-    /// (as mounted now, else as remembered), and say so where it changed:
-    /// whether the labels changed, for the caller to save.
-    fn took(&self, app: &App, answer: Option<protocol::Volumes>) -> bool {
+    /// Keep what skwird said, asked with `ticket`, unless an answer to a
+    /// later ask stands already; the labels of the drives it keeps with it
+    /// (as mounted now, else as remembered), and say so where it changed.
+    fn took(&self, app: &App, ticket: u64, answer: Option<protocol::Volumes>) -> Took {
         let (changed, relabelled) = {
             let mut memory = self.memory.lock();
+            // Of two answers, the one asked later stands, whichever came
+            // last.
+            if ticket < memory.said_at {
+                return Took {
+                    applied: false,
+                    relabelled: false,
+                };
+            }
+            memory.said_at = ticket;
             let mut relabelled = false;
             if let Some(answer) = &answer {
                 let seen: HashMap<&str, &protocol::SeenVolume> = answer
@@ -405,26 +614,21 @@ impl Volumes {
                     .filter_map(|s| Some((s.id.as_deref()?, s)))
                     .collect();
                 let kept: HashSet<&str> = answer.kept.iter().map(|k| k.id.as_str()).collect();
-                let Memory {
-                    remembered,
-                    dropped,
-                    ..
-                } = &mut *memory;
-                let before = remembered.labels.clone();
-                remembered.labels.retain(|id, _| {
-                    let keep = kept.contains(id.as_str());
-                    if !keep {
-                        dropped.insert(id.clone());
-                    }
-                    keep
-                });
+                let gone: Vec<String> = memory
+                    .remembered
+                    .labels
+                    .keys()
+                    .filter(|id| !kept.contains(id.as_str()))
+                    .cloned()
+                    .collect();
+                for id in &gone {
+                    relabelled |= memory.unlabelled(id);
+                }
                 for id in &kept {
                     if let Some(seen) = seen.get(id) {
-                        remembered.labels.insert((*id).to_owned(), label_of(seen));
-                        dropped.remove(*id);
+                        relabelled |= memory.labelled(id, label_of(seen));
                     }
                 }
-                relabelled = remembered.labels != before;
             }
             let changed = memory.said != answer;
             memory.said = answer;
@@ -434,63 +638,116 @@ impl Volumes {
             self.source.changed();
             app.wake();
         }
-        relabelled
+        Took {
+            applied: true,
+            relabelled,
+        }
     }
 
-    /// Note the drives `answer` offers to ask about (each seen with an
-    /// identity, not kept, never asked), letting go of those it no longer
-    /// offers, and take back a question about a drive gone or kept since:
-    /// the identities noted now, which a mount made asks first.
-    fn offer(&self, app: &App, answer: &protocol::Volumes, plugged: bool) -> Vec<String> {
+    /// The one way what is counted asked, the drives waiting and the
+    /// question change: `change` edits them, under `questions` held until
+    /// the window is told, so no other asker comes between. Whatever it did,
+    /// after it the drive up is counted asked, no drive counted asked
+    /// waits, and the window's question is the one up: asked where another
+    /// is up, taken back where none is. Saved where what is counted asked
+    /// changed. On a worker: it may write the state file.
+    fn settle<T>(&self, app: &App, change: impl FnOnce(&mut Questions, &mut Memory) -> T) -> T {
+        let mut questions = self.questions.lock();
+        let before = questions.up.as_ref().map(|up| up.id.clone());
+        let (out, counted) = {
+            let mut memory = self.memory.lock();
+            let counted = memory.remembered.asked.clone();
+            questions
+                .waiting
+                .retain(|offer| !memory.remembered.asked.contains(&offer.id));
+            let out = change(&mut questions, &mut memory);
+            let asked = &mut memory.remembered.asked;
+            if let Some(up) = &questions.up {
+                asked.insert(up.id.clone());
+            }
+            questions.waiting.retain(|offer| !asked.contains(&offer.id));
+            (out, counted)
+        };
+        if questions.up.as_ref().map(|up| &up.id) != before.as_ref() {
+            match &questions.up {
+                Some(offer) => {
+                    app.ask_quietly(ID, question(&offer.label), answers(&offer.id));
+                    // Refused (the plugin turned off meanwhile): not asked.
+                    if self.lifetime.is_cancelled() || !app.registry.gate().is_open(ID) {
+                        let offer = questions.up.take().map(|offer| offer.id);
+                        let mut memory = self.memory.lock();
+                        if let Some(id) = offer.filter(|id| !counted.contains(id)) {
+                            memory.remembered.asked.remove(&id);
+                        }
+                    }
+                }
+                None => app.take_back_question(ID),
+            }
+        }
+        drop(questions);
+        let grew = self.memory.lock().remembered.asked != counted;
+        if grew {
+            self.save(app);
+        }
+        out
+    }
+
+    /// Note the drives `answer` offers to ask about, those `finds` finds
+    /// (each seen with an identity, not kept, never asked), letting go of
+    /// those it no longer offers, and take back a question about a drive
+    /// gone or kept since: the drives found plugged in, which are asked
+    /// first.
+    fn offers(&self, app: &App, answer: &protocol::Volumes, finds: &Finds) -> Vec<String> {
         let kept: HashSet<&str> = answer.kept.iter().map(|k| k.id.as_str()).collect();
         let seen: HashMap<&str, &protocol::SeenVolume> = answer
             .seen
             .iter()
             .filter_map(|s| Some((s.id.as_deref().filter(|id| !id.is_empty())?, s)))
             .collect();
-        let (found, moot) = {
-            let mut memory = self.memory.lock();
-            let Memory {
-                remembered,
-                pending,
-                up,
-                ..
-            } = &mut *memory;
-            let offers = |id: &str| !kept.contains(id) && !remembered.asked.contains(id);
-            pending.retain(|offer| seen.contains_key(offer.id.as_str()) && offers(&offer.id));
-            let moot = up
-                .take_if(|id| !seen.contains_key(id.as_str()) || kept.contains(id.as_str()))
-                .is_some();
-            let waiting: HashSet<String> = pending.iter().map(|o| o.id.clone()).collect();
-            let mut found = Vec::new();
+        self.settle(app, |questions, memory| {
+            questions.moot(|offer| {
+                seen.contains_key(offer.id.as_str()) && !kept.contains(offer.id.as_str())
+            });
+            // Where each is mounted now.
+            for offer in questions.waiting.iter_mut().chain(questions.up.iter_mut()) {
+                if let Some(seen) = seen.get(offer.id.as_str()) {
+                    offer.at = seen.at.to_path();
+                }
+            }
+            let held = questions.held();
+            let asked = &memory.remembered.asked;
+            let mut plugged = Vec::new();
             for volume in &answer.seen {
                 let Some(id) = volume.id.as_deref().filter(|id| !id.is_empty()) else {
                     continue;
                 };
-                if offers(id) && !waiting.contains(id) && up.as_deref() != Some(id) {
-                    pending.push_back(Offer {
-                        id: id.to_owned(),
-                        label: label_of(volume),
-                    });
-                    found.push(id.to_owned());
+                let at = volume.at.to_path();
+                if kept.contains(id) || asked.contains(id) || held.contains(id) || !finds.finds(&at)
+                {
+                    continue;
                 }
+                if finds.plugs(&at) {
+                    plugged.push(id.to_owned());
+                }
+                questions.waiting.push_back(Offer {
+                    id: id.to_owned(),
+                    label: label_of(volume),
+                    at,
+                });
             }
-            (found, moot)
-        };
-        if moot {
-            app.take_back_question(ID);
-        }
-        if plugged { found } else { Vec::new() }
+            plugged
+        })
     }
 
     /// Ask about the next drive waiting, where a window of the user's own is
-    /// looked at: one of `plugged` first, taking the place of a question
-    /// up, else the first found while none is up. Counted asked as it is
-    /// asked, and kept so. On a worker: it reads and writes the state file.
+    /// looked at and skwird's last answer still offers it: one of `plugged`
+    /// first, taking the place of a question up, else the first found while
+    /// none is up. Counted asked as it is asked, and kept so. None while no
+    /// engine answers. On a worker: it reads and writes the state file.
     fn ask_next(&self, app: &App, plugged: &[String]) {
         if self.lifetime.is_cancelled()
             || !app.looked_at_own()
-            || self.memory.lock().pending.is_empty()
+            || self.questions.lock().waiting.is_empty()
         {
             return;
         }
@@ -498,77 +755,119 @@ impl Volumes {
         if let Some(theirs) = on_disk(app) {
             self.memory.lock().merge(&theirs);
         }
-        let offer = {
-            let mut memory = self.memory.lock();
-            let Memory {
-                remembered,
-                pending,
-                up,
-                ..
-            } = &mut *memory;
-            pending.retain(|offer| !remembered.asked.contains(&offer.id));
-            let plugged: HashSet<&str> = plugged.iter().map(String::as_str).collect();
-            let at = pending
-                .iter()
-                .position(|offer| plugged.contains(offer.id.as_str()))
-                .or_else(|| (up.is_none() && !pending.is_empty()).then_some(0));
-            let Some(offer) = at.and_then(|at| pending.remove(at)) else {
+        let plugged: HashSet<&str> = plugged.iter().map(String::as_str).collect();
+        self.settle(app, |questions, memory| {
+            let Some(said) = &memory.said else {
                 return;
             };
-            remembered.asked.insert(offer.id.clone());
-            *up = Some(offer.id.clone());
-            offer
-        };
-        app.ask_quietly(ID, question(&offer.label), answers(&offer.id));
-        self.save(app);
+            let seen: HashSet<&str> = said.seen.iter().filter_map(|s| s.id.as_deref()).collect();
+            let kept: HashSet<&str> = said.kept.iter().map(|k| k.id.as_str()).collect();
+            questions.waiting.retain(|offer| {
+                seen.contains(offer.id.as_str()) && !kept.contains(offer.id.as_str())
+            });
+            let at = questions
+                .waiting
+                .iter()
+                .position(|offer| plugged.contains(offer.id.as_str()))
+                .or_else(|| (questions.up.is_none() && !questions.waiting.is_empty()).then_some(0));
+            if let Some(offer) = at.and_then(|at| questions.waiting.remove(at)) {
+                questions.up = Some(offer);
+            }
+        });
     }
 
     /// The answer to a drive's question (its buttons): kept if Yes, then
     /// the next drive waiting asked.
     fn answer(&self, app: &App, id: &str, keep: bool) -> anyhow::Result<()> {
-        self.memory.lock().up.take_if(|up| up == id);
-        let kept = if keep { self.keep(app, id) } else { Ok(()) };
+        let kept = if keep {
+            self.keep(app, id)
+        } else {
+            self.settle(app, |questions, memory| {
+                questions.decided(&mut memory.remembered.asked, id);
+            });
+            Ok(())
+        };
         self.ask_next(app, &[]);
         kept
     }
 
-    /// Have skwird index the drive `id`, its label remembered.
+    /// Have skwird index the drive `id`, its label remembered: decided,
+    /// whatever skwird answers.
     fn keep(&self, app: &App, id: &str) -> anyhow::Result<()> {
         let label = self.memory.lock().label(id);
-        let Ok(answer) = self.with_engine(true, |client| client.volumes(&[id], &[], &[])) else {
-            anyhow::bail!(skwir_core::words!(
+        self.settle(app, |questions, memory| {
+            questions.decided(&mut memory.remembered.asked, id);
+        });
+        let (ticket, answer) = self.with_engine(true, |client| client.volumes(&[id], &[], &[]));
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(Unanswered::NoEngine) => anyhow::bail!(skwir_core::words!(
                 skwird_volume_not_kept = "The names on { $name } are not indexed: no engine of skwird's that indexes drives answered.",
                 name = Name(label),
                 note = "An error, once the user said yes to indexing a drive's names: name is the drive's label. skwird is a program's name, as written."
-            ));
+            )),
+            Err(Unanswered::Refused(why)) => {
+                return Err(anyhow::Error::msg(why).context(skwir_core::words!(
+                    skwird_volume_keep_refused = "skwird refused to index the names on { $name }",
+                    name = Name(label),
+                    note = "An error, once the user said yes to indexing a drive's names, followed by what skwird said, as it said it: name is the drive's label. skwird is a program's name, as written."
+                )));
+            }
         };
-        {
-            let mut memory = self.memory.lock();
-            memory.remembered.labels.insert(id.to_owned(), label);
-            memory.dropped.remove(id);
+        let taken = answer.kept.iter().any(|kept| kept.id == id);
+        if taken {
+            self.memory.lock().labelled(id, label.clone());
         }
-        self.took(app, Some(answer));
+        self.took(app, ticket, Some(answer));
         self.save(app);
+        if !taken {
+            anyhow::bail!(skwir_core::words!(
+                skwird_volume_not_taken =
+                    "The names on { $name } are not indexed: skwird did not take the drive.",
+                name = Name(label),
+                note = "An error, once the user said yes to indexing a drive's names, where skwird answered without keeping it (the drive gone meanwhile): name is the drive's label. skwird is a program's name, as written."
+            ));
+        }
         Ok(())
     }
 
-    /// Have skwird index the drive `id` no more and remove its index.
+    /// Have skwird index the drive `id` no more and remove its index:
+    /// decided, whatever skwird answers.
     fn forget(&self, app: &App, id: &str) -> anyhow::Result<()> {
         let label = self.memory.lock().label(id);
-        let Ok(answer) = self.with_engine(true, |client| client.volumes(&[], &[id], &[])) else {
-            anyhow::bail!(skwir_core::words!(
+        self.settle(app, |questions, memory| {
+            questions.decided(&mut memory.remembered.asked, id);
+        });
+        let (ticket, answer) = self.with_engine(true, |client| client.volumes(&[], &[id], &[]));
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(Unanswered::NoEngine) => anyhow::bail!(skwir_core::words!(
                 skwird_volume_not_forgotten = "The index of { $name } is not removed: no engine of skwird's that indexes drives answered.",
                 name = Name(label),
                 note = "An error, once the user asked to forget a drive's index: name is the drive's label. skwird is a program's name, as written."
-            ));
+            )),
+            Err(Unanswered::Refused(why)) => {
+                return Err(anyhow::Error::msg(why).context(skwir_core::words!(
+                    skwird_volume_forget_refused = "skwird refused to remove the index of { $name }",
+                    name = Name(label),
+                    note = "An error, once the user asked to forget a drive's index, followed by what skwird said, as it said it: name is the drive's label. skwird is a program's name, as written."
+                )));
+            }
         };
-        {
-            let mut memory = self.memory.lock();
-            memory.remembered.labels.remove(id);
-            memory.dropped.insert(id.to_owned());
+        let still = answer.kept.iter().any(|kept| kept.id == id);
+        if !still {
+            self.memory.lock().forgot(id);
         }
-        self.took(app, Some(answer));
+        self.took(app, ticket, Some(answer));
         self.save(app);
+        if still {
+            anyhow::bail!(skwir_core::words!(
+                skwird_volume_still_kept =
+                    "The index of { $name } is not removed: skwird still keeps the drive.",
+                name = Name(label),
+                note = "An error, once the user asked to forget a drive's index, where skwird answered still keeping it: name is the drive's label. skwird is a program's name, as written."
+            ));
+        }
         Ok(())
     }
 
@@ -847,8 +1146,9 @@ fn carried(
 
 /// Declare what Skwir keeps of the drives, the list, the commands and the
 /// menu's entry, and follow the mounts where an engine may be asked: the
-/// drives' keeper of this run.
-pub(crate) fn register(app: &App, engines: &Engines) -> Arc<Volumes> {
+/// drives' keeper of this run, reading where filesystems are mounted from
+/// `mounted`.
+pub(crate) fn register(app: &App, engines: &Engines, mounted: Mounted) -> Arc<Volumes> {
     app.settings.declare(SettingSpec::state(
         STATE,
         skwir_core::words!(
@@ -865,13 +1165,16 @@ pub(crate) fn register(app: &App, engines: &Engines) -> Arc<Volumes> {
         source: RecordSource::new("skwird.volumes_list", "", "", ""),
         app: app.weak(),
         engines: engines.clone(),
+        mounted,
         lifetime: app.lifetime().child(),
         memory: Mutex::new(Memory {
             remembered,
             ..Memory::default()
         }),
+        questions: Mutex::default(),
         saving: Mutex::default(),
         checking: Mutex::default(),
+        asks: AtomicU64::new(0),
         looked: AtomicBool::new(false),
         looks: AtomicU64::new(0),
         working: AtomicUsize::new(0),
@@ -1028,4 +1331,83 @@ fn register_commands(volumes: &Arc<Volumes>, app: &App) {
             move |args, _| Ok(Outcome::Value(v.menu(&args.location))),
         )
         .data();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remembered(labels: &[(&str, &str)], since: &[(&str, i64)]) -> Remembered {
+        Remembered {
+            labels: labels
+                .iter()
+                .map(|(id, label)| ((*id).to_owned(), (*label).to_owned()))
+                .collect(),
+            since: since
+                .iter()
+                .map(|(id, at)| ((*id).to_owned(), *at))
+                .collect(),
+            ..Remembered::default()
+        }
+    }
+
+    /// Of two skwirs on one state file, the later word on a drive stands: a
+    /// drive one forgot is not brought back by the label the other still
+    /// holds, kept again later it is; a label written with no time is taken
+    /// only where nothing is known of its drive.
+    #[test]
+    fn of_two_skwirs_the_later_word_on_a_drive_stands() {
+        // Forgotten here at 20, kept there at 10.
+        let mut ours = Memory {
+            remembered: remembered(&[], &[("P", 20)]),
+            ..Memory::default()
+        };
+        ours.merge(&remembered(&[("P", "PHOTOS")], &[("P", 10)]));
+        assert!(!ours.remembered.labels.contains_key("P"), "forgotten later");
+        // Kept there again at 30.
+        ours.merge(&remembered(&[("P", "PHOTOS")], &[("P", 30)]));
+        assert_eq!(
+            ours.remembered.labels.get("P").map(String::as_str),
+            Some("PHOTOS")
+        );
+        assert_eq!(ours.remembered.since.get("P"), Some(&30));
+        // Forgotten there at 40: let go of here too.
+        ours.merge(&remembered(&[], &[("P", 40)]));
+        assert!(!ours.remembered.labels.contains_key("P"));
+        // A label of no time: taken only for a drive unknown here.
+        ours.merge(&remembered(&[("P", "OLD"), ("Q", "CARD")], &[]));
+        assert!(!ours.remembered.labels.contains_key("P"), "known here");
+        assert_eq!(
+            ours.remembered.labels.get("Q").map(String::as_str),
+            Some("CARD")
+        );
+    }
+
+    /// Of two answers, the one asked later stands, whichever comes last.
+    #[test]
+    fn an_answer_asked_before_another_taken_is_let_go_of() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let volumes = register(&app, &Engines::None, Arc::new(HashSet::new));
+        let kept = |ids: &[&str]| protocol::Volumes {
+            kept: ids
+                .iter()
+                .map(|id| protocol::KeptVolume {
+                    id: (*id).to_owned(),
+                    standing: protocol::Standing::Away,
+                    at: None,
+                    coverage: None,
+                })
+                .collect(),
+            seen: Vec::new(),
+        };
+        assert!(volumes.took(&app, 2, Some(kept(&["P"]))).applied);
+        assert!(
+            !volumes.took(&app, 1, Some(kept(&[]))).applied,
+            "asked before"
+        );
+        assert_eq!(volumes.memory.lock().said, Some(kept(&["P"])));
+        assert!(volumes.took(&app, 3, None).applied, "asked later");
+        assert_eq!(volumes.memory.lock().said, None);
+    }
 }

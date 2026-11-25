@@ -58,9 +58,10 @@ const SILENCE: Duration = Duration::from_secs(60);
 const PROBE_SILENCE: Duration = Duration::from_millis(500);
 
 /// How long an engine may take to let go of a volume before its unmount
-/// (`NameIndex::release`): it answers once nothing of it is held, within
-/// 5 s, so an Eject never waits on one that stopped answering longer.
-const RELEASE_SILENCE: Duration = Duration::from_secs(8);
+/// (`NameIndex::release`), its connect and hello included: it answers once
+/// nothing of it is held, within 5 s, so an Eject never waits on one that
+/// stopped answering longer, whether before its hello or after it.
+const RELEASE_WITHIN: Duration = Duration::from_secs(8);
 
 /// The longest an engine may take to say hello, a started one's wait
 /// besides (`connect`): an engine answers it at once, a first build under
@@ -84,6 +85,9 @@ pub struct SkwirdPlugin {
     socket: Option<PathBuf>,
     /// The removable drives' keeper of this run, while the plugin is on.
     volumes: Mutex<Option<Arc<volumes::Volumes>>>,
+    /// Where filesystems are mounted, read in place of the system's table
+    /// (`volumes::table`): a test's.
+    mounted: Option<volumes::Mounted>,
 }
 
 impl SkwirdPlugin {
@@ -92,6 +96,7 @@ impl SkwirdPlugin {
         SkwirdPlugin {
             socket: Some(socket),
             volumes: Mutex::default(),
+            mounted: None,
         }
     }
 }
@@ -146,7 +151,11 @@ impl Plugin for SkwirdPlugin {
         };
         let kept = kept::Kept::new(app.weak(), engines.clone());
         kept::register(&kept, app);
-        let volumes = volumes::register(app, &engines);
+        let mounted = self
+            .mounted
+            .clone()
+            .unwrap_or_else(|| Arc::new(volumes::table));
+        let volumes = volumes::register(app, &engines, mounted);
         if let Some(before) = self.volumes.lock().replace(volumes) {
             before.stop();
         }
@@ -158,6 +167,7 @@ impl Plugin for SkwirdPlugin {
                 secrets: Mutex::default(),
                 kept,
                 hello: HELLO,
+                release_within: RELEASE_WITHIN,
             }),
         );
     }
@@ -203,6 +213,8 @@ struct Index {
     kept: Arc<kept::Kept>,
     /// How long a connect waits for a hello: `HELLO`, or a test's.
     hello: Duration,
+    /// How long a release waits, all of it: `RELEASE_WITHIN`, or a test's.
+    release_within: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -369,27 +381,37 @@ impl NameIndex for Index {
     /// it (`release_at`), answered once nothing of it is held. None is
     /// started: an engine not running holds nothing. One that says no such
     /// word keeps no removable volume, and stops at a mount below its roots.
+    /// All of it, its connect and hello included, is given up on past
+    /// `release_within`: one bound, not a hello's and a silence's after it.
     fn release(&self, point: &Path, cancel: &CancelToken) {
         let Some(mut find) = find(&self.engines, false) else {
             return;
         };
-        find.silence = Some(RELEASE_SILENCE);
+        find.silence = Some(self.release_within);
         if cancel.is_cancelled() {
             return;
         }
-        let Ok((mut client, _stop)) = connect(&find, cancel, self.hello) else {
-            return;
-        };
-        if !client
-            .welcome()
-            .features
-            .iter()
-            .any(|word| word == protocol::VOLUMES)
-        {
-            return;
-        }
-        if let Err(error) = client.release_at(&[point]) {
-            said("release", &error);
+        let stopper = Stopper::new();
+        let _stop = cancel.on_cancel({
+            let stopper = stopper.clone();
+            move || stopper.stop()
+        });
+        let released = alarm::within(self.release_within, &stopper, || {
+            let mut client = Client::connect_stopped(&find, &stopper)?;
+            if !client
+                .welcome()
+                .features
+                .iter()
+                .any(|word| word == protocol::VOLUMES)
+            {
+                return Ok(());
+            }
+            client.release_at(&[point]).map(drop)
+        });
+        match released {
+            Some(Ok(())) => {}
+            Some(Err(error)) => said("release", &error),
+            None => said("release", &Error::Silent(self.release_within)),
         }
     }
 

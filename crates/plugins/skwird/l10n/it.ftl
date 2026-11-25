@@ -190,10 +190,16 @@ skwird_volume_checked = Indicizzata, verificata il { $when }
 skwird_volume_forget = Dimentica
 
 # draft
+skwird_volume_forget_refused = skwird ha rifiutato di rimuovere l’indice di { $name }
+
+# draft
 skwird_volume_indexed = Indicizzata
 
 # draft
 skwird_volume_item = Indicizza i suoi nomi
+
+# draft
+skwird_volume_keep_refused = skwird ha rifiutato di indicizzare i nomi su { $name }
 
 # draft
 skwird_volume_live = Indicizzata, in tempo reale dal { $when }
@@ -214,10 +220,16 @@ skwird_volume_not_forgotten = L’indice di { $name } non è stato rimosso: ness
 skwird_volume_not_kept = I nomi su { $name } non sono indicizzati: nessun motore di skwird che indicizza le unità ha risposto.
 
 # draft
+skwird_volume_not_taken = I nomi su { $name } non sono indicizzati: skwird non ha preso l’unità.
+
+# draft
 skwird_volume_reading = Indicizzata, lettura in corso
 
 # draft
 skwird_volume_released = Rilasciata per l’espulsione
+
+# draft
+skwird_volume_still_kept = L’indice di { $name } non è stato rimosso: skwird tiene ancora l’unità.
 
 # draft
 skwird_volume_twin = Rifiutata: un’altra unità con la stessa identità è indicizzata

@@ -190,10 +190,16 @@ skwird_volume_checked = 已编入索引，已于 { $when } 核对
 skwird_volume_forget = 忘记
 
 # draft
+skwird_volume_forget_refused = skwird 拒绝删除{ $name }的索引
+
+# draft
 skwird_volume_indexed = 已编入索引
 
 # draft
 skwird_volume_item = 为其文件名编制索引
+
+# draft
+skwird_volume_keep_refused = skwird 拒绝为{ $name }上的文件名编制索引
 
 # draft
 skwird_volume_live = 已编入索引，自 { $when } 起实时
@@ -214,10 +220,16 @@ skwird_volume_not_forgotten = 未删除{ $name }的索引：没有能为驱动�
 skwird_volume_not_kept = 未为{ $name }上的文件名编制索引：没有能为驱动器编制索引的 skwird 引擎回答。
 
 # draft
+skwird_volume_not_taken = 未为{ $name }上的文件名编制索引：skwird 没有接收该驱动器。
+
+# draft
 skwird_volume_reading = 已编入索引，正在读取
 
 # draft
 skwird_volume_released = 已为弹出而释放
+
+# draft
+skwird_volume_still_kept = 未删除{ $name }的索引：skwird 仍保留该驱动器。
 
 # draft
 skwird_volume_twin = 已拒绝：另一个标识相同的驱动器已编入索引

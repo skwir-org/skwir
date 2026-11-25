@@ -311,8 +311,9 @@ user's engine, never the system service.
     its worker, after Skwir let go and the volume was flushed, before
     the unmount, as it does when another program announces one. skwird's
     asks an engine already running whose hello says `volumes`
-    (`release_at`, the mount point), never starting one, its wait
-    bounded by its own silence (8 s). An engine that does not say it
+    (`release_at`, the mount point), never starting one, its wait,
+    connect and hello included, bounded once (8 s), asked before Skwir's
+    last let-go of the volume. An engine that does not say it
     keeps no removable volume, and stops at a mount below its roots.
 19. **Skwir asks once a volume** (the user's choice, 2026-11-25), by the
     identity the engine spells: as one is mounted while it runs

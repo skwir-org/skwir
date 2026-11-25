@@ -167,11 +167,17 @@ skwird_volume_checked = Indexed, checked { $when }
 # A button on a drive's line in Settings › Index: skwird indexes its names no more and removes its index.
 skwird_volume_forget = Forget
 
+# An error, once the user asked to forget a drive's index, followed by what skwird said, as it said it: name is the drive's label. skwird is a program's name, as written.
+skwird_volume_forget_refused = skwird refused to remove the index of { $name }
+
 # Under a drive's name in the list of drives indexed: plugged in, a root of skwird's index.
 skwird_volume_indexed = Indexed
 
 # An entry of a drive's menu in the sidebar: skwird indexes the names of the files on it, so that searches find them at once. Checked while it does.
 skwird_volume_item = Index Its Names
+
+# An error, once the user said yes to indexing a drive's names, followed by what skwird said, as it said it: name is the drive's label. skwird is a program's name, as written.
+skwird_volume_keep_refused = skwird refused to index the names on { $name }
 
 # Under a drive's name in the list of drives indexed: every change on it heard as it comes since then. when: the date and time.
 skwird_volume_live = Indexed, live since { $when }
@@ -189,11 +195,17 @@ skwird_volume_not_forgotten = The index of { $name } is not removed: no engine o
 # An error, once the user said yes to indexing a drive's names: name is the drive's label. skwird is a program's name, as written.
 skwird_volume_not_kept = The names on { $name } are not indexed: no engine of skwird's that indexes drives answered.
 
+# An error, once the user said yes to indexing a drive's names, where skwird answered without keeping it (the drive gone meanwhile): name is the drive's label. skwird is a program's name, as written.
+skwird_volume_not_taken = The names on { $name } are not indexed: skwird did not take the drive.
+
 # Under a drive's name in the list of drives indexed: plugged in, skwird reads its names for the first time or checks them.
 skwird_volume_reading = Indexed, being read
 
 # Under a drive's name in the list of drives indexed: skwird closed all it held on it before it was ejected, and reads nothing there until it is plugged in again.
 skwird_volume_released = Let go of for an eject
+
+# An error, once the user asked to forget a drive's index, where skwird answered still keeping it: name is the drive's label. skwird is a program's name, as written.
+skwird_volume_still_kept = The index of { $name } is not removed: skwird still keeps the drive.
 
 # Under a drive's name in the list of drives indexed: a copy of a drive, or two drives whose serial numbers are alike; the one indexed first is kept.
 skwird_volume_twin = Refused: another drive of the same identity is indexed

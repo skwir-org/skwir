@@ -66,6 +66,7 @@ fn index(engines: Engines) -> Index {
         engines,
         secrets: Mutex::default(),
         hello: HELLO,
+        release_within: RELEASE_WITHIN,
     }
 }
 
@@ -963,30 +964,184 @@ fn kept_drive(id: &str, standing: protocol::Standing, at: Option<&Path>) -> prot
     }
 }
 
+/// What a drives engine of the test's own sees and keeps, the test's to
+/// change as it serves.
+#[derive(Default)]
+struct Drive {
+    seen: Vec<protocol::SeenVolume>,
+    kept: Vec<protocol::KeptVolume>,
+    /// Keep and forget refused, saying this.
+    refuse: Option<String>,
+    /// Keep and forget answered as if nothing was asked.
+    deaf: bool,
+}
+
+/// An engine of the test's own on `dir`'s socket for drives: its hello says
+/// `features`; every `volumes` is answered with what it sees and keeps
+/// (refused where it is given none, as by an engine that says no
+/// `volumes`), keep and forget changing what it keeps; every request noted.
+/// Gone once dropped: its socket taken away, as an engine that ended.
+struct DrivesEngine {
+    socket: PathBuf,
+    drive: Arc<Mutex<Option<Drive>>>,
+    asked: Arc<Mutex<Vec<protocol::Ask>>>,
+    gone: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl DrivesEngine {
+    fn start(dir: &Path, features: &[&str], volumes: Option<protocol::Volumes>) -> DrivesEngine {
+        use std::os::unix::net::UnixListener;
+        let socket = dir.join("socket");
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let drive = Arc::new(Mutex::new(volumes.map(|v| Drive {
+            seen: v.seen,
+            kept: v.kept,
+            ..Drive::default()
+        })));
+        let asked: Arc<Mutex<Vec<protocol::Ask>>> = Arc::default();
+        let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let features: Vec<String> = features.iter().map(|w| (*w).to_owned()).collect();
+        let (serving, noting, ended) = (Arc::clone(&drive), Arc::clone(&asked), Arc::clone(&gone));
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if ended.load(std::sync::atomic::Ordering::Acquire) {
+                    return;
+                }
+                let Ok(stream) = stream else {
+                    continue;
+                };
+                let (drive, asked, features) =
+                    (Arc::clone(&serving), Arc::clone(&noting), features.clone());
+                std::thread::spawn(move || serve_drives(stream, &features, &drive, &asked));
+            }
+        });
+        DrivesEngine {
+            socket,
+            drive,
+            asked,
+            gone,
+        }
+    }
+
+    /// What was asked so far, hellos left out.
+    fn asked(&self) -> Vec<protocol::Ask> {
+        self.asked
+            .lock()
+            .iter()
+            .filter(|ask| !matches!(ask, protocol::Ask::Hello(_)))
+            .cloned()
+            .collect()
+    }
+
+    /// What it sees from now on.
+    fn see(&self, seen: Vec<protocol::SeenVolume>) {
+        if let Some(drive) = self.drive.lock().as_mut() {
+            drive.seen = seen;
+        }
+    }
+
+    /// Change how it answers.
+    fn with(&self, change: impl FnOnce(&mut Drive)) {
+        if let Some(drive) = self.drive.lock().as_mut() {
+            change(drive);
+        }
+    }
+}
+
+impl Drop for DrivesEngine {
+    fn drop(&mut self) {
+        self.gone.store(true, std::sync::atomic::Ordering::Release);
+        // Its wait for a connection ended, then no way to it.
+        let _ = std::os::unix::net::UnixStream::connect(&self.socket);
+        let _ = std::fs::remove_file(&self.socket);
+    }
+}
+
+fn serve_drives(
+    stream: std::os::unix::net::UnixStream,
+    features: &[String],
+    drive: &Mutex<Option<Drive>>,
+    asked: &Mutex<Vec<protocol::Ask>>,
+) {
+    let Ok(mut out) = stream.try_clone() else {
+        return;
+    };
+    let mut reader = std::io::BufReader::new(stream);
+    while let Ok(Some(request)) = protocol::read::<_, protocol::Request>(&mut reader) {
+        asked.lock().push(request.ask.clone());
+        let failure = |what: &str, message: &str| {
+            protocol::Answer::Error(protocol::Failure {
+                what: what.to_owned(),
+                message: message.to_owned(),
+            })
+        };
+        let answer = match request.ask {
+            protocol::Ask::Hello(_) => protocol::Answer::Hello(protocol::Welcome {
+                version: protocol::VERSION,
+                scope: protocol::Scope::User,
+                engine: "a test's engine of drives".into(),
+                roots: Vec::new(),
+                features: features.to_vec(),
+            }),
+            protocol::Ask::Volumes { keep, forget, .. } => match drive.lock().as_mut() {
+                None => failure("not_here", "this engine keeps no removable volume"),
+                Some(drive) => match &drive.refuse {
+                    Some(why) if !(keep.is_empty() && forget.is_empty()) => failure("busy", why),
+                    _ => {
+                        if !drive.deaf {
+                            let forget: HashSet<String> = forget.into_iter().collect();
+                            drive.kept.retain(|k| !forget.contains(&k.id));
+                            for id in keep {
+                                if drive.kept.iter().any(|k| k.id == id) {
+                                    continue;
+                                }
+                                let at = drive
+                                    .seen
+                                    .iter()
+                                    .find(|s| s.id.as_deref() == Some(id.as_str()))
+                                    .map(|s| s.at.clone());
+                                drive.kept.push(protocol::KeptVolume {
+                                    id,
+                                    standing: protocol::Standing::Indexed,
+                                    at,
+                                    coverage: None,
+                                });
+                            }
+                        }
+                        protocol::Answer::Volumes(protocol::Volumes {
+                            kept: drive.kept.clone(),
+                            seen: drive.seen.clone(),
+                        })
+                    }
+                },
+            },
+            _ => failure("bad_request", "not asked of a test's engine of drives"),
+        };
+        let response = protocol::Response {
+            id: request.id,
+            answer,
+        };
+        if protocol::write(&mut out, &response).is_err() {
+            return;
+        }
+    }
+}
+
 /// An engine whose hello says `features`, answering every `volumes` with
-/// `volumes` (refusing it where none is given), heard on its way.
+/// `volumes` (refusing it where none is given), keep and forget changing
+/// what it keeps.
 fn drives_engine(
     dir: &Path,
     features: &[&str],
     volumes: Option<protocol::Volumes>,
-) -> (Fake, Heard) {
-    let fake = Fake::start(
-        dir.join("socket"),
-        Script {
-            roots: vec![PathBuf::from("/fixture")],
-            features: features.iter().map(|w| (*w).to_owned()).collect(),
-            volumes,
-            ..Script::default()
-        },
-    )
-    .unwrap();
-    let heard = Heard::before(&fake, dir);
-    (fake, heard)
+) -> DrivesEngine {
+    DrivesEngine::start(dir, features, volumes)
 }
 
 /// The `volumes` asked that keep, forget or release something.
-fn volumes_asked(heard: &Heard) -> Vec<protocol::Ask> {
-    heard
+fn volumes_asked(engine: &DrivesEngine) -> Vec<protocol::Ask> {
+    engine
         .asked()
         .into_iter()
         .filter(|ask| {
@@ -994,6 +1149,15 @@ fn volumes_asked(heard: &Heard) -> Vec<protocol::Ask> {
                 if !(keep.is_empty() && forget.is_empty() && release.is_empty() && release_at.is_empty()))
         })
         .collect()
+}
+
+/// How many `volumes` were asked.
+fn volumes_count(engine: &DrivesEngine) -> usize {
+    engine
+        .asked()
+        .iter()
+        .filter(|ask| matches!(ask, protocol::Ask::Volumes { .. }))
+        .count()
 }
 
 /// skwird's plugin turned on in an app of its own, asking the engine at
@@ -1008,13 +1172,37 @@ struct Drives {
 
 impl Drives {
     fn at(dir: &Path, run: &str, socket: &Path) -> Drives {
+        Drives::mounted(dir, run, socket, None)
+    }
+
+    /// [`at`](Self::at), the mount points read from `table` in place of
+    /// the system's.
+    fn with_table(
+        dir: &Path,
+        run: &str,
+        socket: &Path,
+        table: &Arc<Mutex<HashSet<PathBuf>>>,
+    ) -> Drives {
+        let table = Arc::clone(table);
+        Drives::mounted(
+            dir,
+            run,
+            socket,
+            Some(Arc::new(move || table.lock().clone())),
+        )
+    }
+
+    fn mounted(dir: &Path, run: &str, socket: &Path, mounted: Option<volumes::Mounted>) -> Drives {
         let config = skwir_core::app::AppConfig {
             settings_path: Some(dir.join("settings.toml")),
             state_path: Some(dir.join("state.toml")),
             ..skwir_core::app::AppConfig::ephemeral(dir.join(run))
         };
         let app = App::new(config).unwrap();
-        let plugin = Arc::new(SkwirdPlugin::at(socket.to_path_buf()));
+        let plugin = Arc::new(SkwirdPlugin {
+            mounted,
+            ..SkwirdPlugin::at(socket.to_path_buf())
+        });
         app.plugins.add(
             Arc::clone(&plugin) as Arc<dyn skwir_core::plugin::Plugin>,
             &app,
@@ -1098,7 +1286,7 @@ fn stick_point() -> PathBuf {
 fn a_drive_plugged_in_is_asked_about_once_whatever_the_answer() {
     for answer in [Some(true), Some(false), None] {
         let tmp = tempfile::tempdir().unwrap();
-        let (_fake, heard) = drives_engine(
+        let heard = drives_engine(
             tmp.path(),
             &["volumes"],
             Some(protocol::Volumes {
@@ -1159,7 +1347,7 @@ fn drives_are_asked_about_one_at_a_time() {
             seen(Some(other), &other_at, None),
         ],
     };
-    let (fake, heard) = drives_engine(tmp.path(), &["volumes"], Some(both));
+    let heard = drives_engine(tmp.path(), &["volumes"], Some(both));
     let drives = Drives::at(tmp.path(), "run", &heard.socket);
     drives.look();
     let first = drives.questions();
@@ -1180,19 +1368,7 @@ fn drives_are_asked_about_one_at_a_time() {
         "it stands"
     );
     // Its drive pulled out: taken back.
-    drop(fake);
-    let _pulled = Fake::start(
-        tmp.path().join("socket"),
-        Script {
-            features: vec!["volumes".to_owned()],
-            volumes: Some(protocol::Volumes {
-                kept: Vec::new(),
-                seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
-            }),
-            ..Script::default()
-        },
-    )
-    .unwrap();
+    heard.see(vec![seen(Some(STICK), &stick_point(), Some("STICK"))]);
     drives.plugged();
     assert!(
         !drives
@@ -1212,7 +1388,7 @@ fn no_identity_no_word_or_no_engine_asks_nothing() {
         kept: Vec::new(),
         seen: vec![seen(None, &stick_point(), Some("STICK"))],
     };
-    let (_fake, heard) = drives_engine(tmp.path(), &["volumes"], Some(anonymous));
+    let heard = drives_engine(tmp.path(), &["volumes"], Some(anonymous));
     let drives = Drives::at(tmp.path(), "run", &heard.socket);
     drives.look();
     drives.plugged();
@@ -1232,7 +1408,7 @@ fn no_identity_no_word_or_no_engine_asks_nothing() {
         kept: Vec::new(),
         seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
     };
-    let (_fake, heard) = drives_engine(tmp.path(), &[], Some(wordless));
+    let heard = drives_engine(tmp.path(), &[], Some(wordless));
     let drives = Drives::at(tmp.path(), "run", &heard.socket);
     drives.look();
     drives.plugged();
@@ -1264,7 +1440,7 @@ fn no_identity_no_word_or_no_engine_asks_nothing() {
 fn a_drive_s_menu_indexes_its_names_or_forgets_them() {
     let tmp = tempfile::tempdir().unwrap();
     let card = PathBuf::from("/media/someone/CARD");
-    let (_fake, heard) = drives_engine(
+    let heard = drives_engine(
         tmp.path(),
         &["volumes"],
         Some(protocol::Volumes {
@@ -1344,7 +1520,7 @@ fn the_index_page_lists_the_drives_kept_and_forgets_one() {
     {
         let first = tmp.path().join("first");
         std::fs::create_dir(&first).unwrap();
-        let (_fake, heard) = drives_engine(
+        let heard = drives_engine(
             &first,
             &["volumes"],
             Some(protocol::Volumes {
@@ -1364,7 +1540,7 @@ fn the_index_page_lists_the_drives_kept_and_forgets_one() {
         attrs: protocol::Proof::Checked(instant()),
         holes: Vec::new(),
     };
-    let (_fake, heard) = drives_engine(
+    let heard = drives_engine(
         tmp.path(),
         &["volumes"],
         Some(protocol::Volumes {
@@ -1487,7 +1663,7 @@ fn the_index_page_lists_the_drives_kept_and_forgets_one() {
 #[test]
 fn turned_off_it_asks_nothing_and_on_again_it_asks_anew() {
     let tmp = tempfile::tempdir().unwrap();
-    let (_fake, heard) = drives_engine(
+    let heard = drives_engine(
         tmp.path(),
         &["volumes"],
         Some(protocol::Volumes {
@@ -1508,4 +1684,281 @@ fn turned_off_it_asks_nothing_and_on_again_it_asks_anew() {
     assert!(drives.app.plugins.set_enabled(ID, true, &drives.app));
     drives.look();
     assert_eq!(drives.questions().len(), 1, "asked by the new run");
+}
+
+/// A command of skwird's run as an agent's or a script's call is (off the
+/// window's thread: at once), what it came to.
+fn run(drives: &Drives, command: &str, id: &str) -> anyhow::Result<()> {
+    drives
+        .app
+        .dispatch(&skwir_core::command::Invocation::with_args(
+            command,
+            &serde_json::json!({ "id": id }),
+        ))
+        .map(drop)
+}
+
+/// A drive kept or forgotten outside its question (its menu, the Index
+/// page) is decided as its question's answer is: never asked about, its
+/// question, standing, taken back at once.
+#[test]
+fn a_drive_kept_from_its_menu_is_never_asked_about() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (card, card_at) = ("5e6f-7a8b", PathBuf::from("/media/someone/CARD"));
+    let engine = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: vec![
+                seen(Some(STICK), &stick_point(), Some("STICK")),
+                seen(Some(card), &card_at, Some("CARD")),
+            ],
+        }),
+    );
+    let drives = Drives::at(tmp.path(), "run", &engine.socket);
+    drives.look();
+    let first = drives.questions();
+    assert_eq!(first.len(), 1);
+    assert!(first[0].text.english().contains("STICK"));
+    // The card, waiting, kept from its menu; then the stick answered.
+    run(&drives, "skwird.keep_volume", card).unwrap();
+    drives.press(&first[0], 1);
+    until(|| drives.volumes().idle());
+    assert!(
+        drives.questions().is_empty(),
+        "the card kept is not asked about"
+    );
+
+    // A question standing, its drive kept from its menu: taken back.
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+        }),
+    );
+    let drives = Drives::at(tmp.path(), "run", &engine.socket);
+    drives.look();
+    let asked = drives.questions();
+    let question = asked[0].question.expect("a question");
+    assert!(drives.app.question_stands(ID, question));
+    run(&drives, "skwird.keep_volume", STICK).unwrap();
+    assert!(!drives.app.question_stands(ID, question), "taken back");
+    run(&drives, "skwird.forget_volume", STICK).unwrap();
+    drives.plugged();
+    drives.look();
+    assert!(
+        drives.questions().is_empty(),
+        "forgotten, never asked again"
+    );
+}
+
+/// Only a drive skwird sees at a mount point made since the check before
+/// is plugged in: one it came to see otherwise (an engine started since,
+/// another mount made) is not asked about, nor waited for; one decided
+/// (kept, then forgotten) is not asked about when plugged in again; one
+/// skwird does not see yet is asked of it once more a moment later, where
+/// it may be a drive.
+#[test]
+fn only_a_drive_plugged_in_is_asked_about() {
+    let tmp = tempfile::tempdir().unwrap();
+    let table = Arc::new(Mutex::new(HashSet::from([stick_point()])));
+    let socket = tmp.path().join("socket");
+    let drives = Drives::with_table(tmp.path(), "run", &socket, &table);
+    // No engine at the first look: nothing found.
+    drives.look();
+    let engine = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+        }),
+    );
+    // A search started one; then a container's layers are mounted.
+    table.lock().insert(tmp.path().join("layers"));
+    let before = volumes_count(&engine);
+    drives.plugged();
+    assert!(
+        drives.questions().is_empty(),
+        "the stick was not plugged in"
+    );
+    assert_eq!(volumes_count(&engine), before + 1, "no drive waited for");
+
+    // Kept from its menu, then forgotten; pulled out and plugged in again.
+    run(&drives, "skwird.keep_volume", STICK).unwrap();
+    run(&drives, "skwird.forget_volume", STICK).unwrap();
+    table.lock().remove(&stick_point());
+    engine.see(Vec::new());
+    drives.plugged();
+    table.lock().insert(stick_point());
+    engine.see(vec![seen(Some(STICK), &stick_point(), Some("STICK"))]);
+    drives.plugged();
+    assert!(drives.questions().is_empty(), "decided, never asked");
+
+    // Another plugged in is asked about at once.
+    let card = PathBuf::from("/media/someone/CARD");
+    table.lock().insert(card.clone());
+    engine.see(vec![
+        seen(Some(STICK), &stick_point(), Some("STICK")),
+        seen(Some("5e6f-7a8b"), &card, Some("CARD")),
+    ]);
+    drives.plugged();
+    let asked = drives.questions();
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].text.english().contains("CARD"));
+
+    // One skwird does not see yet: asked once more.
+    table.lock().insert(PathBuf::from("/media/someone/LATE"));
+    let before = volumes_count(&engine);
+    drives.plugged();
+    assert_eq!(volumes_count(&engine), before + 2, "asked once more");
+}
+
+/// While no engine answers, nothing is asked, and a drive the mount table
+/// lists no more is let go of: its question, standing, taken back.
+#[test]
+fn with_no_engine_nothing_is_asked_and_a_drive_gone_is_let_go_of() {
+    let tmp = tempfile::tempdir().unwrap();
+    let card = PathBuf::from("/media/someone/CARD");
+    let table = Arc::new(Mutex::new(HashSet::from([stick_point(), card.clone()])));
+    let engine = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: vec![
+                seen(Some(STICK), &stick_point(), Some("STICK")),
+                seen(Some("5e6f-7a8b"), &card, Some("CARD")),
+            ],
+        }),
+    );
+    let socket = engine.socket.clone();
+    let drives = Drives::with_table(tmp.path(), "run", &socket, &table);
+    drives.look();
+    let first = drives.questions();
+    assert_eq!(first.len(), 1, "the card waits");
+    // The engine ends, a mount changes elsewhere; the stick answered.
+    drop(engine);
+    table.lock().insert(PathBuf::from("/media/someone/OTHER"));
+    drives.plugged();
+    drives.press(&first[0], 1);
+    until(|| drives.volumes().idle());
+    assert!(drives.questions().is_empty(), "no engine: nothing asked");
+
+    // A question standing, its drive pulled out while no engine answers.
+    let tmp = tempfile::tempdir().unwrap();
+    let table = Arc::new(Mutex::new(HashSet::from([stick_point()])));
+    let engine = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+        }),
+    );
+    let drives = Drives::with_table(tmp.path(), "run", &engine.socket, &table);
+    drives.look();
+    let question = drives.questions()[0].question.expect("a question");
+    drop(engine);
+    table.lock().remove(&stick_point());
+    drives.plugged();
+    assert!(!drives.app.question_stands(ID, question), "taken back");
+}
+
+/// A keep or a forget skwird refuses says what it said; one it answers
+/// without doing says so.
+#[test]
+fn a_keep_skwird_refuses_or_lets_be_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = drives_engine(
+        tmp.path(),
+        &["volumes"],
+        Some(protocol::Volumes {
+            kept: Vec::new(),
+            seen: vec![seen(Some(STICK), &stick_point(), Some("STICK"))],
+        }),
+    );
+    let drives = Drives::at(tmp.path(), "run", &engine.socket);
+    // Seen once: what names it in what is said.
+    drives.look();
+    let said = |command: &str| {
+        let error = run(&drives, command, STICK).expect_err(command);
+        format!("{error:#}")
+    };
+    engine.with(|drive| drive.refuse = Some("the drive is being checked".into()));
+    let refused = said("skwird.keep_volume");
+    assert!(
+        refused.contains(
+            "skwird refused to index the names on \u{201c}STICK\u{201d}: the drive is being checked"
+        ),
+        "{refused}"
+    );
+    let refused = said("skwird.forget_volume");
+    assert!(
+        refused.contains(
+            "skwird refused to remove the index of \u{201c}STICK\u{201d}: the drive is being checked"
+        ),
+        "{refused}"
+    );
+    engine.with(|drive| {
+        drive.refuse = None;
+        drive.deaf = true;
+    });
+    let ignored = said("skwird.keep_volume");
+    assert!(
+        ignored.contains("skwird did not take the drive"),
+        "{ignored}"
+    );
+    engine.with(|drive| drive.deaf = false);
+    run(&drives, "skwird.keep_volume", STICK).unwrap();
+    engine.with(|drive| drive.deaf = true);
+    let ignored = said("skwird.forget_volume");
+    assert!(
+        ignored.contains("skwird still keeps the drive"),
+        "{ignored}"
+    );
+}
+
+/// A release is given up on past its one bound, its connect and hello
+/// included: an engine that takes the connection and says no hello, and
+/// one that says hello and then nothing, each cost the bound, not a hello's
+/// time and a silence after it.
+#[test]
+fn a_release_is_given_up_on_past_its_bound() {
+    use std::os::unix::net::UnixListener;
+    let point = PathBuf::from("/media/someone/it's USB");
+    let tmp = tempfile::tempdir().unwrap();
+    let socket = tmp.path().join("stalled");
+    let listener = UnixListener::bind(&socket).unwrap();
+    std::thread::spawn(move || {
+        let held: Vec<_> = listener.incoming().map_while(Result::ok).collect();
+        drop(held);
+    });
+    let silent = Fake::start(
+        tmp.path().join("silent"),
+        Script {
+            features: vec!["volumes".to_owned()],
+            silent: true,
+            ..Script::default()
+        },
+    )
+    .unwrap();
+    for (engine, at) in [
+        ("no hello", socket),
+        ("silent after it", silent.socket.clone()),
+    ] {
+        let mut index = index(Engines::At(at));
+        index.release_within = Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        index.release(&point, &CancelToken::new());
+        let took = started.elapsed();
+        assert!(
+            took >= index.release_within && took < Duration::from_secs(3),
+            "{engine}: {took:?}"
+        );
+    }
 }

@@ -1389,73 +1389,98 @@ fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
             "places-unmount-told",
             lifetime.clone(),
             move || {
-                let Some(app) = weak.upgrade() else {
-                    return;
-                };
-                let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
-                for (point, desktops) in points {
-                    let named: Vec<Words> = app
-                        .executor
-                        .under_way_in(&point)
-                        .into_iter()
-                        .map(|title| {
-                            words!(
-                                places_under_way_title = "{ $title }",
-                                title = skwir_core::words::Named(title),
-                                note = "An action's title (copy 3 items to USB), quoted."
-                            )
-                        })
-                        .collect();
-                    if refused {
-                        if named.is_empty() && !desktops && shows_below(&app, &point) {
-                            app.notify(
-                                NotifyLevel::Warning,
-                                words!(
-                                    places_unmount_retry = "{ $volume } was not unmounted. Skwir is no longer using it: if nothing else is, unmount it again.",
-                                    volume = Name::of(&point),
-                                    note = "Another program (udisksctl, udiskie) unmounted a drive Skwir was showing, which was refused as something used it; Skwir let go of it as it was asked, but another program may use it still. volume: the drive's name."
-                                ),
-                            );
-                        }
-                        continue;
-                    }
-                    tracing::debug!(?point, "let go of before another program unmounts it");
-                    if let Err(error) = app.release(&point, &Location::from_path(&home)) {
-                        tracing::debug!(?point, "not let go of before its unmount: {error:#}");
-                    }
-                    // A names index's engine lets go of it too, as it
-                    // reads a volume it was asked to keep (ADR-150, 18).
-                    app.names.release(&point, &lifetime);
-                    if named.is_empty() {
-                        continue;
-                    }
-                    app.notify_from(
-                        ID,
-                        NotifyLevel::Warning,
-                        words!(
-                            places_unmount_held = "{ $volume } is being unmounted, but { $count ->
-                                [1] { $actions } is still under way on it
-                               *[other] { $actions } are still under way on it
-                            }",
-                            volume = Name::of(&point),
-                            count = named.len(),
-                            actions = skwir_core::words::List::and(named),
-                            note = "Another program unmounts a drive while Skwir copies to it (or moves, deletes there): volume: the drive's name; actions: what Skwir does there. Its button cancels them."
-                        ),
-                        vec![skwir_core::app::NotifyAction {
-                            label: words!(
-                                places_unmount_held_cancel = "Cancel",
-                                note = "The button of \"… is being unmounted, but … is still under way on it\": cancel what Skwir does on the drive."
-                            ),
-                            command: Invocation::new("cancel_in")
-                                .with("folder", PathArg::from(point.as_path())),
-                            answers: true,
-                        }],
-                    );
+                if let Some(app) = weak.upgrade() {
+                    let_go_told(&app, points, refused, &lifetime);
                 }
             },
         );
     });
+}
+
+/// What another program said of an unmount, on a worker
+/// ([`follow_unmounts`]): each of `points` (with whether a desktop
+/// announced it) let go of as it is begun or announced, and Skwir's own
+/// actions still under way there named; then what a names index holds
+/// there, once Skwir let go of every point, each on a job of its own so
+/// that none waits for another's engine (ADR-150, 18). A refusal said where
+/// it is worth asking again.
+fn let_go_told(app: &App, points: Vec<(PathBuf, bool)>, refused: bool, lifetime: &CancelToken) {
+    let home = skwir_platform::places::home().unwrap_or_else(|| PathBuf::from("/"));
+    let mut let_go = Vec::new();
+    for (point, desktops) in points {
+        let named: Vec<Words> = app
+            .executor
+            .under_way_in(&point)
+            .into_iter()
+            .map(|title| {
+                words!(
+                    places_under_way_title = "{ $title }",
+                    title = skwir_core::words::Named(title),
+                    note = "An action's title (copy 3 items to USB), quoted."
+                )
+            })
+            .collect();
+        if refused {
+            if named.is_empty() && !desktops && shows_below(app, &point) {
+                app.notify(
+                    NotifyLevel::Warning,
+                    words!(
+                        places_unmount_retry = "{ $volume } was not unmounted. Skwir is no longer using it: if nothing else is, unmount it again.",
+                        volume = Name::of(&point),
+                        note = "Another program (udisksctl, udiskie) unmounted a drive Skwir was showing, which was refused as something used it; Skwir let go of it as it was asked, but another program may use it still. volume: the drive's name."
+                    ),
+                );
+            }
+            continue;
+        }
+        tracing::debug!(?point, "let go of before another program unmounts it");
+        if let Err(error) = app.release(&point, &Location::from_path(&home)) {
+            tracing::debug!(?point, "not let go of before its unmount: {error:#}");
+        }
+        let_go.push(point.clone());
+        if named.is_empty() {
+            continue;
+        }
+        app.notify_from(
+            ID,
+            NotifyLevel::Warning,
+            words!(
+                places_unmount_held = "{ $volume } is being unmounted, but { $count ->
+                    [1] { $actions } is still under way on it
+                   *[other] { $actions } are still under way on it
+                }",
+                volume = Name::of(&point),
+                count = named.len(),
+                actions = skwir_core::words::List::and(named),
+                note = "Another program unmounts a drive while Skwir copies to it (or moves, deletes there): volume: the drive's name; actions: what Skwir does there. Its button cancels them."
+            ),
+            vec![skwir_core::app::NotifyAction {
+                label: words!(
+                    places_unmount_held_cancel = "Cancel",
+                    note = "The button of \"… is being unmounted, but … is still under way on it\": cancel what Skwir does on the drive."
+                ),
+                command: Invocation::new("cancel_in")
+                    .with("folder", PathArg::from(point.as_path())),
+                answers: true,
+            }],
+        );
+    }
+    // A names index's engine lets go of them too, as it reads a volume it
+    // was asked to keep: once Skwir let go of every one, which none of
+    // these waits delays.
+    for point in let_go {
+        let (weak, lifetime) = (app.weak(), lifetime.clone());
+        app.scheduler.spawn(
+            Priority::Visible,
+            "places-unmount-index",
+            lifetime.clone(),
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    app.names.release(&point, &lifetime);
+                }
+            },
+        );
+    }
 }
 
 /// Whether a pane shows a folder at or below `point`.
@@ -2155,18 +2180,21 @@ impl Plugin for PlacesPlugin {
                         );
                         return;
                     }
-                    // The windows let go of what shows a file there for
-                    // `LETTING_GO` from `release` on, which the wait and
-                    // the flush may outlast: let go of again as udisks is
-                    // asked, so its tries meet nothing of Skwir's there.
-                    if let Err(error) = app.release(&mount.path, &home) {
-                        tracing::debug!("not let go of again before its unmount: {error:#}");
-                    }
-                    // And a names index's engine, reading a volume it was
-                    // asked to keep: answered once nothing of it is held
-                    // (ADR-150, 18).
+                    // A names index's engine, reading a volume it was asked
+                    // to keep, lets go of it too: answered once nothing of
+                    // it is held, within its own bound (ADR-150, 18). Asked
+                    // before Skwir's last let-go, which its wait would
+                    // otherwise eat into.
                     if let Some(lifetime) = lifetime.as_ref() {
                         app.names.release(&mount.path, lifetime);
+                    }
+                    // The windows let go of what shows a file there for
+                    // `LETTING_GO` from `release` on, which the wait, the
+                    // flush and the indexes may outlast: let go of again as
+                    // udisks is asked, so its tries meet nothing of Skwir's
+                    // there. Nothing waits between this and the unmount.
+                    if let Err(error) = app.release(&mount.path, &home) {
+                        tracing::debug!("not let go of again before its unmount: {error:#}");
                     }
                     let deadline = std::time::Instant::now() + RELEASE;
                     let unmounted = loop {
@@ -3683,5 +3711,62 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "{:?}", titles(&app));
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// An unmount another program announced or began lets go of each
+    /// volume in Skwir first, then asks every names index to let go of it
+    /// too (ADR-150, 18) while Skwir still lets go of it, each point asked;
+    /// one refused asks none.
+    #[test]
+    fn an_unmount_told_asks_the_indexes_once_skwir_let_go() {
+        use skwir_core::names::{NameIndex, Opened};
+        /// An index that notes each point it is asked to let go of, and
+        /// whether Skwir let go of it then.
+        struct Noting(std::sync::Weak<App>, Arc<Mutex<Vec<(PathBuf, bool)>>>);
+        impl NameIndex for Noting {
+            fn id(&self) -> &'static str {
+                "noting"
+            }
+            fn by(&self) -> Words {
+                Words::as_written("noting")
+            }
+            fn syncs(&self) -> bool {
+                true
+            }
+            fn open(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
+                None
+            }
+            fn release(&self, point: &Path, _: &CancelToken) {
+                let let_go = self.0.upgrade().is_some_and(|app| app.letting_go(point));
+                self.1.lock().push((point.to_path_buf(), let_go));
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        app.names
+            .register("noting", Arc::new(Noting(app.weak(), Arc::clone(&asked))));
+        let stick = PathBuf::from("/media/someone/it's a stick, \u{e9}t\u{e9}");
+        let card = PathBuf::from("/media/someone/CARD");
+        let lifetime = CancelToken::new();
+
+        let_go_told(&app, vec![(stick.clone(), false)], true, &lifetime);
+        assert!(app.scheduler.wait_idle(WAIT));
+        assert!(asked.lock().is_empty(), "refused: none asked");
+
+        let_go_told(
+            &app,
+            vec![(stick.clone(), true), (card.clone(), false)],
+            false,
+            &lifetime,
+        );
+        assert!(app.scheduler.wait_idle(WAIT));
+        let mut asked = asked.lock().clone();
+        asked.sort();
+        assert_eq!(
+            asked,
+            [(card, true), (stick, true)],
+            "each asked, once Skwir let go of it"
+        );
     }
 }

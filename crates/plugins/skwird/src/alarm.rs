@@ -2,9 +2,10 @@
 //! that takes the connection and says no hello within a few seconds is
 //! stopped through the connect's `Stopper`, so a stalled engine (stopped,
 //! not gone: the system still takes its connections) costs a search a few
-//! seconds, not the client's whole silence. One thread rings every alarm
-//! armed, made when one is and ended once none is: nothing runs between
-//! connects.
+//! seconds, not the client's whole silence; and on a release before an
+//! unmount, all of it (`Index::release`: its connect, hello and answer
+//! under one bound). One thread rings every alarm armed, made when one is
+//! and ended once none is: nothing runs between connects.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;

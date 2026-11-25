@@ -409,7 +409,9 @@ pub trait NameIndex: Send + Sync {
     /// mounted again or a while has passed, should the unmount be refused.
     /// Asked of what already runs, never starting anything (no engine, no
     /// hold); blocking, on a worker, given up on with `cancel` and within a
-    /// few seconds. The default holds nothing.
+    /// few seconds, all of it (skwird's: 8 s, its connect and hello
+    /// included), since an Eject waits for it before its last let-go of the
+    /// volume. The default holds nothing.
     fn release(&self, _point: &Path, _cancel: &CancelToken) {}
 }
 
