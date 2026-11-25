@@ -1440,6 +1440,15 @@ done in 0952a7be and passed on Linux. Left: the next release's Mac
 build checked by a Mac (the tap's cask job runs codesign's deep check),
 and then the cask on the tap's main (it waits on `cask/skwir`).
 
+**A file's preview from a terminal** (ADR-151, built 2026-11-25:
+`skwir view`, `skw`, checked in a window on Xvfb). Left: its memory and
+first frame measured in a `dist` build against the user's Skwir (the
+debug build on Xvfb read 338 MiB against 363, both mostly the debug
+binary and llvmpipe); the system's dialog with no file named, tried
+only where no portal answers (it ends, saying why); the packages'
+`skw` link and Skwir Preview entry built and installed (written, no
+package built); macOS and Windows compiled only.
+
 **A folder comes back with its volume** (ADR-149, built and amended
 twice 2026-11-22). Left: a folder deleted and made again at its path is
 not watched for; a mount let go of and made again within one settled

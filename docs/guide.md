@@ -828,6 +828,28 @@ archives, and the bytes of any file.
 [Previews](previews.md) lists every kind of file with its tools, keys
 and requirements.
 
+### A file's preview from a terminal
+
+`skwir view notes.md`, or `skw notes.md` for short, shows a file's
+preview in a window of its own: the same preview, with the same tools,
+and no file manager around it.
+
+- **Stepping:** the arrows go to the next file of its folder, in the
+  order Skwir shows that folder in. Given several files
+  (`skw *.jpg`), they go through those.
+- **Keys:** `F` shows the preview on the whole screen, and `Escape`
+  closes the window.
+- **More:** the menu opens the file in another application, prints it,
+  or shows it in Skwir, its folder open and the file selected.
+- **Standard input:** `skw -` shows what is piped in, whatever it is:
+  `curl -s https://example.org/logo.png | skw -`. It is kept in Skwir's
+  cache while the window is open, 1 GB at most.
+- **No file named:** the system's dialog asks which.
+
+It is a program of its own, beside a Skwir already open: it starts only
+what showing a file needs, and the terminal waits until its window
+closes. A file manager can offer it in Open With, as **Skwir Preview**.
+
 ## Properties
 
 `Alt+Enter` (or `Ctrl+I`, or Properties at the end of the context menu)

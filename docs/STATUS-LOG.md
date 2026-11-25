@@ -24270,3 +24270,63 @@ files.
 - **Not done:** skwird has no AUR package base (its first push is the
   user's, with its checksum filled, as skwird's RELEASING says), nor a
   nixpkgs package; `idle-pss` and the AppImage on the user's desktop.
+
+## 2026-11-25, evening: a file's preview from a terminal (ADR-151)
+
+Asked by the user for 0.7.1: a small program shipped with Skwir that
+shows a file's preview, given on the command line or chosen in a dialog.
+A separate binary was measured first (`target/dist/skwir` after 0.7.0:
+167 MB, 38 MB of it symbols; by its symbols 15 to 25 % is the file
+manager's alone, so a viewer of its own would be about 100 MB beside
+it). The user chose a window of the running Skwir, then, the same
+evening, a program of its own that starts only what viewing needs.
+
+- **Built.** `skwir view [FILE…]` and `skw` (the program under that
+  name, `skwir::view::asked`). It hands nothing over and takes nothing
+  over (`handover::keep_apart`, no `take_over`), registers the plugins
+  that say they serve a viewer (`Plugin::for_viewer`, 21 of them; a test
+  in `plugins_toggle.rs` refuses one that registers a preview, a
+  thumbnail or map tiles without saying it), and leaves out the login
+  shell's variables, the collation's table, Settings' row for dialogs,
+  the address field's suggestions, owner names, the members' sweep and
+  plugins from outside (`finishing::prepare_viewer`, `lib::view`).
+  The core's window kind (`WindowKind`: the user's own, a dialog's, a
+  viewer's) replaces `chooses`; what asked a dialog's window to mean "not
+  the user's own" asks `is_own`. The window draws peek's card alone
+  (`preview::render_viewed`), with its keys (`keymap::VIEWER`: the arrows
+  `ui.viewer_step`, F, Escape and Ctrl+W `ui.close_window`), its title
+  the file's name, its tag `viewer`, its size `ui.viewer_size`. What it
+  offers is the core's `App::in_viewer` (previews, the player, the
+  window, the cursor, Open With, Print) and the window's buttons.
+  `ui.viewer_reveal` starts `skwir FILE`, which now opens the file's
+  folder with the file selected. `-` reads standard input into
+  `~/.cache/skwir/view/<pid>/`, typed by its bytes (`stdin.png`), 1 GiB
+  at most, removed as the program ends; folders left a day ago go at a
+  later start. No file: gpui's `prompt_for_paths`.
+- **Checked in a window** (Xvfb :93, lavapipe, a private session bus
+  without services, XDG folders of its own; the debug build from a
+  reflinked copy of `target/debug`, so the user's binary was left as it
+  was): `skw "a note.md"` shows the note, Right steps to the next file of
+  its folder, the title follows; given `c picture.png a note.md`, Right
+  goes to the note against the folder's order and stops at the last;
+  F shows the picture on the whole screen and Escape comes back, Escape
+  again closes the window and ends the process; the state file then
+  holds `ui.viewer_size` alone. Found and fixed on the way: the core's
+  first window opened beside the viewer's (now kept asleep, as a
+  dialog's program keeps them), the window's shape written as the
+  user's `ui.session` (a viewer's keeps its size alone), Escape refused
+  (`ui.close_window` is of the Tabs topic: the window's buttons are
+  offered by the shell), and peek's × hiding the card (it closes the
+  window). `cat picture.png | skw -` showed `stdin.png`, its folder
+  `0700`, gone once closed. `skwir view` with no portal on the bus
+  ended at once, saying the dialog did not open.
+- **Measured** (debug, Xvfb, llvmpipe, idle, one after the other, same
+  folders): the viewer on a picture 338 MiB PSS (anonymous 79.5), 133
+  threads, first frame 341 ms; `skwir --new-instance` on the folder
+  363 MiB (anonymous 86.5), 150 threads, 366 ms. Both are mostly the
+  debug binary and llvmpipe: the `dist` build is left to measure.
+- **Tests:** core's windows (19, a viewer's window is not the user's
+  own), the binary's (251: `skw` and `skwir view` read, files read
+  against the folder, the viewing plugins), the UI's commands and keys
+  (35: the window tags, `ui.viewer_step` repeating while held);
+  rustfmt and clippy `-D warnings` on every crate touched.

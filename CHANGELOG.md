@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A file's preview from a terminal**: `skwir view notes.md`, or `skw
+  notes.md`, shows the preview in a window of its own, the arrows stepping
+  through the folder (or through the files given, `skw *.jpg`), `F` on
+  the whole screen, `Escape` closing it; `skw -` shows what is piped in,
+  and with no file the system's dialog asks which. A program of its own
+  that starts only what showing a file needs, offered in Open With as
+  Skwir Preview ([ADR-151](docs/adr/151-a-file-is-viewed-in-a-window-of-its-own.md)).
+- **`skwir FILE` opens its folder with the file selected**, as Show in
+  Skwir does from the viewer.
 - **The Mac app's signature holds**: in every Mac build to 0.7.0, a library
   of GStreamer's framework was signed again once sealed, so macOS's check
   of the app's signature failed, and macOS could call the app damaged.
