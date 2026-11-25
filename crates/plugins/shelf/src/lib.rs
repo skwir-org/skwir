@@ -161,18 +161,17 @@ impl Shelf {
         s.forget(&lost);
     }
 
-    /// Hydrate `items` for the listing of `sink`: stat-ed and filled one
-    /// folder at a time, each answer told under the shelf's lock only
-    /// where the shelf holds it still where it was looked for and no read
-    /// of it begun later was told (`State::newest`). Returns what is to be
-    /// read again: left out behind a read that told its row less
-    /// (`Slot::filled`). Worker-only: this is I/O, in the lane of the
-    /// paths.
+    /// Hydrate `items`, asked by one listing of the shelf: stat-ed and
+    /// filled one folder at a time, each answer told to every listing
+    /// under the shelf's lock, only where the shelf holds it still where
+    /// it was looked for and no read of it begun later was told
+    /// (`State::newest`). Returns what is to be read again: left out
+    /// behind a read that told its rows less (`Slot::filled`).
+    /// Worker-only: this is I/O, in the lane of the paths.
     fn hydrate_now(
         &self,
         items: &[(EntryId, PathBuf)],
         metadata: &MetadataProviders,
-        sink: &EventSink,
         cancel: &CancelToken,
     ) -> Vec<(EntryId, PathBuf)> {
         // Dropped last, after its answers are told.
@@ -186,28 +185,31 @@ impl Shelf {
             held += read.found.len() + read.gone.len() + read.unread.len();
             reads.push(read);
             if held >= SENT_EVERY {
-                behind.extend(self.answer(std::mem::take(&mut reads), &asked, sink, cancel));
+                behind.extend(self.answer(std::mem::take(&mut reads), &asked, cancel));
                 held = 0;
             }
         });
-        behind.extend(self.answer(reads, &asked, sink, cancel));
+        behind.extend(self.answer(reads, &asked, cancel));
         behind
     }
 
-    /// Tell what `reads` found, `asked` where each was looked for. Moved
-    /// or gone is decided here, under the lock, before anything is told:
-    /// gone from where it was looked for, it leaves the shelf; moved
-    /// meanwhile, or moved and moved back (a rename undone), the follow's
-    /// read of it stands. Returns what is to be read again, as asked:
-    /// left out behind a read that told its row less than this one would
-    /// (an item shelved again bare, a plan's rename), or its row stays
-    /// unfilled for good, its asker waiting on this answer. Each read
-    /// again takes later tickets than the one it was left out behind.
+    /// Tell what `reads` found, `asked` where each was looked for, to
+    /// every listing of the shelf, not the asker's alone: what is decided
+    /// here (`State::newest`, `Slot::filled`) is decided for all of them,
+    /// and a listing never told what stood would wait for good on its own
+    /// read, left out behind it. Moved or gone is decided here, under the
+    /// lock, before anything is told: gone from where it was looked for,
+    /// it leaves the shelf; moved meanwhile, or moved and moved back (a
+    /// rename undone), the follow's read of it stands. Returns what is to
+    /// be read again, as asked: left out behind a read that told its rows
+    /// less than this one would (an item shelved again bare, a plan's
+    /// rename), or they stay unfilled for good, their askers waiting on
+    /// this answer. Each read again takes later tickets than the one it
+    /// was left out behind.
     fn answer(
         &self,
         reads: Vec<Read>,
         asked: &hashing::Map<EntryId, &Path>,
-        sink: &EventSink,
         cancel: &CancelToken,
     ) -> Vec<(EntryId, PathBuf)> {
         let mut s = self.lock();
@@ -253,18 +255,19 @@ impl Shelf {
             }
         }
         if !updated.is_empty() {
-            sink.send(ListingEvent::Updated(updated));
+            s.broadcast(&ListingEvent::Updated(updated));
         }
         // Off the shelf, and out of every listing of it.
         s.forget(&gone);
         if !unread.is_empty() {
-            sink.send(ListingEvent::Unreadable(unread));
+            s.broadcast(&ListingEvent::Unreadable(unread));
         }
         behind
     }
 }
 
-/// A shelved item, with what its rows were last told.
+/// A shelved item, with what its rows were last told: its rows in every
+/// listing of the shelf, each told alike (`State::broadcast`).
 struct Slot {
     item: ShelfItem,
     /// Whether by a read the metadata providers filled (a hydration's, a
@@ -361,6 +364,12 @@ impl Items {
     }
 }
 
+/// The shelf's one state, for every listing of it: each shows every item,
+/// and what changes or reads an item is told to all of them
+/// (`State::broadcast`), whichever listing asked, since what is decided
+/// here (`newest`, `Slot::filled`) is decided for all of them: a read left
+/// out for one listing behind a read told to another alone would leave
+/// its row unread for good, the view asking once.
 #[derive(Default)]
 struct State {
     items: Items,
@@ -718,7 +727,6 @@ impl OpenLocation for ShelfLocation {
         for (lane, items) in skwir_core::fs::reach::by_lane(items, |(_, path)| path) {
             for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
                 let items = items.to_vec();
-                let sink = self.sink.clone();
                 let metadata = Arc::clone(&self.ctx.metadata);
                 let state = Arc::clone(&self.state);
                 let cancel = self.ctx.cancel.child();
@@ -733,7 +741,7 @@ impl OpenLocation for ShelfLocation {
                         // row less, read again: each time with tickets
                         // later than the read it was left out behind.
                         while !items.is_empty() && !cancel.is_cancelled() {
-                            items = state.hydrate_now(&items, &metadata, &sink, &cancel);
+                            items = state.hydrate_now(&items, &metadata, &cancel);
                         }
                     },
                 );
@@ -1570,6 +1578,92 @@ mod tests {
             l.get(x).is_some_and(|e| e.metadata.is_filled())
         });
         assert_eq!(shelf.lock().items.len(), 1);
+    }
+
+    /// The read of an item left out behind a later one.
+    #[derive(Clone, Copy, Debug)]
+    enum Older {
+        /// The other listing's hydration.
+        Hydration,
+        /// A follow's read of the item where a plan put it.
+        Follow,
+    }
+
+    /// The shelf shown twice (the split, two windows): a read of an item
+    /// begun first, held, is left out behind a later hydration asked by
+    /// the first listing alone, and neither listing's row stays unread:
+    /// what stands is told to both, the second's waiting on no answer of
+    /// its own.
+    #[test]
+    fn a_read_left_out_behind_another_listings_leaves_no_row_unread() {
+        for older in [Older::Hydration, Older::Follow] {
+            left_out_behind_another_listing(older);
+        }
+    }
+
+    fn left_out_behind_another_listing(older: Older) {
+        let tmp = home_tempdir();
+        let src = tmp.path().join("l'été, à l'ombre");
+        std::fs::create_dir(&src).unwrap();
+        let name = "it's ☂ shown twice.txt";
+        let here = src.join(name);
+        std::fs::write(&here, b"shelved").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = Arc::new(ShelfPlugin::default());
+        let shelf = Arc::clone(&plugin.state);
+        app.plugins.add(plugin, &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&src)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        select(&app, pane, &[name]);
+        app.dispatch(&Invocation::new("shelf.add")).unwrap();
+        let x = shelf.lock().items.iter().next().unwrap().id;
+        let (first, second) = (
+            app.open_location(&Location::parse("shelf:")).unwrap(),
+            app.open_location(&Location::parse("shelf:")).unwrap(),
+        );
+        let (mut one, mut two) = (
+            skwir_core::Listing::default(),
+            skwir_core::Listing::default(),
+        );
+        until(
+            &*first,
+            &mut one,
+            "listed",
+            skwir_core::Listing::is_complete,
+        );
+        until(
+            &*second,
+            &mut two,
+            "listed",
+            skwir_core::Listing::is_complete,
+        );
+        let (held, go) = hold(&app, name);
+        let filled = |l: &skwir_core::Listing| l.get(x).is_some_and(|e| e.metadata.is_filled());
+        std::thread::scope(|scope| {
+            // The older read: stat-ed first, held before it is told.
+            match older {
+                Older::Hydration => second.hydrate(&[x], Priority::Visible),
+                Older::Follow => {
+                    let (shelf, here, metadata) = (&shelf, here.clone(), &app.metadata);
+                    scope.spawn(move || shelf.restat(vec![(x, here)], metadata));
+                }
+            }
+            held.recv_timeout(Duration::from_secs(10)).expect("held");
+            // The later, asked by the first listing: told first.
+            first.hydrate(&[x], Priority::Visible);
+            until(&*first, &mut one, "filled for the first", filled);
+            go.send(()).unwrap();
+        });
+        until(
+            &*second,
+            &mut two,
+            &format!("filled for the second ({older:?} left out)"),
+            filled,
+        );
+        assert!(app.scheduler.wait_idle_here(Duration::from_secs(10)));
+        assert_eq!(shelf.lock().items.len(), 1, "{older:?}");
+        assert!(filled(&one) && filled(&two), "{older:?}");
     }
 
     /// A hydration of a shelf of a folder's worth of files, all gone (their
