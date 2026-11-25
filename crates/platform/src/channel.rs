@@ -105,7 +105,7 @@ impl Channel {
 /// a build not packaged by skwir, or a word not known. Reads the disk:
 /// call it off the window's thread.
 pub fn of_this_program() -> Option<Channel> {
-    of_program_in(&crate::carried::program_folder()?)
+    of_program_in(skwir_core::folders::program()?)
 }
 
 /// How the program in `bin` came, as `of_this_program` reads it.

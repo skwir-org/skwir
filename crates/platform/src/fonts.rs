@@ -26,10 +26,7 @@ pub const CARRIED: [&str; 2] = ["Inter", "JetBrains Mono"];
 /// for a family not asked. Reads the disk: call it off the window's
 /// thread (`fonts::read_ahead` in the UI).
 pub fn bundled(families: &[&str]) -> Vec<(&'static str, Vec<u8>)> {
-    let Some(folder) = crate::carried::program_folder()
-        .as_deref()
-        .and_then(bundled_beside)
-    else {
+    let Some(folder) = skwir_core::folders::program().and_then(bundled_beside) else {
         return Vec::new();
     };
     read_carried(&folder, families)
@@ -39,8 +36,7 @@ pub fn bundled(families: &[&str]) -> Vec<(&'static str, Vec<u8>)> {
 /// `bundled` finds them, by path: for a program that opens them itself
 /// (the print helper). None for a build not packaged.
 pub fn bundled_files(families: &[&str]) -> Vec<PathBuf> {
-    crate::carried::program_folder()
-        .as_deref()
+    skwir_core::folders::program()
         .and_then(bundled_beside)
         .map(|folder| carried_in(&folder, families))
         .unwrap_or_default()

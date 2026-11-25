@@ -1198,8 +1198,9 @@ fn handle_message(
     }
     Ok(())
 }
-/// The `GStreamer` carried beside this helper, where every package that
-/// carries one puts it, is the one it plays with, apart from any the user
+/// The `GStreamer` carried beside this helper (its folder, links followed:
+/// `skwir_core::folders::program`), where every package that carries one
+/// puts it, is the one it plays with, apart from any the user
 /// installed: its plugins alone (none from `GST_PLUGIN_PATH`), its own
 /// plugin scanner, and its registry in skwir's cache rather than the one an
 /// installed `GStreamer` keeps, which each would write again for its own
@@ -1218,13 +1219,10 @@ fn handle_message(
 /// before any thread exists, which is the one situation where it is sound.
 #[allow(unsafe_code)]
 fn carried_gstreamer() {
-    let Some(here) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(std::path::Path::to_owned))
-    else {
+    let Some(here) = skwir_core::folders::program() else {
         return;
     };
-    let Some((plugins, scanner)) = carried_beside(&here) else {
+    let Some((plugins, scanner)) = carried_beside(here) else {
         return;
     };
     let mut vars: Vec<(&str, std::ffi::OsString)> = vec![
@@ -1244,7 +1242,7 @@ fn carried_gstreamer() {
     #[cfg(windows)]
     {
         let path = std::env::var_os("PATH").unwrap_or_default();
-        let paths = std::iter::once(here.clone()).chain(std::env::split_paths(&path));
+        let paths = std::iter::once(here.to_path_buf()).chain(std::env::split_paths(&path));
         if let Ok(joined) = std::env::join_paths(paths) {
             vars.push(("PATH", joined));
         }

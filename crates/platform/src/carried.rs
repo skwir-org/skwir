@@ -3,70 +3,86 @@
 //! Mac's `Resources/share` (`AGENTS.md`, "Build, test, lint"). Skwir's
 //! own fonts (ADR-118, `fonts::bundled`) and the word saying how the copy
 //! came (ADR-142, `channel`). None for a build not packaged.
+//!
+//! Each is looked for from the folder of the running program as
+//! `skwir_core::folders::program` finds it, its links followed, as are
+//! the helpers (`process::Worker::find`), the type database
+//! (`mime::found_database`) and the licences (`about::licences`).
 
 use std::path::{Path, PathBuf};
 
-/// `name` in the data folder beside the program in `bin`, where `found`
-/// says it is there: the first of the places a package puts it.
-pub(crate) fn beside(bin: &Path, name: &str, found: fn(&Path) -> bool) -> Option<PathBuf> {
+/// The data folders a package puts beside the program in `bin`, in the
+/// order they are looked in: `share` next to it (Windows), above it
+/// (Linux, and a Linux or Windows build's `target`), a Mac's
+/// `Resources/share`.
+pub(crate) fn shares(bin: &Path) -> [PathBuf; 3] {
     [
         bin.join("share"),
         bin.join("../share"),
         bin.join("../Resources/share"),
     ]
-    .into_iter()
-    .map(|share| share.join("skwir").join(name))
-    .find(|path| found(path))
 }
 
-/// The folder holding the running program, as `beside` takes it, the
-/// one place what a package carries is looked for from. Its links
-/// followed: a Mac's `current_exe` is the path the program was started
-/// by, so an app started through a link in `PATH` finds its bundle's
-/// `Resources` only so (Linux's is already the program's own). The path as
-/// the system gave it where it cannot be followed, and on Windows, where
-/// a followed path is a verbatim one (`\\?\`) and the program's own
-/// already. Reads the disk: off the window's thread.
-pub(crate) fn program_folder() -> Option<PathBuf> {
-    folder_of(&std::env::current_exe().ok()?)
-}
-
-/// The folder holding `program`, as `program_folder` finds it.
-fn folder_of(program: &Path) -> Option<PathBuf> {
-    #[cfg(unix)]
-    if let Ok(followed) = std::fs::canonicalize(program) {
-        return followed.parent().map(Path::to_path_buf);
-    }
-    program.parent().map(Path::to_path_buf)
+/// `name` in the data folder beside the program in `bin`, where `found`
+/// says it is there: the first of the places a package puts it.
+pub(crate) fn beside(bin: &Path, name: &str, found: fn(&Path) -> bool) -> Option<PathBuf> {
+    shares(bin)
+        .into_iter()
+        .map(|share| share.join("skwir").join(name))
+        .find(|path| found(path))
 }
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
     use std::path::Path;
 
-    /// A program started through a link finds what its package carries
-    /// beside the program itself, not beside the link.
+    /// A program started through a link (a Mac's app, linked into
+    /// Homebrew's `bin` by its cask) finds what its bundle carries beside
+    /// the program itself, not beside the link: its helpers, its type
+    /// database, its licences and what its data folder holds.
     #[test]
-    fn a_program_started_through_a_link_finds_its_own_folder() {
+    fn a_program_started_through_a_link_finds_what_its_bundle_carries() {
         let root = tempfile::tempdir().unwrap();
         let bundle = root.path().join("skwir.app/Contents");
-        std::fs::create_dir_all(bundle.join("MacOS")).unwrap();
-        std::fs::create_dir_all(bundle.join("Resources/share/skwir")).unwrap();
-        std::fs::write(bundle.join("Resources/share/skwir/channel"), "macos").unwrap();
-        std::fs::write(bundle.join("MacOS/skwir"), "").unwrap();
+        let macos = bundle.join("MacOS");
+        let share = bundle.join("Resources/share");
+        for folder in [
+            macos.clone(),
+            share.join("skwir"),
+            share.join("mime"),
+            bundle.join("Resources/licenses"),
+        ] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        std::fs::write(share.join("skwir/channel"), "macos").unwrap();
+        std::fs::write(share.join("mime/globs2"), "").unwrap();
+        std::fs::write(macos.join("skwir"), "").unwrap();
+        let helper = macos.join("skwir-pdf-worker");
+        std::fs::write(&helper, "").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
         let bin = root.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        std::os::unix::fs::symlink(bundle.join("MacOS/skwir"), bin.join("skwir")).unwrap();
-        let folder = super::folder_of(&bin.join("skwir")).unwrap();
-        assert!(super::beside(&folder, "channel", Path::is_file).is_some());
-        assert!(
-            super::beside(&bin, "channel", Path::is_file).is_none(),
-            "not beside the link"
-        );
-        // A path that cannot be followed is taken as given.
+        std::os::unix::fs::symlink(macos.join("skwir"), bin.join("skwir")).unwrap();
+
+        let worker = crate::process::Worker {
+            variable: "SKWIR_TEST_UNSET_WORKER",
+            executable: "skwir-pdf-worker",
+        };
+        let found = |folder: &Path| {
+            (
+                worker.found_beside(folder).is_some(),
+                crate::mime::database_beside(folder).is_some(),
+                crate::about::licences_beside(folder).is_some(),
+                super::beside(folder, "channel", Path::is_file).is_some(),
+            )
+        };
+        let folder = skwir_core::folders::program_of(&bin.join("skwir")).unwrap();
+        assert_eq!(found(&folder), (true, true, true, true));
         assert_eq!(
-            super::folder_of(&bin.join("gone/skwir")),
-            Some(bin.join("gone"))
+            found(&bin),
+            (false, false, false, false),
+            "not beside the link"
         );
     }
 }

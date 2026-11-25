@@ -95,22 +95,26 @@ pub struct Worker {
 
 impl Worker {
     /// Where it is, if it can run there: the variable's choice, else
-    /// where skwir's own helpers are (`helper_folders`), else on `PATH`. A
-    /// choice naming nothing that runs is no worker: a probe says it is
-    /// missing rather than installed, and an engine chosen automatically
-    /// goes on to the next.
+    /// where skwir's own helpers are (`helper_folders`) from the program's
+    /// folder, its links followed (`skwir_core::folders::program`), else on
+    /// `PATH`. A choice naming nothing that runs is no worker: a probe says
+    /// it is missing rather than installed, and an engine chosen
+    /// automatically goes on to the next.
     pub fn find(&self) -> Option<PathBuf> {
         if let Some(chosen) = std::env::var_os(self.variable) {
             return find_program(chosen);
         }
-        std::env::current_exe()
-            .ok()
-            .and_then(|bin| {
-                helper_folders(bin.parent()?)
-                    .into_iter()
-                    .find_map(|dir| find_program(dir.join(self.executable)))
-            })
+        skwir_core::folders::program()
+            .and_then(|bin| self.found_beside(bin))
             .or_else(|| find_program(self.executable))
+    }
+
+    /// Where it is among skwir's helpers for a program in `bin`
+    /// (`helper_folders`), if it can run there.
+    pub(crate) fn found_beside(&self, bin: &Path) -> Option<PathBuf> {
+        helper_folders(bin)
+            .into_iter()
+            .find_map(|dir| find_program(dir.join(self.executable)))
     }
 
     /// [`Worker::find`], or `missing`: what to do without it, a whole

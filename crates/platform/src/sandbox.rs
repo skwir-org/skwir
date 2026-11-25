@@ -399,12 +399,12 @@ pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untr
 }
 
 /// A relocatable package's private runtime is readable by its helpers
-/// (ADR-052). Derive it from Skwir itself, never from a plugin's ancestry:
-/// an outside plugin must not grant itself access to an enclosing folder
-/// by placing a marker there. Only programs in this runtime need it.
+/// (ADR-052). Derive it from Skwir itself, in `bin`, never from a plugin's
+/// ancestry: an outside plugin must not grant itself access to an
+/// enclosing folder by placing a marker there. Only programs in this
+/// runtime need it.
 #[cfg(target_os = "linux")]
-fn package_runtime<'a>(executable: &'a Path, program: &Path) -> Option<&'a Path> {
-    let bin = executable.parent()?;
+fn package_runtime<'a>(bin: &'a Path, program: &Path) -> Option<&'a Path> {
     let prefix = bin.parent()?;
     (bin.file_name()? == "bin"
         && prefix.file_name()? == "usr"
@@ -419,8 +419,8 @@ fn package_runtime<'a>(executable: &'a Path, program: &Path) -> Option<&'a Path>
 
 #[cfg(target_os = "linux")]
 fn bind_package_runtime(command: &mut Command, program: &Path) {
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(runtime) = package_runtime(&executable, program)
+    if let Some(bin) = skwir_core::folders::program()
+        && let Some(runtime) = package_runtime(bin, program)
     {
         // Called after the private /tmp, which may hide the AppImage's
         // mount. Bind only usr, read-only, not the user's mount folder.
@@ -915,19 +915,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let prefix = dir.path().join("App Dir's/usr");
         std::fs::create_dir_all(prefix.join("share/skwir")).unwrap();
-        let executable = prefix.join("bin/skwir");
+        let bin = prefix.join("bin");
         let helper = prefix.join("lib/skwir/skwir-pdf-worker");
-        assert!(package_runtime(&executable, &helper).is_none());
+        assert!(package_runtime(&bin, &helper).is_none());
         std::fs::write(prefix.join("share/skwir/appimage-runtime"), "runtime").unwrap();
-        assert_eq!(
-            package_runtime(&executable, &helper),
-            Some(prefix.as_path())
-        );
+        assert_eq!(package_runtime(&bin, &helper), Some(prefix.as_path()));
         // A host application or an outside plugin gets no extra access.
-        assert!(package_runtime(&executable, Path::new("/usr/bin/tool")).is_none());
-        assert!(package_runtime(&executable, &dir.path().join("plugin/run")).is_none());
-        assert!(package_runtime(&executable, &prefix.join("../plugin/run")).is_none());
-        assert!(package_runtime(&dir.path().join("plugin/run"), &helper).is_none());
+        assert!(package_runtime(&bin, Path::new("/usr/bin/tool")).is_none());
+        assert!(package_runtime(&bin, &dir.path().join("plugin/run")).is_none());
+        assert!(package_runtime(&bin, &prefix.join("../plugin/run")).is_none());
+        assert!(package_runtime(&dir.path().join("plugin"), &helper).is_none());
     }
 
     /// Run this test from a synthetic package so `current_exe` has the

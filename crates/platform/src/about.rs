@@ -12,18 +12,19 @@ pub fn system_name() -> Option<String> {
 }
 
 /// What shows skwir's licences where this installation keeps them: the
-/// crates' third-party notices when there, else their folder. `None` for
-/// a build that was not packaged.
+/// crates' third-party notices when there, else their folder, found from
+/// the program's folder, its links followed
+/// (`skwir_core::folders::program`). `None` for a build that was not
+/// packaged.
 pub fn licences() -> Option<PathBuf> {
-    let program = std::env::current_exe().ok()?;
-    licences_beside(program.parent()?)
+    licences_beside(skwir_core::folders::program()?)
 }
 
 /// [`licences`] for a program in `bin`. Where each package puts them
 /// (`tools/package`): Windows' beside the program, a Mac's bundle in its
 /// resources, Fedora's and Arch's under `share/licenses`, Debian's and
 /// Ubuntu's with the package's documentation.
-fn licences_beside(bin: &Path) -> Option<PathBuf> {
+pub(crate) fn licences_beside(bin: &Path) -> Option<PathBuf> {
     let prefix = bin.parent();
     let folders = [
         Some(bin.join("licenses")),

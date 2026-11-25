@@ -44,14 +44,15 @@ fn main() {
 }
 
 /// `PDFium`'s library: the one named (`SKWIR_PDFIUM_LIBRARY`: the
-/// settings'), else the one a package carries for this helper (ADR-041),
-/// else the system's.
+/// settings'), else the one a package carries for this helper (ADR-041)
+/// from its folder, links followed (`skwir_core::folders::program`), else
+/// the system's.
 fn bindings() -> Result<Box<dyn PdfiumLibraryBindings>, PdfiumError> {
     if let Some(path) = std::env::var_os("SKWIR_PDFIUM_LIBRARY") {
         return Pdfium::bind_to_library(path);
     }
-    let carried = std::env::current_exe().ok().and_then(|program| {
-        carried(program.parent()?, &Pdfium::pdfium_platform_library_name())
+    let carried = skwir_core::folders::program().and_then(|folder| {
+        carried(folder, &Pdfium::pdfium_platform_library_name())
             .into_iter()
             .find(|path| path.is_file())
     });

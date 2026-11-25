@@ -792,8 +792,8 @@ pub fn lineage(mime: &Mime) -> Vec<Mime> {
 }
 
 /// Off Linux, the data folder whose `mime` holds the type database
-/// (ADR-037), the first of: beside skwir (`share` next to the program or
-/// above it, a `.app`'s `Resources/share`: what a package ships), where a
+/// (ADR-037), the first of: beside skwir (`database_beside` the
+/// program's folder, its links followed: what a package ships), where a
 /// package manager installed it (Homebrew on a Mac), `$XDG_DATA_DIRS`.
 /// Reads the disk once.
 #[cfg(not(target_os = "linux"))]
@@ -802,30 +802,38 @@ fn found_database() -> Option<std::path::PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
     FOUND
         .get_or_init(|| {
-            let program = std::env::current_exe().ok();
-            let beside = program
-                .as_deref()
-                .and_then(Path::parent)
-                .into_iter()
-                .flat_map(|dir| {
-                    [
-                        dir.join("share"),
-                        dir.join("../share"),
-                        dir.join("../Resources/share"),
-                    ]
-                });
             let managed: &[&str] = if cfg!(target_os = "macos") {
                 &["/opt/homebrew/share", "/usr/local/share"]
             } else {
                 &[]
             };
-            let named = crate::xdg::data_dirs();
-            beside
-                .chain(managed.iter().map(PathBuf::from))
-                .chain(named)
-                .find(|dir| dir.join("mime").join("globs2").is_file())
+            skwir_core::folders::program()
+                .and_then(database_beside)
+                .or_else(|| {
+                    managed
+                        .iter()
+                        .map(PathBuf::from)
+                        .chain(crate::xdg::data_dirs())
+                        .find(|dir| holds_database(dir))
+                })
         })
         .clone()
+}
+
+/// The data folder a package carries the type database in beside the
+/// program in `bin` (`carried::shares`: `share` next to it or above it, a
+/// `.app`'s `Resources/share`), where it has one.
+#[cfg(any(not(target_os = "linux"), test))]
+pub(crate) fn database_beside(bin: &Path) -> Option<std::path::PathBuf> {
+    crate::carried::shares(bin)
+        .into_iter()
+        .find(|dir| holds_database(dir))
+}
+
+/// Whether `dir`, a data folder, holds a type database in its `mime`.
+#[cfg(any(not(target_os = "linux"), test))]
+fn holds_database(dir: &Path) -> bool {
+    dir.join("mime").join("globs2").is_file()
 }
 
 /// The desktop's type database, shared-mime-info (ADR-037): Linux's own

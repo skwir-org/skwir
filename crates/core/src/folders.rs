@@ -11,8 +11,14 @@
 //! What a running skwir keeps for the session alone (its sockets, the
 //! marker of the one that takes launches, its mount points) is in
 //! [`runtime`], every folder there made through [`private`].
+//!
+//! What a package carries beside skwir's programs (its helpers, the type
+//! database, the licences, the fonts; a helper's own libraries) is looked
+//! for from the folder of the running program, [`program`], its links
+//! followed: never from `current_exe`'s parent.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// The folder skwir's settings are kept in (`…/skwir`).
 pub fn config() -> Option<PathBuf> {
@@ -60,6 +66,33 @@ pub fn cache() -> Option<PathBuf> {
     #[cfg(not(any(target_os = "macos", windows)))]
     let dir = crate::xdg::cache_home().map(|dir| dir.join("skwir"));
     dir
+}
+
+/// The folder holding the running program, its links followed: the one
+/// place what its package carries is looked for from (the module's
+/// header), by skwir and by its helpers alike. On macOS `current_exe` is
+/// the path the program was started by, so an app started through a link
+/// on `PATH` (Homebrew's cask links `skwir` into its `bin`) finds its
+/// bundle only so; Linux's is the program's own already. The path as the
+/// system gave it where it cannot be followed, and on Windows, where a
+/// followed path is a verbatim one (`\\?\`) and the program's own
+/// already. Read once, from the disk: the first call is off the window's
+/// thread.
+pub fn program() -> Option<&'static Path> {
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| program_of(&std::env::current_exe().ok()?))
+        .as_deref()
+}
+
+/// The folder holding `program`, as [`program`] finds the running one's:
+/// for a test, given the path a program was started by.
+pub fn program_of(program: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    if let Ok(followed) = std::fs::canonicalize(program) {
+        return followed.parent().map(Path::to_path_buf);
+    }
+    program.parent().map(Path::to_path_buf)
 }
 
 /// The folder a running skwir keeps what is the session's alone in:
@@ -140,7 +173,26 @@ pub fn private(folder: &Path) -> std::io::Result<()> {
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
-    use super::{private, runtime_of};
+    use super::{private, program_of, runtime_of};
+
+    /// A program started through a link is in the folder of the file the
+    /// link names, not the link's: a Mac's app linked into Homebrew's
+    /// `bin` is in its bundle's `MacOS`. A path that cannot be followed is
+    /// taken as given.
+    #[test]
+    fn a_program_started_through_a_link_is_in_its_own_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root.path()).unwrap();
+        let macos = root.join("skwir.app/Contents/MacOS");
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::write(macos.join("skwir"), "").unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(macos.join("skwir"), bin.join("skwir")).unwrap();
+        assert_eq!(program_of(&bin.join("skwir")), Some(macos.clone()));
+        assert_eq!(program_of(&macos.join("skwir")), Some(macos));
+        assert_eq!(program_of(&bin.join("gone/skwir")), Some(bin.join("gone")));
+    }
 
     /// The session's runtime folder holds skwir's; where it has none, the
     /// user's own in the temporary folder, named for the user on Linux.
