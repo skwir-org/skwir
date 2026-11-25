@@ -1653,6 +1653,12 @@ impl Worker {
                 if path.starts_with(&at) {
                     self.cache.invalidate(path, whole);
                     changed.push((path.clone(), whole));
+                } else if at.starts_with(path) && !matches!(change, Change::Changed(_)) {
+                    // A folder above the one followed came, went or is
+                    // covered no more (an index tells it since skwird
+                    // 0.2): what it holds goes with it, whole.
+                    self.cache.invalidate(&at, true);
+                    changed.push((at.clone(), true));
                 }
             }
             let holes: BTreeSet<PathBuf> = journal
@@ -4197,6 +4203,35 @@ mod tests {
     /// name, the folders the map opens summed too; what its journal says
     /// changed is summed again, and its changes are asked from where it
     /// stood before, never from where a breakdown summed after it stood.
+    /// A folder above the one measured, gone, as an index tells it since
+    /// skwird 0.2: the measure goes with it, read again whole; a folder
+    /// above it that only changed keeps it.
+    #[test]
+    fn a_folder_above_one_measured_gone_takes_its_measure_with_it() {
+        let mut t = Indexing::new(&Recording::default());
+        let root = t.root.clone();
+        t.measure(0, &root, 1);
+        let above = root.parent().expect("a folder above").to_path_buf();
+        t.tell(
+            vec![names::Change::Changed(noted(
+                above.clone(),
+                EntryKind::Directory,
+            ))],
+            "m2",
+        );
+        assert!(t.round().is_empty(), "a folder above only changed");
+        t.index.0.lock().asked.clear();
+        t.tell(
+            vec![names::Change::Removed(noted(above, EntryKind::Directory))],
+            "m3",
+        );
+        assert_eq!(t.round(), HashSet::from([PaneId(0)]));
+        assert!(
+            t.index.0.lock().asked.contains(&root),
+            "measured again whole"
+        );
+    }
+
     #[test]
     fn a_folder_an_index_sums_is_measured_from_it() {
         let mut t = Indexing::new(&Recording::default());

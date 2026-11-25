@@ -278,7 +278,20 @@ fn seeds_of(
     let holding = |path: &Path, seeds: &mut Vec<(PathBuf, bool)>| {
         seeds.extend(path.parent().map(|p| (of_files(p.to_path_buf()), false)));
     };
+    // The root itself, or a folder above it, came, went or is covered no
+    // more (an index tells it since skwird 0.2): the root is read again
+    // whole, which a root gone reads as holding nothing. A folder above it
+    // that only changed changes nothing below it.
+    let takes_the_root = |change: &Change| match change {
+        Change::Added(n) | Change::Removed(n) => real_root.starts_with(&n.path),
+        Change::NotCovered(hole) => real_root.starts_with(&hole.path),
+        Change::Changed(_) => false,
+    };
     for change in &journal.changes {
+        if takes_the_root(change) {
+            seeds.push((root.to_path_buf(), true));
+            continue;
+        }
         let (path, deep) = match change {
             Change::Added(n) | Change::Removed(n) | Change::Changed(n) => {
                 let Some(path) = walked(&n.path) else {
@@ -1452,6 +1465,32 @@ mod tests {
             ]
         );
         assert!(removed.is_empty());
+
+        // The root itself, or a folder above it, gone or come again: the
+        // root read again whole; a folder above it only changed, nothing.
+        for (above, said) in [
+            (Path::new("/"), "a folder above it removed"),
+            (root, "the root itself removed"),
+        ] {
+            let journal = Journal {
+                changes: vec![
+                    Change::Changed(Noted {
+                        path: PathBuf::from("/"),
+                        kind: EntryKind::Directory,
+                        id: None,
+                    }),
+                    Change::Removed(Noted {
+                        path: above.to_path_buf(),
+                        kind: EntryKind::Directory,
+                        id: Some((1, 2)),
+                    }),
+                ],
+                holes: Vec::new(),
+                ..journal.clone()
+            };
+            let (seeds, _) = super::seeds_of(&app, root, root, &below, &journal);
+            assert_eq!(seeds, [(root.to_path_buf(), true)], "{said}");
+        }
 
         // A root gone since: an error, which ends the count, never a
         // cancel, which leaves it running.
