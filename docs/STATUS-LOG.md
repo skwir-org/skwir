@@ -24076,3 +24076,29 @@ before the release, the user said yes; a run of every crate then found
 - **Not checked:** real Windows; Open With's sentence with the
   registry's own type names ("PNG File"), which Wine's registry lacks.
 
+
+## 2026-11-25: skwird 0.2's side
+
+skwird's main reached 0.2: names matched in both forms, then removable
+volumes on Linux, macOS and Windows (e650eb3; the protocol unchanged
+since 871efc2, which Skwir's session checked: a release answered once
+nothing of the volume is held, and by mount point).
+- **Names in both forms** against its engine (5a7a1926, 45de1d11): the
+  client copied at dc08f67, its word `NAMES_BOTH_FORMS`. A real engine
+  answers a term typed composed, decomposed, in capitals or as a glob
+  from its index; 0.1.0's walks.
+- **Eject lets an engine go of a drive** (24587b92, d1c66069; ADR-150
+  18): core's `NameIndex::release`, asked by Eject on its worker just
+  before the unmount, and when another program announces one. skwird's
+  sends `release_at` to an engine already running that says `volumes`,
+  never starting one, within 8 s.
+- **Asked once per drive** (b43cd5de; ADR-150 19), the user's choice: a
+  message that stays as a drive with an identity is plugged in while an
+  engine runs, Index Its Names in a drive's menu, the drives kept on
+  Settings › Index with Forget. Built by a fixer, reviewed.
+- **Checked** on b43cd5de: `lint-all`; the workspace's tests (4,408);
+  the seven real-engine tests against skwird at e650eb3; core, places,
+  skwird and the binary under Wine (820, 13, 12, 119), none retried.
+- **Not checked:** a real drive (a loop device is no removable volume
+  to skwird), in a window; Eject's release against a real engine;
+  macOS and Windows.
