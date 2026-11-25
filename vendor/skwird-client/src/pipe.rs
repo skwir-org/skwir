@@ -122,10 +122,10 @@ pub struct Stream {
 }
 
 impl Stream {
-    fn of(handle: HANDLE) -> Stream {
+    fn of(handle: Handle) -> Stream {
         Stream {
             end: Arc::new(End {
-                handle: Handle(handle),
+                handle,
                 shut: AtomicBool::new(false),
             }),
             timeout: None,
@@ -190,7 +190,7 @@ impl Stream {
                 )
             };
             if handle != INVALID_HANDLE_VALUE {
-                let stream = Stream::of(handle);
+                let stream = Stream::of(Handle(handle));
                 if stream.owned_by_the_system()? || stream.server_runs_as(&user_sid()?)? {
                     return Ok(stream);
                 }
@@ -261,7 +261,10 @@ impl Stream {
     /// Stop every read and write on this connection, now and after, from
     /// any thread: what waits returns at once, failing.
     pub fn shutdown(&self) {
-        self.end.shut.store(true, Ordering::Release);
+        // Before the cancel, in one order with a call's check after it is
+        // made ([`Stream::overlapped`]): either the cancel finds the call,
+        // or the call sees the stop.
+        self.end.shut.store(true, Ordering::SeqCst);
         // SAFETY: every overlapped call on the handle, whichever thread made
         // it, is cancelled; each waits for its cancel before it returns.
         unsafe { CancelIoEx(self.end.handle.0, std::ptr::null()) };
@@ -303,14 +306,26 @@ impl Stream {
             if error != ERROR_IO_PENDING {
                 return Err(failed(error));
             }
+            // A stop between the check above and the call cancelled nothing
+            // of it, as it was not made yet: seen now, it cancels the call
+            // here. One made after this check finds the call.
+            if self.end.shut.load(Ordering::SeqCst) {
+                // SAFETY: the call's own structure, alive until its result
+                // is waited for, below.
+                unsafe { CancelIoEx(handle, &raw const ov) };
+            }
             // SAFETY: the event is ours, alive for the wait.
             if unsafe { WaitForSingleObject(event.0, millis(self.timeout)) } == WAIT_TIMEOUT {
                 let mut moved = 0;
                 // SAFETY: the call's own structure, alive until its cancel has
                 // landed, which the wait for its result waits for.
-                unsafe {
+                let done = unsafe {
                     CancelIoEx(handle, &raw const ov);
-                    GetOverlappedResult(handle, &raw const ov, &raw mut moved, 1);
+                    GetOverlappedResult(handle, &raw const ov, &raw mut moved, 1)
+                };
+                // Done before its cancel landed: what it moved is not lost.
+                if done != 0 && moved > 0 {
+                    return Ok(moved);
                 }
                 return Err(std::io::ErrorKind::TimedOut.into());
             }
@@ -465,17 +480,46 @@ impl Drop for Descriptor {
     }
 }
 
-/// A connection being waited for: its instance, and its overlapped call,
-/// at a place of its own while it is pending.
+/// A connection being waited for: its overlapped call, and its instance.
+/// The call is let go of first (the order of the fields), while its
+/// instance is open.
 struct Pending {
+    call: Listening,
     pipe: Handle,
+    /// Whether a client was there before the call was made: it failed at
+    /// once, saying so, and its structure says nothing.
+    connected: bool,
+}
+
+// SAFETY: the structure is the pending call's alone, used by one thread at
+// a time under the server's lock; the handles are usable from any thread.
+unsafe impl Send for Pending {}
+
+/// An instance's call waiting for a client: its event, and its structure
+/// at a place of its own while it is pending. Let go of, the call is
+/// cancelled and waited for until its cancel lands: the system writes to
+/// the structure as the call ends, and must never write to it freed.
+struct Listening {
+    /// The instance's handle, which [`Pending`] holds open.
+    pipe: HANDLE,
     event: Handle,
     ov: Box<OVERLAPPED>,
 }
 
-// SAFETY: the structure is the pending call's alone, used by one thread at
-// a time under the server's lock.
-unsafe impl Send for Pending {}
+impl Drop for Listening {
+    fn drop(&mut self) {
+        let mut moved = 0;
+        // SAFETY: the instance's handle, open until this is let go of; the
+        // call's own structure, alive until the wait for its result
+        // returns, which waits for its cancel to land. A call done (a
+        // client connected, its event set, by the system or by hand)
+        // cancels nothing, and the wait ends at once.
+        unsafe {
+            CancelIoEx(self.pipe, &raw const *self.ov);
+            GetOverlappedResult(self.pipe, &raw const *self.ov, &raw mut moved, 1);
+        }
+    }
+}
 
 /// The engine's side of a pipe: its instances, each its user's alone, or
 /// the system's ([`Server::bind_system`]).
@@ -581,20 +625,32 @@ impl Server {
         ov.hEvent = event.0;
         // SAFETY: the structure stays at its place until the call is done:
         // it is boxed, and kept with the instance.
+        let mut connected = false;
         if unsafe { ConnectNamedPipe(pipe.0, &raw mut *ov) } == 0 {
             // SAFETY: no argument.
             match unsafe { GetLastError() } {
                 ERROR_IO_PENDING => {}
                 // A client came between the instance and the call: no event
-                // will say so, so it is said here.
-                // SAFETY: the event is ours.
-                ERROR_PIPE_CONNECTED => unsafe {
-                    SetEvent(event.0);
-                },
+                // will say so, so it is said here; nor will the structure,
+                // its call failed at once.
+                ERROR_PIPE_CONNECTED => {
+                    connected = true;
+                    // SAFETY: the event is ours.
+                    unsafe { SetEvent(event.0) };
+                }
+                // Failed at once: no call pends, nothing to cancel.
                 e => return Err(failed(e)),
             }
         }
-        Ok(Pending { pipe, event, ov })
+        Ok(Pending {
+            call: Listening {
+                pipe: pipe.0,
+                event,
+                ov,
+            },
+            pipe,
+            connected,
+        })
     }
 
     /// The next client, waited for at most `wait`: none if it passed.
@@ -605,21 +661,32 @@ impl Server {
         }
         let p = pending.as_ref().expect("an instance waits");
         // SAFETY: the instance's event, alive while it is pending.
-        if unsafe { WaitForSingleObject(p.event.0, millis(wait)) } == WAIT_TIMEOUT {
+        if unsafe { WaitForSingleObject(p.call.event.0, millis(wait)) } == WAIT_TIMEOUT {
             return Ok(None);
         }
-        let p = pending.take().expect("an instance waits");
-        let mut moved = 0;
-        // SAFETY: the instance's own call and structure, done.
-        let ok = unsafe { GetOverlappedResult(p.pipe.0, &raw const *p.ov, &raw mut moved, 0) };
-        // SAFETY: no argument.
-        if ok == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
-            return Ok(None);
-        }
-        let Pending { pipe, .. } = p;
-        let handle = pipe.0;
-        std::mem::forget(pipe);
-        Ok(Some(Stream::of(handle)))
+        // The next instance is made before this one is handed on or let go
+        // of: the name always has one waiting. A client never finds it gone,
+        // to start another engine in place of this one, and no other
+        // process can make the name its own meanwhile, which only the first
+        // instance's flag refuses (`FILE_FLAG_FIRST_PIPE_INSTANCE`). Should
+        // it fail, the next accept makes it.
+        let next = self.instance(false).ok();
+        let Pending {
+            call,
+            pipe,
+            connected,
+        } = std::mem::replace(&mut *pending, next).expect("an instance waits");
+        drop(pending);
+        let connected = connected || {
+            let mut moved = 0;
+            // SAFETY: the instance's own call and structure, done.
+            let ok = unsafe { GetOverlappedResult(pipe.0, &raw const *call.ov, &raw mut moved, 0) };
+            // SAFETY: no argument.
+            ok != 0 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED
+        };
+        // Done: its drop cancels nothing, waits for nothing.
+        drop(call);
+        Ok(connected.then(|| Stream::of(pipe)))
     }
 }
 
@@ -630,7 +697,9 @@ impl Server {
 /// any, as std's `Command` asks: the engine, which outlives its client,
 /// would keep open what the client was given (the pipe a launcher reads
 /// the client's output from, to its end). So nothing is inherited, and
-/// the engine opens its log itself (`SKWIRD_LOG`).
+/// the engine opens its log itself (`SKWIRD_LOG`). `program` is the file
+/// started, named whole: Windows, given a command line alone, looks for it
+/// in the current folder first.
 pub(crate) fn start_detached(
     program: &std::path::Path,
     args: &[&str],
@@ -671,18 +740,19 @@ pub(crate) fn start_detached(
     }
     block.push(0);
     let folder = wide(folder.as_os_str());
+    let application = wide(program.as_os_str());
     // SAFETY: all-zero structures are valid ones, the first sized.
     let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
     startup.cb = u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(u32::MAX);
     // SAFETY: as above.
     let mut started: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
-    // SAFETY: a NUL-terminated command line the call may write in, an
-    // environment block ended by two NULs, a NUL-terminated folder, the
-    // structures alive for the call; nothing inherited. The handles given
-    // are ours to close.
+    // SAFETY: a NUL-terminated program, a NUL-terminated command line the
+    // call may write in, an environment block ended by two NULs, a
+    // NUL-terminated folder, the structures alive for the call; nothing
+    // inherited. The handles given are ours to close.
     let ok = unsafe {
         CreateProcessW(
-            std::ptr::null(),
+            application.as_ptr(),
             line.as_mut_ptr(),
             std::ptr::null(),
             std::ptr::null(),

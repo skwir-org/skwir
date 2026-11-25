@@ -320,6 +320,7 @@ impl Fake {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::Scratch as Dir;
     use crate::{Client, Find};
     use skwird_protocol::{Id, Instant, Kind, Match, NameTerm, Proof, Query, Why, WirePath};
 
@@ -327,14 +328,7 @@ mod tests {
     /// coverage of the longest root, entries below the root asked.
     #[test]
     fn a_client_asks_a_fake_engine() {
-        // Under the user's cache, never `/tmp` (AGENTS.md, "Testing").
-        let dir = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-            .unwrap()
-            .join("skwird-tests")
-            .join(format!("fake-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Dir::new("fake");
         let checked = Coverage {
             names: Proof::Checked(Instant { sec: 5, nsec: 0 }),
             attrs: Proof::AsOf(Instant { sec: 1, nsec: 0 }),
@@ -419,7 +413,6 @@ mod tests {
             "kept even when too old"
         );
         drop(fake);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The journal the script gives is every `changes`' answer, as it
@@ -427,15 +420,7 @@ mod tests {
     /// in order, for the test to check what its client sent.
     #[test]
     fn the_fake_answers_the_scripts_journal_and_keeps_what_was_asked() {
-        // Under the user's cache, never `/tmp` (AGENTS.md, "Testing").
-        let dir = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-            .unwrap()
-            .join("skwird-tests")
-            .join(format!("fake-changes-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Dir::new("fake-changes");
         let journal = skwird_protocol::Changes {
             events: vec![skwird_protocol::Event::Added(Entry {
                 path: WirePath(b"/home/user/new.txt".to_vec()),
@@ -480,7 +465,6 @@ mod tests {
             ]
         );
         drop(fake);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A `totals` through the real client: every child of the folder the
@@ -490,14 +474,7 @@ mod tests {
     #[test]
     fn the_fake_answers_the_scripts_totals_and_sums_the_rest() {
         use skwird_protocol::{Child, Largest, Totals, TotalsDone};
-        let dir = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-            .unwrap()
-            .join("skwird-tests")
-            .join(format!("fake-totals-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Dir::new("fake-totals");
         let children: Vec<Child> = (0..600u64)
             .map(|n| Child {
                 path: WirePath(format!("/home/user/file {n}").into_bytes()),
@@ -575,6 +552,5 @@ mod tests {
             "{refused:?}"
         );
         drop(fake);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

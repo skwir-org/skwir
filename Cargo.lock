@@ -10606,16 +10606,17 @@ dependencies = [
 
 [[package]]
 name = "skwird-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
+ "rustix",
  "skwird-protocol",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "skwird-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

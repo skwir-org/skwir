@@ -71,8 +71,24 @@ impl<'de> Deserialize<'de> for WirePath {
 }
 
 impl WirePath {
+    /// `path` as the wire carries it: its bytes on Unix; on Windows, its
+    /// WTF-8, as the engine spells the names it holds.
     pub fn of(path: &Path) -> WirePath {
-        WirePath(path.as_os_str().as_encoded_bytes().to_vec())
+        #[cfg(unix)]
+        return WirePath(std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()).to_vec());
+        // A valid path's UTF-8 is its WTF-8, as nearly every one is: copied
+        // as it is, encoded only where it holds an unpaired surrogate.
+        #[cfg(windows)]
+        return WirePath(path.to_str().map_or_else(
+            || {
+                wtf8::encode(std::os::windows::ffi::OsStrExt::encode_wide(
+                    path.as_os_str(),
+                ))
+            },
+            |text| text.as_bytes().to_vec(),
+        ));
+        #[cfg(not(any(unix, windows)))]
+        WirePath(path.to_string_lossy().into_owned().into_bytes())
     }
 
     /// The path, as the system takes it.
@@ -82,10 +98,107 @@ impl WirePath {
         PathBuf::from(std::ffi::OsString::from_vec(self.0.clone()))
     }
 
-    /// The path, as the system takes it: elsewhere than Unix, its UTF-8.
-    #[cfg(not(unix))]
+    /// The path, as the system takes it: on Windows, the UTF-16 its WTF-8
+    /// names, an unpaired surrogate among it, as a name may hold one.
+    #[cfg(windows)]
+    pub fn to_path(&self) -> PathBuf {
+        use std::os::windows::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_wide(&wtf8::decode(&self.0)))
+    }
+
+    /// The path, as the system takes it: elsewhere, its UTF-8.
+    #[cfg(not(any(unix, windows)))]
     pub fn to_path(&self) -> PathBuf {
         PathBuf::from(String::from_utf8_lossy(&self.0).into_owned())
+    }
+}
+
+/// Names on Windows, whose names are UTF-16, as bytes: their WTF-8, UTF-8
+/// for every valid name, an unpaired surrogate kept as the three bytes its
+/// code point would take. The engine's own (`skwird_crawl::wtf8`), written
+/// out again here so that this crate needs serde alone; never Rust's
+/// encoded bytes of an `OsStr`, which it does not promise.
+#[cfg(any(windows, test))]
+mod wtf8 {
+    /// The UTF-16 units `wide`, as WTF-8.
+    pub fn encode(wide: impl IntoIterator<Item = u16>) -> Vec<u8> {
+        let mut out = Vec::new();
+        for unit in char::decode_utf16(wide) {
+            let point = match unit {
+                Ok(c) => u32::from(c),
+                Err(e) => u32::from(e.unpaired_surrogate()),
+            };
+            push_point(point, &mut out);
+        }
+        out
+    }
+
+    /// A code point as UTF-8, a surrogate's as any other's of its range.
+    // Each shift and mask leaves a value below 256.
+    #[allow(clippy::cast_possible_truncation)]
+    fn push_point(point: u32, out: &mut Vec<u8>) {
+        match point {
+            0..0x80 => out.push(point as u8),
+            0x80..0x800 => out.extend([0xC0 | (point >> 6) as u8, 0x80 | (point & 0x3F) as u8]),
+            0x800..0x1_0000 => out.extend([
+                0xE0 | (point >> 12) as u8,
+                0x80 | ((point >> 6) & 0x3F) as u8,
+                0x80 | (point & 0x3F) as u8,
+            ]),
+            _ => out.extend([
+                0xF0 | (point >> 18) as u8,
+                0x80 | ((point >> 12) & 0x3F) as u8,
+                0x80 | ((point >> 6) & 0x3F) as u8,
+                0x80 | (point & 0x3F) as u8,
+            ]),
+        }
+    }
+
+    /// The UTF-16 units WTF-8 `bytes` name. A byte [`encode`] never writes
+    /// there is U+FFFD, as a lossy UTF-8 reading has it.
+    pub fn decode(bytes: &[u8]) -> Vec<u16> {
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            let Some((point, len)) = point_at(&bytes[i..]) else {
+                out.push(0xFFFD);
+                i += 1;
+                continue;
+            };
+            if let Some(low) = point.checked_sub(0x1_0000) {
+                // Below 0x10_0000: each half fits a unit.
+                #[allow(clippy::cast_possible_truncation)]
+                out.extend([0xD800 + (low >> 10) as u16, 0xDC00 + (low & 0x3FF) as u16]);
+            } else {
+                // Below 0x1_0000.
+                #[allow(clippy::cast_possible_truncation)]
+                out.push(point as u16);
+            }
+            i += len;
+        }
+        out
+    }
+
+    /// The code point the bytes start with, and how many it takes: none
+    /// for a sequence cut short, overlong, or past U+10FFFF.
+    fn point_at(bytes: &[u8]) -> Option<(u32, usize)> {
+        let first = bytes[0];
+        let (len, start) = match first {
+            0x00..=0x7F => return Some((u32::from(first), 1)),
+            0xC2..=0xDF => (2, u32::from(first & 0x1F)),
+            0xE0..=0xEF => (3, u32::from(first & 0x0F)),
+            0xF0..=0xF4 => (4, u32::from(first & 0x07)),
+            _ => return None,
+        };
+        let rest = bytes.get(1..len)?;
+        if !rest.iter().all(|b| b & 0xC0 == 0x80) {
+            return None;
+        }
+        let point = rest
+            .iter()
+            .fold(start, |p, b| (p << 6) | u32::from(b & 0x3F));
+        let least = [0, 0, 0x80, 0x800, 0x1_0000][len];
+        (point >= least && point <= 0x10_FFFF).then_some((point, len))
     }
 }
 
@@ -394,12 +507,14 @@ pub struct Welcome {
 /// and indexes a removable volume a client keeps.
 pub const VOLUMES: &str = "volumes";
 
-/// A [`Welcome::features`] word: a name term is matched in both its
-/// Unicode forms, composed and decomposed (NFC and NFD), lowercased first
-/// where case is ignored; a glob in its literal parts alone (DESIGN, open
-/// question 5). A client that matches so asks no engine without it for a
-/// term whose two forms differ: the index would hold less than it
-/// matches.
+/// A [`Welcome::features`] word: a name term is matched as skwir's
+/// `name_match` matches it (DESIGN, open question 5): in its forms as
+/// typed, composed and decomposed (NFC and NFD), each once; where case is
+/// ignored, folded on the term and the name (`to_lowercase`, `ς` taken as
+/// `σ`); a glob in its literal parts, its escapes and its classes' single
+/// members, a range's ends as typed; an ASCII name against the term's one
+/// ASCII form. A client that matches so asks no engine without it for a
+/// term whose forms differ: the index would hold less than it matches.
 pub const NAMES_BOTH_FORMS: &str = "names-both-forms";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -513,8 +628,25 @@ impl Totals {
         }
     }
 
-    /// `other`'s totals added to these, by extension too.
+    /// `other`'s totals added to these, by extension too: each extension
+    /// finds its match by a map.
     pub fn add(&mut self, other: &Totals) {
+        self.add_counts(other);
+        if other.by_extension.is_empty() {
+            return;
+        }
+        let mut sum = Extensions::default();
+        for e in std::mem::take(&mut self.by_extension) {
+            sum.add(e);
+        }
+        for e in &other.by_extension {
+            sum.add(e.clone());
+        }
+        self.by_extension = sum.into_sorted();
+    }
+
+    /// `other`'s totals added to these, but for their extensions.
+    fn add_counts(&mut self, other: &Totals) {
         self.size += other.size;
         self.alloc += other.alloc;
         self.files += other.files;
@@ -525,17 +657,33 @@ impl Totals {
             (Some(a), Some(b)) => Some(a.max(b)),
             (a, b) => a.or(b),
         };
-        for e in &other.by_extension {
-            match self.by_extension.iter_mut().find(|m| m.ext == e.ext) {
-                Some(m) => {
-                    m.files += e.files;
-                    m.alloc += e.alloc;
-                }
-                None => self.by_extension.push(e.clone()),
-            }
-        }
-        self.by_extension
-            .sort_by(|a, b| b.alloc.cmp(&a.alloc).then_with(|| a.ext.cmp(&b.ext)));
+    }
+}
+
+/// Files by extension as they are summed: each extension found by a map,
+/// the list built and sorted once, however many are summed (a folder's
+/// rest of tens of thousands of children, [`largest`]).
+#[derive(Default)]
+struct Extensions(std::collections::HashMap<Option<WirePath>, (u64, u64)>);
+
+impl Extensions {
+    fn add(&mut self, e: Extension) {
+        let (files, alloc) = self.0.entry(e.ext).or_default();
+        *files += e.files;
+        *alloc += e.alloc;
+    }
+
+    /// The extensions in their order: the largest alloc first, then by
+    /// extension. Each is there once, so the order is the same whatever
+    /// they were added in.
+    fn into_sorted(self) -> Vec<Extension> {
+        let mut out: Vec<Extension> = self
+            .0
+            .into_iter()
+            .map(|(ext, (files, alloc))| Extension { ext, files, alloc })
+            .collect();
+        out.sort_by(|a, b| b.alloc.cmp(&a.alloc).then_with(|| a.ext.cmp(&b.ext)));
+        out
     }
 }
 
@@ -562,14 +710,24 @@ pub fn largest(children: Vec<Child>, largest: Largest) -> (Vec<Child>, Option<Re
         count: 0,
         totals: Totals::default(),
     };
-    for (child, kept) in children.into_iter().zip(keep) {
+    // Each child's extensions moved into one sum, not merged into the
+    // rest's list one child at a time.
+    let mut extensions = Extensions::default();
+    for (mut child, kept) in children.into_iter().zip(keep) {
         if kept {
             sent.push(child);
         } else {
             rest.count += 1;
-            rest.totals.add_child(&child);
+            rest.totals.add_counts(&child.totals);
+            if child.kind == Kind::Folder {
+                rest.totals.folders += 1;
+            }
+            for e in std::mem::take(&mut child.totals.by_extension) {
+                extensions.add(e);
+            }
         }
     }
+    rest.totals.by_extension = extensions.into_sorted();
     (sent, (rest.count > 0).then_some(rest))
 }
 
@@ -822,7 +980,13 @@ pub fn write<W: Write, T: Serialize>(to: &mut W, message: &T) -> std::io::Result
 pub fn read<R: BufRead, T: DeserializeOwned>(from: &mut R) -> std::io::Result<Option<T>> {
     let mut line = Vec::new();
     loop {
-        let buf = from.fill_buf()?;
+        // A read interrupted by a signal is made again: what it would
+        // leave of the line is held here alone.
+        let buf = match from.fill_buf() {
+            Ok(buf) => buf,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
         if buf.is_empty() {
             return if line.is_empty() {
                 Ok(None)
@@ -1042,5 +1206,127 @@ mod tests {
         assert!(read::<_, Request>(&mut cut).is_err());
         let mut long = std::io::Cursor::new(vec![b'x'; MAX_LINE + 10]);
         assert!(read::<_, Request>(&mut long).is_err());
+    }
+
+    /// What a read gives, a part at a time, a signal between two parts.
+    struct Parts(Vec<Option<Vec<u8>>>);
+
+    impl std::io::Read for Parts {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Ok(0);
+            }
+            match self.0.remove(0) {
+                Some(part) => {
+                    buf[..part.len()].copy_from_slice(&part);
+                    Ok(part.len())
+                }
+                None => Err(std::io::ErrorKind::Interrupted.into()),
+            }
+        }
+    }
+
+    /// A read interrupted by a signal in the middle of a line is made
+    /// again: the line is read whole, what came before the signal with it.
+    #[test]
+    fn a_read_interrupted_keeps_its_line() {
+        let ask = Request {
+            id: 7,
+            ask: Ask::Cancel { id: 3 },
+        };
+        let mut line = Vec::new();
+        write(&mut line, &ask).unwrap();
+        let second = line.split_off(line.len() / 2);
+        let mut r = std::io::BufReader::new(Parts(vec![Some(line), None, Some(second)]));
+        assert_eq!(read::<_, Request>(&mut r).unwrap(), Some(ask));
+        assert_eq!(read::<_, Request>(&mut r).unwrap(), None);
+    }
+
+    /// Totals added merge their extensions, each once, the largest alloc
+    /// first, then by extension, whatever order they came in; the rest of
+    /// a `largest`, summed at once, as the same children added one by one.
+    #[test]
+    fn totals_added_merge_their_extensions() {
+        let ext = |name: &str, files, alloc| Extension {
+            ext: (!name.is_empty()).then(|| WirePath(name.as_bytes().to_vec())),
+            files,
+            alloc,
+        };
+        let mut a = Totals {
+            by_extension: vec![ext("rs", 2, 40), ext("md", 1, 10), ext("", 1, 5)],
+            ..Totals::default()
+        };
+        let b = Totals {
+            by_extension: vec![ext("txt", 3, 30), ext("", 2, 6), ext("rs", 1, 1)],
+            ..Totals::default()
+        };
+        a.add(&b);
+        assert_eq!(
+            a.by_extension,
+            [
+                ext("rs", 3, 41),
+                ext("txt", 3, 30),
+                ext("", 3, 11),
+                ext("md", 1, 10)
+            ]
+        );
+        let children: Vec<Child> = (0..200u64)
+            .map(|i| {
+                child(
+                    &format!("c{i}"),
+                    Kind::File,
+                    i % 7,
+                    1,
+                    &format!("e{}", i % 13),
+                )
+            })
+            .collect();
+        let (_, rest) = largest(children.clone(), Largest { alloc: 0, files: 0 });
+        let mut summed = Totals::default();
+        for c in &children {
+            summed.add_child(c);
+        }
+        assert_eq!(rest.unwrap().totals, summed);
+        assert_eq!(summed.by_extension.len(), 13);
+        // Many children of many extensions each: their rest sums each
+        // extension once, as the same children added one by one.
+        let many: Vec<Child> = (0..400u64)
+            .map(|i| {
+                let mut c = child(&format!("m{i}"), Kind::Folder, i, 1, "");
+                c.totals.by_extension = (0..20u64)
+                    .map(|j| ext(&format!("x{}", (i * 7 + j) % 1_000), 1, j))
+                    .collect();
+                c
+            })
+            .collect();
+        let (sent, rest) = largest(many.clone(), Largest { alloc: 1, files: 0 });
+        let mut summed = Totals::default();
+        for c in many.iter().filter(|c| c.path != sent[0].path) {
+            summed.add_child(c);
+        }
+        let rest = rest.unwrap();
+        assert_eq!(rest.count, 399);
+        assert_eq!(rest.totals, summed);
+        assert_eq!(rest.totals.by_extension.len(), 1_000);
+    }
+
+    /// A name on Windows travels as its WTF-8: a valid one as its UTF-8,
+    /// an unpaired surrogate as the three bytes of its code point, read
+    /// back as it was; what no encoding gives reads as U+FFFD.
+    #[test]
+    fn a_windows_name_is_its_wtf8() {
+        for name in ["notes.txt", "été", "日本語", "a 🙂 b", ""] {
+            let wide: Vec<u16> = name.encode_utf16().collect();
+            assert_eq!(wtf8::encode(wide.iter().copied()), name.as_bytes());
+            assert_eq!(wtf8::decode(name.as_bytes()), wide, "{name}");
+        }
+        assert_eq!(wtf8::encode([0x61, 0xD800, 0x62]), b"a\xED\xA0\x80b");
+        for wide in [&[0x61, 0xD800, 0x62][..], &[0xDC00], &[0xD83D, 0x61]] {
+            let bytes = wtf8::encode(wide.iter().copied());
+            assert!(std::str::from_utf8(&bytes).is_err(), "{bytes:x?}");
+            assert_eq!(wtf8::decode(&bytes), wide, "{bytes:x?}");
+        }
+        assert_eq!(wtf8::decode(b"a\xFFb"), [0x61, 0xFFFD, 0x62]);
+        assert_eq!(wtf8::decode(b"\xC0\x80"), [0xFFFD, 0xFFFD], "overlong");
     }
 }

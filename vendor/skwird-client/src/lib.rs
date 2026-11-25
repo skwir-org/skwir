@@ -90,7 +90,9 @@ pub struct Find {
     pub start: Option<PathBuf>,
     /// A socket to ask, in place of the system's and the user's: on
     /// Windows, a pipe's name, which an engine started is given to serve
-    /// on (`SKWIRD_PIPE`).
+    /// on (`SKWIRD_PIPE`). On Unix, an engine is started for it only where
+    /// it is the one an engine serves on in the runtime folder (`runtime`),
+    /// its `skwird/socket`.
     pub socket: Option<PathBuf>,
     /// How long a started engine is waited for.
     pub wait: Duration,
@@ -152,15 +154,20 @@ impl Find {
             .collect()
     }
 
-    /// Where an engine started serves.
+    /// Where an engine started serves: in the runtime folder it is given.
+    /// A socket given elsewhere is one it would never serve on, waited for
+    /// in vain while it serves another: none is started for it.
     #[cfg(unix)]
     fn started(&self) -> Result<PathBuf, Error> {
+        let socket = self
+            .runtime()
+            .map(|r| socket_in(&r))
+            .ok_or_else(|| Error::NoEngine(NO_RUNTIME.into()))?;
         match &self.socket {
-            Some(s) => Ok(s.clone()),
-            None => self
-                .runtime()
-                .map(|r| socket_in(&r))
-                .ok_or_else(|| Error::NoEngine(NO_RUNTIME.into())),
+            Some(s) if *s != socket => Err(Error::NoEngine(
+                "an engine started serves in its runtime folder, not at the socket given".into(),
+            )),
+            _ => Ok(socket),
         }
     }
 
@@ -202,8 +209,11 @@ pub fn system_socket() -> PathBuf {
 pub fn user_socket() -> Option<PathBuf> {
     #[cfg(windows)]
     return pipe::user_pipe();
-    #[cfg(not(windows))]
-    runtime_folder().map(|r| socket_in(&r))
+    #[cfg(unix)]
+    return runtime_folder().map(|r| socket_in(&r));
+    // No engine serves on this system (rule 7).
+    #[cfg(not(any(unix, windows)))]
+    None
 }
 
 /// What a client says where it finds no runtime folder.
@@ -228,7 +238,7 @@ pub fn runtime_folder() -> Option<PathBuf> {
     named
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn socket_in(runtime: &Path) -> PathBuf {
     runtime.join("skwird").join("socket")
 }
@@ -245,13 +255,67 @@ pub(crate) type Conn = pipe::Stream;
 pub(crate) type Conn = std::convert::Infallible;
 
 /// A connection to `at`, each read and write waited for at most `silence`.
-#[cfg(unix)]
+/// Linux holds a connect while the engine's queue of connections is full:
+/// one that accepts none would hold it past the silence, and past a stop.
+/// So the connect does not wait: while the queue is full, it is made again
+/// after a pause, until the silence has passed or a stop comes.
+#[cfg(target_os = "linux")]
+fn connect_to(at: &Path, silence: Option<Duration>, stop: &Stop) -> std::io::Result<Conn> {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
+    let fd = rustix::net::socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        SocketFlags::CLOEXEC | SocketFlags::NONBLOCK,
+        None,
+    )?;
+    let addr = SocketAddrUnix::new(at)?;
+    let deadline = silence.map(|d| std::time::Instant::now() + d);
+    let mut pause = Duration::from_millis(1);
+    loop {
+        match rustix::net::connect(&fd, &addr) {
+            Ok(()) => break,
+            Err(rustix::io::Errno::AGAIN) => {
+                let left = deadline.map(|d| d.saturating_duration_since(std::time::Instant::now()));
+                if left.is_some_and(|l| l.is_zero()) {
+                    return Err(std::io::ErrorKind::TimedOut.into());
+                }
+                if stop.pause(left.map_or(pause, |l| l.min(pause))) {
+                    return Err(std::io::ErrorKind::ConnectionAborted.into());
+                }
+                pause = (pause * 2).min(Duration::from_millis(100));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let stream = std::os::unix::net::UnixStream::from(fd);
+    stream.set_nonblocking(false)?;
+    // The socket's own, so its clone's too.
+    stream.set_read_timeout(silence)?;
+    stream.set_write_timeout(silence)?;
+    Ok(stream)
+}
+
+/// A connection to `at`, each read and write waited for at most `silence`.
+/// Elsewhere than Linux (macOS), a connect to a full queue is refused at
+/// once: it never waits.
+#[cfg(all(unix, not(target_os = "linux")))]
 fn connect_to(at: &Path, silence: Option<Duration>, _: &Stop) -> std::io::Result<Conn> {
     let stream = std::os::unix::net::UnixStream::connect(at)?;
     // The socket's own, so its clone's too.
     stream.set_read_timeout(silence)?;
     stream.set_write_timeout(silence)?;
     Ok(stream)
+}
+
+/// Whether a connect failed for nothing listening there: no socket, or a
+/// dead engine's left; on Windows, no pipe of that name. An engine may be
+/// started there then, and nowhere else.
+#[cfg(any(unix, windows))]
+fn nothing_listens(e: &Error) -> bool {
+    matches!(e, Error::Io(e) if matches!(
+        e.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+    ))
 }
 
 /// A connection to the pipe `at`, each read and write waited for at most
@@ -301,10 +365,21 @@ pub struct Client {
     silence: Option<Duration>,
     /// What its [`Stopper`] stops.
     stop: Arc<Stop>,
-    /// Set once the engine said nothing for `silence`: what it says after
-    /// would be read from the middle of a message, so the connection is
-    /// closed.
-    silent: bool,
+    /// Set once a read or a write failed: what is read after would be read
+    /// from the middle of a message, so the connection is closed.
+    closed: Option<Closed>,
+}
+
+/// Why a connection was closed.
+#[cfg(any(unix, windows))]
+#[derive(Clone, Copy, Debug)]
+enum Closed {
+    /// The engine said nothing for its silence.
+    Silent,
+    /// A read or a write failed otherwise: it may have stopped in the
+    /// middle of a message (a line cut short, or longer than a line may
+    /// be).
+    Broken,
 }
 
 /// A connection to an engine, which this system does not make (rule 7):
@@ -433,17 +508,29 @@ impl Client {
             Some(s) => vec![s.clone()],
             None => find.sockets(),
         };
+        // How the first engine that listens and failed failed.
+        let mut failed: Option<Error> = None;
         for socket in &sockets {
             match Client::open(socket, &find.client, find.silence, stop) {
                 Ok(client) => return Ok(client),
                 Err(e @ (Error::Version | Error::Stopped)) => return Err(e),
-                Err(_) => {}
+                Err(e) if nothing_listens(&e) => {}
+                Err(e) => {
+                    failed.get_or_insert(e);
+                }
             }
         }
         let Some(program) = &find.start else {
             return Err(Error::NoEngine("none answers".into()));
         };
         let socket = find.started()?;
+        // One engine per scope (rule 4): where an engine listens and failed
+        // (silent, gone in the middle of its hello, refusing), the system
+        // service's or where one started would, none is started beside it,
+        // nor waited for. An engine going away listens no more.
+        if let Some(e) = failed {
+            return Err(Error::NoEngine(format!("one runs, and failed: {e}")));
+        }
         // No engine started for a search given up on.
         if stop.stopped() {
             return Err(Error::Stopped);
@@ -520,19 +607,23 @@ impl Client {
             },
             silence,
             stop: Arc::clone(stop),
-            silent: false,
+            closed: None,
         };
         let id = c.ask(Ask::Hello(protocol::Hello {
             versions: vec![protocol::VERSION],
             client: client.to_owned(),
         }))?;
-        match c.answer(id)? {
-            Answer::Hello(welcome) if welcome.version == protocol::VERSION => {
+        // An engine refuses a hello of no version it speaks with an error
+        // (`what` is `version`), as [`Client::answer`] gives it.
+        match c.answer(id) {
+            Ok(Answer::Hello(welcome)) if welcome.version == protocol::VERSION => {
                 c.welcome = welcome;
                 Ok(c)
             }
-            Answer::Error(f) if f.what == "version" => Err(Error::Version),
-            _ => Err(Error::Version),
+            Ok(Answer::Hello(_)) => Err(Error::Version),
+            Err(Error::Engine(f)) if f.what == "version" => Err(Error::Version),
+            Ok(_) => Err(Error::Unexpected),
+            Err(e) => Err(e),
         }
     }
 
@@ -570,29 +661,35 @@ impl Client {
     #[cfg(any(unix, windows))]
     fn closed(&self) -> Option<Error> {
         if self.stop.stopped() {
-            Some(Error::Stopped)
-        } else if self.silent {
-            Some(Error::Silent(self.silence.unwrap_or_default()))
-        } else {
-            None
+            return Some(Error::Stopped);
         }
+        self.closed.map(|why| match why {
+            Closed::Silent => Error::Silent(self.silence.unwrap_or_default()),
+            Closed::Broken => Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "the connection was closed: a read or a write on it failed",
+            )),
+        })
     }
 
     /// What a read or a write that failed means: a stop, the engine's
-    /// silence (the connection closed), or the error itself.
+    /// silence, or the error itself. Whichever it is, the connection is
+    /// closed: a read may have stopped in the middle of a line, which no
+    /// read after could find the end of.
     #[cfg(any(unix, windows))]
     fn failed(&mut self, e: std::io::Error) -> Error {
         if self.stop.stopped() {
             return Error::Stopped;
         }
-        match (e.kind(), self.silence) {
-            (std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut, Some(d)) => {
-                self.silent = true;
-                shut(&self.writer);
-                Error::Silent(d)
-            }
-            _ => Error::Io(e),
+        shut(&self.writer);
+        if let (std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut, Some(d)) =
+            (e.kind(), self.silence)
+        {
+            self.closed = Some(Closed::Silent);
+            return Error::Silent(d);
         }
+        self.closed = Some(Closed::Broken);
+        Error::Io(e)
     }
 
     #[cfg(any(unix, windows))]
@@ -765,16 +862,12 @@ impl Client {
         release: &[&str],
     ) -> Result<protocol::Volumes, Error> {
         let owned = |ids: &[&str]| ids.iter().map(|&id| id.to_owned()).collect();
-        let id = self.ask(Ask::Volumes {
+        self.ask_volumes(Ask::Volumes {
             keep: owned(keep),
             forget: owned(forget),
             release: owned(release),
             release_at: Vec::new(),
-        })?;
-        match self.answer(id)? {
-            Answer::Volumes(volumes) => Ok(volumes),
-            _ => Err(Error::Unexpected),
-        }
+        })
     }
 
     /// Release every kept volume mounted at or below each of `points`,
@@ -783,12 +876,17 @@ impl Client {
     /// held, or after a few seconds. The volumes this client keeps after,
     /// and those mounted.
     pub fn release_at(&mut self, points: &[&Path]) -> Result<protocol::Volumes, Error> {
-        let id = self.ask(Ask::Volumes {
+        self.ask_volumes(Ask::Volumes {
             keep: Vec::new(),
             forget: Vec::new(),
             release: Vec::new(),
             release_at: points.iter().map(|p| WirePath::of(p)).collect(),
-        })?;
+        })
+    }
+
+    /// `ask`, a [`Ask::Volumes`], asked and its answer awaited.
+    fn ask_volumes(&mut self, ask: Ask) -> Result<protocol::Volumes, Error> {
+        let id = self.ask(ask)?;
         match self.answer(id)? {
             Answer::Volumes(volumes) => Ok(volumes),
             _ => Err(Error::Unexpected),
@@ -892,16 +990,121 @@ fn start(program: &Path, find: &Find) -> Result<(), Error> {
     if let Some(log) = &log {
         set.push(("SKWIRD_LOG", log.as_os_str()));
     }
-    pipe::start_detached(&program_path(program)?, &["serve"], &folder, &set)
+    let program = program_on(&program_path(program)?, std::env::var_os("PATH"))
+        .ok_or_else(|| Error::NoEngine("cannot start it: not found on the PATH".into()))?;
+    pipe::start_detached(&program, &["serve"], &folder, &set)
         .map_err(|e| Error::NoEngine(format!("cannot start it: {e}")))
+}
+
+/// The file `program` names, as Windows would start it, without an
+/// extension as an `.exe`: a path as it is; a bare name, the first found
+/// in a folder of `path` that is absolute. Never in the current folder,
+/// where Windows looks first: a program left in the folder a client was
+/// started from would be started in place of the engine.
+#[cfg(any(windows, test))]
+fn program_on(program: &Path, path: Option<OsString>) -> Option<PathBuf> {
+    let file = if program.extension().is_none() {
+        program.with_extension("exe")
+    } else {
+        program.to_owned()
+    };
+    if file.is_absolute() || file.components().count() > 1 {
+        return Some(file);
+    }
+    std::env::split_paths(&path?)
+        .filter(|folder| folder.is_absolute())
+        .map(|folder| folder.join(&file))
+        .find(|candidate| candidate.is_file())
+}
+
+/// A folder of a unit test's own, removed when dropped, by a test that
+/// failed too: under the user's cache, never `/tmp` (AGENTS.md,
+/// "Testing"); on Windows, under their local application data. The
+/// integration tests' is `tests/common`'s.
+#[cfg(test)]
+pub(crate) struct Scratch(pub(crate) PathBuf);
+
+#[cfg(test)]
+impl Scratch {
+    pub(crate) fn new(label: &str) -> Scratch {
+        let base = if cfg!(windows) {
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+        } else {
+            std::env::var_os("XDG_CACHE_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        };
+        let dir = base
+            .unwrap()
+            .join("skwird-tests")
+            .join(format!("client-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Scratch(dir)
+    }
+
+    pub(crate) fn join(&self, rel: &str) -> PathBuf {
+        self.0.join(rel)
+    }
+}
+
+#[cfg(test)]
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
-    use std::path::PathBuf;
+    use std::path::{Component, Path, PathBuf};
 
-    use super::absolute;
+    use super::{Scratch, absolute, program_on};
+
+    /// The program a client starts on Windows is found as Windows would
+    /// start it, an `.exe` where it has no extension, in the absolute
+    /// folders of the `PATH` alone: never in one named relatively, the
+    /// current folder among them. A path is taken as it is.
+    #[test]
+    fn a_program_is_found_on_the_path_alone() {
+        let scratch = Scratch::new("program-on");
+        let (here, bin) = (scratch.join("here"), scratch.join("bin"));
+        for folder in [&here, &bin] {
+            std::fs::create_dir_all(folder).unwrap();
+            std::fs::write(folder.join("skwird.exe"), b"").unwrap();
+        }
+        let path = |folders: &[&Path]| Some(std::env::join_paths(folders).unwrap());
+        let bare = Path::new("skwird");
+        let found = Some(bin.join("skwird.exe"));
+        assert_eq!(program_on(bare, path(&[Path::new("."), &bin])), found);
+        assert_eq!(
+            program_on(bare, path(&[&here, &bin])),
+            Some(here.join("skwird.exe"))
+        );
+        assert_eq!(program_on(bare, path(&[Path::new(".")])), None);
+        assert_eq!(program_on(bare, None), None);
+        assert_eq!(program_on(&bin.join("skwird"), None), found);
+        assert_eq!(program_on(&bin.join("skwird.exe"), None), found);
+        // `here`, named from the current folder: passed over, though the
+        // program is there.
+        let cwd = std::env::current_dir().unwrap();
+        let common = cwd
+            .components()
+            .zip(here.components())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let relative: PathBuf =
+            std::iter::repeat_n(Component::ParentDir, cwd.components().count() - common)
+                .chain(here.components().skip(common))
+                .collect();
+        if relative.is_relative() {
+            assert!(relative.join("skwird.exe").is_file(), "{relative:?}");
+            assert_eq!(program_on(bare, path(&[&relative, &bin])), found);
+        } else {
+            eprintln!("not proven: the current folder is on another drive");
+        }
+    }
 
     /// An XDG folder named empty or relative is none, as the engine reads
     /// it.
