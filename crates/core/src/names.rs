@@ -402,6 +402,15 @@ pub trait NameIndex: Send + Sync {
     fn follow(&self, _root: &Path, _cancel: &CancelToken) -> Option<Opened> {
         None
     }
+
+    /// Let go of everything its engine holds at or below `point`, a volume
+    /// about to be unmounted (ADR-149, ADR-150 18): returned once nothing
+    /// of it is held, its engine reading nothing there until the volume is
+    /// mounted again or a while has passed, should the unmount be refused.
+    /// Asked of what already runs, never starting anything (no engine, no
+    /// hold); blocking, on a worker, given up on with `cancel` and within a
+    /// few seconds. The default holds nothing.
+    fn release(&self, _point: &Path, _cancel: &CancelToken) {}
 }
 
 /// An index opened for a search: which, how far it covers, its session.
@@ -488,6 +497,18 @@ impl NameIndexes {
         covered
     }
 
+    /// Every index let go of `point` before its volume is unmounted
+    /// ([`NameIndex::release`]): returned once none holds anything there.
+    /// Blocking, on a worker.
+    pub fn release(&self, point: &Path, cancel: &CancelToken) {
+        for index in self.list.all() {
+            if cancel.is_cancelled() {
+                return;
+            }
+            index.release(point, cancel);
+        }
+    }
+
     /// A session to follow `root`'s journal on ([`NameIndex::follow`]):
     /// that of the index `by` names where it answers (a mark kept is its
     /// own), else the strongest that does.
@@ -537,6 +558,52 @@ mod tests {
     use super::*;
     use crate::coverage::{Proof, Why};
     use std::time::{Duration, SystemTime};
+
+    /// An index that notes the volumes it was asked to let go of.
+    struct Releasing(
+        &'static str,
+        Arc<parking_lot::Mutex<Vec<(&'static str, PathBuf)>>>,
+    );
+
+    impl NameIndex for Releasing {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn by(&self) -> Words {
+            Words::as_written(self.0)
+        }
+        fn syncs(&self) -> bool {
+            true
+        }
+        fn open(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
+            None
+        }
+        fn release(&self, point: &Path, _: &CancelToken) {
+            self.1.lock().push((self.0, point.to_path_buf()));
+        }
+    }
+
+    /// Before a volume is unmounted, every index is asked to let go of it,
+    /// in their order, an index of none its default holding nothing; none
+    /// once the unmount is given up on.
+    #[test]
+    fn every_index_lets_go_of_a_volume_before_its_unmount() {
+        let asked = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let indexes = NameIndexes::default();
+        indexes.register("a", Arc::new(Releasing("first", Arc::clone(&asked))));
+        indexes.register("b", Arc::new(Fixed("holds nothing", Coverage::as_of(None))));
+        indexes.register("c", Arc::new(Releasing("second", Arc::clone(&asked))));
+        let point = PathBuf::from("/media/someone/it's USB");
+        indexes.release(&point, &CancelToken::new());
+        assert_eq!(
+            *asked.lock(),
+            [("first", point.clone()), ("second", point.clone())]
+        );
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        indexes.release(&point, &cancelled);
+        assert_eq!(asked.lock().len(), 2, "given up on: none asked");
+    }
 
     struct Fixed(&'static str, Coverage);
 

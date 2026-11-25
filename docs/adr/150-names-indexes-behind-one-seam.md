@@ -17,7 +17,8 @@ menu's entry, skwird-check), checked in the release window. Amended the
 same evening (the Index page, steps E and F, the footer's
 words), and again (13 to 15: step D's whole disk as typed, sizes
 and times, the journal), and on 2026-11-24 (16: Usage from folder
-totals; 17: names in both forms). Amends
+totals; 17: names in both forms; 18: removable volumes let go of
+before an eject). Amends
 ADR-050 (point 7: where the provider lives) and ADR-026's amendment of
 2026-10-10 (coverage is a seam of its own, not `HintProvider`'s).
 
@@ -289,4 +290,29 @@ question 5), built the same evening on skwir's side:
     - plocate is asked every combination of the terms' forms, eight runs
       at most. Past that, a term is left out of what it is asked, so it
       names more, never fewer.
+
+### 2026-11-25: removable volumes
+
+skwird 0.2 (its main at e650eb3, the client copied there) keeps a
+removable volume a client asks for, by an identity its engine spells,
+and lets go of one before its unmount. The request, `volumes {keep,
+forget, release, release_at}`, was designed with skwird's session on
+the points skwir's side needed: asked only once the user said yes,
+never at a start; release answered once nothing of the volume is held,
+5 s at most; by mount point too, as an Eject knows it; a second volume
+of one identity refused; read a few seconds after mounting, at the
+lowest I/O priority; block devices alone; nothing written on the
+volume. The word `volumes` in the hello says an engine does it: every
+user's engine, never the system service.
+
+18. **What an index holds of a volume is let go of before its unmount**
+    (`NameIndex::release`, ADR-149's Eject): Eject asks every index on
+    its worker, after Skwir let go and the volume was flushed, before
+    the unmount, as it does when another program announces one. skwird's
+    asks an engine already running whose hello says `volumes`
+    (`release_at`, the mount point), never starting one, its wait
+    bounded by its own silence (8 s). An engine that does not say it
+    keeps no removable volume, and stops at a mount below its roots.
+    Asking the user whether to keep a volume waits for their choice of
+    how (`docs/PLAN.md`).
 

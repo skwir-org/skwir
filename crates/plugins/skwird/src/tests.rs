@@ -511,6 +511,59 @@ fn what_is_kept_out_is_sent_to_the_engine() {
     );
 }
 
+/// Before a volume is unmounted, an engine already running whose hello
+/// says it keeps volumes is asked to let go of what it holds there, by the
+/// volume's mount point, and answers once it holds nothing; one that says
+/// no such word is asked nothing; with no engine, nothing is started and
+/// nothing waits.
+#[test]
+fn an_engine_that_keeps_volumes_lets_go_of_one_before_its_unmount() {
+    let point = PathBuf::from("/media/someone/it's USB, \u{e9}t\u{e9}");
+    for (features, asked) in [(vec!["volumes".to_owned()], true), (Vec::new(), false)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = Script {
+            roots: vec![PathBuf::from("/fixture/root")],
+            features: features.clone(),
+            volumes: Some(protocol::Volumes {
+                kept: Vec::new(),
+                seen: Vec::new(),
+            }),
+            ..Script::default()
+        };
+        let fake = Fake::start(tmp.path().join("socket"), script).unwrap();
+        let heard = Heard::before(&fake, tmp.path());
+        let index = index(Engines::At(heard.socket.clone()));
+        index.release(&point, &CancelToken::new());
+        let released: Vec<protocol::Ask> = heard
+            .asked()
+            .into_iter()
+            .filter(|ask| matches!(ask, protocol::Ask::Volumes { .. }))
+            .collect();
+        if asked {
+            assert_eq!(
+                released,
+                [protocol::Ask::Volumes {
+                    keep: Vec::new(),
+                    forget: Vec::new(),
+                    release: Vec::new(),
+                    release_at: vec![protocol::WirePath::of(&point)],
+                }],
+                "released by its mount point, nothing kept or forgotten"
+            );
+        } else {
+            assert!(released.is_empty(), "{features:?}: asked nothing");
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let index = index(Engines::At(tmp.path().join("no engine")));
+    let asked_at = std::time::Instant::now();
+    index.release(&point, &CancelToken::new());
+    assert!(
+        asked_at.elapsed() < Duration::from_secs(2),
+        "no engine waited for"
+    );
+}
+
 /// A root skwird is still reading (a first build) says so at once, and is
 /// asked nothing more: the search walks it, never syncing it, as a sync
 /// waits for the build's end.

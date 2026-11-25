@@ -1383,10 +1383,11 @@ fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
             return;
         }
         let weak = app.weak();
+        let lifetime = jobs.child();
         app.scheduler.spawn(
             Priority::Visible,
             "places-unmount-told",
-            jobs.child(),
+            lifetime.clone(),
             move || {
                 let Some(app) = weak.upgrade() else {
                     return;
@@ -1422,6 +1423,9 @@ fn follow_unmounts(places: &Places, app: &App, lifetime: &CancelToken) {
                     if let Err(error) = app.release(&point, &Location::from_path(&home)) {
                         tracing::debug!(?point, "not let go of before its unmount: {error:#}");
                     }
+                    // A names index's engine lets go of it too, as it
+                    // reads a volume it was asked to keep (ADR-150, 18).
+                    app.names.release(&point, &lifetime);
                     if named.is_empty() {
                         continue;
                     }
@@ -2157,6 +2161,12 @@ impl Plugin for PlacesPlugin {
                     // asked, so its tries meet nothing of Skwir's there.
                     if let Err(error) = app.release(&mount.path, &home) {
                         tracing::debug!("not let go of again before its unmount: {error:#}");
+                    }
+                    // And a names index's engine, reading a volume it was
+                    // asked to keep: answered once nothing of it is held
+                    // (ADR-150, 18).
+                    if let Some(lifetime) = lifetime.as_ref() {
+                        app.names.release(&mount.path, lifetime);
                     }
                     let deadline = std::time::Instant::now() + RELEASE;
                     let unmounted = loop {

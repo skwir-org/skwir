@@ -55,6 +55,11 @@ const SILENCE: Duration = Duration::from_secs(60);
 /// included; one busier than that is not counted on.
 const PROBE_SILENCE: Duration = Duration::from_millis(500);
 
+/// How long an engine may take to let go of a volume before its unmount
+/// (`NameIndex::release`): it answers once nothing of it is held, within
+/// 5 s, so an Eject never waits on one that stopped answering longer.
+const RELEASE_SILENCE: Duration = Duration::from_secs(8);
+
 /// The longest an engine may take to say hello, a started one's wait
 /// besides (`connect`): an engine answers it at once, a first build under
 /// way included. One that takes the connection and says nothing (stopped,
@@ -330,6 +335,36 @@ impl NameIndex for Index {
     /// both forms (`protocol::NAMES_BOTH_FORMS`); none where it does not.
     fn covers_both_forms(&self, q: &Query, cancel: &CancelToken) -> Option<Coverage> {
         self.probe(q, cancel, true)
+    }
+
+    /// Let go of `point` before its volume is unmounted (ADR-150, 18): an
+    /// engine already running whose hello says it keeps volumes
+    /// (`protocol::VOLUMES`) is asked to release what it holds at or below
+    /// it (`release_at`), answered once nothing of it is held. None is
+    /// started: an engine not running holds nothing. One that says no such
+    /// word keeps no removable volume, and stops at a mount below its roots.
+    fn release(&self, point: &Path, cancel: &CancelToken) {
+        let Some(mut find) = find(&self.engines, false) else {
+            return;
+        };
+        find.silence = Some(RELEASE_SILENCE);
+        if cancel.is_cancelled() {
+            return;
+        }
+        let Ok((mut client, _stop)) = connect(&find, cancel, self.hello) else {
+            return;
+        };
+        if !client
+            .welcome()
+            .features
+            .iter()
+            .any(|word| word == protocol::VOLUMES)
+        {
+            return;
+        }
+        if let Err(error) = client.release_at(&[point]) {
+            said("release", &error);
+        }
     }
 
     /// A session on an engine already running, nothing started nor sent
