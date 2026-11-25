@@ -247,6 +247,20 @@ programs.skwir = {
 };
 ```
 
+Searches are answered from an index where skwird, Skwir's index of names,
+runs ([skwir-org/skwird](https://github.com/skwir-org/skwird)). Its flake has
+a Home Manager module of its own, `services.skwird`, the engine for your
+session: enable it beside `programs.skwir`, and skwir finds it, with no
+setting of its own:
+
+```nix
+imports = [
+  inputs.skwir.homeManagerModules.default
+  inputs.skwird.homeManagerModules.default
+];
+services.skwird.enable = true;
+```
+
 ### From source
 
 With Rust 1.97 or later and the libraries `flake.nix` lists (the Nix flake has

@@ -575,12 +575,28 @@ it, **+ Filter** adds one, and the text can be typed as is:
   shows the bar above the pane's files wherever it goes (each pane its
   own, as the timeline under them), and says why when it has nothing to
   offer.
-- A search uses the desktop's indexes where they run (Baloo, plocate) to
-  go faster, and always checks the files themselves. A search of `/` by
-  name alone is plocate's answer where it is installed, as its database
-  was at its last update: the footer says when (`as of Yesterday 03:00`),
-  and a file made or renamed since is not found. Search a folder to walk
-  it.
+- A search asks the indexes that run to go faster, and always checks the
+  files themselves: skwird, Skwir's own index of names, installed apart
+  ([skwir-org/skwird](https://github.com/skwir-org/skwird)), plocate's
+  database, and the desktop's (Baloo). Each answers only as far as it
+  can prove, which the footer says, and where none answers, the search
+  walks the folders.
+  - Below a folder skwird keeps live, the answer comes at once and up to
+    date. Elsewhere in your home, skwird checks what changed first,
+    about half a second.
+  - plocate answers as its database was at its last update, and the
+    footer says when (`as of Yesterday 03:00`): a file made or renamed
+    since is not found. Search a folder to walk it.
+  - Settings › Index chooses the folders skwird keeps live (your own
+    folders and bookmarks, and those you add, or a folder's Keep Live for
+    Searches), whether a search starts skwird where it is not running,
+    and the removable drives it indexes. Skwir asks once as a drive is
+    plugged in while skwird runs, and a drive's menu in the sidebar has
+    Index Its Names. A drive's index stays on this computer, never on
+    the drive, and Eject lets skwird go of it first.
+- A word is found however its accents are written: `café` typed finds a
+  name written with `e` and a combining accent, as macOS's programs
+  often write names, and the other way round.
 - A search looks at hidden files when the pane shows them (`Ctrl+H`), and
   again as you turn them on or off; `hidden:true` always finds and shows
   them, `hidden:false` never does.
@@ -909,6 +925,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | Terminal | The terminal's shell and history, and the shell commands on the selection run in |
 | Network | Every server of the sidebar's Network section (added, edited and removed as from their menus), where those added by their address are kept, and the tools that open an address, in the order tried |
 | Privacy | What leaves the machine: whether a copy downloaded from the website asks it for new versions (Updates); what agents never see is on Exclusions |
+| Index | skwird's index of names: whether a search starts it, the folders it keeps live, and the removable drives it indexes |
 | Exclusions | The files and folders skwir leaves out, by kind: of searches and tag counts, of what agents see |
 | Plugins | Every plugin, on or off, what it may do and what it needs |
 | Keyboard | Every action and its keys, changed where they are listed |
