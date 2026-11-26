@@ -24470,3 +24470,60 @@ start running code ADR-128's list left scattered.
   `link-ordered --check` passes on the binary linked with it.
 - **Tests:** `tools/build`'s 26 (a later program follows the first,
   laid out as if alone; the PNG made is one).
+
+## 2026-11-26, night: printing in a viewer, skwird with the packages, two reviews, 0.7.1
+
+The user asked, before sleeping: Skwir's Print dialog in a viewer; skwird
+brought by Skwir's packages (their decisions: recommended where a package
+manager brings it, carried in the Windows, Mac and tarball builds,
+never in the AppImage; Fedora's repository waits for a signed `.rpm`);
+a review with fixes; 0.7.1 up to the GitHub draft. Dependencies updated
+within their ranges (8f433717).
+
+- **Printing in a viewer** (d6a8cce0): `print.print` asked Skwir's dialog
+  first only with a user's window shown; it now asks wherever a window
+  can (`can_ask`), and Ctrl+P is bound in a viewer. Checked in windows on a
+  headless sway, a viewer's own program and one handed to a running
+  skwir, on a PDF, a picture and a text: the dialog in the viewer, As
+  shown and Booklet, Save as PDF written, Escape closing the dialog alone.
+- **skwird with the packages:** found on `PATH`, then beside Skwir's own
+  program (2a4d3832); the `.deb` and `.rpm` recommend it and the
+  repositories list its packages, each suite its own, from
+  `tools/package/skwird.lock` (81c77336, `just repository-check` passed
+  on stand-in packages; skwird 0.2.0's `.rpm` is unsigned, so Fedora's
+  lists none); carried in the Windows installer and zip, the Mac app and
+  the tarball, built there from its source (e8f79158: windows-check
+  under Wine, macos-check's seals, the tarball's skwird finding a file in
+  its root; on packages staged from 0.7.0's programs); Settings › Index
+  and a walked search's footer say when it is missing (f3cedab4,
+  de62b114, checked in a window with a stand-in xdg-open and skwird).
+- **First review** (three readers, 45 findings, 4 high), fixed:
+  - the running Skwir removed whatever path a launch named as its
+    standard input, which a sandbox allowed FileManager1 could reach
+    (HO-1): only the caller's own spool now, a viewing taken in two
+    steps, `Finishing` answering its instance's own name alone
+    (91505361, 53db45df; 38 handover tests ten runs in a row, 14 under
+    Wine);
+  - Skwir Preview's 813 types made it Skwir's own fallback opener
+    (TL-1): never unless a list names it (7fcbb415); its types listed by
+    their aliases too (683f0605); `skw` through a link to the AppImage
+    (83890bf7);
+  - in a viewer, Open With did nothing and nothing it said was drawn
+    (VW-1, VW-3): what a viewer offers is each command's declaration,
+    menus asking it; Show in Skwir reachable and detached; Properties
+    and links offered; a plan's answer in the window that asked; the
+    preview bar keeps More at any width (3080267f, 5b47935a, aeb98727;
+    checked in windows, French, both kinds of viewer).
+- **Second review** (three fresh readers, 23 findings, 1 high: the
+  viewer's stepping broken by 3080267f, a `select` its steps run being
+  refused), fixed in f3834a39 (checked in a window), ad302bfd (Stop
+  leaves no action to go on by itself), a2081f86, 93a36bd7 (archives'
+  links refused), de62b114 and the docs.
+- **Incident:** at 04:00 a fixer executed `skwir-0.7.0-x86_64.AppImage
+  --appimage-offset` to read its runtime's offset; NixOS's binfmt ran it
+  through appimage-run with the user's own folders, and it rewrote the
+  user's remembered windows in `~/.local/state/skwir/state.toml`. Stopped
+  by its pids; the agents' rules now forbid executing any packaged
+  program to inspect it.
+- **Measured:** see 40f4bcf3 and ADR-128 (the list made again, a
+  viewer's start laid out after the file manager's).

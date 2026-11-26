@@ -1436,22 +1436,69 @@ to `lib/libgstreamer-1.0.0.dylib`, which rcodesign signs as a library,
 seals, then signs again through the link. Left: a framework rcodesign
 seals once (its binary a file, not a link) and a look-over in
 `package-macos` that checks every bundle's seal as codesign does, both
-done in 0952a7be and passed on Linux. Left: the next release's Mac
+done in 0952a7be and passed on Linux. Left: 0.7.1's Mac
 build checked by a Mac (the tap's cask job runs codesign's deep check),
 and then the cask on the tap's main (it waits on `cask/skwir`).
 
 **A file's preview from a terminal** (ADR-151, built 2026-11-25:
-`skwir view`, `skw`, checked in a window on Xvfb; amended 2026-11-26: a
-Skwir running shows the files a launch hands it, the launch waiting in
-its terminal, checked on a headless sway; a viewer's start laid out
-after the file manager's by `just startup-order`, ADR-128 amended;
-`dist` measured there: skwir 76.5 MiB own share, a viewer's own program
-73.0, one handed to skwir 22.8 more, its first frame 26 ms from the
-launch against 85). Left: the system's dialog with no file named,
-tried only where no portal answers (it ends, saying why); the packages'
-`skw` link and Skwir Preview entry built and installed (written, no
-package built); Windows's handover tried under Wine (the pipe), its
-window and macOS compiled only.
+`skwir view`, `skw`; amended 2026-11-26: a Skwir running shows the files
+a launch hands it in two steps, the launch waiting in its terminal;
+reviewed twice the same night, a viewer's offer made each command's
+declaration; `dist` measured on a headless sway: skwir 76.5 MiB own
+share, a viewer's own program 73.0, one handed to skwir 22.8 more, its
+first frame 26 ms from the launch against 85). Left:
+- the system's dialog with no file named, tried only where no portal
+  answers (it ends, saying why);
+- the packages' `skw` link and Skwir Preview entry, built by 0.7.1's
+  release; the RPM owns no `skw` link (cargo-generate-rpm has no
+  symlink asset: an upstream pull request would let it);
+- Skwir Preview's declared types: other programs (GIO, xdg-open, KDE)
+  take it as the default opener of each type it declares that no list
+  names directly, and its desktop ID sorts before `vlc`; Skwir's own
+  Open no longer does (7fcbb415). How many it declares is the user's
+  call;
+- Windows: the handover tried under Wine (the pipe), its window
+  compiled only; a release build's terminal does not wait for `skw`
+  (the window subsystem), and a later Ctrl+C in that console ends the
+  launch, closing its viewer, as for `skwir` (candidate:
+  `SetConsoleCtrlHandler(None, TRUE)` in `attach_console`); each handed
+  viewer's thread looks four times a second whether its launch is there
+  (overlapped I/O would wait instead); macOS compiled only;
+- in a 300 px viewer More's menu runs off the window's edge; opening a
+  viewer wakes the folders of windows asleep (`resume_shown`, VW-21),
+  and the active window may be recorded wrongly (VW-23);
+- Stop and quit with a viewer up: an action waiting for its server may
+  still go on if the server answers at that very moment (ad302bfd
+  narrowed it);
+- Skwir's own lineage rule (apps.rs) asks a parent's named default
+  before the child type's own applications, where GIO does the reverse
+  (its doc says it follows GIO).
+
+**skwird with Skwir's packages** (ADR-050, ADR-052, ADR-074, ADR-075,
+ADR-142, amended 2026-11-26): the `.deb` and `.rpm` recommend it, the
+repositories list its packages, the AUR suggests it; the Windows
+installer and zip, the Mac app and the Linux tarball carry it; Settings ›
+Index and a walked search's footer say when it is missing. Left:
+- Fedora's repository lists none until skwird's `.rpm` is signed by the
+  repositories' key (skwird's release, the user's passphrase);
+- skwird 0.2.0's `logon remove` takes back the logon task whichever copy
+  registered it, and leaves its engine running, which holds its files at
+  a removal or an upgrade (asked of skwird: `--if-mine`, ending the
+  engine, a `stop`, a silent `schtasks`); nothing tried on Windows or a
+  Mac (Full Disk Access granted to skwird's own copy does not carry over
+  to the one signed with the app);
+- a plain Linux build of skwird for the AppImage's users (skwird's
+  release; its session recommends glibc in an Ubuntu 22.04 root).
+
+**What a sandbox reaches on the session bus** (found 2026-11-26): calls
+reach any object served on the program's one connection by whatever name
+it owns, so a sandbox allowed `org.freedesktop.FileManager1` reached
+`Finishing` (closed by 53db45df: answered by the instance's own name
+alone). The portal back end's FileChooser object and the media controls'
+objects are still reachable so. Left: a destination check on every object
+served there, or FileManager1 on a connection of its own (an ADR on the
+one-connection rule). Core's `fs::Dir` removes nothing in a folder it
+holds: handover.rs uses rustix for the spool (a seam for core).
 
 **A folder comes back with its volume** (ADR-149, built and amended
 twice 2026-11-22). Left: a folder deleted and made again at its path is
