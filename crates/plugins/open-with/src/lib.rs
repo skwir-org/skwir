@@ -3,7 +3,8 @@
 //! files or folders with an application the user chooses.
 //!
 //! The default application is the catalog's (`Catalog::default_for_lineage`,
-//! the desktop's rule), for Open as for the menu that names it: not
+//! the desktop's rule, save that Skwir Preview opens only the types a list
+//! names it for), for Open as for the menu that names it: not
 //! `xdg-open`'s, which some desktops reduce to a simpler rule that ignores
 //! the applications the user added for a type. `xdg-open` opens only what
 //! the catalog has no application for.
