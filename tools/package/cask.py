@@ -103,8 +103,7 @@ cask "skwir" do
   version "{version}"
   sha256 "{sha256}"
 
-  url "{REPOSITORY}/releases/download/v#{{version}}/skwir-#{{version}}-macos-arm64.zip",
-      verified: "github.com/skwir-org/skwir/"
+  url "{REPOSITORY}/releases/download/v#{{version}}/skwir-#{{version}}-macos-arm64.zip"
   name "Skwir"
   desc "{summary()}"
   homepage "https://skwir.org/"

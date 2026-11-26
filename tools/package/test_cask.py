@@ -65,9 +65,11 @@ class Cask(unittest.TestCase):
             self.assertEqual(made.returncode, 0, made.stderr)
             text = (tap / "Casks/skwir.rb").read_text()
             self.assertIn('cask "skwir" do\n  version "1.2.3"\n  sha256 "' + sha256 + '"\n', text)
+            # No `verified:`: Homebrew deprecated it (2026-11, cask/dsl.rb),
+            # its own verification the default.
             self.assertIn('  url "https://github.com/skwir-org/skwir/releases/download/v#{version}/'
-                          'skwir-#{version}-macos-arm64.zip",\n'
-                          '      verified: "github.com/skwir-org/skwir/"\n', text)
+                          'skwir-#{version}-macos-arm64.zip"\n  name "Skwir"\n', text)
+            self.assertNotIn("verified:", text)
             self.assertIn('  app "skwir.app"\n', text)
             # The program on the PATH, and `skw`, a link to it that starts
             # it as `skwir view` (ADR-151).
