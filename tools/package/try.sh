@@ -262,6 +262,22 @@ arch)
 esac
 echo "== $distribution: with the others and what they recommend"
 enter "$fresh" 0 /tools/package/linux/check.sh ${fonts:+"$fonts"} "channel=$channel"
+# Fedora's `skw` is made by skwir's scriptlets (crates/skwir/Cargo.toml:
+# cargo-generate-rpm 0.21.1 puts no link in a package, nor a %ghost, so
+# no package owns it): kept through a reinstall, where the old package's
+# %postun runs once the new one's skwir is in place, and gone with skwir,
+# whatever erases the others first (ADR-151).
+if [ "$distribution" = fedora ]; then
+    enter "$fresh" 0 sh -c 'dnf -y -q reinstall /package/main/*.rpm /package/extra/*.rpm' >/dev/null
+    # shellcheck disable=SC2016 # expanded in the root
+    enter "$fresh" 0 sh -c '[ -L /usr/bin/skw ] && [ "$(readlink /usr/bin/skw)" = skwir ]' ||
+        { echo "fedora: /usr/bin/skw, a link to skwir, lost to a reinstall" >&2; exit 1; }
+    echo "ok: fedora: /usr/bin/skw kept through a reinstall"
+    enter "$fresh" 0 sh -c 'dnf -y -q remove skwir' >/dev/null
+    enter "$fresh" 0 sh -c '! rpm -q skwir >/dev/null && [ ! -e /usr/bin/skw ] && [ ! -L /usr/bin/skw ]' ||
+        { echo "fedora: /usr/bin/skw left once skwir was removed" >&2; exit 1; }
+    echo "ok: fedora: /usr/bin/skw gone with skwir"
+fi
 # Only packages that passed both installations leave the test root.
 for package in "$fresh"/package/main/* "$fresh"/package/extra/*; do
     cp "$package" "$out/"
