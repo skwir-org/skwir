@@ -3,9 +3,12 @@
 the site's static folder at http://127.0.0.1:PORT/, where a request for a
 package of a pool is sent on (302), as the site's `_redirects` sends it, to
 http://localhost:PORT/release/<tag>/<file>, another host's name as GitHub's
-is, which serves the bundle's files.
+is, which serves the bundle's files; one for skwird's, below the pool's
+`skwird/` (`pool/skwird/<tag>/<file>`), to
+http://localhost:PORT/skwird/<tag>/<file>, which serves the files of the
+folder SKWIRD, its release's tag the one its skwird.lock names.
 
-    serve.py SITE BUNDLE PORT
+    serve.py SITE BUNDLE PORT [SKWIRD]
 """
 
 import functools
@@ -16,22 +19,25 @@ import re
 import sys
 
 POOL = re.compile(r"/(?:apt|rpm/fedora)/pool/([^/]+)/([^/]+)")
-RELEASE = re.compile(r"/release/([^/]+)/([^/]+)")
+SKWIRD_POOL = re.compile(r"/(?:apt|rpm/fedora)/pool/skwird/([^/]+)/([^/]+)")
+RELEASE = re.compile(r"/(release|skwird)/([^/]+)/([^/]+)")
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         host = self.headers.get("Host", "")
         port = self.server.server_address[1]
-        if (pool := POOL.fullmatch(self.path)) and host.startswith("127.0.0.1"):
-            self.send_response(302)
-            self.send_header("Location", f"http://localhost:{port}/release/{pool[1]}/{pool[2]}")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
+        for pattern, release in ((POOL, "release"), (SKWIRD_POOL, "skwird")):
+            if (pool := pattern.fullmatch(self.path)) and host.startswith("127.0.0.1"):
+                self.send_response(302)
+                self.send_header("Location", f"http://localhost:{port}/{release}/{pool[1]}/{pool[2]}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
         if release := RELEASE.fullmatch(self.path):
-            file = self.server.bundle / release[2]
-            if release[1] != self.server.tag or not file.is_file() or host.startswith("127.0.0.1"):
+            folder, tag = self.server.releases.get(release[1], (None, None))
+            file = folder / release[3] if folder else None
+            if release[2] != tag or not file.is_file() or host.startswith("127.0.0.1"):
                 self.send_error(404)
                 return
             body = file.read_bytes()
@@ -50,8 +56,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     site, bundle, port = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), functools.partial(Handler, directory=str(site)))
-    server.bundle = bundle
-    server.tag = json.loads((bundle / "manifest.json").read_text())["tag"]
+    server.releases = {"release": (bundle, json.loads((bundle / "manifest.json").read_text())["tag"])}
+    if len(sys.argv) > 4:
+        skwird = pathlib.Path(sys.argv[4])
+        lock = (skwird / "skwird.lock").read_text()
+        server.releases["skwird"] = (skwird, re.search(r"^release (\S+)$", lock, re.M)[1])
     server.serve_forever()
 
 

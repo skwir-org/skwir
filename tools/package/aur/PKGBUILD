@@ -89,6 +89,7 @@ package_skwir() {
     'ffmpeg: still frames of films'
     'perl-image-exiftool: writing and removing pictures locations'
     'plocate: instant name searches over whole disks'
+    'skwird: name searches answered from an index kept current'
     'udisks2: unmounting volumes from the sidebar'
     'sshfs: opening sftp:// addresses through your ssh'
     'rclone: opening rclone remotes, s3:// and servers that ask a password'

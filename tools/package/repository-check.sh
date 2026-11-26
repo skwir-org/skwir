@@ -31,6 +31,17 @@
 # to expire, `skwir-repository` brings it extended, and once the first
 # expiry has passed what the key signs is still taken.
 #
+# skwird's packages, which skwir's recommend, are listed beside skwir's
+# (ADR-142, amended 2026-11-26): those tools/package/skwird.lock pins,
+# fetched once into target/skwird/<tag> and checked against it, each step's
+# copies signed as the release's are, and a lock of the step's own naming
+# them. Debian and Ubuntu are offered their own skwird alone and install
+# it, Fedora installs it under `gpgcheck=1`, each through the redirect to
+# a stand-in for skwird's release (`pool/skwird/<tag>/<file>`).
+# repository.py refuses skwird's `.rpm` signed by another key or by none,
+# and one marked `unsigned` in its lock that the key signed; marked and
+# unsigned, Fedora's repository lists no skwird.
+#
 # repository.py refuses, before it writes the site, a key about to expire,
 # one whose secret part is not here, a release whose `.rpm` another key
 # signed, and a version published made again with other bytes: each for
@@ -95,20 +106,32 @@ port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0))
 base="$(sed -n 's/^homepage = "\(.*\)"$/\1/p' "$tree/Cargo.toml" | head -1)"
 here="http://127.0.0.1:$port"
 [ -n "$base" ] || fail "Cargo.toml: no homepage"
+# skwird's packages as skwird.lock pins them, checked.
+skwird_kept="$(python3 "$tree/tools/package/repository.py" --fetch-skwird)" || fail "skwird's packages: not fetched"
 # What is served as the release: the bundle's packages and its manifest,
 # each `.rpm` signed again by the key $1, as release-build signs them with
 # the repositories' (the manifest saying what they are now), into $2 or
-# the release served.
+# the release served; and in its skwird/, skwird's, with a lock naming them
+# as they are now, its `.rpm` signed by the key $3 (by default $1; `none`,
+# no signature), marked `unsigned` in that lock where $3 ends in `:marked`.
 released="$work/release"
 signed_by() {
     into="${2:-$released}"
+    skwird_key="${3:-$1}"
     rm -rf "$into"
-    mkdir -p "$into"
+    mkdir -p "$into/skwird"
     for package in "$bundle"/*.deb "$bundle"/*.rpm; do
         cp "$package" "$into/"
     done
+    awk '$1 ~ /\.(deb|rpm)$/ { print $1 }' "$tree/tools/package/skwird.lock" | while read -r name; do
+        cp "$skwird_kept/$name" "$into/skwird/"
+    done
     "$tree/tools/package/rpm-sign.sh" "$work/$1.asc" "$into"/*.rpm >/dev/null 2>&1
-    python3 - "$bundle/manifest.json" "$into" <<'PYTHON'
+    case "${skwird_key%:marked}" in
+    none) rpmsign --delsign "$into"/skwird/*.rpm >/dev/null 2>&1 ;;
+    *) "$tree/tools/package/rpm-sign.sh" "$work/${skwird_key%:marked}.asc" "$into"/skwird/*.rpm >/dev/null 2>&1 ;;
+    esac
+    python3 - "$bundle/manifest.json" "$into" "$tree/tools/package/skwird.lock" "$skwird_key" <<'PYTHON'
 import hashlib, json, pathlib, sys
 manifest, released = json.loads(pathlib.Path(sys.argv[1]).read_text()), pathlib.Path(sys.argv[2])
 for path in released.iterdir():
@@ -116,6 +139,15 @@ for path in released.iterdir():
         manifest["assets"][path.name] = {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                                          "bytes": path.stat().st_size}
 (released / "manifest.json").write_text(json.dumps(manifest))
+# skwird's lock as the step has its files: their sums, the mark asked.
+lines = []
+for line in pathlib.Path(sys.argv[3]).read_text().splitlines():
+    words = line.split()
+    if words and (released / "skwird" / words[0]).is_file():
+        mark = " unsigned" if words[0].endswith(".rpm") and sys.argv[4].endswith(":marked") else ""
+        line = f"{words[0]} {hashlib.sha256((released / 'skwird' / words[0]).read_bytes()).hexdigest()}{mark}"
+    lines.append(line)
+(released / "skwird/skwird.lock").write_text("\n".join(lines) + "\n")
 PYTHON
 }
 # The repositories made again from $from (the release served): their
@@ -126,7 +158,8 @@ make() {
     : > "$work/retired"
     [ -z "${4:-}" ] || fingerprint "$4" > "$work/retired"
     python3 "$tree/tools/package/repository.py" "$from" --site "$work/site" --key "$work/$2.asc" \
-        --next "${3:+$work/$3.asc}" --retired "$work/retired" --version "$1" >/dev/null 2>"$work/made"
+        --next "${3:+$work/$3.asc}" --retired "$work/retired" --version "$1" \
+        --skwird "$from/skwird/skwird.lock" --skwird-files "$from/skwird" >/dev/null 2>"$work/made"
 }
 # repository.py refusing to make them (make's arguments after $1) for its
 # own reason $1 (words of its message), the site left as it was.
@@ -160,6 +193,15 @@ refuses "$(fingerprint gone): its secret part is not in GnuPG's keyring" 2 gone
 from="$released"
 signed_by stranger
 refuses "(signed by key ID $(lower stranger | cut -c33-))" 2 old
+# skwird's `.rpm`, which dnf checks as it checks skwir's: one a stranger
+# signed, or none, refused; one the key signed and its lock marks
+# `unsigned`, refused too, for the mark to be taken off.
+signed_by old "$released" stranger
+refuses "(signed by key ID $(lower stranger | cut -c33-)): skwird's, not signed by the key" 2 old
+signed_by old "$released" none
+refuses "(unsigned): skwird's, not signed by the key" 2 old
+signed_by old "$released" old:marked
+refuses "marked \`unsigned\` in skwird.lock: take the mark off" 2 old
 signed_by old
 make 2 old || fail "repository.py: $(tail -1 "$work/made")"
 signed_by new
@@ -167,7 +209,7 @@ refuses "published as skwir-repository 2, and what it holds changed since: raise
 # Made again as it was, it is the same file, and taken.
 signed_by old
 make 2 old || fail "repository.py made skwir-repository 2 again as it was, and refused it: $(tail -1 "$work/made")"
-python3 "$tree/tools/package/repository/serve.py" "$work/site" "$released" "$port" 2>"$work/serve.log" &
+python3 "$tree/tools/package/repository/serve.py" "$work/site" "$released" "$port" "$released/skwird" 2>"$work/serve.log" &
 server=$!
 
 # A distribution's image, once, checked against its sum (as try.sh).
@@ -273,6 +315,21 @@ for distribution in debian ubuntu fedora; do
         echo "ok: the signed index read with the key 2 brought, skwir $candidate offered"
         enter "$root" sh -c "$at_here && cd /tmp && apt-get download -q $apt_skwir skwir >/dev/null && ls skwir_*.deb" >/dev/null
         echo "ok: skwir downloaded through the redirect, its checksum the index's"
+        # skwird: its suite's own package alone offered, installed through
+        # the redirect to skwird's release, its checksum the index's.
+        case "$distribution" in
+        debian) skwird_deb="$(awk '$1 ~ /^skwird_[^_]+-[0-9]+_amd64\.deb$/ { print $1 }' "$released/skwird/skwird.lock")" ;;
+        ubuntu) skwird_deb="$(awk '$1 ~ /^skwird_[^_]+-[0-9]+ubuntu24\.04_amd64\.deb$/ { print $1 }' "$released/skwird/skwird.lock")" ;;
+        esac
+        skwird_version="$(echo "$skwird_deb" | cut -d_ -f2)"
+        offers="$(enter "$root" sh -c "$at_here && apt-cache madison $apt_skwir skwird" | cut -d'|' -f2 | tr -d ' ')"
+        [ "$offers" = "$skwird_version" ] ||
+            fail "$distribution: skwird offered as '$(echo "$offers" | tr '\n' ' ')', not $skwird_version alone"
+        enter "$root" sh -c "$at_here && apt-get install -y -q $apt_skwir skwird" >/dev/null
+        # shellcheck disable=SC2016 # dpkg-query's own format
+        [ "$(enter "$root" dpkg-query -W -f '${Version}' skwird)" = "$skwird_version" ] ||
+            fail "$distribution: skwird $skwird_version not installed"
+        echo "ok: skwird $skwird_version alone offered, installed through the redirect to its release"
         ;;
     fedora)
         enter "$root" sh -c "dnf -y -q --disablerepo='*' install /published/skwir-repository.rpm" >/dev/null
@@ -294,9 +351,25 @@ for distribution in debian ubuntu fedora; do
         enter "$root" rpm -q skwir >/dev/null || fail "fedora: skwir not installed"
         rpm_holds fedora | grep -q "^$(lower old) " || fail "fedora: skwir installed, and no key imported for it"
         echo "ok: skwir installed through the redirect under gpgcheck=1, the key 2 brought imported"
+        # skwird, under the same gpgcheck, through the redirect to its release.
+        enter "$root" sh -c "dnf -y -q $dnf_at_here --setopt=install_weak_deps=False install skwird" >/dev/null
+        skwird_version="$(enter "$root" rpm -q --qf '%{VERSION}-%{RELEASE}' skwird)" || fail "fedora: skwird not installed"
+        echo "ok: skwird $skwird_version installed through the redirect to its release under gpgcheck=1"
         ;;
     esac
 done
+
+# skwird's `.rpm` as unsigned as 0.2.0's, and marked so in its lock:
+# Fedora's repository lists no skwird, said as the indexes are made.
+signed_by old "$released" none:marked
+make 2 old || fail "repository.py refused skwird's .rpm marked unsigned: $(tail -1 "$work/made")"
+grep -q "^skwird: skwird-.*\.rpm not listed: skwird.lock marks it unsigned" "$work/made" ||
+    fail "repository.py did not say skwird's .rpm, marked unsigned, is not listed"
+# Asked with skwir, which the index lists: an index read, skwird not in it.
+listed="$(enter "$work/root-fedora" sh -c "dnf -q $dnf_skwir --refresh repoquery --available --qf '%{name}\n' skwir skwird")"
+echo "$listed" | grep -qx skwir || fail "fedora: skwir's repository not read: $listed"
+echo "$listed" | grep -qx skwird && fail "fedora: skwir's repository lists skwird, its .rpm marked unsigned"
+echo "ok: skwird's .rpm marked unsigned: fedora's repository lists no skwird, and repository.py says so"
 
 # Indexes a stranger's key signed, offering skwir-repository 9: no system
 # reads them. That the next step reads the same server's indexes shows the
@@ -493,5 +566,6 @@ case "$(echo "$said" | sed -n 's/^system: //p')" in
 *) fail "extension: fedora's rpm refuses skwir, signed after the key's first expiry: $(echo "$said" | tail -3)" ;;
 esac
 
-grep -c ' 302 ' "$work/serve.log" | sed 's/^/ok: requests sent on to the release: /'
+grep -c ' 302 ' "$work/serve.log" | sed 's/^/ok: requests sent on to the releases: /'
+grep -c '/pool/skwird/.* 302 ' "$work/serve.log" | sed "s/^/ok: of which to skwird's: /"
 echo "repositories: passed"

@@ -151,7 +151,11 @@ alike: lists, grids and columns that stay responsive on very large \
 folders, previews of documents, pictures, music, films, archives and \
 maps, tags kept on the files themselves, and every change undoable."""
 depends = "$auto, libvulkan1, libfontconfig1"
-recommends = "skwir-media, skwir-heif, mesa-vulkan-drivers, bubblewrap, udisks2"
+# skwird, skwir's index of names (ADR-050), from skwir's own repository,
+# which lists its release's packages (ADR-142); installed, it turns
+# nothing on, and its engine starts at skwir's first search. Where no
+# repository has it, apt installs skwir without it, which walks instead.
+recommends = "skwird, skwir-media, skwir-heif, mesa-vulkan-drivers, bubblewrap, udisks2"
 # Beside the other readers and what previews use: the tools remote
 # folders mount through (ADR-077), the FUSE rclone and the phone helper
 # need, rsync for copies over sftp, and what finds servers nearby
@@ -331,7 +335,11 @@ post_uninstall_script = "if [ -L /usr/bin/skw ] && [ ! -e /usr/bin/skw ] && [ \"
 vulkan-loader = "*"
 fontconfig = "*"
 
+# skwird as Debian's recommends say. skwir's Fedora repository lists it
+# once a release of it signed by the repositories' key is pinned
+# (ADR-142, tools/package/skwird.lock); until then dnf installs skwir alone.
 [package.metadata.generate-rpm.recommends]
+skwird = "*"
 skwir-media = "*"
 skwir-heif = "*"
 mesa-vulkan-drivers = "*"

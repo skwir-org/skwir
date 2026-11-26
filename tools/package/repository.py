@@ -6,7 +6,21 @@ website's static files; the packages stay the release's, which the site
 sends each request for to (`skwir-site/static/_redirects`: `/apt/pool/` and
 `/rpm/fedora/pool/`), the indexes' SHA-256 checking what arrives.
 
+They list skwird's packages too (ADR-142, amended 2026-11-26), which
+skwir's recommend: those of the release `tools/package/skwird.lock` pins
+(or `--skwird`), each kept in `target/skwird/<its tag>` (or
+`--skwird-files`) or fetched there from skwird's release, its SHA-256 the
+lock's, under `pool/skwird/<its tag>/`, which the site sends to skwird's
+release. Each suite takes its own as it takes skwir's. An `.rpm` the
+repositories' key did not sign is refused as skwir's is, unless the lock
+marks it `unsigned`: Fedora's repository then lists no skwird, until a
+release of it signed by that key is pinned.
+
     tools/package/repository.py target/releases/v0.6.0 --site ../skwir-site/static
+    tools/package/repository.py --fetch-skwird
+
+the second fetching skwird's packages alone, checked, and printing the
+folder that holds them (repository-check.sh signs its own copies).
 
 needs apt-ftparchive, createrepo_c, gpg, gpgv, nfpm, rpmkeys and rpmsign
 (the recipe `just repositories` finds them in the flake's nixpkgs), the
@@ -88,9 +102,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HERE = ROOT / "tools/package/repository"
+# skwird's packages that skwir's recommend (ADR-142, amended 2026-11-26).
+SKWIRD_LOCK = ROOT / "tools/package/skwird.lock"
 
 # Each suite, with what of a release's `.deb` files it takes.
 SUITES = {
@@ -139,6 +156,93 @@ def released(bundle):
             sys.exit(f"{path}: changed since the release built it (its manifest.json): the indexes would name"
                      " another file than the one the release serves")
     return manifest
+
+
+def family_of(name):
+    """The family whose suite takes the package `name`, as it takes skwir's:
+    `debian` and `ubuntu` a `.deb` each by its revision, `fedora` an
+    `.rpm`; None for a package none takes."""
+    for family, suite in SUITES.items():
+        if suite["debs"].fullmatch(name):
+            return family
+    return "fedora" if RPMS.fullmatch(name) else None
+
+
+def skwird_listed(lock):
+    """skwird's packages the lock pins, by the family whose suite lists
+    each ({family: [names]}), and those it pins and no suite lists: an
+    `.rpm` marked `unsigned`, which Fedora's repository lists once a
+    release of it signed by the repositories' key is pinned. Each family is
+    pinned a package, listed or not; a mark is an `.rpm`'s alone (apt
+    trusts a `.deb` by its signed index)."""
+    listed = {family: [] for family in (*SUITES, "fedora")}
+    pinned = {family: [] for family in listed}
+    for name in sorted(lock.files):
+        if not name.endswith((".deb", ".rpm")):
+            continue
+        family = family_of(name)
+        if family is None:
+            sys.exit(f"skwird.lock: {name}: a package no suite of skwir's repositories takes"
+                     " (Debian's `-<n>_amd64.deb`, Ubuntu's `-<n>ubuntu24.04_amd64.deb`, Fedora's `.x86_64.rpm`)")
+        pinned[family].append(name)
+        if name not in lock.unsigned:
+            listed[family].append(name)
+    if debs := sorted(name for name in lock.unsigned if not name.endswith(".rpm")):
+        sys.exit(f"skwird.lock: {', '.join(debs)}: marked unsigned, which only an `.rpm` is (apt trusts a"
+                 " package by its signed index)")
+    labels = {**{family: suite["label"] for family, suite in SUITES.items()}, "fedora": "Fedora"}
+    if missing := [labels[family] for family, names in pinned.items() if not names]:
+        sys.exit(f"skwird.lock: no package of skwird for {', '.join(missing)}, whose skwir recommends it")
+    return listed, sorted(lock.unsigned)
+
+
+def skwird_files(lock, names, folder, opener=urllib.request.urlopen):
+    """Each of `names`, a file of the skwird release `lock` pins, kept in
+    `folder` or fetched there from that release (tried again where the
+    connection fails), its SHA-256 the lock's: {name: path}."""
+    import skwird  # beside this file, read here alone: `--check-key` goes without it
+    paths = {}
+    for name in names:
+        path = folder / name
+        if not (path.is_file() and skwird.sha256(path) == lock.files[name]):
+            folder.mkdir(parents=True, exist_ok=True)
+            partial = path.with_name(f"{name}.part")
+            try:
+                skwird.download(f"https://github.com/{skwird.REPOSITORY}/releases/download/{lock.tag}/{name}",
+                                partial, opener)
+            except skwird.Refused as refused:
+                sys.exit(f"skwird's {name}: not fetched: {refused}")
+            if skwird.sha256(partial) != lock.files[name]:
+                partial.unlink()
+                sys.exit(f"{name}: not the file skwird.lock pins (its SHA-256 differs): the indexes would name"
+                         " another file than the one skwird's release serves")
+            partial.replace(path)
+        paths[name] = path
+    return paths
+
+
+def skwird_folder(tag, given):
+    """Where skwird's packages of the release `tag` are kept: the folder
+    `given`, or target/skwird/<tag>."""
+    return given or ROOT / "target/skwird" / tag
+
+
+def skwird_release(lock_path, folder):
+    """skwird's packages as the indexes list them: the release's tag, its
+    files by the family whose suite lists them ({family: [paths]}), and
+    those pinned and listed nowhere ({name: path}), each kept in `folder`
+    (by default target/skwird/<tag>) or fetched there, checked. The lock
+    is read by tools/package/skwird.py, its one reader."""
+    import skwird  # beside this file, read here alone: `--check-key` goes without it
+    try:
+        lock = skwird.Lock(lock_path)
+    except (skwird.Refused, OSError) as refused:
+        sys.exit(f"{lock_path}: not read: {refused}")
+    listed, unlisted = skwird_listed(lock)
+    paths = skwird_files(lock, [*(n for names in listed.values() for n in names), *unlisted],
+                         skwird_folder(lock.tag, folder))
+    return (lock.tag, {family: [paths[n] for n in names] for family, names in listed.items()},
+            {name: paths[name] for name in unlisted})
 
 
 def keys(listing):
@@ -383,10 +487,11 @@ def package(work, name, packager, version, contents, description, out, scripts=N
         stdout=subprocess.DEVNULL, env={**os.environ, "SOURCE_DATE_EPOCH": epoch()})
 
 
-def apt_repository(work, bundle, tag, base, carried, key, version):
+def apt_repository(work, bundle, tag, base, carried, key, version, skwird_packages):
     """apt's repository, made in `work`, its source trusting the keys
-    `carried` (the key that signs, then the key coming): the folder to
-    publish."""
+    `carried` (the key that signs, then the key coming), listing skwird's
+    packages beside the release's (`skwird_packages`, `skwird_release`'s
+    tag and files by family): the folder to publish."""
     folder = work / "apt"
     keyring = work / "skwir.gpg"
     keyring.write_bytes(b"".join(
@@ -399,6 +504,10 @@ def apt_repository(work, bundle, tag, base, carried, key, version):
             sys.exit(f"{bundle}: no {suite['label']} package")
         for deb in debs:
             link(deb, root / "pool" / tag / deb.name)
+        # skwird's below a folder of its own, which the site sends to
+        # skwird's release: a path of three parts, never one of skwir's.
+        for deb in skwird_packages[1][family]:
+            link(deb, root / "pool" / "skwird" / skwird_packages[0] / deb.name)
         sources = work / f"{family}.sources"
         sources.write_text(
             "# Skwir's repository (https://skwir.org/download#repository), added by\n"
@@ -446,10 +555,11 @@ def apt_repository(work, bundle, tag, base, carried, key, version):
     return folder
 
 
-def rpm_repository(work, bundle, tag, base, carried, key, version, retired):
+def rpm_repository(work, bundle, tag, base, carried, key, version, retired, skwird_packages):
     """dnf's repository, made in `work`, its repo file trusting the keys
     `carried` (the key that signs, then the key coming), the fingerprints
-    `retired` those of keys it carried before: the folder to publish."""
+    `retired` those of keys it carried before, listing skwird's packages
+    beside the release's (as `apt_repository`): the folder to publish."""
     folder = work / "rpm"
     root = folder / "fedora"
     rpms = sorted(p for p in bundle.iterdir() if RPMS.fullmatch(p.name))
@@ -457,6 +567,8 @@ def rpm_repository(work, bundle, tag, base, carried, key, version, retired):
         sys.exit(f"{bundle}: no Fedora package")
     for rpm in rpms:
         link(rpm, root / "pool" / tag / rpm.name)
+    for rpm in skwird_packages[1]["fedora"]:
+        link(rpm, root / "pool" / "skwird" / skwird_packages[0] / rpm.name)
     # Each key a file of its own, as dnf's gpgkey lists them.
     keys = [(public, "/etc/pki/rpm-gpg/RPM-GPG-KEY-skwir" + ("-next" if i else ""), False)
             for i, public in enumerate(carried)]
@@ -537,9 +649,19 @@ def main():
                         " tools/package/repository/retired, where there is one)")
     parser.add_argument("--base", help="the site's address (by default Cargo.toml's homepage)")
     parser.add_argument("--version", help="skwir-repository's version (by default tools/package/repository/version)")
+    parser.add_argument("--skwird", type=pathlib.Path, default=SKWIRD_LOCK,
+                        help="the lock of the skwird release whose packages are listed beside skwir's (by default"
+                        " tools/package/skwird.lock)")
+    parser.add_argument("--skwird-files", type=pathlib.Path, help="where skwird's packages are kept, fetched"
+                        " there from its release where missing (by default target/skwird/<its tag>)")
+    parser.add_argument("--fetch-skwird", action="store_true",
+                        help="only fetch skwird's packages, each checked, and print the folder that holds them")
     args = parser.parse_args()
+    if args.fetch_skwird:
+        print(skwird_folder(skwird_release(args.skwird, args.skwird_files)[0], args.skwird_files))
+        return
     if not args.check_key and not (args.bundle and args.site):
-        parser.error("a bundle and --site are needed, unless --check-key")
+        parser.error("a bundle and --site are needed, unless --check-key or --fetch-skwird")
     if not args.key.is_file():
         sys.exit(f"{args.key}: no key. Make the repositories' key once, then keep its secret part safe:\n"
                  "    gpg --quick-generate-key 'Skwir repositories' ed25519 sign 5y\n"
@@ -566,6 +688,8 @@ def main():
                                                                   HERE / "postrm.sh"])
             + [args.key, coming, args.retired or HERE / "retired"] if path and path.exists()]
     committed([path for path in held if path.is_relative_to(ROOT)])
+    # skwird's, fetched and checked before the key is asked for.
+    skwird_tag, skwird_listed_by, skwird_unlisted = skwird_release(args.skwird, args.skwird_files)
     key = signer(args.key, coming)
     retired = retired_keys(args.retired or HERE / "retired",
                            [key_of(args.key)[0], *([key_of(coming)[0]] if coming else [])])
@@ -577,14 +701,28 @@ def main():
                  " checks each package. `release-build` signs a release's with the key of skwir.asc at its tag:"
                  " a release made before skwir.asc changed (a new key's second step) is never published by it,"
                  " but by the release after (docs/RELEASING.md, A new key)")
+    if refused := unsigned(skwird_listed_by["fedora"], args.key):
+        named = ", ".join(f"{rpm.name} ({why})" for rpm, why in refused.items())
+        sys.exit(f"{named}: skwird's, not signed by the key that signs the indexes ({key}, {args.key.name}),"
+                 " and dnf checks each package. Its release signs it with that key, or skwird.lock marks it"
+                 " `unsigned` and Fedora's repository lists no skwird until one is pinned that is (ADR-142,"
+                 " amended 2026-11-26)")
+    marked = list(skwird_unlisted.values())
+    if marked and (signed := sorted(set(marked) - set(unsigned(marked, args.key)))):
+        sys.exit(f"{', '.join(rpm.name for rpm in signed)}: skwird's, signed by the key that signs the indexes"
+                 " and marked `unsigned` in skwird.lock: take the mark off, and Fedora's repository lists it")
+    for name in skwird_unlisted:
+        print(f"skwird: {name} not listed: skwird.lock marks it unsigned, so Fedora's repository lists no"
+              " skwird until a release of it that the repositories' key signed is pinned", file=sys.stderr)
     carried = [args.key, coming] if coming else [args.key]
     site = args.site.resolve()
     # Beside the bundle, on its filesystem, so its packages are hard links
     # into the pools, never copies in $TMPDIR (a tmpfs, in memory).
     with tempfile.TemporaryDirectory(prefix=".skwir-repositories-", dir=bundle.parent) as work:
         work = pathlib.Path(work)
-        apt = apt_repository(work, bundle, tag, base, carried, key, version)
-        rpm = rpm_repository(work, bundle, tag, base, carried, key, version, retired)
+        skwird_packages = (skwird_tag, skwird_listed_by)
+        apt = apt_repository(work, bundle, tag, base, carried, key, version, skwird_packages)
+        rpm = rpm_repository(work, bundle, tag, base, carried, key, version, retired, skwird_packages)
         if changed := [*changed_since(apt / "own", site / "apt/own"),
                        *changed_since(rpm / "fedora/own", site / "rpm/fedora/own")]:
             sys.exit(f"{', '.join(map(str, changed))}: published as skwir-repository {version}, and what it holds"

@@ -68,6 +68,7 @@ pkgname = skwir
 	optdepends = ffmpeg: still frames of films
 	optdepends = perl-image-exiftool: writing and removing pictures locations
 	optdepends = plocate: instant name searches over whole disks
+	optdepends = skwird: name searches answered from an index kept current
 	optdepends = udisks2: unmounting volumes from the sidebar
 	optdepends = sshfs: opening sftp:// addresses through your ssh
 	optdepends = rclone: opening rclone remotes, s3:// and servers that ask a password

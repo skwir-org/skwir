@@ -21,6 +21,12 @@ workers, check performance or build packages.
    in their prose; `release-metadata` stops at a package's file name of
    another version there, or at "Skwir 0.2" or "Version 0.2" naming
    another, and at a `Cargo.lock` or a `.SRCINFO` of another version.
+   A release that brings a new skwird pins it in `tools/package/skwird.lock`:
+   its release's tag, each file's SHA-256 as that release's `SHA256SUMS`
+   says, and its source archive's as GitHub serves it. Skwir's packages
+   carry or build that release, and the repositories list its `.deb` and
+   `.rpm` (below). Its `.rpm` line ends with `unsigned` unless the
+   repositories' key signed it: Fedora's repository then lists no skwird.
 2. Date that version's `CHANGELOG.md` heading, for example
    `## 0.1.0 (2026-10-11)`. AppStream must have the same date. The section
    supplies the GitHub release notes, so it must be the first: an
@@ -344,7 +350,23 @@ After the GitHub release is published:
   repositories' signed indexes and `skwir-repository` into the site's
   `static/` (`../skwir-site` by default); gpg asks for the key's
   passphrase. It refuses a release whose `.rpm` packages the key did not
-  sign (`release-build` signs them). Review them (`git -C ../skwir-site status`), then commit and
+  sign (`release-build` signs them). It lists skwird's packages beside
+  Skwir's (ADR-142, amended 2026-11-26): those of the release
+  `tools/package/skwird.lock` pins, kept in `target/skwird/<tag>` and
+  fetched there from skwird's release where missing, each refused unless
+  its SHA-256 is the lock's. Their pool is `pool/skwird/<tag>/`, which the
+  site's `_redirects` sends to skwird's release:
+
+  ```
+  /apt/pool/skwird/:tag/:file         https://github.com/skwir-org/skwird/releases/download/:tag/:file  302
+  /rpm/fedora/pool/skwird/:tag/:file  https://github.com/skwir-org/skwird/releases/download/:tag/:file  302
+  ```
+
+  These lines sit above Skwir's pool lines, and are deployed before the
+  first indexes that list skwird. skwird's `.rpm` is refused, as Skwir's
+  are, unless the repositories' key signed it, or the lock marks it
+  `unsigned`, in which case Fedora's repository lists no skwird. Review
+  the indexes (`git -C ../skwir-site status`), then commit and
   deploy the site once, with the version file: an index never names a
   package before the release that holds it is published.
 - **winget.** `just winget v0.1.0` writes the release's three manifest
@@ -368,7 +390,10 @@ After the GitHub release is published:
   repository and process (its RELEASING); a release of Skwir that needs a
   new skwird says so in its notes, linking that release's tag, and goes
   out the same day as it (0.7.0 with skwird 0.2.0: drives indexed,
-  names in both forms answered from the index).
+  names in both forms answered from the index). It pins that release in
+  `tools/package/skwird.lock` (above, Prepare the source), published
+  before Skwir's: the repositories' indexes name its files, and Skwir's
+  packages carry them.
 
 **The repositories' key, once.** Make it where releases are made, with a
 passphrase, and keep its secret part off the site's host (a backup apart):

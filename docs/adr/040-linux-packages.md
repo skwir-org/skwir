@@ -11,7 +11,8 @@ Amended 2026-10-11 by ADR-053: local release builds and draft uploads;
 hosted package builds are a manual fallback. Decision 7, `skwir-bin` and
 `skwir-git` on the AUR, added 2026-10-17. Amended 2026-11-19 by ADR-142
 (built): signed apt and dnf repositories of these
-packages, added by a `skwir-repository` package from the site.
+packages, added by a `skwir-repository` package from the site. Amended
+2026-11-26 (ADR-050, ADR-142): the packages recommend skwird.
 
 ## Context
 
@@ -117,4 +118,15 @@ and the folders it manages unless all are granted, and bubblewrap
   is written at each release (`just cask <tag>`) and published by the
   user, as the AUR's bases are (`docs/RELEASING.md`). A copy it installs
   is Homebrew's, and never checks for a new version.
-
+- 2026-11-26 (ADR-050, ADR-142, the user's choice that Skwir's packages
+  bring skwird): the `.deb` and the `.rpm` recommend `skwird`, Skwir's
+  index of names (decision 3's Recommended), and Skwir's repositories list
+  skwird's own packages. apt and dnf install it by default where the
+  repository is added. Installing it turns nothing on: its engine starts
+  at Skwir's first search. Where no repository has it (a `.deb` installed
+  without the repository; Fedora, until skwird's `.rpm` is signed by the
+  repositories' key), Skwir is installed without it and walks for its
+  searches. The AUR's three bases suggest it (`optdepends`, the same
+  words in each). `skwir-bin` installs the release's tarball, which
+  carries skwird; a skwird pacman installs is on `PATH`, where Skwir
+  looks first, and takes the carried copy's place.

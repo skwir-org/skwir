@@ -76,6 +76,9 @@ class Cask(unittest.TestCase):
             self.assertIn('  depends_on arch: :arm64\n  depends_on macos: :monterey\n', text)
             self.assertIn('  desc "Browse, find and organize your files"\n', text)
             self.assertIn("brew trust skwir-org/tap", text)
+            # skwird, carried in the app, and Homebrew's taking its place.
+            self.assertIn("skwir carries skwird", text)
+            self.assertIn("      brew install skwir-org/tap/skwird\n", text)
             self.assertIn("Open Anyway", text)
 
     def test_the_cask_never_takes_the_quarantine_off(self):

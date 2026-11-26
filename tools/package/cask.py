@@ -20,6 +20,11 @@ The cask never takes the quarantine off, in a postflight or otherwise: the app
 is signed ad hoc and not notarized, and macOS asks before its first start
 (Open Anyway, in Privacy & Security), as it asks of the zip downloaded by hand.
 Its caveats say so.
+
+The app carries skwird, skwir's index of names, in `Contents/MacOS` (ADR-050,
+amended 2026-11-26). skwir looks for skwird on `PATH`, Homebrew's folders
+included, before the copy it carries, so one the tap installs takes that
+copy's place and Homebrew updates it: the caveats name it.
 """
 
 import argparse
@@ -130,6 +135,10 @@ cask "skwir" do
 
     Homebrew loads this tap's casks once the tap is trusted:
       brew trust {TAP}
+
+    skwir carries skwird, its index of names. A skwird Homebrew
+    installs takes the carried one's place, and Homebrew updates it:
+      brew install {TAP}/skwird
   EOS
 end
 """

@@ -33,6 +33,10 @@ optdepends=(
   'ffmpeg: still frames of films'
   'perl-image-exiftool: writing and removing pictures locations'
   'plocate: instant name searches over whole disks'
+  # The tarball carries skwird beside skwir, in /opt/skwir; a skwird
+  # pacman installs, on PATH, takes the carried copy's place (skwir looks
+  # there first), and pacman updates it.
+  'skwird: name searches answered from an index kept current'
   'udisks2: unmounting volumes from the sidebar'
   'sshfs: opening sftp:// addresses through your ssh'
   'rclone: opening rclone remotes, s3:// and servers that ask a password'

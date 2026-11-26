@@ -1,7 +1,7 @@
 """What tools/package/repository.py (ADR-142) refuses before it signs: a
 bundle whose packages are not the release's, a key that cannot sign or will
-not be valid long enough. The repositories themselves are tried by
-repository-check.sh."""
+not be valid long enough, skwird's packages that are not those its lock
+pins. The repositories themselves are tried by repository-check.sh."""
 
 import datetime
 import hashlib
@@ -14,12 +14,14 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import types
 import unittest
 import unittest.mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import repository  # noqa: E402
+import skwird  # noqa: E402
 
 NOW = datetime.datetime(2026, 11, 20, tzinfo=datetime.UTC)
 OLD = "30CE3EFEEAF349BA66124FFACF2B299583B07B74"
@@ -137,6 +139,81 @@ class Keys(unittest.TestCase):
             self.assertIn(" 5y, and its subkeys that sign with '*'), export it again, raise"
                           " tools/package/repository/version", said[0])
         self.assertEqual(repository.unfit((OLD, later), (NEW, later), True, NOW), [])
+
+
+DEB, UBUNTU, RPM = "skwird_1.0.0-1_amd64.deb", "skwird_1.0.0-1ubuntu24.04_amd64.deb", "skwird-1.0.0-1.x86_64.rpm"
+
+
+def skwird_lock(files, unsigned=()):
+    """What skwird.lock pins of a release (`files`: name and body), as
+    skwird.py reads it."""
+    return types.SimpleNamespace(tag="v1.0.0", unsigned=set(unsigned),
+                                 files={name: hashlib.sha256(body).hexdigest() for name, body in files.items()})
+
+
+class Skwird(unittest.TestCase):
+    """skwird's packages listed beside skwir's (ADR-142, amended 2026-11-26)."""
+
+    def listed(self, names, unsigned=()):
+        return repository.skwird_listed(skwird_lock(dict.fromkeys(names, b""), unsigned))
+
+    def test_each_suite_lists_its_own_skwird(self):
+        listed, unlisted = self.listed([DEB, UBUNTU, RPM, "skwird-1.0.0-windows-x86_64.zip"])
+        self.assertEqual(listed, {"debian": [DEB], "ubuntu": [UBUNTU], "fedora": [RPM]})
+        self.assertEqual(unlisted, [])
+
+    def test_an_rpm_marked_unsigned_is_pinned_and_listed_nowhere(self):
+        listed, unlisted = self.listed([DEB, UBUNTU, RPM], unsigned=[RPM])
+        self.assertEqual(listed, {"debian": [DEB], "ubuntu": [UBUNTU], "fedora": []})
+        self.assertEqual(unlisted, [RPM])
+
+    def test_a_lock_the_suites_cannot_list_is_refused(self):
+        for names, unsigned, said in (([DEB, UBUNTU, RPM], [DEB], f"{DEB}: marked unsigned, which only an `.rpm` is"),
+                                      ([DEB, RPM], [], "no package of skwird for Ubuntu 24.04"),
+                                      ([UBUNTU, DEB], [], "no package of skwird for Fedora"),
+                                      ([DEB, UBUNTU, RPM, "skwird_1.0.0-1_arm64.deb"], [],
+                                       "skwird_1.0.0-1_arm64.deb: a package no suite")):
+            with self.subTest(names=names, unsigned=unsigned), self.assertRaises(SystemExit) as refusal:
+                self.listed(names, unsigned)
+            self.assertIn(said, str(refusal.exception.code))
+
+    def test_the_lock_pins_a_package_of_skwird_for_each_suite(self):
+        listed, unlisted = repository.skwird_listed(skwird.Lock(repository.SKWIRD_LOCK))
+        self.assertTrue(listed["debian"] and listed["ubuntu"])
+        self.assertTrue(listed["fedora"] or unlisted)
+
+    def fetch(self, kept, served, folder):
+        """skwird's Debian package, `kept` in `folder` beforehand (or not),
+        fetched where needed from a release serving `served`; the
+        addresses asked."""
+        asked = []
+
+        def opener(url, timeout):
+            asked.append(url)
+            return io.BytesIO(served)
+        if kept is not None:
+            (folder / DEB).write_bytes(kept)
+        paths = repository.skwird_files(skwird_lock({DEB: b"deb"}), [DEB], folder, opener)
+        return paths, asked
+
+    def test_a_package_kept_with_its_sum_is_not_fetched_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            paths, asked = self.fetch(b"deb", b"never", pathlib.Path(folder))
+            self.assertEqual((paths, asked), ({DEB: pathlib.Path(folder) / DEB}, []))
+
+    def test_a_package_missing_or_changed_is_fetched_from_its_release(self):
+        for kept in (None, b"changed"):
+            with self.subTest(kept=kept), tempfile.TemporaryDirectory() as folder:
+                paths, asked = self.fetch(kept, b"deb", pathlib.Path(folder))
+                self.assertEqual(asked, [f"https://github.com/skwir-org/skwird/releases/download/v1.0.0/{DEB}"])
+                self.assertEqual(paths[DEB].read_bytes(), b"deb")
+
+    def test_a_package_fetched_whose_sum_is_not_the_lock_s_is_refused_and_kept_nowhere(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(SystemExit) as refusal:
+                self.fetch(None, b"another", pathlib.Path(folder))
+            self.assertIn(f"{DEB}: not the file skwird.lock pins", str(refusal.exception.code))
+            self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
 
 
 def deb(path, version, body=b""):

@@ -9,7 +9,9 @@ setting that turns it off. Built 2026-11-19 on Linux (the plugin and the
 platform's parts compiled for Windows and macOS), amended as built
 (Amendments); amended 2026-11-20, on the user's choice: each `.rpm` is
 signed, and dnf checks it; amended 2026-11-24, on the user's agreement
-to a Homebrew cask: a Mac app whose cask is installed never checks. Amends ADR-020 (a second plugin makes requests, and HTTP
+to a Homebrew cask: a Mac app whose cask is installed never checks;
+amended 2026-11-26, on the user's choice that Skwir's packages bring
+skwird: the repositories list skwird's packages. Amends ADR-020 (a second plugin makes requests, and HTTP
 moves to `skwir-platform`) and ADR-040 (signed repositories for the
 `.deb` and the `.rpm`).
 
@@ -588,3 +590,70 @@ leaves Gatekeeper's question to macOS.
   again) and the check itself on Caskrooms made in a test's folder.
   Never on a Mac; the tap's workflow installs the cask on GitHub's macOS
   runner once it is pushed.
+
+### 2026-11-26: skwird's packages
+
+The user decided (2026-11-26) that Skwir's packages bring skwird, Skwir's
+index of names (ADR-050, amended the same day). The `.deb` and the `.rpm`
+recommend it (ADR-040, amended), and apt and dnf install what is
+recommended by default. Neither Debian, Ubuntu nor Fedora has a skwird
+package, so Skwir's repositories list skwird's own. Installing it turns
+nothing on: its engine starts at Skwir's first search.
+
+- **What is listed.** The packages of the one skwird release that
+  `tools/package/skwird.lock` pins: its tag, and each file's SHA-256 as
+  that release's `SHA256SUMS` says. The lock moves with a Skwir release
+  (`docs/RELEASING.md`). Each suite takes skwird's package as it takes
+  Skwir's: Debian 13's `skwird_<version>-1_amd64.deb`, Ubuntu 24.04's
+  `-1ubuntu24.04`, Fedora's `.x86_64.rpm`, each in its own suite alone.
+  `just repositories` keeps them in `target/skwird/<tag>`, fetched there
+  from skwird's release where missing. Before the key is asked for, it
+  refuses a file whose SHA-256 is not the lock's, a lock that pins none
+  for a suite, and a package no suite takes.
+- **Where.** In `pool/skwird/<tag>/<file>` under `apt/` and
+  `rpm/fedora/`. That path has three parts, so the site's rules for
+  Skwir's (`pool/:tag/:file`) never match it. Two lines of the site's
+  `_redirects`, above Skwir's, send it to skwird's release (302):
+  `/apt/pool/skwird/:tag/:file` and `/rpm/fedora/pool/skwird/:tag/:file`
+  to `https://github.com/skwir-org/skwird/releases/download/:tag/:file`.
+  The indexes' SHA-256 checks what arrives, as for Skwir's packages.
+- **Signed as Skwir's.** dnf checks each package (`gpgcheck=1`), so
+  `just repositories` refuses skwird's `.rpm` unless the repositories' key
+  signed it, as it refuses Skwir's. skwird 0.2.0's `.rpm` is unsigned.
+  Until the lock pins a skwird release whose `.rpm` that key signed, the
+  lock marks the `.rpm` `unsigned`, and Fedora's repository lists no
+  skwird. There Skwir's recommendation goes unmet: dnf installs Skwir
+  alone, which walks for its searches as it does without skwird. A mark
+  on an `.rpm` the key signed is refused, so the mark goes once a signed
+  release is pinned. Signing skwird's `.rpm` with the repositories' key is
+  for skwird's release to do, and the user's to decide, as the key is
+  theirs.
+- **`skwir-repository`** is unchanged: the same source, repository file
+  and keys, and no version raised.
+- **Tried** (2026-11-26):
+  - `repository.py`'s tests: each suite lists its own skwird; an `.rpm`
+    marked `unsigned` is listed nowhere; a lock no suite can list is
+    refused. A file kept with the lock's sum is not fetched again, one
+    missing or changed is fetched from skwird's release, and one fetched
+    with another sum is refused and kept nowhere.
+  - `just repository-check`, against skwird 0.2.0's own packages, fetched
+    and checked against the lock, and a bundle of stand-in Skwir packages
+    (no release bundle was at hand). Those packages were made by
+    cargo-deb and cargo-generate-rpm from the manifest's metadata, so they
+    recommend skwird. Each step's copies are signed as Skwir's are, and
+    the stand-in for the site sends `pool/skwird/` to a stand-in for
+    skwird's release.
+    - Debian and Ubuntu are each offered their own skwird alone and
+      install it. Fedora installs it under `gpgcheck=1`.
+    - `just repositories` refuses skwird's `.rpm` when a stranger signed
+      it, when nothing did, and when the key signed it and the lock still
+      marks it.
+    - Marked and unsigned, Fedora's repository lists no skwird.
+  - A run of `repository.py` with skwird 0.2.0's real lock and files and a
+    throwaway key. Its indexes list `pool/skwird/v0.2.0/` in trixie and
+    noble, each its own skwird with the lock's SHA-256, and Fedora's
+    lists none. Without the mark the run is refused, and with a sum that
+    is not the release's too, the site left as it was.
+- **Not tried:** the site's two redirect lines on Cloudflare (the site
+  deploys them), a real release's bundle, and an upgrade of skwird
+  through the repositories.

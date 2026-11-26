@@ -354,7 +354,9 @@ aur-publish tag:
 # gpg asks for the repositories' key's passphrase; the packages stay the
 # release's, which the site's redirects reach; publishing is deploying the
 # site, after the release is. Into skwir-site's static folder by default:
-# a verified release's apt and dnf repositories, signed (ADR-142).
+# a verified release's apt and dnf repositories, signed, listing the
+# packages of the skwird release tools/package/skwird.lock pins, fetched
+# into target/skwird from its release (ADR-142).
 repositories tag site="../skwir-site/static":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -365,7 +367,8 @@ repositories tag site="../skwir-site/static":
 # With throwaway keys against a stand-in for the site, the newest bundle in
 # target/releases or the one named: the repositories tried in fresh Debian,
 # Ubuntu and Fedora roots from skwir-repository 1 as published, a change of
-# key and an extension included (ADR-142); the distributions' mirrors needed.
+# key, an extension and skwird's packages included (ADR-142); the
+# distributions' mirrors and skwird's release needed.
 repository-check bundle="":
     #!/usr/bin/env bash
     set -euo pipefail
