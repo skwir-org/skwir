@@ -1,5 +1,11 @@
 # Changes
 
+## Unreleased
+
+- **The viewer's Open With entry** says what kind of program it is and
+  what it does in French, Italian and Simplified Chinese, drafts like the
+  rest of those languages.
+
 ## 0.7.1 (2026-11-26)
 
 Skwir 0.7.1 shows a file's preview from a terminal, and brings skwird, its

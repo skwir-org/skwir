@@ -110,6 +110,7 @@ line, drafted 2026-11-18), which a sentence naming a place reads.
 | Properties | Propriétés | |
 | preview | aperçu | |
 | quick preview | aperçu rapide | |
+| viewer (`skwir view`'s window) | visionneuse | « visionneuse de fichiers » for its kind |
 | thumbnail | vignette | |
 | sidebar | barre latérale | |
 | place (sidebar) | emplacement | |

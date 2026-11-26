@@ -58,7 +58,9 @@ class Translations(unittest.TestCase):
         with tempfile.TemporaryDirectory() as share:
             self.assertEqual(run("merge", share).returncode, 0)
             viewer = Path(share, "applications", VIEWER.name)
-            english = viewer.read_text()
+            # What it says in English alone: its translated rows left out.
+            english = "".join(row for row in viewer.read_text().splitlines(keepends=True)
+                              if not re.match(r"[A-Za-z-]*\[[^]]*\]=", row))
             viewer.unlink()
             told = run("installed", share)
             self.assertNotEqual(told.returncode, 0)

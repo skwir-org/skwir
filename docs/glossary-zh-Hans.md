@@ -104,6 +104,7 @@ attribute (`tools/words/grammar` has no `zh-Hans` line).
 | Properties | 属性 | |
 | preview | 预览 | |
 | quick preview | 快速预览 | |
+| viewer (`skwir view`'s window) | 查看器 | 「文件查看器」 for its kind |
 | thumbnail | 缩略图 | |
 | sidebar | 侧边栏 | |
 | place (sidebar) | 位置 | |
