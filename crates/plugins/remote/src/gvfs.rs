@@ -30,9 +30,6 @@ const PATIENCE: Duration = Duration::from_secs(60);
 #[cfg(target_os = "linux")]
 const DAEMON: &str = "org.gtk.vfs.Daemon";
 
-/// How long a daemon just started may take to mount its bridge.
-const BRIDGE_PATIENCE: Duration = Duration::from_secs(3);
-
 /// How long a mount just made may be waited for while the bridge answers
 /// an I/O error for it: made again at once under the name of one just let
 /// go of (a server ejected and connected to again), it does so for what
@@ -171,22 +168,23 @@ impl Connector for Gvfs {
         let gio = skwir_core::os_path::find_program("gio")
             .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("gio (GLib)")))?;
         mount(self.gio(&gio), &top, ask, cancel)?;
-        // A daemon `gio` just started mounts its bridge as it starts: a
-        // moment, looked for again.
-        let since = Instant::now();
-        while self.bridge().is_none() && since.elapsed() < BRIDGE_PATIENCE {
-            std::thread::sleep(Duration::from_millis(50));
-            skwir_core::fs::reach::changed();
-        }
-        if self.bridge().is_none() {
+        // A daemon `gio` just started mounts its bridge as it starts, and
+        // the bridge lists the mount once told of it, on its own loop,
+        // after `gio` returned: each waited for (`connector::appears`).
+        if crate::connector::appears(cancel, || self.bridge()).is_none() {
+            anyhow::ensure!(!cancel.is_cancelled(), crate::connector::cancelled());
             anyhow::bail!(words!(
                 remote_gvfs_no_bridge = "GVfs mounted { $address } but its FUSE bridge is not running: is gvfsd-fuse installed?",
                 address = top.to_string(),
                 note = "address: the server's address (sftp://example.com/)."
             ));
         }
-        skwir_core::fs::reach::changed();
-        let (point, mounted) = self.find_mount(&top).ok_or_else(|| {
+        let found = crate::connector::appears(cancel, || self.find_mount(&top));
+        anyhow::ensure!(
+            found.is_some() || !cancel.is_cancelled(),
+            crate::connector::cancelled()
+        );
+        let (point, mounted) = found.ok_or_else(|| {
             anyhow::anyhow!(words!(
                 remote_gvfs_no_folder = "GVfs mounted { $address } but its folder is not there",
                 address = top.to_string(),

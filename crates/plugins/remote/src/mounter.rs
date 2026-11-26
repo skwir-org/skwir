@@ -208,21 +208,20 @@ pub fn mount(
         // What the tool said, as it said it.
         return Err(ToolSaid(said.to_owned()).into());
     }
-    // A daemon may say it is ready a moment before the kernel lists it.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        skwir_core::fs::reach::changed();
-        if skwir_core::fs::reach::of(point).is_some_and(|remote| remote.point == point) {
-            return Ok(());
-        }
-        if Instant::now() > deadline || cancel.is_cancelled() {
-            let _ = remove_point(point);
-            anyhow::bail!(words!(
-                remote_mounter_nothing_mounted = "it said it mounted, but nothing is mounted there"
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(50));
+    // A daemon may say it is ready a moment before the kernel lists it
+    // (`connector::appears`).
+    let mounted = crate::connector::appears(cancel, || {
+        skwir_core::fs::reach::of(point)
+            .filter(|remote| remote.point == point)
+            .map(|_| ())
+    });
+    if mounted.is_none() {
+        let _ = remove_point(point);
+        anyhow::bail!(words!(
+            remote_mounter_nothing_mounted = "it said it mounted, but nothing is mounted there"
+        ));
     }
+    Ok(())
 }
 
 /// Let go of the FUSE mount at `point`; with `ours`, its folder too.

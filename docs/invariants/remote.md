@@ -723,13 +723,22 @@ ADR-077 (which revises ADR-021).
   asked the user speaks for the attempt, which no other asks again.
   Failures are said together, each by its tool. Adding a protocol is a
   scheme a connector maps, or a connector.
+- What a tool says it made is waited for, never looked for once
+  (`connector::appears`, ten seconds at most, looked for every 50 ms,
+  until cancelled): a daemon answers before the kernel lists its mount
+  (sshfs, rclone), kio-fuse just started lists its bridge a moment
+  after it answers, and GVfs's bridge lists a mount only once its own
+  loop hears of it (gvfsd-fuse's `mount_added`), after `gio mount`
+  returned, the later the busier the machine or the slower the device
+  (a watch over MTP said "its folder is not there", 2026-11-26). No
+  watch tells a folder a FUSE daemon adds.
 - GVfs is the session's: its bridge is `$XDG_RUNTIME_DIR/gvfs` alone
   (`Gvfs::bridge`), never another the mount table lists (another
   user's, or the user's own while a window runs with a runtime folder of
   its own); a mount of another bridge is neither recognised nor
   connected through. It is there where its daemon runs or the session
   bus would start it (`org.gtk.vfs.Daemon`): `gio mount` starts it, which
-  mounts the bridge, waited for a moment. A mount made again at once
+  mounts the bridge, waited for as above. A mount made again at once
   under the name of one just let go of (a server ejected and connected
   to again) answers an I/O error for what was reached in the one gone,
   up to about a second and a half, while a stat may still be answered

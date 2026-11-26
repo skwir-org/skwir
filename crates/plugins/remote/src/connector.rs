@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
@@ -306,6 +307,41 @@ pub trait Connector: Send + Sync {
     }
 }
 
+/// How long what a tool said it made is waited for before it counts as
+/// not there: a daemon answers before the kernel lists its mount, and
+/// GVfs's FUSE bridge lists a mount only once its own loop hears of it
+/// (gvfsd-fuse's `mount_added`), after `gio mount` returned, the later
+/// the busier the machine or the slower the device (a watch over MTP).
+pub const APPEARS_WITHIN: Duration = Duration::from_secs(10);
+
+/// What `look` finds once what a tool said it made is there (its mount
+/// in the system's table, its folder in a bridge), looked for again every
+/// 50 ms, the mount table read again first, for [`APPEARS_WITHIN`] at
+/// most; `None` past it or once `cancel` fires. Looked for, not told: no
+/// watch tells a folder a FUSE daemon adds. Every connector waits so,
+/// never looking once.
+pub fn appears<T>(cancel: &CancelToken, look: impl FnMut() -> Option<T>) -> Option<T> {
+    appears_within(APPEARS_WITHIN, cancel, look)
+}
+
+fn appears_within<T>(
+    within: Duration,
+    cancel: &CancelToken,
+    mut look: impl FnMut() -> Option<T>,
+) -> Option<T> {
+    let deadline = Instant::now() + within;
+    loop {
+        skwir_core::fs::reach::changed();
+        if let Some(found) = look() {
+            return Some(found);
+        }
+        if cancel.is_cancelled() || Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// `program` is not installed, said ([`Connector::unavailable`]).
 pub fn not_installed(program: &str) -> Words {
     words!(
@@ -394,6 +430,54 @@ pub fn of_point_name(name: &str) -> Option<(&str, Address)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a tool made is waited for: found once there (GVfs's bridge
+    /// listing a mount after `gio mount` returned), given up past the
+    /// patience, and at once when cancelled.
+    #[test]
+    fn what_a_tool_made_is_waited_for() {
+        let cancel = CancelToken::new();
+        let started = Instant::now();
+        let mut looks = 0;
+        let found = appears_within(Duration::from_secs(10), &cancel, || {
+            looks += 1;
+            (looks == 4).then_some("listed")
+        });
+        assert_eq!(
+            found,
+            Some("listed"),
+            "there the fourth time it is looked for"
+        );
+        assert!(
+            started.elapsed() >= Duration::from_millis(150),
+            "looked for again, not at once"
+        );
+
+        let started = Instant::now();
+        let never = appears_within(Duration::from_millis(200), &cancel, || None::<()>);
+        assert_eq!(never, None);
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(200) && waited < Duration::from_secs(5),
+            "{waited:?}"
+        );
+
+        cancel.cancel();
+        let started = Instant::now();
+        assert_eq!(
+            appears_within(Duration::from_secs(10), &cancel, || None::<()>),
+            None
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a cancel ends the wait"
+        );
+        assert_eq!(
+            appears_within(Duration::from_secs(10), &cancel, || Some(1)),
+            Some(1),
+            "what is there is found, cancelled or not"
+        );
+    }
 
     #[test]
     fn a_mount_point_says_its_address() {

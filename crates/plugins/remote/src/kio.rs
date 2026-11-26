@@ -347,14 +347,16 @@ impl Connector for Kio {
                     }
                 }
             };
-            skwir_core::fs::reach::changed();
-            let remote = skwir_core::fs::reach::of(&local)
-                .filter(|remote| remote.fstype == BRIDGE)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(words!(
-                        remote_kio_no_folder = "kio-fuse mounted it but its folder is not there"
-                    ))
-                })?;
+            // kio-fuse just started lists its bridge a moment after it
+            // answers (`connector::appears`).
+            let remote = crate::connector::appears(cancel, || {
+                skwir_core::fs::reach::of(&local).filter(|remote| remote.fstype == BRIDGE)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(words!(
+                    remote_kio_no_folder = "kio-fuse mounted it but its folder is not there"
+                ))
+            })?;
             Ok(Connected {
                 point: remote.point.clone(),
                 address: server(address),

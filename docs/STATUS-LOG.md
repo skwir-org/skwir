@@ -24637,3 +24637,27 @@ without the load, stays theirs).
   of no known type to the octet-stream ones. KDE offers the viewer for
   every file, after what the file's type and its parents declare;
   ADR-151 (8) and the guide say so.
+
+## 2026-11-26, late: a mount's folder waited for
+
+The user mounted a Garmin watch over MTP: Skwir said GVfs mounted it but
+its folder was not there, and a refresh showed it. GVfs's FUSE bridge
+lists a mount only once its own loop hears of it (gvfsd-fuse's
+`mount_added`, read in GVfs's `client/gvfsfusedaemon.c`), after `gio
+mount` returned; the GVfs connector looked for the mount's folder once.
+Four places each waited in their own way for what a tool said it made
+(GVfs's bridge 3 s, the mount's folder not at all, kio-fuse's bridge not
+at all, sshfs's and rclone's mount 5 s): one wait now,
+`connector::appears` (10 s at most, every 50 ms, until cancelled), the
+rule in `docs/invariants/remote.md`.
+
+- **Checked:** clippy `-D warnings` and the remote plugin's 164 tests (a
+  new one of the wait: found late, given up at its patience, ended by a
+  cancel); `remote_folders`' GVfs, KIO and MTP tests against servers on
+  this machine (`just remote-check`'s tools), 13 of 14 passing.
+  `gvfs_mounts_through_gio_its_questions_answered_by_the_window` fails
+  in `gio mount` itself, before the wait, GVfs answering "connection
+  failed" for its SFTP server, three runs of three, with nixpkgs' GVfs
+  1.60.3: not looked into.
+- **Not checked:** the user's watch; the race itself, which no test here
+  makes happen (GVfs's own timing).
