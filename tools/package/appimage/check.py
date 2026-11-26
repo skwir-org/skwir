@@ -155,6 +155,21 @@ def unpack(artifact, work):
     return work / top, "skwir"
 
 
+def check_viewer_name(artifact, app, work):
+    """`skw` is the viewer (ADR-151) as its user starts it: the tarball's
+    link, or a link named skw to the AppImage, its name carried by the
+    runtime (ARGV0) and AppRun. `--help` answers before any display."""
+    if artifact.name.endswith(".AppImage"):
+        link = work / "skw"
+        link.symlink_to(artifact)
+        env = dict(os.environ, APPIMAGE_EXTRACT_AND_RUN="1")
+    else:
+        link, env = app / "skw", None
+    said = run([link, "--help"], env=env, capture_output=True, text=True).stdout
+    assert said.startswith("skwir view"), ("skw is not the viewer", said)
+    print("ok: skw --help is the viewer's", flush=True)
+
+
 def check_media(app, work):
     audio = work / "a quiet recording.wav"
     with wave.open(str(audio), "wb") as stream:
@@ -661,6 +676,7 @@ def main():
         said = run([app / launcher, "--version"], capture_output=True, text=True).stdout.strip()
         print(said, flush=True)
         assert said.startswith("skwir "), said
+        check_viewer_name(artifact, app, work)
         check_helpers(app, said.removeprefix("skwir "))
         check_fonts(app)
         check_channel(app, "appimage" if artifact.name.endswith(".AppImage") else "tarball")

@@ -150,12 +150,20 @@ chmod +x skwir-0.7.0-x86_64.AppImage
 ./skwir-0.7.0-x86_64.AppImage
 ```
 
+A link to it named `skw` shows a file's preview in a window of its own
+(`skw notes.md`, [from a terminal](docs/guide.md#a-files-preview-from-a-terminal)):
+
+```sh
+ln -sfn "$PWD/skwir-0.7.0-x86_64.AppImage" ~/.local/bin/skw
+```
+
 The tarball needs no FUSE and goes where you like, here `~/.local/opt`:
 
 ```sh
 mkdir -p ~/.local/opt ~/.local/bin
 tar -xzf skwir-0.7.0-linux-x86_64.tar.gz -C ~/.local/opt
 ln -sfn ~/.local/opt/skwir-0.7.0-linux-x86_64/skwir ~/.local/bin/skwir
+ln -sfn ~/.local/opt/skwir-0.7.0-linux-x86_64/skw ~/.local/bin/skw
 ```
 
 To list it among your applications, add its desktop entry and icon:
@@ -168,7 +176,7 @@ sed "s|^Exec=skwir|Exec=\"$HOME/.local/bin/skwir\"|" applications/org.skwir.skwi
 cp icons/hicolor/scalable/apps/org.skwir.skwir.svg ~/.local/share/icons/hicolor/scalable/apps/
 ```
 
-A later version goes beside it; run the `ln` line again with its name.
+A later version goes beside it; run the `ln` lines again with its name.
 
 ### NixOS and Nix
 

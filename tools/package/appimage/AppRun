@@ -3,4 +3,9 @@
 # environment for the editor, terminal and converters Skwir launches.
 set -eu
 appdir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# A link named skw to the AppImage is the viewer, as the packages' skw is
+# (ADR-151): the runtime says the name it was started by in ARGV0.
+case "${ARGV0:-}" in
+    skw | */skw) exec "$appdir/usr/bin/skwir" view "$@" ;;
+esac
 exec "$appdir/usr/bin/skwir" "$@"

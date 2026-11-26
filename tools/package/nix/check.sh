@@ -104,6 +104,14 @@ for variant in "$@"; do
         echo "missing: bin/skw, a link to skwir"
         failed=1
     fi
+    # ... and the viewer through it and skwir's wrapper, its name reaching
+    # the program (`--help` answers before any display).
+    if "$out/bin/skw" --help 2>/dev/null | grep -q '^skwir view'; then
+        echo "ok: bin/skw --help is the viewer's"
+    else
+        echo "missing: bin/skw starting the viewer (skw --help)"
+        failed=1
+    fi
     while read -r program; do
         [ "$program" = skwir ] && continue
         found="$out/libexec/skwir/$program"

@@ -153,6 +153,14 @@ else
     echo "missing: /usr/bin/skw, a link to skwir"
     failed=1
 fi
+# ... and the viewer through it, its name reaching the program
+# (`--help` answers before any display).
+if /usr/bin/skw --help 2>/dev/null | grep -q '^skwir view'; then
+    echo "ok: skw --help is the viewer's"
+else
+    echo "missing: skw starting the viewer (skw --help)"
+    failed=1
+fi
 # The desktop entries and the icon they name, where the desktop finds them.
 for file in /usr/share/applications/org.skwir.skwir.desktop \
     /usr/share/applications/org.skwir.skwir.view.desktop \

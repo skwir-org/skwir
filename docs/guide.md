@@ -832,7 +832,11 @@ and requirements.
 
 `skwir view notes.md`, or `skw notes.md` for short, shows a file's
 preview in a window of its own: the same preview, with the same tools,
-and no file manager around it.
+and no file manager around it. `skw` comes with the Linux packages, Nix
+and Homebrew; the tarball holds it, to link beside `skwir` as the
+[README](../README.md#any-other-distribution-appimage-or-tarball)'s
+steps do; for the AppImage, make a link named `skw` to it. Windows has
+none: run `skwir.exe view` from the folder Skwir is installed in.
 
 - **Stepping:** the arrows go to the next file of its folder, in the
   order Skwir shows that folder in. Given several files
