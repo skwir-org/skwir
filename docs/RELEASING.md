@@ -57,8 +57,9 @@ workers, check performance or build packages.
    meets a bar anew; then run `just words` and commit both files.
    `lint-all` runs the same check, so `release-check` refuses it too.
 4. After the last fix, run `just startup-order` and commit
-   `tools/build/startup-order.txt`: what a start of skwir runs, which the
-   packages lay out together (ADR-128). It traces real starts on displays
+   `tools/build/startup-order.txt`: what a start of skwir runs, then what
+   a viewer's own program runs beside it (`skwir view`, ADR-151), which
+   the packages lay out together (ADR-128). It traces real starts on displays
    of its own and needs a CPU with Intel PT. A list left stale makes the
    packages heavier, not wrong.
 5. Run `just release-metadata v0.1.0`, review and commit the release source,

@@ -32,15 +32,31 @@ class TheList(unittest.TestCase):
     def test_what_every_display_runs_comes_first(self):
         wayland = {"shared-late": 5.0, "shared-early": 1.0, "wl": 2.0}
         x11 = {"shared-late": 4.0, "shared-early": 3.0, "x": 0.5}
-        self.assertEqual(startup_order.laid_out({"wayland": wayland, "x11": x11}),
+        self.assertEqual(startup_order.laid_out([{"wayland": wayland, "x11": x11}]),
                          ["shared-early", "shared-late", "wl", "x"])
+
+    def test_a_later_program_follows_with_what_it_runs_beside(self):
+        manager = {"wayland": {"shared": 1.0, "folder": 2.0, "wl": 3.0},
+                   "x11": {"shared": 1.5, "folder": 2.5}}
+        viewer = {"wayland": {"shared": 0.5, "text": 1.0, "wl": 0.2, "png-wl": 4.0},
+                  "x11": {"shared": 0.5, "text": 2.0}}
+        self.assertEqual(startup_order.laid_out([manager, viewer]),
+                         ["shared", "folder", "wl", "text", "png-wl"],
+                         "the first program as if alone, then the later one's own")
+        self.assertEqual(startup_order.laid_out([manager]), ["shared", "folder", "wl"])
 
     def test_merged_keeps_the_earliest(self):
         self.assertEqual(startup_order.merged([{"a": 2.0}, {"a": 1.0, "b": 3.0}]),
                          {"a": 1.0, "b": 3.0})
 
     def test_equal_times_order_by_name(self):
-        self.assertEqual(startup_order.laid_out({"one": {"b": 1.0, "a": 1.0}}), ["a", "b"])
+        self.assertEqual(startup_order.laid_out([{"one": {"b": 1.0, "a": 1.0}}]), ["a", "b"])
+
+    def test_a_picture_is_a_png(self):
+        made = startup_order.picture(4, 3)
+        self.assertTrue(made.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn(b"IHDR", made)
+        self.assertTrue(made.endswith(b"IEND\xaeB`\x82"))
 
 
 if __name__ == "__main__":

@@ -440,7 +440,8 @@ idle-pss:
     tools/measure/idle-pss.py
 
 # Make tools/build/startup-order.txt: what a start runs, in order, which
-# `dist` builds lay out together (ADR-128). Before tagging, after the last
+# `dist` builds lay out together (ADR-128): the file manager's, then a
+# viewer's own program's (`skwir view`). Before tagging, after the last
 # fix. Traces real starts on displays of its own; needs Intel PT.
 startup-order *args:
     #!/usr/bin/env bash

@@ -3,7 +3,9 @@
 Status: accepted 2026-11-09 with the user. Built for Linux on x86-64
 (`dist` builds, the flake's Nix package included); not for macOS or
 Windows.
-Answers PLAN's "find why so much of the code is resident".
+Answers PLAN's "find why so much of the code is resident". Amended
+2026-11-26, on the user's request: a viewer's own program (ADR-151) is
+traced too, its code laid out after the file manager's.
 
 ## Context
 
@@ -67,6 +69,14 @@ back with use and the layout stays as it was.
    Vulkan and a session bus and folders of its own. What every display
    runs comes first, then what each runs alone, so a start keeps one run
    of code. Only the list's maker needs Intel PT.
+   - Two programs are started (amended 2026-11-26): the file manager on a
+     folder, then a viewer's own program (`skwir view`, ADR-151) on a
+     text file, a picture and a Markdown file in turn. The file manager's
+     code is laid out first, as if it were alone: its start is what
+     ADR-000 budgets. What a viewer's start runs beside it follows, laid
+     out the same way. Before, a viewer's own program read more of the
+     binary than the file manager (58 MiB against 44): its start ran code
+     the list left scattered.
 5. **Made again before each release**, after the last fix
    (`docs/RELEASING.md`), and a new list links skwir again
    (`crates/skwir/build.rs`). A list 74 commits old recovered about half
@@ -97,6 +107,16 @@ in 82 ms against 94. What idle pays for new code is now what a start
 runs of it.
 
 - The list is 1.7 MiB of text, regenerated each release.
+- **A viewer's start laid out too** (2026-11-26, the same commit linked
+  with the list before and the one made then, alternated twice on a
+  headless sway with Intel's driver, medians of three, own share): skwir
+  82.7 MiB to 76.5 (its binary 44.1 to 37.9: the list had gone stale
+  since 0.7.0); a viewer's own program 90.2 to 73.0 (58.0 to 40.9); a
+  viewer handed to a running skwir 29.6 more to 22.8 (its binary's part
+  22.6 to 15.5). First frames were not told apart (three starts each,
+  spread from 46 to 81 ms). The list grew
+  from 13,001 to 15,498 functions: the viewer's start added 2,719, 2.5 MiB
+  of code.
 - What is left of the code (4.8 MiB above the list) is mostly what only a
   real session runs (a portal on the bus) and a driver's own paths, which
   a recipe that touches no desktop cannot see; 676 small functions there

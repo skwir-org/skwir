@@ -13,6 +13,12 @@ code. That sees every branch taken, which sampling cannot: what is run once
 is what this list is for. Needs a CPU with Intel PT; nothing else does, as
 the packages only read the list this writes.
 
+Two programs start: the file manager, on a folder, then a viewer's own
+(`skwir view`, ADR-151), on a text file, a picture and a Markdown file in
+turn. The file manager's code comes first, laid out as if it were alone:
+its start is what ADR-000 budgets. What a viewer's start runs beside it
+follows.
+
 A list made here goes stale as the code moves (a list 74 commits old kept
 half of the gain): run this before tagging a release, after the last fix.
 """
@@ -24,15 +30,18 @@ import pathlib
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 PT = pathlib.Path("/sys/bus/event_source/devices/intel_pt")
 HEADER = """\
-# The functions a start of skwir runs, by first execution (ADR-128).
+# The functions a start of skwir runs, by first execution (ADR-128): the
+# file manager's, then what a viewer's own program runs beside it.
 # Made by `just startup-order`; read by tools/build/link-ordered.
 """
 
@@ -118,24 +127,46 @@ def merged(firsts):
     return first
 
 
-def laid_out(by_display):
-    """The functions of every display's starts, in the order for the list:
-    what all of them run, by first execution, then what each runs alone.
-    Mixed, a start on one display would keep windows of the other's code."""
-    displays = list(by_display)
-    everywhere = set.intersection(*(set(by_display[d]) for d in displays))
+def laid_out(programs):
+    """The functions of every program's starts, in the order for the list,
+    a program after another (each a display's first runs, by display): of
+    each, what was not placed before it, what its starts on every display
+    run, by first execution, then what each display's run alone. Mixed, a
+    start on one display would keep windows of the other's code; the first
+    program's code is laid out as if it were alone, and a later one's
+    follows it."""
     placed = []
+    taken = set()
 
     def add(names, first):
         placed.extend(sorted(names, key=lambda name: (first[name], name)))
 
-    add(everywhere, merged(by_display.values()))
-    taken = set(everywhere)
-    for display in displays:
-        alone = set(by_display[display]) - taken
-        add(alone, by_display[display])
-        taken |= alone
+    for by_display in programs:
+        displays = list(by_display)
+        everywhere = set.intersection(*(set(by_display[d]) for d in displays)) - taken
+        add(everywhere, merged(by_display.values()))
+        taken |= everywhere
+        for display in displays:
+            alone = set(by_display[display]) - taken
+            add(alone, by_display[display])
+            taken |= alone
     return placed
+
+
+def picture(width, height):
+    """A PNG of `width` × `height`, a gradient, made here: no picture
+    library is asked."""
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    rows = b"".join(b"\0" + bytes(((x * 255 // width), (y * 255 // height), 128)[c]
+                                    for x in range(width) for c in range(3))
+                    for y in range(height))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
 def write_list(names, output):
@@ -158,6 +189,11 @@ class Session:
         (self.folder / "notes.txt").write_text("alpha\n")
         (self.folder / "readme.md").write_text("beta\n")
         (self.folder / "data.bin").write_bytes(bytes(4096))
+        (self.folder / "photos" / "dune.png").write_bytes(picture(160, 120))
+        # What a viewer's starts show, in turn: a text file, a picture, a
+        # Markdown file.
+        self.viewed = [self.folder / "notes.txt", self.folder / "photos" / "dune.png",
+                       self.folder / "readme.md"]
         for name in ("config", "cache", "state", "data"):
             (self.root / name).mkdir()
         self.args = args
@@ -250,11 +286,12 @@ class Session:
             process.wait()
         self.procs.remove(process)
 
-    def trace(self, binary, display, idle, data, log):
+    def trace(self, binary, start, display, idle, data, log):
+        """`start`, the program's arguments, traced."""
         offset, _, size = text_segment(binary)
         self.run([self.args.perf, "record", "-o", str(data), "-e", "intel_pt/cyc=0/u", "-m,256K",
                   "--filter", f"filter {offset:#x}/{size:#x}@{binary}", "--",
-                  str(binary), str(self.folder)], display, idle, log)
+                  str(binary), *start], display, idle, log)
 
     def close(self):
         for process in reversed(self.procs):
@@ -318,35 +355,52 @@ def main():
     syms = symbols(binary, address - offset)
 
     session = Session(args)
-    traces = []  # (display, its data)
+    # What each program is started with, its `n`th start: the file manager
+    # on a folder, a viewer's own program on a file in turn (ADR-151).
+    programs = {
+        "skwir": lambda n: [str(session.folder)],
+        "view": lambda n: ["view", str(session.viewed[n % len(session.viewed)])],
+    }
+    traces = []  # (program, display, its data)
     try:
         session.start_bus()
         for kind, start in (("wayland", session.start_wayland), ("x11", session.start_x11)):
             display = start()
-            # Once untraced: what follows is a start like any other, with
-            # its caches filled, not a first one.
-            print(f"{kind}: warming up", flush=True)
-            session.run([str(binary), str(session.folder)], display, args.idle, f"{kind}-warm.log")
-            for n in range(args.runs):
-                print(f"{kind}: start {n + 1} of {args.runs}", flush=True)
-                data = session.root / f"{kind}-{n}.perf"
-                session.trace(binary, display, args.idle, data, f"{kind}-{n}.log")
-                traces.append((kind, data))
+            for program, arguments in programs.items():
+                # Once untraced: what follows is a start like any other,
+                # with its caches filled, not a first one.
+                print(f"{kind}, {program}: warming up", flush=True)
+                session.run([str(binary), *arguments(0)], display, args.idle,
+                            f"{kind}-{program}-warm.log")
+                for n in range(args.runs):
+                    print(f"{kind}, {program}: start {n + 1} of {args.runs}", flush=True)
+                    data = session.root / f"{kind}-{program}-{n}.perf"
+                    session.trace(binary, arguments(n), display, args.idle, data,
+                                  f"{kind}-{program}-{n}.log")
+                    traces.append((program, kind, data))
         print(f"decoding {len(traces)} traces", flush=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-            covers = list(pool.map(lambda trace: decode(args.perf, binary, trace[1]), traces))
+            covers = list(pool.map(lambda trace: decode(args.perf, binary, trace[2]), traces))
     finally:
         session.close()
 
-    by_display = {}
-    for (kind, _), cover in zip(traces, covers):
+    by_program = {program: {} for program in programs}
+    for (program, kind, _), cover in zip(traces, covers):
+        by_display = by_program[program]
         by_display[kind] = merged([by_display.get(kind, {}), first_runs(syms, cover)])
-    names = laid_out(by_display)
+    names = laid_out(list(by_program.values()))
     if len(names) < 1000:
         fail(f"only {len(names)} functions seen: the traces did not cover a start")
     write_list(names, pathlib.Path(args.output))
-    listed = set(names)
-    size = sum(s[1] for s in syms if s[2] in listed)
+    sizes = {s[2]: s[1] for s in syms}
+    seen = set()
+    for program, by_display in by_program.items():
+        ran = set().union(*by_display.values())
+        added = ran - seen
+        seen |= ran
+        print(f"{program}: {len(added)} functions more, "
+              f"{sum(sizes.get(name, 0) for name in added) / 1048576:.1f} MiB of code")
+    size = sum(sizes.get(name, 0) for name in set(names))
     print(f"{args.output}: {len(names)} functions, {size / 1048576:.1f} MiB of code")
     return 0
 

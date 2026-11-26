@@ -1443,12 +1443,11 @@ and then the cask on the tap's main (it waits on `cask/skwir`).
 **A file's preview from a terminal** (ADR-151, built 2026-11-25:
 `skwir view`, `skw`, checked in a window on Xvfb; amended 2026-11-26: a
 Skwir running shows the files a launch hands it, the launch waiting in
-its terminal, checked on a headless sway; `dist` measured there: a
-viewer's own program 90.4 MiB own share, more than skwir's 82.6, one
-handed to skwir 28.8 more, its first frame 26 ms from the launch
-against 85). Left: a viewer's own start traced by `just startup-order`
-too, so ADR-128 lays out its code (its program reads 58 MiB of the
-binary, skwir's start 44); the system's dialog with no file named,
+its terminal, checked on a headless sway; a viewer's start laid out
+after the file manager's by `just startup-order`, ADR-128 amended;
+`dist` measured there: skwir 76.5 MiB own share, a viewer's own program
+73.0, one handed to skwir 22.8 more, its first frame 26 ms from the
+launch against 85). Left: the system's dialog with no file named,
 tried only where no portal answers (it ends, saying why); the packages'
 `skw` link and Skwir Preview entry built and installed (written, no
 package built); Windows's handover tried under Wine (the pipe), its

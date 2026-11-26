@@ -24435,3 +24435,38 @@ user's Quit leaves viewers, macOS stays a program of its own.
   skwir-platform, skwir-ui and the binary's 1724 tests: 1723 passed, and
   `remote_configs::a_remote_left_half_made_is_said_so_and_removed` failed
   after 81 s under the run's load, then passed alone in 1.9 s.
+
+## 2026-11-26, night: a viewer's start laid out too (ADR-128 amended)
+
+The user asked for the follow-up the viewer's measure suggested: its own
+program read more of the binary than skwir (58 MiB against 44), its
+start running code ADR-128's list left scattered.
+
+- **Built.** `tools/build/startup_order.py` starts two programs on each
+  display: the file manager on a folder, as before, then a viewer's own
+  program (`skwir view`) on a text file, a picture (a PNG it makes, no
+  picture library asked) and a Markdown file in turn. `laid_out` takes
+  the programs in order: the file manager's code as if it were alone
+  (what ADR-000 budgets), then what a viewer's start runs beside it, laid
+  out the same way (every display's first, then each one's alone).
+- **The list made again** at af41d13b (four traced starts of each
+  program on each display, Intel PT, a sway and an Xvfb of its own, a
+  bus and folders of its own): 15,498 functions, 15.9 MiB of code; the
+  file manager's 13.4 MiB, the viewer's start 2,719 more, 2.5 MiB.
+- **Measured** (`dist` at af41d13b linked with the list before and the
+  one made, alternated twice on a headless sway with Intel's driver,
+  medians of three idle starts, own share of PSS):
+
+  | | list before | list made |
+  | --- | --- | --- |
+  | skwir | 82.7 MiB (binary 44.1) | 76.5 (37.9) |
+  | a viewer's own program | 90.2 (57.9) | 73.0 (40.9) |
+  | a viewer handed to skwir, more | 29.6 (22.6) | 22.8 (15.5) |
+
+  skwir's own gain is the list made fresh (it was 0.7.0's). First frames,
+  the two rounds' medians: skwir 63 and 67 ms before, 62 and 63 after; a
+  viewer 55 and 47 before, 60 and 57 after, single starts spread from 46
+  to 81 ms: three starts are too few to tell a viewer's few ms apart.
+  `link-ordered --check` passes on the binary linked with it.
+- **Tests:** `tools/build`'s 26 (a later program follows the first,
+  laid out as if alone; the PNG made is one).

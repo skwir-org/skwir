@@ -225,6 +225,9 @@ manager (Rejected).
     included (binary 22.6, anonymous 5.8, the launch's 5.5 of it);
   - from the launch to the window's first frame (five runs): handed,
     22 to 38 ms (26 the median); its own program, 63 to 130 (85).
+  - with a viewer's start laid out too (ADR-128, amended the same
+    night): skwir 76.5 MiB, a viewer's own program 73.0, one handed to
+    skwir 22.8 more.
 - A preview that fails in the Skwir running takes the user's windows
   with it, as it would in its preview panel.
 - While viewers' windows alone are up, what runs without the user's
