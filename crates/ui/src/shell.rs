@@ -751,9 +751,10 @@ pub struct Shell {
     /// (`window_moved`).
     pub(crate) placement: crate::session::Placement,
     placement_wait: Option<gpui::Task<()>>,
-    /// A dialog's window was dragged to its size since the placement was
-    /// last remembered (`window_moved`, `Placement::of_dialog`): the change
-    /// that ends the drag, which says no drag any more, is the user's too.
+    /// A dialog's window, or a viewer's, was dragged to its size since the
+    /// placement was last remembered (`window_moved`,
+    /// `Placement::of_dialog`): the change that ends the drag, which says
+    /// no drag any more, is the user's too.
     dialog_dragged: bool,
     /// Scroll position of the sidebar, so it can have a scrollbar.
     pub sidebar_scroll: gpui::ScrollHandle,
@@ -1260,9 +1261,10 @@ impl Shell {
     /// The window moved or was resized: where it is now, remembered once it
     /// stays half a second, not at each step of a drag; a dialog's, the size
     /// the user dragged it to, else the size it had while tiled
-    /// (`Placement::of_dialog`, ADR-144, 4).
+    /// (`Placement::of_dialog`, ADR-144, 4), and a viewer's alike, which
+    /// floats where windows tile, its size kept apart (ADR-151, 3).
     fn window_moved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.placement = if self.chooser.is_some() {
+        self.placement = if self.chooser.is_some() || self.viewer.is_some() {
             self.dialog_dragged |= window.is_being_resized();
             crate::session::Placement::of_dialog(window, &self.placement, self.dialog_dragged, cx)
         } else {
@@ -3051,17 +3053,15 @@ impl Shell {
     /// another program's dialog, as the core answers (`App::in_dialogs`:
     /// what finds and chooses, what its own parts ask of themselves, and a
     /// picker, a prompt or a preview's item only where what it runs is
-    /// offered). The one answer every way to run a command in a window
-    /// asks: keys and F1's list, the palette, menus, buttons and the
-    /// address field's rows, pickers, Properties' links, toasts' buttons.
+    /// offered); in a viewer's, as the core answers there too
+    /// (`App::in_viewer`, ADR-151, 5: what shows the file and acts on it
+    /// without changing it, the window's own). The one answer every way to
+    /// run a command in a window asks: keys and F1's list, the palette,
+    /// menus, buttons and the address field's rows, pickers, Properties'
+    /// links, toasts' buttons.
     pub(crate) fn in_window(&self, name: &str, args: &serde_json::Value) -> InDialogs {
-        // A viewer's window views (ADR-151, 5); its buttons close, maximize
-        // and minimize it, and Quit ends its program.
         if self.viewer.is_some() {
-            if VIEWER_OWN.contains(&name) {
-                return InDialogs::Offered;
-            }
-            return self.app.in_viewer(name);
+            return self.app.in_viewer(name, args);
         }
         if self.chooser.is_none() {
             return InDialogs::Offered;
@@ -3088,14 +3088,13 @@ impl Shell {
         self.in_window(name, args).offered()
     }
 
-    /// The menu items this window runs (`runs_here`), in their order.
+    /// The menu items this window runs (`runs_here`), in their order: in a
+    /// window of the user's own, all; in a dialog's or a viewer's, those
+    /// whose command (and what it leads to) is offered there.
     pub(crate) fn items_run_here(
         &self,
         items: Vec<skwir_core::registry::MenuItem>,
     ) -> Vec<skwir_core::registry::MenuItem> {
-        if self.chooser.is_none() {
-            return items;
-        }
         items
             .into_iter()
             .filter(|item| self.runs_here(&item.command.name, &item.command.args))
@@ -3424,8 +3423,10 @@ impl Shell {
     /// the program taking in what the core sends and asks, which finishes
     /// without the window (`finishing.rs`) or ends. The window goes later
     /// (gpui removes it in a task of its own), and what is asked meanwhile
-    /// waits for the next window rather than going with this one.
-    pub(crate) fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// waits for the next window rather than going with this one: nothing
+    /// here reads it (a viewer's size is the placement it keeps,
+    /// `window_moved`).
+    pub(crate) fn leave(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.left {
             return;
         }
@@ -3435,7 +3436,7 @@ impl Shell {
         // ADR-141).
         self.chooser_let_go(skwir_platform::chooser::Answer::Cancelled, cx);
         // A viewer's window keeps its size and goes from the core (ADR-151).
-        self.viewer_let_go(window);
+        self.viewer_let_go(cx);
         let held = self.take_held();
         self.left = true;
         // A plan being made for it, and what waited, go with it.
@@ -3497,8 +3498,10 @@ impl Shell {
             crate::finishing::others_but_viewers(cx, self.window_id)
         };
         // A viewer's own Quit closes it alone (`run_ui`): one here was
-        // asked from elsewhere, and stays unless all go.
-        if viewers || self.viewer.is_none() {
+        // asked from elsewhere, and stays unless all go, but in a viewer's
+        // own program, whose window it is (Quit's question asked there, a
+        // Mac's Dock or logging out: ADR-151, 4).
+        if viewers || self.viewer.is_none() || self.views_alone() {
             self.leave(window, cx);
             window.remove_window();
         }
@@ -5587,16 +5590,6 @@ impl Render for Shell {
     }
 }
 
-/// What a viewer's window offers whatever its topic (ADR-151, 4 and 5):
-/// the window's own buttons (ADR-138), and Quit, which ends the viewer's
-/// program as it ends any (ADR-115).
-const VIEWER_OWN: &[&str] = &[
-    "ui.close_window",
-    "ui.maximize_window",
-    "ui.minimize_window",
-    "ui.quit",
-];
-
 impl Shell {
     /// A viewer's window (ADR-151, 3): the file's bar and its preview
     /// filling it (`preview::render_viewed`), under skwir's own title bar
@@ -5619,17 +5612,20 @@ impl Shell {
             crate::title_bar::Drawn::System => (title_bar, None),
             _ => (None, title_bar),
         };
-        let toast_over =
-            crate::toast::render_answer(self, crate::toast::AnswerAt::Screen, cx).map(|answer| {
-                div()
-                    .absolute()
-                    .bottom(crate::sizes::sized(38.))
-                    .left_0()
-                    .right_0()
-                    .flex()
-                    .justify_center()
-                    .child(answer)
-            });
+        // What answers the user (ADR-151, 3), wherever the window would
+        // draw it: a viewer has neither files nor Activity to draw it over,
+        // so this is the one place it is drawn, its card under it.
+        let at = self.answer_at();
+        let toast_over = crate::toast::render_answer(self, at, cx).map(|answer| {
+            div()
+                .absolute()
+                .bottom(crate::sizes::sized(38.))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(answer)
+        });
         let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, window, cx);
         let overlays = [

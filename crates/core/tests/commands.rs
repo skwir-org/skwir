@@ -523,6 +523,113 @@ fn a_dialog_offers_a_command_by_its_topic_unless_it_says_otherwise() {
     }
 }
 
+/// A viewer's window offers a command by its topic (what shows the file
+/// and plays in it, the window's own parts) unless it says otherwise where
+/// it is registered, never one that changes files unless it says so, and
+/// only where what it leads to is offered; what opens elsewhere it offers
+/// by its topic; what no list offers runs where it is asked (ADR-151, 5).
+#[test]
+fn a_viewer_offers_a_command_by_its_topic_unless_it_says_otherwise() {
+    use skwir_core::command::InDialogs;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let register = |topic, name: &'static str| {
+        app.commands.register::<serde_json::Value, _>(
+            "viewer",
+            topic,
+            name,
+            Words::as_written(name),
+            Words::as_written(""),
+            |_, _| Ok(Outcome::Done),
+        )
+    };
+    register(Topic::Preview, "viewer.zoom");
+    register(Topic::Player, "viewer.play");
+    register(Topic::Window, "viewer.menu");
+    register(Topic::Select, "viewer.select_all");
+    register(Topic::Find, "viewer.find");
+    register(Topic::Files, "viewer.compress");
+    register(Topic::Tabs, "viewer.new_tab");
+    register(Topic::Go, "viewer.go");
+    // Opened elsewhere, the file shown: by its topic.
+    register(Topic::Preview, "viewer.open_external").opens_elsewhere();
+    register(Topic::Go, "viewer.open_url")
+        .in_viewer()
+        .opens_elsewhere();
+    register(Topic::Files, "viewer.open_with").in_viewer();
+    register(Topic::Window, "viewer.activity").not_in_viewer();
+    // What changes files, whatever it is about.
+    register(Topic::Preview, "viewer.rotate").plans();
+    register(Topic::Files, "viewer.print").in_viewer().plans();
+    register(Topic::Files, "viewer.rows").data();
+    register(Topic::Preview, "viewer.invoke").leads_to(|args| {
+        args.get("command")
+            .and_then(serde_json::Value::as_str)
+            .map(Invocation::new)
+            .into_iter()
+            .collect()
+    });
+    // A dialog's rule says nothing of a viewer's.
+    register(Topic::Files, "viewer.mkdir").in_dialogs().plans();
+    let here = |name: &str, args: serde_json::Value| app.in_viewer(name, &args);
+    let none = || serde_json::json!({});
+    for name in [
+        "viewer.zoom",
+        "viewer.play",
+        "viewer.menu",
+        "viewer.open_external",
+        "viewer.open_url",
+        "viewer.open_with",
+        "viewer.print",
+    ] {
+        assert_eq!(here(name, none()), InDialogs::Offered, "{name}");
+    }
+    for name in [
+        "viewer.select_all",
+        "viewer.find",
+        "viewer.compress",
+        "viewer.new_tab",
+        "viewer.go",
+        "viewer.activity",
+        "viewer.rotate",
+        "viewer.mkdir",
+        "viewer.none",
+    ] {
+        assert_eq!(here(name, none()), InDialogs::Not, "{name}");
+    }
+    assert_eq!(here("viewer.rows", none()), InDialogs::Asked);
+    let invoke = |command: &str| serde_json::json!({ "command": command });
+    assert_eq!(
+        here("viewer.invoke", invoke("viewer.print")),
+        InDialogs::Offered
+    );
+    assert_eq!(
+        here("viewer.invoke", invoke("viewer.compress")),
+        InDialogs::Not
+    );
+    // Each answer its own: the dialog's is not the viewer's.
+    assert_eq!(app.in_dialogs("viewer.mkdir", &none()), InDialogs::Offered);
+    assert_eq!(app.in_dialogs("viewer.open_with", &none()), InDialogs::Not);
+    // The core's own: nothing that changes files, nor tabs, windows or
+    // the selection, which a viewer's pane, never drawn, keeps on the
+    // file shown.
+    for name in [
+        "delete",
+        "trash",
+        "copy",
+        "move",
+        "mkdir",
+        "rename",
+        "undo",
+        "tab.new",
+        "tab.close",
+        "window.new",
+        "select_all",
+    ] {
+        assert!(!here(name, none()).runs(), "{name}");
+    }
+}
+
 /// What a command's arguments make it do only ever raises what it declares
 /// (ADR-044): one that shows keeps the user's preference by an argument,
 /// so an agent's call of it with that argument asks first; one that acts

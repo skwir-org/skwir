@@ -6545,29 +6545,7 @@ impl Shell {
         let Some((about, pane)) = self.preview.about() else {
             return Vec::new();
         };
-        let own = |order, title: Words, icon: &str, name: &str| {
-            MenuItem::new("preview", title, icon, order, Invocation::new(name))
-        };
-        let mut items = vec![
-            own(
-                0,
-                words!(
-                    preview_open_external = "Open externally",
-                    note = "A preview's menu row: open the file in the application the desktop opens it with."
-                ),
-                "open",
-                "ui.preview_open_external",
-            ),
-            own(
-                100,
-                words!(
-                    preview_copy_path = "Copy path",
-                    note = "A preview's menu row: copy the file's path."
-                ),
-                "copy",
-                "ui.preview_copy_path",
-            ),
-        ];
+        let mut items = own_entry_items(self.viewer.is_some());
         let (plugins, sources) = self.preview_menu_parts();
         items.extend(plugins.into_iter().map(|item| MenuItem {
             command: Invocation::with_args(
@@ -6589,9 +6567,10 @@ impl Shell {
                 (source, answer)
             })
             .collect();
-        // What the window runs of them (ADR-144, 1): an application to open
-        // the file with, Print…, opening it elsewhere are no rows of a
-        // dialog's window.
+        // What the window runs of them (ADR-144, 1; ADR-151, 5): an
+        // application to open the file with, Print…, opening it elsewhere
+        // are no rows of a dialog's window, and what changes the file
+        // (Reduce Size…) none of a viewer's.
         self.items_run_here(crate::menu::merge(items, answers))
     }
 
@@ -9642,6 +9621,50 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             )
             .into_any_element(),
     )
+}
+
+/// The window's own rows of the preview's More, before the plugins' and
+/// what the menu sources answer: Open externally, Copy path, and in a
+/// viewer's window (`viewer`) Show in Skwir (ADR-151, 5).
+pub(crate) fn own_entry_items(viewer: bool) -> Vec<skwir_core::registry::MenuItem> {
+    use skwir_core::command::Invocation;
+    use skwir_core::registry::MenuItem;
+    let own = |order, title: Words, icon: &str, name: &str| {
+        MenuItem::new("preview", title, icon, order, Invocation::new(name))
+    };
+    let mut items = vec![
+        own(
+            0,
+            words!(
+                preview_open_external = "Open externally",
+                note = "A preview's menu row: open the file in the application the desktop opens it with."
+            ),
+            "open",
+            "ui.preview_open_external",
+        ),
+        own(
+            100,
+            words!(
+                preview_copy_path = "Copy path",
+                note = "A preview's menu row: copy the file's path."
+            ),
+            "copy",
+            "ui.preview_copy_path",
+        ),
+    ];
+    if viewer {
+        // Of what opens it (0xx, ADR-099), after Open With's.
+        items.push(own(
+            9,
+            words!(
+                preview_viewer_reveal = "Show in Skwir",
+                note = "A row of the More menu of a window showing one file's preview alone (skwir view): open the file's folder in Skwir, the file selected."
+            ),
+            "folder",
+            "ui.viewer_reveal",
+        ));
+    }
+    items
 }
 
 /// A viewer's window (`skwir view`, ADR-151, 3): peek's card filling the

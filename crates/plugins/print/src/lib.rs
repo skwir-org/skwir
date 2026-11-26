@@ -413,6 +413,8 @@ impl Plugin for PrintPlugin {
             serde_json::json!({ "layout": "listing" }),
             print_listing_menu(),
         )]);
+        // Print… of the file a viewer's window shows (ADR-151, 5).
+        print.in_viewer();
         let saving = self.held.app.clone();
         app.commands
             .register::<SaveArgs, _>(
@@ -463,6 +465,8 @@ impl Plugin for PrintPlugin {
                     )?))
                 },
             )
+            // Print…'s Save as PDF, in a viewer's window too.
+            .in_viewer()
             .plans();
         menus(app);
         // Ctrl+P prints the files selected, the pane's listing with none,

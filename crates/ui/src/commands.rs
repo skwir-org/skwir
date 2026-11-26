@@ -1477,6 +1477,57 @@ const NOT_IN_DIALOGS: &[&str] = &[
     "ui.viewer_step",
 ];
 
+/// The shell's commands a viewer's window offers though their topic is not
+/// offered there (ADR-151, 5): the window's own buttons (ADR-138), Quit,
+/// which ends a viewer's own program as it ends any (ADR-115) and closes
+/// the viewer alone in the Skwir running, the answers to what it asks of
+/// what the user did there (a PDF saved over a name taken: Enter and
+/// Escape on the question) and a plan's Cancel (a print being sent),
+/// Properties of the file shown and copying what it says, a document's
+/// links, which open in the browser, and the list of its keys.
+const IN_VIEWER: &[&str] = &[
+    "ui.close_window",
+    "ui.maximize_window",
+    "ui.minimize_window",
+    "ui.quit",
+    "ui.review_apply",
+    "ui.review_cancel",
+    "ui.plan_cancel",
+    "ui.properties",
+    "ui.properties_count",
+    "ui.properties_fold",
+    "ui.copy_text",
+    "ui.open_url",
+    "ui.shortcuts",
+];
+
+/// The shell's commands a viewer's window does not offer though their
+/// topic is offered there (ADR-151, 5): what is about the parts of a
+/// window it does not draw (the pane's menu, the sidebar and the parts the
+/// focus goes round, Settings' keys, Activity, a dialog's own rows), and
+/// the pinned player (pinning what plays, a menu's Play, Keep playing):
+/// what plays there ends with its preview, as in a dialog's window.
+const NOT_IN_VIEWER: &[&str] = &[
+    "ui.context_menu",
+    "ui.focus_pane",
+    "ui.focus_sidebar",
+    "ui.focus_next_part",
+    "ui.sidebar_key",
+    "ui.settings_key",
+    "ui.settings_adjust",
+    "ui.settings_exclusion",
+    "ui.settings_exclusion_item",
+    "ui.activity",
+    "ui.activity_earlier",
+    "ui.chooser_accept",
+    "ui.chooser_cancel",
+    "ui.chooser_filter",
+    "ui.chooser_choice",
+    "ui.media_play",
+    "ui.media_pin",
+    "ui.media_keep_playing",
+];
+
 /// The shell's commands that open something in another program
 /// (`Declared::opens_elsewhere`): an address, the file shown, the place
 /// shown. A window answering another program's dialog offers none
@@ -2009,6 +2060,13 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
         declared.in_dialogs()
     } else if NOT_IN_DIALOGS.contains(&name) {
         declared.not_in_dialogs()
+    } else {
+        declared
+    };
+    let declared = if IN_VIEWER.contains(&name) {
+        declared.in_viewer()
+    } else if NOT_IN_VIEWER.contains(&name) {
+        declared.not_in_viewer()
     } else {
         declared
     };
@@ -4183,6 +4241,22 @@ mod tests {
                 "{name}"
             );
         }
+        // So does what a viewer's window offers apart from them (ADR-151,
+        // 5).
+        for name in super::IN_VIEWER {
+            let spec = app.commands.get(name).expect(name);
+            assert!(
+                app.in_viewer(name, &none).offered() && !spec.in_viewer_by_default(),
+                "{name}"
+            );
+        }
+        for name in super::NOT_IN_VIEWER {
+            let spec = app.commands.get(name).expect(name);
+            assert!(
+                !app.in_viewer(name, &none).runs() && spec.in_viewer_by_default(),
+                "{name}"
+            );
+        }
         for name in super::OPENS_ELSEWHERE {
             let spec = app.commands.get(name).expect(name);
             assert!(
@@ -4205,5 +4279,91 @@ mod tests {
         let waiting = app.take_front_requests();
         assert_eq!(waiting.len(), 1);
         assert_eq!(&*waiting[0].name, "ui.toggle_sidebar");
+    }
+
+    /// What a viewer's window shows of its own runs there (ADR-151, 5):
+    /// the rows of its More and the keys its card binds; what it promises
+    /// (the window's buttons, Quit, Properties, a document's links, the
+    /// answers to its questions) is offered, and what it does not draw
+    /// (the sidebar, Activity, the pinned player, the parts F6 goes round)
+    /// nor what changes files is not.
+    #[test]
+    fn a_viewer_runs_what_it_shows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        super::declare_all(&app);
+        let offered = |name: &str, args: &serde_json::Value| app.in_viewer(name, args).offered();
+        for item in crate::preview::own_entry_items(true) {
+            assert!(
+                offered(&item.command.name, &item.command.args),
+                "{}",
+                item.command.name
+            );
+        }
+        // Show in Skwir is a viewer's row alone.
+        assert!(
+            !crate::preview::own_entry_items(false)
+                .iter()
+                .any(|item| &*item.command.name == "ui.viewer_reveal")
+        );
+        let viewer = |context: &str| {
+            context
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|token| token == crate::keymap::VIEWER)
+        };
+        let mut bound = 0;
+        for key in crate::keymap::bindings(&app, &[]) {
+            let Some((command, args)) = &key.command else {
+                continue;
+            };
+            if viewer(&key.context) {
+                bound += 1;
+                assert!(offered(command, args), "{} {command}", key.keys);
+            }
+        }
+        assert!(bound > 0, "a viewer binds keys of its own");
+        let none = serde_json::json!({});
+        for name in [
+            "ui.close_window",
+            "ui.quit",
+            "ui.properties",
+            "ui.open_url",
+            "ui.review_apply",
+            "ui.review_cancel",
+            "ui.preview_menu",
+            "ui.preview_fullscreen",
+            "ui.viewer_step",
+            "ui.menu_down",
+            "ui.accept",
+            "ui.dismiss",
+            "ui.media_control",
+        ] {
+            assert!(offered(name, &none), "{name}");
+        }
+        for name in [
+            "ui.focus_next_part",
+            "ui.focus_sidebar",
+            "ui.activity",
+            "ui.media_pin",
+            "ui.media_play",
+            "ui.palette",
+            "ui.settings",
+            "ui.split",
+            "ui.terminal",
+            "ui.rename_prompt",
+            "ui.cursor",
+            "ui.context_menu",
+        ] {
+            assert!(!app.in_viewer(name, &none).runs(), "{name}");
+        }
+        // A prompt or an item of the preview's menu runs where what it
+        // leads to does.
+        let invoke = |command: &str| serde_json::json!({ "command": command });
+        assert!(offered(
+            "ui.preview_invoke",
+            &invoke("ui.preview_copy_path")
+        ));
+        assert!(!offered("ui.preview_invoke", &invoke("ui.rename_prompt")));
+        assert!(!offered("ui.ask", &invoke("ui.mkdir_prompt")));
     }
 }

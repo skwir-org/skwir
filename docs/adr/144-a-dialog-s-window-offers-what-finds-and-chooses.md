@@ -112,7 +112,10 @@ every window is tiled).
    the rule (keys and menus one, the palette another, pickers a
    third), checks beside features (the terminal, the split) stood
    beside it, and a command about notes or places that rewrote
-   pictures or opened a program was offered by its topic.
+   pictures or opened a program was offered by its topic. A viewer's
+   window (ADR-151, 5) is answered the same way, by a declaration of
+   its own (`App::in_viewer`, `Declared::in_viewer`, `not_in_viewer`),
+   what a command leads to followed alike (amended 2026-11-26).
 2. **What it does not offer is not drawn either**: no tab bar, no
    split, no terminal panel, no pinned player (a film or a song still
    plays in the preview), no Activity panel (what the user does there

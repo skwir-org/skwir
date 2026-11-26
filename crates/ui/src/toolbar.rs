@@ -533,6 +533,7 @@ impl Button {
             .label
             .map(|label| crate::elements::clip::text(label.say()))
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
+        let has_label = label.is_some();
         let id = self.id.clone();
         let clicked = id.clone();
         // Its tooltip shown, it says what the button says now
@@ -770,7 +771,11 @@ impl Button {
             // A submenu's row, as a context menu's (`menu::row_element`),
             // what it is set to before its chevron.
             .when(beside.is_some(), |d| {
-                d.child(div().flex_1())
+                // At the row's end: after a label that fills the row, at
+                // once; after a name kept whole beside what it is set to,
+                // past room that grows. Two that grow would share the row,
+                // the label cut at half of it ("Ouvrir…ec").
+                d.when(has_value || !has_label, |d| d.child(div().flex_1()))
                     .children(self.value.map(|value| {
                         div()
                             .min_w_0()

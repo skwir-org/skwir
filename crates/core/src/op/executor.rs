@@ -219,6 +219,13 @@ pub enum ExecEvent {
         /// after another ([`counts_as_action`]): as it counted waiting
         /// ([`Waiting::counts`]); one refused before it began does not.
         counts: bool,
+        /// The pane whose window asked it (`app::asking_pane`, as it was
+        /// queued): that window takes what it does and says (its answer,
+        /// its notice) where no window said it ran it, a plan a window's
+        /// worker applied (Print…'s Save as PDF, in a viewer's window too).
+        /// Only the window reads it, so it is not said to agents.
+        #[serde(skip)]
+        asking: Option<PaneId>,
     },
     Step(Progress),
     /// The plan waits where it would answer Cancel, until resumed
@@ -2159,8 +2166,13 @@ impl Executor {
     /// waits its turn, as [`Executor::wind_down`] does, without waiting and
     /// taking more after: Stop and quit while a viewer's window stays, the
     /// program going on until it closes (ADR-151, 4). Each takes back its
-    /// own partial work as it stops.
+    /// own partial work as it stops. A plan stopped that waits for its
+    /// server to go on by itself (ADR-080, 9) waits no more: Stop says it
+    /// does not go on, and only Retry, asked, takes it on from there.
     pub fn cancel_all(&self) {
+        for stopped in self.stopped.lock().iter_mut() {
+            stopped.waits = Waits::default();
+        }
         {
             let mut lane = self.lane.lock();
             lane.version += 1;
@@ -4277,6 +4289,7 @@ impl Executor {
                 items: None,
                 undoes: plan.undoes.clone(),
                 counts: false,
+                asking: crate::app::asking_pane(),
             });
         }
         drop(shown);
@@ -4719,6 +4732,7 @@ impl Executor {
                     items: None,
                     undoes: (direction == Direction::Undo).then(|| entry.title.clone()),
                     counts: false,
+                    asking: crate::app::asking_pane(),
                 });
                 self.emit(ExecEvent::Finished {
                     plan: id,
@@ -4880,6 +4894,7 @@ impl Executor {
             undoes: plan.undoes.clone(),
             // Cancelled before it began, it ends at once: no card.
             counts: !cancel.is_cancelled() && counts_as_action(plan.steps.len(), heavy),
+            asking: crate::app::asking_pane(),
         });
         Shown {
             pause,
@@ -8069,6 +8084,60 @@ mod tests {
             |e| matches!(e, ExecEvent::Finished { plan, .. } if *plan == next_id),
         );
         assert_eq!(applied.load(Ordering::SeqCst), 1, "the next plan ran");
+    }
+
+    /// Cancelled all, a plan stopped that waits for its server does not go
+    /// on by itself once the server answers (Stop and quit with a viewer
+    /// up, ADR-151, 4): nothing keeps the program for it, and Retry alone
+    /// takes it on.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cancelled_all_a_plan_waiting_for_its_server_waits_no_more() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("t-")
+            .tempdir_in(base)
+            .unwrap();
+        let served = tmp.path().join("served");
+        std::fs::create_dir(&served).unwrap();
+        crate::fs::reach::pretend_remote(&served);
+        let executor = Executor::new(Scheduler::new(2));
+        executor.set_server_look(Duration::from_millis(100));
+        let mode = |mode: u32| {
+            std::fs::set_permissions(&served, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        // The server gone: its top read by no one.
+        mode(0o000);
+        let plan = Plan::with_steps(
+            Words::as_written("make a folder"),
+            vec![Box::new(super::super::Mkdir {
+                path: served.join("a"),
+            }) as Box<dyn Operation>],
+        );
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert!(r.error.is_some() && r.applied == 0, "{r:?}");
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::WaitsForServer { plan: p } if *p == plan.id),
+        );
+        assert!(executor.busy_or_waiting(), "it keeps the program");
+        executor.cancel_all();
+        assert!(!executor.waits_for_server(plan.id));
+        assert!(!executor.busy_or_waiting(), "nothing keeps the program");
+        // Back: it does not go on.
+        mode(0o755);
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(
+            executor
+                .events()
+                .try_iter()
+                .all(|e| !matches!(e, ExecEvent::GoesOn { .. } | ExecEvent::Started { .. })),
+            "it went on by itself"
+        );
+        assert!(!served.join("a").exists());
+        assert!(executor.can_retry(plan.id), "Retry takes it on");
     }
 
     /// Files deleted for good from a folder that keeps others are not

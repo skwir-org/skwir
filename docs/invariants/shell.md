@@ -2137,7 +2137,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - **The program takes, each window draws.** A wake is taken once
   (`finishing::woken`): what the executor says of plans goes to the window
   that ran each one (`finishing::ran`, recorded by `Shell::run`), else to
-  the active window; a window's command asked from elsewhere
+  the window of the pane that asked it (`ExecEvent::Started::asking`: one
+  a window's worker applied, Print…'s Save as PDF in a viewer's window),
+  else to the active window; a window's command asked from elsewhere
   (`request_front`) to the window of the pane it names, else the front
   window of the user's own (none runs that names a dialog's pane);
   notifications, questions, clashes, secrets and forms to the window whose

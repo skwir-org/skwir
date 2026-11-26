@@ -61,10 +61,12 @@ pub(crate) fn register(app: &App, plugin: &External) {
                 move |args, app| run(app, &runner, &name, &said, args),
             )
             // Not offered in a window answering another program's dialog
-            // (ADR-144, 1), whatever it is about: a program or a module may
-            // change files or start programs, which the host cannot tell,
-            // and its manifest cannot yet say a command is fit for a dialog.
+            // (ADR-144, 1), nor in a viewer's (ADR-151, 5), whatever it is
+            // about: a program or a module may change files or start
+            // programs, which the host cannot tell, and its manifest cannot
+            // yet say a command is fit for either.
             .not_in_dialogs()
+            .not_in_viewer()
             .effect(match declared.effect {
                 Declared::Reads => Effect::Reads,
                 Declared::Shows => Effect::Shows,

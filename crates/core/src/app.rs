@@ -1642,60 +1642,62 @@ impl App {
     /// not registered.
     pub fn in_dialogs(&self, name: &str, args: &serde_json::Value) -> InDialogs {
         // A picker of prompts of pickers is as deep as anything goes.
-        self.in_dialogs_within(name, args, 4)
+        self.offered_within(Apart::Dialog, name, args, 4)
     }
 
-    fn in_dialogs_within(&self, name: &str, args: &serde_json::Value, depth: usize) -> InDialogs {
+    /// How a viewer's window takes `name` run with `args` (ADR-151, 5;
+    /// [`InDialogs`]): as the command says where it is registered
+    /// (`Declared::in_viewer`, `not_in_viewer`), else as its topic and
+    /// effect say (`CommandSpec::in_viewer_by_default`: what shows the file
+    /// and plays in it, the window's own parts, never what changes files),
+    /// and only where what it leads to is offered there too
+    /// (`Declared::leads_to`: an item of the preview's menu is what it
+    /// runs). The one answer every way to run a command in that window
+    /// asks (`Shell::in_window`); `InDialogs::Not` for a command not
+    /// registered. It views.
+    pub fn in_viewer(&self, name: &str, args: &serde_json::Value) -> InDialogs {
+        self.offered_within(Apart::Viewer, name, args, 4)
+    }
+
+    fn offered_within(
+        &self,
+        apart: Apart,
+        name: &str,
+        args: &serde_json::Value,
+        depth: usize,
+    ) -> InDialogs {
         // Copied out: a rule may read the app's other registries (a view's
         // role), never under the commands' lock.
-        let Some(terms) = self.commands.dialog_terms(name) else {
+        let Some(terms) = self.commands.offer_terms(name) else {
             return InDialogs::Not;
         };
         let leads = terms.leads_to.is_none_or(|leads_to| {
             depth > 0
                 && leads_to(args).iter().all(|then| {
-                    self.in_dialogs_within(&then.name, &then.args, depth - 1)
+                    self.offered_within(apart, &then.name, &then.args, depth - 1)
                         .offered()
                 })
         });
         if !leads {
             return InDialogs::Not;
         }
-        let said = match terms.said {
-            Some(DialogRule::By(rule)) => rule(self, args),
-            Some(DialogRule::Offered) => InDialogs::Offered,
-            None if terms.by_default => InDialogs::Offered,
-            Some(DialogRule::Not) | None => InDialogs::Not,
+        let said = match apart {
+            Apart::Dialog => match terms.said {
+                Some(DialogRule::By(rule)) => rule(self, args),
+                Some(DialogRule::Offered) => InDialogs::Offered,
+                None if terms.by_default => InDialogs::Offered,
+                Some(DialogRule::Not) | None => InDialogs::Not,
+            },
+            Apart::Viewer => match terms.viewer_said {
+                Some(true) => InDialogs::Offered,
+                None if terms.viewer_by_default => InDialogs::Offered,
+                Some(false) | None => InDialogs::Not,
+            },
         };
         if said == InDialogs::Not && terms.asked {
             InDialogs::Asked
         } else {
             said
-        }
-    }
-
-    /// How a viewer's window takes `name` (ADR-151, 5): what shows the file
-    /// and what plays in it (`Topic::Preview`, `Topic::Player`), the
-    /// window's own parts (`Topic::Window`), the steps through the files
-    /// (`Topic::Select`), and what acts on the file shown without changing
-    /// it: opening it elsewhere, Print. Nothing else: it views.
-    pub fn in_viewer(&self, name: &str) -> InDialogs {
-        /// What acts on the file shown without changing it, whatever its
-        /// topic.
-        const ACTS: &[&str] = &[
-            "open",
-            "open_with.choices",
-            "open_with.menu",
-            "print.print",
-            "print.save_pdf",
-        ];
-        let Some(spec) = self.commands.get(name) else {
-            return InDialogs::Not;
-        };
-        match spec.topic {
-            Topic::Preview | Topic::Player | Topic::Window | Topic::Select => InDialogs::Offered,
-            _ if ACTS.contains(&name) => InDialogs::Offered,
-            _ => InDialogs::Not,
         }
     }
 
@@ -4431,6 +4433,16 @@ impl<'a> Opening<'a> {
             ..Opening::default()
         }
     }
+}
+
+/// A window that is not the user's own, which offers only some commands
+/// (`App::in_dialogs`, `App::in_viewer`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Apart {
+    /// One answering another program's Open or Save dialog (ADR-144, 1).
+    Dialog,
+    /// One viewing files (ADR-151, 5).
+    Viewer,
 }
 
 /// What of the pane's lens a location is shown with (ADR-107,

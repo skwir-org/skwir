@@ -539,6 +539,8 @@ impl Work {
                 items,
                 undoes,
                 counts,
+                // Where it goes, which `finishing::deliver` read.
+                asking: _,
             } => {
                 let going_on = self.going_on.remove(&plan);
                 if counts {
@@ -1054,6 +1056,7 @@ mod tests {
             items: None,
             undoes: None,
             counts,
+            asking: None,
         }
     }
 

@@ -17,7 +17,13 @@ Skwir running shows the files a launch hands it, the launch waiting in
 its terminal; where none runs, the program of its own, as before. A
 viewer's program neither takes later viewers nor becomes the file
 manager (Rejected). Amended the same day: Print… in a viewer asks
-Skwir's own dialog first, as the file manager does (5).
+Skwir's own dialog first, as the file manager does (5). Amended the
+same day, from a review of the handover: a viewing is taken in two
+steps, the launch confirming it (1), and what stands for standard input
+is removed only as the caller's own spool (7). Amended the same day,
+from a review of the window: what a viewer offers is each command's to
+say, as for dialogs, and More's rows, keys and buttons ask it (5); what
+it says is drawn over its card (3).
 
 ## Context
 
@@ -111,9 +117,17 @@ Skwir's own dialog first, as the file manager does (5).
      tiles without saying it. Plugins from outside are not looked for.
      Of the program's start, not what the file manager starts: the login
      shell's variables (ADR-125), the collation's table for typing names,
-     Settings' row for dialogs, the address field's suggestions, owner
-     names, the sweep of members extracted by a program killed (which
-     another Skwir may be using).
+     Settings' row for dialogs, the address field's suggestions, the
+     sweep of members extracted by a program killed (which another Skwir
+     may be using). It reads on a worker what its window shows: the
+     tree-sitter grammars installed, as each language's is chosen
+     (ADR-110), and owner names, for Properties (amended 2026-11-26, from
+     a review: code was colored by bat's grammars alone there).
+   - It never becomes the file manager, whatever asks for the user's
+     windows there: its presence or a notice clicked brings its viewer
+     forward if it is up, and a Mac's Dock Quit or logging out with its
+     window gone ends it, what runs stopped, as a signal does (amended
+     2026-11-26, from a review: they opened the user's windows in it).
    - It reads the settings and the state the user's Skwir reads. What it
      saves it writes over the files as they stand, its own keys alone
      (`Settings::persist`), and it never records the user's windows
@@ -137,11 +151,17 @@ Skwir's own dialog first, as the file manager does (5).
    - Peek's card, filling the window: the file's bar (its name, its ways
      of looking, Full preview, More) and the preview under it.
    - No sidebar, toolbar, tabs, panes, terminal or Activity panel. What
-     answers the user is said over it.
+     answers the user is said over it, at its foot, off the whole screen
+     too (amended 2026-11-26, from a review: only the whole screen drew
+     it, and Print's answers, Copy path's, an error went unsaid).
    - Its title is the file's name, and its tag `viewer`, for the
      compositor's rules (ADR-141, 9).
    - It has a size of its own, the last one left, kept apart from the
-     user's windows and the dialogs' (`ui.viewer_size`).
+     user's windows and the dialogs' (`ui.viewer_size`), and saved as it
+     closes. It is kept as a dialog's is (ADR-144, 4): the size it was
+     given while it floated, or the user dragged it to, never a tile's
+     (amended 2026-11-26, from a review: a tile's size was kept, and the
+     next viewer, floated, opened at it).
    - Its title bar is the main window's, by `ui.title_bar` (ADR-138):
      the system's, skwir's above or compact, none on the whole screen.
      In the top row, the card's header is that row: the window's buttons
@@ -163,16 +183,46 @@ Skwir's own dialog first, as the file manager does (5).
    - In the Skwir running (amended 2026-11-26), a viewer's Quit closes
      that viewer alone. The user's Quit closes their windows and the
      dialogs' and leaves viewers', which launches wait on: what it stops
-     is stopped at once (`Executor::cancel_all`), and the program ends
-     with the last viewer. A signal ends all, viewers included.
+     is stopped at once (`Executor::cancel_all`), an action waiting for
+     its server to go on by itself included, which then waits for Retry
+     alone (amended 2026-11-26, from a review: it went on once its server
+     answered, and kept the program), and the program ends with the last
+     viewer. A signal ends all, viewers included.
+   - In a viewer's own program, Quit's question asked there (a Mac's
+     Dock Quit or logging out while a print is sent) closes its window
+     whichever way it is answered (amended 2026-11-26, from a review: its
+     answers closed nothing).
    - Steps go through the folder, in the order that folder is shown in
      (ADR-132), as peek's do. With several files given, they go through
      those alone, in the order given.
 5. **What it offers** (ADR-144's one answer, with a third kind of
-   window):
-   - the previews' commands and what plays in them;
-   - the window's own, its buttons and Quit;
-   - Open With, Print…;
+   window: `App::in_viewer`, which every way to run a command there asks
+   through `Shell::in_window`: keys, menus and More's rows, buttons,
+   pickers, prompts, Properties' links, toasts' buttons). Each command
+   says it where it is registered (`Declared::in_viewer`,
+   `not_in_viewer`), else its topic and effect say it
+   (`CommandSpec::in_viewer_by_default`): the previews' commands, what
+   plays in them and the window's own parts (its menus, prompts,
+   pickers, toasts, buttons) are offered, never what changes files
+   (`Effect::Plans`) unless it says so; an item of the preview's menu, a
+   picker and a prompt only where what they lead to is
+   (`Declared::leads_to`): Reduce Size… is no row of a viewer's More. A
+   row, a button or a key the window does not run is not drawn nor
+   listed, and a key bound to it does what it would with nothing bound.
+   No list in core names a plugin's command (amended 2026-11-26, from a
+   review: as first built, core listed the plugins' commands it offered
+   beside the topics, Open With's application rows were left out of it
+   and did nothing, menus drew rows the window then refused, and F6 sent
+   the focus into parts never drawn). So it offers:
+   - the previews' commands and what plays in them, but the pinned
+     player (pinning, a menu's Play, Keep playing), whose dock a viewer
+     does not draw: what plays ends with its preview, as in a dialog's
+     window;
+   - the window's own, its buttons and Quit, the list of its keys (F1),
+     but the parts of a window it does not draw (the pane's menu, the
+     sidebar and the parts F6 goes round, Activity, Settings' keys);
+   - Open With: its rows in More and its picker;
+   - Print…;
      - Print… (Ctrl+P, the preview's More) asks Skwir's own dialog
        first, in the viewer's window, as the file manager does (ADR-111):
        a printer or a PDF, the pages, as shown or as a booklet. In a
@@ -181,10 +231,26 @@ Skwir's own dialog first, as the file manager does (5).
        (`App::can_ask`). What is printed is the file shown; a listing is
        not offered, the pane being never drawn (amended 2026-11-26, the
        user having found the system's dialog opened at once there).
-   - Show in Skwir (`ui.viewer_reveal`): a window of the user's own on
-     the folder, the file selected.
-   - Nothing that changes files, nor tabs, the split, the terminal or
-     the palette's other commands. It views.
+     - What it asks of what the user did there (a PDF saved over a name
+       taken, short of room) is answered there, Enter and Escape
+       included, as in a dialog's window (`ui.review_apply`,
+       `ui.review_cancel`; amended 2026-11-26, as tried: the window
+       refused both keys, and only its buttons answered), and a plan's
+       Cancel too. What it saved is said there, as any plan's answer goes
+       to the window whose pane asked it (`ExecEvent::Started::asking`),
+       without Undo, which a viewer does not offer (amended 2026-11-26, as
+       tried: it was said in the user's window behind, or nowhere).
+   - Properties of the file shown, its bar's button, as peek's card has
+     it, and copying what it says; a document's links, which open in the
+     browser (amended 2026-11-26, from a review: both were refused).
+   - Show in Skwir (`ui.viewer_reveal`, a row of its More): a window of
+     the user's own on the folder, the file selected; Skwir started on
+     its own, in a process group of its own, as the program it is, never
+     the `skw` link (amended 2026-11-26, from a review: no row ran it).
+   - Nothing that changes files, nor tabs, the split, the terminal, the
+     selection, going places or the palette's other commands, nor a
+     plugin from outside's command, which the host cannot tell is fit
+     for it. It views.
 6. **No file named.**
    - The system's dialog opens (gpui's `prompt_for_paths`): the portal
      on Linux, which may be Skwir's own (ADR-141), the system's panel on

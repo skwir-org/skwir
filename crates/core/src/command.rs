@@ -311,6 +311,29 @@ impl Topic {
         }
     }
 
+    /// Whether a viewer's window offers its commands (ADR-151, 5), unless a
+    /// command says otherwise (`Declared::in_viewer`, `not_in_viewer`) or
+    /// changes files (`CommandSpec::in_viewer_by_default`): what shows the
+    /// file and what plays in it, and the window's own parts (its menus,
+    /// prompts, pickers, toasts, buttons), never what is about the files
+    /// of a folder, going places, the tabs, the terminal or Skwir itself.
+    /// It views.
+    pub fn in_viewer(self) -> bool {
+        match self {
+            Topic::Preview | Topic::Player | Topic::Window => true,
+            Topic::Go
+            | Topic::Select
+            | Topic::Files
+            | Topic::Find
+            | Topic::Notes
+            | Topic::Tabs
+            | Topic::View
+            | Topic::Terminal
+            | Topic::Places
+            | Topic::Skwir => false,
+        }
+    }
+
     /// In the order F1 lists them.
     pub const ALL: [Topic; 13] = [
         Topic::Go,
@@ -689,13 +712,15 @@ pub enum OpensIn {
 /// command, what an item of the preview's menu runs with what it shows. A
 /// window answering another program's dialog offers it only where it
 /// offers each of them (`App::in_dialogs`): a picker of applications to
-/// open a file with is about files, whoever draws it.
+/// open a file with is about files, whoever draws it; and so does a
+/// viewer's (`App::in_viewer`): the preview's Reduce Size… changes files.
 pub type LeadsTo = fn(&serde_json::Value) -> Vec<Invocation>;
 
 /// How a window answering another program's Open or Save dialog takes a
-/// command run with given arguments (`App::in_dialogs`, ADR-144, 1): the
-/// one answer every way to run a command there asks (keys and F1's list,
-/// the palette, menus, buttons and the address field's rows, pickers and
+/// command run with given arguments (`App::in_dialogs`, ADR-144, 1), and
+/// how a viewer's window does (`App::in_viewer`, ADR-151, 5): the one
+/// answer every way to run a command there asks (keys and F1's list, the
+/// palette, menus, buttons and the address field's rows, pickers and
 /// prompts, Properties' links, a toast's buttons). Every command is
 /// offered in a window of the user's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -723,13 +748,17 @@ impl InDialogs {
     }
 }
 
-/// What `App::in_dialogs` reads of a command, copied out of the registry
-/// so that a rule reading the app's other registries runs without its
-/// lock.
+/// What `App::in_dialogs` and `App::in_viewer` read of a command, copied
+/// out of the registry so that a rule reading the app's other registries
+/// runs without its lock.
 #[derive(Clone, Copy)]
-pub(crate) struct DialogTerms {
+pub(crate) struct OfferTerms {
     pub(crate) said: Option<DialogRule>,
     pub(crate) by_default: bool,
+    /// What it says of a viewer's window (`CommandSpec::in_viewer`), and
+    /// what its topic and effect say there.
+    pub(crate) viewer_said: Option<bool>,
+    pub(crate) viewer_by_default: bool,
     /// Data or asked only: run where asked, listed nowhere.
     pub(crate) asked: bool,
     pub(crate) leads_to: Option<LeadsTo>,
@@ -804,6 +833,12 @@ pub struct CommandSpec {
     /// the window reads it, so it is not said to agents.
     #[serde(skip)]
     pub in_dialogs: Option<DialogRule>,
+    /// Whether a viewer's window offers it (ADR-151, 5), said where it is
+    /// registered (`Declared::in_viewer`, `not_in_viewer`); `None`, as its
+    /// topic and effect say (`CommandSpec::in_viewer_by_default`). Only the
+    /// window reads it, so it is not said to agents.
+    #[serde(skip)]
+    pub in_viewer: Option<bool>,
     /// What it runs in turn with the arguments it is given
     /// (`Declared::leads_to`, see [`LeadsTo`]).
     #[serde(skip)]
@@ -829,6 +864,16 @@ impl CommandSpec {
     /// only where they say so (`Declared::in_dialogs`).
     pub fn in_dialogs_by_default(&self) -> bool {
         self.topic.in_dialogs() && self.effect != Effect::Plans && self.opens == OpensIn::Here
+    }
+
+    /// Whether a viewer's window offers it by what its topic and effect
+    /// say, where it says nothing of viewers (ADR-151, 5): by its topic
+    /// (`Topic::in_viewer`), but never what changes files (`Effect::Plans`),
+    /// which a viewer offers only where it says so (`Declared::in_viewer`:
+    /// Print…). What opens elsewhere is offered by its topic: the file
+    /// shown, a document's link, the folder in Skwir.
+    pub fn in_viewer_by_default(&self) -> bool {
+        self.topic.in_viewer() && self.effect != Effect::Plans
     }
 
     /// What it does run with `args` (ADR-044): its `effect`, or what they
@@ -979,6 +1024,30 @@ impl Declared<'_> {
     /// says, by the arguments it runs with (see [`DialogRule::By`]).
     pub fn in_dialogs_by(&self, rule: fn(&App, &serde_json::Value) -> InDialogs) {
         self.update(|spec| spec.in_dialogs = Some(DialogRule::By(rule)));
+    }
+
+    /// A viewer's window offers it, whatever its topic and effect say
+    /// (ADR-151, 5): what acts on the file shown without changing it
+    /// (opening it elsewhere, Print…), the window's own (its buttons,
+    /// Quit, the answers to what it asks).
+    // Said as it is declared: what it returns only goes on to say more
+    // (`.in_viewer().opens_elsewhere()`), and may be dropped.
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn in_viewer(self) -> Self {
+        self.update(|spec| spec.in_viewer = Some(true));
+        self
+    }
+
+    /// A viewer's window does not offer it, whatever its topic says
+    /// (ADR-151, 5): what is about parts of a window it does not draw (the
+    /// sidebar, Activity, the pinned player), a plugin from outside's
+    /// command.
+    // Said as it is declared: what it returns only goes on to say more,
+    // and may be dropped.
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn not_in_viewer(self) -> Self {
+        self.update(|spec| spec.in_viewer = Some(false));
+        self
     }
 
     /// What it runs in turn with its arguments (see [`LeadsTo`]).
@@ -1339,6 +1408,7 @@ impl CommandRegistry {
             same_as: None,
             asked_only: false,
             in_dialogs: None,
+            in_viewer: None,
             leads_to: None,
             opens: OpensIn::Here,
             repeats: None,
@@ -1378,16 +1448,18 @@ impl CommandRegistry {
             .map(|(s, _, _)| s.clone())
     }
 
-    /// What `App::in_dialogs` reads of the command `name`, copied out in
-    /// place: `None` for one that is not registered.
-    pub(crate) fn dialog_terms(&self, name: &str) -> Option<DialogTerms> {
+    /// What `App::in_dialogs` and `App::in_viewer` read of the command
+    /// `name`, copied out in place: `None` for one that is not registered.
+    pub(crate) fn offer_terms(&self, name: &str) -> Option<OfferTerms> {
         self.commands
             .read()
             .get(name)
             .and_then(|stack| stack.last())
-            .map(|(spec, _, _)| DialogTerms {
+            .map(|(spec, _, _)| OfferTerms {
                 said: spec.in_dialogs,
                 by_default: spec.in_dialogs_by_default(),
+                viewer_said: spec.in_viewer,
+                viewer_by_default: spec.in_viewer_by_default(),
                 asked: spec.data || spec.asked_only,
                 leads_to: spec.leads_to,
             })

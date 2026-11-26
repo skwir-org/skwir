@@ -1551,8 +1551,9 @@ impl Plugin for OpenWithPlugin {
         )
         // It opens a file in its application; in a window answering
         // another program's dialog it answers with the file (ADR-141, 5;
-        // ADR-144, 1).
+        // ADR-144, 1); a viewer's opens the file shown (ADR-151, 5).
         .in_dialogs()
+        .in_viewer()
         .opens_elsewhere();
         app.commands.register::<PaneArg, _>(
             ID, Topic::Terminal,
@@ -1593,6 +1594,8 @@ impl Plugin for OpenWithPlugin {
             ),
             move |a, app| choices(a, &cache, app),
         )
+        // Open With's picker in a viewer's window, for the file shown.
+        .in_viewer()
         .data();
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<TargetArgs, _>(
@@ -1634,6 +1637,8 @@ impl Plugin for OpenWithPlugin {
             ),
             move |a, app| open_with(a, &cache, app),
         )
+        // A viewer's window opens the file shown so (ADR-151, 5).
+        .in_viewer()
         .opens_elsewhere();
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<SetDefaultArgs, _>(
@@ -1721,6 +1726,8 @@ impl Plugin for OpenWithPlugin {
             ),
             move |a, app| menu(&a, &cache, app),
         )
+        // The rows of a viewer's More that open the file shown.
+        .in_viewer()
         .data();
         app.registry.menu_sources.add(
             ID,

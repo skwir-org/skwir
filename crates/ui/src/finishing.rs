@@ -42,7 +42,7 @@ use std::collections::{HashMap, HashSet};
 use gpui::{App, AppContext, Global, WindowHandle};
 use parking_lot::Mutex;
 use skwir_core::Location;
-use skwir_core::op::PlanId;
+use skwir_core::op::{ExecEvent, PlanId};
 use skwir_core::workspace::{PaneId, WindowId, WindowKind, WindowTabs};
 use skwir_platform::chooser::Answer;
 use skwir_platform::desktop::{Asked, Presence, Standing};
@@ -110,6 +110,10 @@ pub(crate) struct Finishing {
     shown: Option<Presence>,
     /// What windows were opened in this run.
     opened: Opened,
+    /// A viewer's own program (ADR-151, 1): it shows its viewer's window
+    /// alone, never the user's windows, whatever asks for them (its
+    /// presence, a notice, the Dock).
+    viewer: bool,
 }
 
 /// What windows were opened in a run: one was (one that cannot open
@@ -387,6 +391,7 @@ pub(crate) fn start(
         ending,
         shown: None,
         opened: Opened::Never,
+        viewer: view.is_some(),
     });
     // A viewer's program takes nothing over (ADR-151, 1) and reads only
     // what its window needs: its window, else the system's dialog first.
@@ -475,10 +480,12 @@ fn handed_away(cx: &mut App) -> bool {
 }
 
 /// What a viewer's program reads once (ADR-151, 1): the settings the window
-/// declares and what it keeps, and how code is colored. Not what the file
-/// manager's own parts read (the themes and fonts Settings lists, owner
-/// names for Properties, the members a killed program extracted, which
-/// another Skwir may be showing).
+/// declares and what it keeps, how code is colored (the tree-sitter
+/// grammars installed, each language's as the user chose it, ADR-110), and
+/// owner names for Properties of the file shown, those two on a worker.
+/// Not what the file manager's own parts read (the themes and fonts
+/// Settings lists, its rows of grammars, the members a killed program
+/// extracted, which another Skwir may be showing).
 fn prepare_viewer(app: &Arc<skwir_core::App>) {
     crate::settings::declare(app);
     skwir_platform::highlight::added::keep_in(app.cache.namespace("grammars"));
@@ -486,6 +493,26 @@ fn prepare_viewer(app: &Arc<skwir_core::App>) {
         app.cache.namespace("wasmtime").folder("tree-sitter"),
     );
     crate::session::declare(app);
+    let weak = app.weak();
+    let wake = app.waker_handle();
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Normal,
+        "viewer-reads",
+        app.lifetime().child(),
+        move || {
+            if let Some(app) = weak.upgrade() {
+                // The choices as they stand, then the grammars found: what
+                // was colored by bat's meanwhile is colored again
+                // (`grammars::generation`).
+                skwir_platform::grammars::sync(
+                    &skwir_platform::highlight::GrammarChoices::chosen(&app).sources(),
+                );
+                skwir_platform::grammars::find();
+            }
+            skwir_platform::users::load();
+            wake();
+        },
+    );
 }
 
 /// A viewer's window on what `viewing` names (ADR-151): none given, the
@@ -518,6 +545,10 @@ fn view_files(cx: &mut App, viewing: crate::viewer::Viewing, handed: Option<View
             Ok(Ok(None)) | Err(_) => Vec::new(),
         };
         cx.update(|cx| {
+            // Its launch gone while the dialog asked: nothing opens.
+            if handed.as_ref().is_some_and(Viewed::is_gone) {
+                return;
+            }
             if files.is_empty() {
                 not_viewed(cx, handed.as_ref());
             } else {
@@ -529,12 +560,21 @@ fn view_files(cx: &mut App, viewing: crate::viewer::Viewing, handed: Option<View
     .detach();
 }
 
-/// Nothing to view (the dialog cancelled, a window that cannot open): a
-/// viewer's own program ends; a launch that handed its files over is told
-/// its window closed.
+/// Nothing to view (the dialog cancelled): a viewer's own program ends; a
+/// launch that handed its files over is told its window closed.
 fn not_viewed(cx: &mut App, handed: Option<&Viewed>) {
     match handed {
         Some(handed) => handed.close(),
+        None => quit(cx),
+    }
+}
+
+/// A viewer's window that could not open: a viewer's own program ends; a
+/// launch that handed its files over is told nothing was shown, and views
+/// them itself.
+fn not_shown(cx: &mut App, handed: Option<&Viewed>) {
+    match handed {
+        Some(handed) => handed.not_shown(),
         None => quit(cx),
     }
 }
@@ -578,12 +618,12 @@ fn open_viewer(cx: &mut App, viewing: crate::viewer::Viewing, handed: Option<Vie
         Ok((id, _, pane)) => (id, pane),
         Err(error) => {
             tracing::error!("a viewer's window has no pane: {error:#}");
-            not_viewed(cx, handed.as_ref());
+            not_shown(cx, handed.as_ref());
             return;
         }
     };
     if !open_window(cx, id, false, token, false, None) {
-        not_viewed(cx, handed.as_ref());
+        not_shown(cx, handed.as_ref());
         return;
     }
     app.reveal_names(pane, name.into_iter().collect());
@@ -658,6 +698,12 @@ fn show(
     activity: bool,
 ) -> Option<PaneId> {
     let state = cx.global_mut::<Finishing>();
+    if state.viewer {
+        // A viewer's own program never becomes the file manager (ADR-151,
+        // 1): the user's windows open in the Skwir a launch starts.
+        tracing::debug!("a viewer's program shows no window of the user's");
+        return None;
+    }
     let app = Arc::clone(&state.app);
     let initial = match initial {
         None if state.opened != Opened::Own => start_choice(&app),
@@ -1119,10 +1165,11 @@ pub(crate) struct Inbox {
 }
 
 /// Take in what the core sent and asked, once for the program, and hand
-/// each window its part: what a plan did to the window that ran it (else
-/// the active one), what a window's action said or asked to that window
-/// (`app::asking_in`), a window's command to the window of the pane it
-/// names, the rest to the active window. "The active window" is one that is up
+/// each window its part: what a plan did to the window that ran it, else
+/// to the one whose pane asked it, else the active one; what a window's
+/// action said or asked to that window (`app::asking_in`); a window's
+/// command to the window of the pane it names; the rest to the active
+/// window. "The active window" is one that is up
 /// (`front_of`): what is taken from the core's queues is never left in the
 /// inbox of a window that is not. Then tell the desktop, and do what it
 /// asked.
@@ -1168,6 +1215,18 @@ fn deliver(cx: &mut App) {
         let mut work = state.work.borrow_mut();
         let events = app.executor.events().clone();
         while let Ok(event) = events.try_recv() {
+            // A plan no window said it ran (`ran`: one a window's worker
+            // applied, Print…'s Save as PDF in a viewer's window) goes to
+            // the window of the pane that asked it, while it is up.
+            if let ExecEvent::Started {
+                plan,
+                asking: Some(pane),
+                ..
+            } = &event
+                && let Some(window) = in_window.get(pane)
+            {
+                state.plans.entry(*plan).or_insert(*window);
+            }
             let taken = work.take(&app, event, watched);
             let told = work.take_telling();
             let plan = match &taken {
@@ -2362,6 +2421,18 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
 /// brings the window in use forward.
 pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
     let state = cx.global::<Finishing>();
+    if state.viewer {
+        // A viewer's own program, its presence or a notice clicked: its
+        // viewer comes forward, if it is still up; the user's windows are
+        // never opened here (ADR-151, 1).
+        let token = opening.and_then(|opening| opening.token);
+        if let Some(window) = active_handle(cx) {
+            let _ = window.update(cx, |_, window, _| {
+                window.activate_window_with_token(token.as_deref());
+            });
+        }
+        return;
+    }
     let app = Arc::clone(&state.app);
     let (initial, token, launched, to_select) = match opening {
         Some(opening) => (
@@ -2888,7 +2959,10 @@ pub(crate) fn may_quit(cx: &mut App) -> bool {
         return true;
     }
     let busy = under_way(&state.app);
-    if !busy {
+    // A viewer's own program, its window gone, has none to ask in, nor
+    // opens the user's (ADR-151, 1): it ends as a signal ends it, what runs
+    // stopped.
+    if !busy || (state.viewer && state.windows.is_empty()) {
         cx.global_mut::<Finishing>().quitting = true;
         return true;
     }

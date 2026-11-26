@@ -524,6 +524,7 @@ fn found<'a>(groups: &'a [Group], query: &str) -> Vec<(&'a str, Vec<&'a Row>)> {
 
 pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let overview = shell.shortcuts.as_ref()?;
+    let keyboard_page = shell.runs_here("ui.settings", &serde_json::json!({ "page": "keyboard" }));
     let theme = cx.global::<Theme>().clone();
     let query = overview.filter.read(cx).text().trim().to_owned();
     let here = found(&overview.here, &query);
@@ -639,7 +640,9 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(
+                        // Where the window runs Settings: a dialog's or a
+                        // viewer's does not (ADR-144, 1; ADR-151, 5).
+                        .when(keyboard_page, |d| d.child(
                             controls::button(
                                 "shortcuts-all",
                                 words!(
@@ -666,7 +669,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                                     this.run("ui.settings", args, window, cx);
                                 },
                             )),
-                        )
+                        ))
                         .child(
                             controls::icon_button(
                                 "shortcuts-close",

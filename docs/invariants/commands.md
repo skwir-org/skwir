@@ -93,6 +93,31 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   - A key whose command the window does not run does there what it would
     with nothing bound (`Shell::on_run_command` lets it go on), and F1
     lists it nowhere.
+- **In a viewer's window (ADR-151, 5).** A window viewing files (`skwir
+  view`) offers what shows the file and acts on it without changing it,
+  by the same kind of answer (`App::in_viewer`, `InDialogs`), which
+  `Shell::in_window` asks there for every surface, as in a dialog's
+  window: the window's menus and More's rows (`Shell::items_run_here`,
+  in every window), buttons, keys, pickers, prompts, toasts' buttons.
+  - A command is offered by its topic (`Topic::in_viewer`: the preview,
+    the player, the window's own parts), but what changes files never by
+    its topic alone (`CommandSpec::in_viewer_by_default`). It says
+    otherwise where it is registered (`Declared::in_viewer`,
+    `not_in_viewer`; the shell's in `commands::IN_VIEWER` and
+    `NOT_IN_VIEWER`, each held by a test to say the opposite of its topic
+    and effect): Open With's rows and picker and Print… say they are
+    offered; the pinned player and the parts of a window a viewer does
+    not draw (the sidebar, Activity, what F6 goes round) say they are
+    not. What opens elsewhere is offered by its topic there.
+  - What leads to another (`Declared::leads_to`) is offered only where
+    that one is, as in a dialog's window: an item of the preview's menu
+    runs what it names (Print… yes, Reduce Size… no).
+  - Never a list of commands' names in core or the shell beside it: a
+    plugin says it of its own commands. What a viewer offers beyond its
+    topics, and what it offers that changes files, is listed in
+    `crates/skwir/tests/viewer_offers.rs`: a new one says why there.
+  - A plugin from outside's commands are never offered there
+    (`skwir-extend`'s `not_in_viewer`), as in a dialog's window.
 - **Families (ADR-100).** Forms of one command that only go elsewhere
   share a family (`Form::in_family`: Extend the selection up, down, to
   the first item): F1 lists its keys on one row, in the forms' order.

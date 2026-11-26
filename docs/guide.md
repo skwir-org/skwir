@@ -865,11 +865,16 @@ none: run `skwir.exe view` from the folder Skwir is installed in.
   order Skwir shows that folder in. Given several files
   (`skw *.jpg`), they go through those.
 - **Keys:** `F` shows the preview on the whole screen; `Ctrl+P` prints
-  it; `Escape`, `Ctrl+Q` and the × close the window.
-- **More:** the menu opens the file in another application, prints it,
-  or shows it in Skwir, its folder open and the file selected. Printing
-  asks first in Skwir's Print dialog, as the file manager does: a
-  printer or a PDF, the pages, as shown or as a booklet.
+  it; `Escape`, `Ctrl+Q` and the × close the window; `F1` lists the
+  rest.
+- **More:** the menu opens the file in another application (Open With
+  and its applications), prints it, or shows it in Skwir, its folder
+  open and the file selected. Printing asks first in Skwir's Print
+  dialog, as the file manager does: a printer or a PDF, the pages, as
+  shown or as a booklet.
+- **Properties:** the button in its bar shows what Skwir knows of the
+  file, as beside the file manager's preview. A link in a document opens
+  in your browser. Nothing there changes the file: it is for viewing.
 - **Standard input:** `skw -` shows what is piped in, whatever it is:
   `curl -s https://example.org/logo.png | skw -`. It is kept in Skwir's
   cache while the window is open, 1 GB at most.
