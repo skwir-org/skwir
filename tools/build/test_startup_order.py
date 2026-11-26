@@ -1,8 +1,12 @@
 """tools/build/startup_order.py's arithmetic: which functions a trace ran,
-and in which order the list puts them."""
+and in which order the list puts them; and the X display it takes."""
+import os
 import sys
+import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import startup_order  # noqa: E402
@@ -57,6 +61,52 @@ class TheList(unittest.TestCase):
         self.assertTrue(made.startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertIn(b"IHDR", made)
         self.assertTrue(made.endswith(b"IEND\xaeB`\x82"))
+
+
+class TheDisplay(unittest.TestCase):
+    """`start_x11` takes a display no other server holds, with a stand-in
+    Xvfb and folders of its own for the sockets and locks."""
+
+    # As Xvfb: a display whose lock is there is refused at once; else its
+    # lock names it and its socket comes. :<first+1> is another's, which
+    # makes its socket and lock as this Xvfb ends.
+    XVFB = """#!/bin/sh
+number="${1#:}"
+lock="$LOCKS/.X$number-lock"
+[ -e "$lock" ] && exit 1
+if [ "$number" = "$OTHERS" ]; then
+    echo 1 > "$lock"; : > "$SOCKETS/X$number"; exit 1
+fi
+echo "$$" > "$lock"; : > "$SOCKETS/X$number"
+exec sleep 30
+"""
+
+    def test_a_display_held_or_taken_meanwhile_is_passed_over(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            sockets, locks = folder / "sockets", folder / "locks"
+            sockets.mkdir()
+            locks.mkdir()
+            xvfb = folder / "Xvfb"
+            xvfb.write_text(self.XVFB)
+            xvfb.chmod(0o755)
+            first = 910 + os.getpid() % 90
+            at = [910 + (first - 910 + n) % 90 for n in range(4)]
+            # Held: a socket alone, a lock alone.
+            (sockets / f"X{at[0]}").touch()
+            (locks / f".X{at[1]}-lock").write_text("1\n")
+            env = {"SOCKETS": str(sockets), "LOCKS": str(locks), "OTHERS": str(at[2])}
+            args = types.SimpleNamespace(xvfb=str(xvfb), keep=False)
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch.object(startup_order, "X11_SOCKETS", sockets), \
+                    mock.patch.object(startup_order, "X11_LOCKS", locks):
+                session = startup_order.Session(args)
+                try:
+                    self.assertEqual(session.start_x11(), {"DISPLAY": f":{at[3]}"},
+                                     "not one held, nor one another took as it started")
+                    self.assertEqual(len(session.procs), 1, "the Xvfb that ended is let go of")
+                finally:
+                    session.close()
 
 
 if __name__ == "__main__":

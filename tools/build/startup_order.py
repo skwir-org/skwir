@@ -39,6 +39,9 @@ import zlib
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 PT = pathlib.Path("/sys/bus/event_source/devices/intel_pt")
+# Where an X server's socket and its lock, naming its pid, are.
+X11_SOCKETS = pathlib.Path("/tmp/.X11-unix")
+X11_LOCKS = pathlib.Path("/tmp")
 HEADER = """\
 # The functions a start of skwir runs, by first execution (ADR-128): the
 # file manager's, then what a viewer's own program runs beside it.
@@ -69,6 +72,14 @@ END { for (g in first) printf "%d %.6f\n", g * 64 + pgoff, first[g] - t0 }
 
 def fail(why):
     raise SystemExit(f"startup-order: {why}")
+
+
+def held_by(lock):
+    """The pid an X server's lock file names, or None."""
+    try:
+        return int(lock.read_text().strip())
+    except (OSError, ValueError):
+        return None
 
 
 def c_locale():
@@ -253,11 +264,31 @@ class Session:
         return {"WAYLAND_DISPLAY": socket.name}
 
     def start_x11(self):
-        display = ":9" + str(os.getpid() % 90 + 10)
-        self.spawn([self.args.xvfb, display, "-screen", "0", "1280x860x24", "-nolisten", "tcp"],
-                   "xvfb.log", self.clean_env())
-        self.wait_for(pathlib.Path("/tmp/.X11-unix") / f"X{display[1:]}", "the X server")
-        return {"DISPLAY": display}
+        """Xvfb on a display no other server holds, from :910 to :999,
+        beginning where this run's pid points. A number whose socket or
+        lock is there is passed over; one taken meanwhile by another
+        server, whose Xvfb then ends at once, is too. The display is this
+        run's once its socket is there and the lock names this Xvfb, never
+        on the socket alone, which may be another's. Never `-displayfd`,
+        which removes the session's own socket."""
+        start = os.getpid() % 90
+        for tried in range(90):
+            number = 910 + (start + tried) % 90
+            socket = X11_SOCKETS / f"X{number}"
+            lock = X11_LOCKS / f".X{number}-lock"
+            if socket.exists() or lock.exists():
+                continue
+            process = self.spawn([self.args.xvfb, f":{number}", "-screen", "0", "1280x860x24",
+                                  "-nolisten", "tcp"], "xvfb.log", self.clean_env())
+            deadline = time.monotonic() + 20
+            while process.poll() is None and time.monotonic() < deadline:
+                if socket.exists() and held_by(lock) == process.pid:
+                    return {"DISPLAY": f":{number}"}
+                time.sleep(0.05)
+            if process.poll() is None:
+                fail(f"the X server did not start; see {self.root}")
+            self.procs.remove(process)
+        fail("no X display free from :910 to :999")
 
     def app_env(self, display):
         env = self.clean_env()
