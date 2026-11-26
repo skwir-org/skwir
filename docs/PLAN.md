@@ -1470,12 +1470,23 @@ Index and a walked search's footer say when it is missing. Left:
   repositories' key (skwird's release, the user's passphrase);
 - skwird 0.2.0's `logon remove` takes back the logon task whichever copy
   registered it, and leaves its engine running, which holds its files at
-  a removal or an upgrade (asked of skwird: `--if-mine`, ending the
-  engine, a `stop`, a silent `schtasks`); nothing tried on Windows or a
-  Mac (Full Disk Access granted to skwird's own copy does not carry over
-  to the one signed with the app);
-- a plain Linux build of skwird for the AppImage's users (skwird's
-  release; its session recommends glibc in an Ubuntu 22.04 root).
+  a removal or an upgrade; nothing tried on Windows or a Mac (Full Disk
+  Access granted to skwird's own copy does not carry over to the one
+  signed with the app);
+- a plain Linux build of skwird for the AppImage's users.
+
+skwird 0.3, built on its branch, not released (its session, 2026-11-26),
+answers each once skwir pins it (`tools/package/skwird.lock`): `skwird
+stop` (this copy's engine alone, 10 s at most; exit 1 before 0.3) and
+`logon remove --if-mine` (Windows, macOS: this copy's task only, its
+engine stopped first) for the MSI's uninstall and the Mac app's steps;
+`schtasks` started without a window, `skwirdw.exe` making no folder
+outside `serve`; its own THIRD-PARTY-NOTICES.txt in the Windows zip and
+the macOS archive, carried instead of the notices made from its lock; a
+plain Linux tarball (glibc 2.34, Ubuntu 22.04's root) that skwir's
+tarball can carry instead of building skwird; its `.rpm` signed at its
+release by the repositories' key, so Fedora's lists it. The client gains
+`Client::stop` (feature word `stop`).
 
 **What a sandbox reaches on the session bus** (found 2026-11-26): calls
 reach any object served on the program's one connection by whatever name
