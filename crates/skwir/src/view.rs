@@ -181,8 +181,8 @@ fn piped() -> Result<PathBuf, i32> {
 }
 
 /// Remove what standard input gave, and its folder, once this launch's
-/// wait ended: its window closed (the window removed it, unless it never
-/// opened), or the Skwir that showed it ended before.
+/// wait ended: its window closed, or the Skwir that showed it ended
+/// before (ADR-151, 7).
 pub fn let_go_of_piped(viewing: &Viewing) {
     if let Some(piped) = &viewing.piped {
         skwir_platform::handover::let_go_of_spool(piped);

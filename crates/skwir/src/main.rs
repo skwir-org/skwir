@@ -88,8 +88,8 @@ fn main() -> anyhow::Result<()> {
         viewing.token = skwir_platform::handover::launch_token();
         match skwir_platform::handover::view_elsewhere(&viewing) {
             skwir_platform::handover::ViewedElsewhere::NotTaken => {}
-            // Its window removed what standard input gave, unless it never
-            // opened: removed here then.
+            // What standard input gave is this launch's to remove once its
+            // window closed (ADR-151, 7).
             skwir_platform::handover::ViewedElsewhere::Closed => {
                 skwir::view::let_go_of_piped(&viewing);
                 return Ok(());

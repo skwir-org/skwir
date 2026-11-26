@@ -85,9 +85,18 @@ it says is drawn over its card (3).
      - Linux: `Finishing.View` on the bus, answered with the viewing's
        number; then `Viewed`, whose first asking is the confirmation,
        answered once its window closes (asked again should the bus give
-       up on a call waiting that long; a window closed is told so to a
-       `Viewed` asked again even once that Skwir stopped). The launch is
-       followed by its name on the bus.
+       up on a call waiting that long; one waiting as that Skwir stops is
+       told the window closed where it did, else that the Skwir ended).
+       The launch is followed by its name on the bus.
+     - Both are asked by the instance's own name, `org.skwir.skwir.I<key>`,
+       and `Viewed` is answered for the launch that asked `View` alone
+       (amended 2026-11-26, from a second review). The program's one
+       connection also holds the file manager's name (ADR-140), which a
+       sandboxed program may be allowed to talk to, and zbus dispatches a
+       call by its path whatever name it was addressed to: `Finishing`
+       (`Open`, `View`, `Viewed`, `Choose`) refuses a call addressed by
+       any other name, so no sandbox opens a server's address there, views
+       a file, or asks for files to be chosen.
      - Windows: the pipe's message says it views (`VIEW`), answered
        `TAKEN`; the launch confirms (`CONFIRMED`), and its connection
        stays until the window closes (`CLOSED`). The Skwir looks four
@@ -266,24 +275,42 @@ it says is drawn over its card (3).
    - It reads 1 GiB at most, room for a film. Past that, it stops, says
      so with status 1, and opens nothing: a file cut short would be
      shown as whole.
-   - The file is removed once the window showing it closes, and by the
-     launch once its wait ends however it does. Its launch gone first
-     (its terminal's Ctrl+C), the Skwir showing it removes it once the
-     window let go. One a program left by ending otherwise is removed at
-     a later start, once a day old and its process ended.
-   - Handed over, it is the Skwir that removes it (amended 2026-11-26,
-     from a review: the path was taken as the caller named it, so a
-     program allowed to talk to Skwir on the bus, a sandboxed one
-     allowed `org.freedesktop.FileManager1` included, could have any
-     file of the user's removed). So `piped` is taken only as the
-     caller's own spool: one of the files, exactly
-     `<cache>/view/<pid>/stdin` or `stdin.<extension>`, a regular file
-     in a real folder, both the user's, no link, `<pid>` the caller's
-     process as the bus says it (`GetConnectionUnixProcessID`) or the
-     pipe (`GetNamedPipeClientProcessId`). Anything else refuses the
-     viewing whole (`NotTaken`), rather than show it and leave the file:
-     a launch of Skwir's never names another, and refused it views the
-     files itself, its spool kept.
+   - The file is removed once its viewing ends, by whoever is left to:
+     the launch, once its wait ends however it does; a viewer's own
+     program, as its window closes or it ends; the Skwir showing it only
+     where its launch went first (its terminal's Ctrl+C), once the
+     window let go, or went before confirming and its process ended (one
+     that gave up views the file itself). One a program left by ending
+     otherwise is removed at a later start, once a day old and its
+     process ended.
+   - Handed over, the Skwir may remove it (amended 2026-11-26, from two
+     reviews: the path was taken as the caller named it, so a program
+     allowed to talk to Skwir on the bus, a sandboxed one allowed
+     `org.freedesktop.FileManager1` included, could have any file of the
+     user's removed). So `piped` is taken only as the caller's own
+     spool: one of the files, exactly `<cache>/view/<pid>/stdin` or
+     `stdin.<extension>`, `<pid>` the caller's process as the bus says
+     it (`GetConnectionUnixProcessID`) or the pipe
+     (`GetNamedPipeClientProcessId`), a regular file in a real folder,
+     no link.
+     - On Linux, both the user's, and held from the check on (off the
+       bus's thread): its folder kept open, opened never through a link,
+       and the file removed by its name there, only while it is still
+       the file found. A link put in its path meanwhile changes nothing
+       (`handover::linux::Spool`).
+     - On Windows, where the pipe lets the user's own processes alone
+       ask, it is removed by its path: a process able to write skwir's
+       cache could have a file named `stdin…` removed where a link it
+       put there leads.
+     - Anything else refuses the viewing whole (`NotTaken`), rather than
+       show it and leave the file; refused, the launch views the files
+       itself, its spool kept.
+     - So too a launch whose cache is not the running Skwir's (an
+       `XDG_CACHE_HOME` a shell sets and the session does not): its
+       spool is not where that Skwir looks. The cache is kept out of the
+       instance (ADR-122): such a shell's other launches, and its views
+       of files named, still go to the Skwir running, rather than start
+       a second program each.
 8. **Open With.**
    - A desktop entry of its own, "Skwir Preview", runs `skwir view %F`.
    - Its types are the kinds Skwir previews, as the desktop's database

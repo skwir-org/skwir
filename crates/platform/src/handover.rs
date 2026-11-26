@@ -139,9 +139,10 @@ pub struct Viewing {
     /// The files, each a whole path, in the order given; none for the
     /// system's dialog to ask which.
     pub files: Vec<PathBuf>,
-    /// The one of them standing for standard input: removed once the
-    /// window showing it closes. Handed over, always the launch's own
-    /// spool ([`spool_file`]): what serves launches refuses any other.
+    /// The one of them standing for standard input: removed once its
+    /// viewing ends, by whoever is left to (ADR-151, 7). Handed over,
+    /// always the launch's own spool ([`spool_file`]): what serves launches
+    /// refuses any other.
     pub piped: Option<PathBuf>,
     /// The desktop's token to bring the window forward ([`launch_token`]).
     pub token: Option<String>,
@@ -163,7 +164,7 @@ pub fn spool_folder(pid: u32) -> PathBuf {
 
 /// The file the launch `pid` keeps standard input in, `stdin`, or
 /// `stdin.<extension>` once its type is known: the one name a Skwir taking
-/// a viewing over removes as its window closes ([`Viewing::piped`]).
+/// a viewing over may remove ([`Viewing::piped`]).
 #[must_use]
 pub fn spool_file(pid: u32, extension: Option<&str>) -> PathBuf {
     spool_folder(pid).join(match extension.filter(|extension| !extension.is_empty()) {
@@ -188,24 +189,22 @@ pub fn let_go_of_spool(piped: &std::path::Path) {
     }
 }
 
-/// Whether `piped`, as a launch hands it over, is that launch's spool,
-/// which the Skwir showing it may remove: one of `files`, exactly (byte for
-/// byte) `<spools>/<pid>/stdin` or `stdin.<extension>`, `pid` the process
-/// that asked (as the bus or the pipe says, never as it says itself), its
-/// folder a real folder and the file a regular file, both the user's, no
-/// link in either. Anything else would let a program that may talk to
-/// Skwir (a sandboxed one allowed `org.freedesktop.FileManager1`, served on
-/// the same connection) have any file of the user's removed.
-#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
-fn spooled_by(
-    piped: &std::path::Path,
+/// The name of `piped` in its folder where, as a launch hands it over, it
+/// is named as that launch's spool, which the Skwir showing it may remove:
+/// one of `files`, exactly (byte for byte) `<spools>/<pid>/stdin` or
+/// `stdin.<extension>`, `pid` the process that asked (as the bus or the
+/// pipe says, never as it says itself). What is there is then checked
+/// where it is held (`linux::Spool::hold`, Windows' `spooled_by`). Anything
+/// else would let a program that may talk to Skwir have any file of the
+/// user's removed.
+#[cfg(any(target_os = "linux", windows))]
+fn spool_name<'a>(
+    piped: &'a std::path::Path,
     files: &[PathBuf],
     spools: &std::path::Path,
     pid: u32,
-) -> bool {
-    let Some(name) = piped.file_name() else {
-        return false;
-    };
+) -> Option<&'a std::ffi::OsStr> {
+    let name = piped.file_name()?;
     let named = name.to_str().is_some_and(|name| {
         name == SPOOLED
             || name
@@ -213,33 +212,38 @@ fn spooled_by(
                 .and_then(|rest| rest.strip_prefix('.'))
                 .is_some_and(|extension| !extension.is_empty())
     });
-    let folder = spools.join(pid.to_string());
     // Byte for byte as the launch makes it: no step back, no `.`, no other
     // spelling of the same place.
-    let exact = folder.join(name).as_os_str() == piped.as_os_str();
-    if !named
-        || !exact
-        || !files
-            .iter()
-            .any(|file| file.as_os_str() == piped.as_os_str())
-    {
+    let exact = spools.join(pid.to_string()).join(name).as_os_str() == piped.as_os_str();
+    let given = files
+        .iter()
+        .any(|file| file.as_os_str() == piped.as_os_str());
+    (named && exact && given).then_some(name)
+}
+
+/// Whether `piped` is the spool of the process `pid` ([`spool_name`]), its
+/// folder a real folder and the file a regular file, no link in either:
+/// Windows', where the pipe's DACL lets the user's processes alone ask, and
+/// what is removed is removed by its path (a caller able to write skwir's
+/// cache could put a link in that path meanwhile, and have a file named
+/// `stdin` removed where it leads).
+#[cfg(windows)]
+fn spooled_by(
+    piped: &std::path::Path,
+    files: &[PathBuf],
+    spools: &std::path::Path,
+    pid: u32,
+) -> bool {
+    if spool_name(piped, files, spools, pid).is_none() {
         return false;
     }
     let (Ok(held), Ok(file)) = (
-        std::fs::symlink_metadata(&folder),
+        std::fs::symlink_metadata(spools.join(pid.to_string())),
         std::fs::symlink_metadata(piped),
     ) else {
         return false;
     };
-    #[cfg(unix)]
-    let users = {
-        use std::os::unix::fs::MetadataExt as _;
-        let user = rustix::process::getuid().as_raw();
-        held.uid() == user && file.uid() == user
-    };
-    #[cfg(not(unix))]
-    let users = true;
-    held.is_dir() && file.is_file() && users
+    held.is_dir() && file.is_file()
 }
 
 /// The viewings whose windows closed while their launches wait, until
@@ -1162,8 +1166,9 @@ pub(crate) mod linux {
     /// [`super::view_elsewhere`] to the Skwir `marker` says finishes, as
     /// [`hand_over_at`], on the bus `connect` builds a connection to (made
     /// only when the marker is there). Taken in two steps, so that only the
-    /// launch decides whether it is: `View` asked of the one that holds
-    /// `name` within [`PATIENCE`] (connecting included), answered with the
+    /// launch decides whether it is: `View` asked by `name` (the one name
+    /// `Finishing` answers by) within [`PATIENCE`], connecting included,
+    /// answered with the
     /// viewing's number and nothing shown; then `Viewed`, whose first asking
     /// confirms it (shown from then on, this launch no longer giving up),
     /// answered once its window closes, asked again should the bus give up
@@ -1185,13 +1190,14 @@ pub(crate) mod linux {
                 // never says hello holds this launch no longer than that.
                 let bus = connect()?.build().await?;
                 let dbus = zbus::fdo::DBusProxy::new(&bus).await?;
-                let name = zbus::names::BusName::try_from(name)?;
                 // Asked first, so a name no one holds is not started by
                 // the bus, and a stale marker costs no failed call.
-                if !dbus.name_has_owner(name.clone()).await? {
+                if !dbus
+                    .name_has_owner(zbus::names::BusName::try_from(name)?)
+                    .await?
+                {
                     return Ok(None);
                 }
-                let holder = dbus.get_name_owner(name).await?;
                 let files: Vec<&[u8]> = viewing
                     .files
                     .iter()
@@ -1202,15 +1208,22 @@ pub(crate) mod linux {
                     .as_deref()
                     .map_or(&[][..], |piped| piped.as_os_str().as_encoded_bytes());
                 let token = viewing.token.as_deref().unwrap_or_default();
+                // By the instance's own name, which `Finishing` answers
+                // alone; who answered is followed from then on.
                 let reply = bus
                     .call_method(
-                        Some(holder.as_str()),
+                        Some(name),
                         PATH,
                         Some(INTERFACE),
                         "View",
                         &(files, piped, token),
                     )
                     .await?;
+                let holder = reply
+                    .header()
+                    .sender()
+                    .map(zbus::names::UniqueName::to_owned)
+                    .ok_or_else(|| zbus::Error::Failure("an answer from no one".into()))?;
                 let id: u64 = reply.body().deserialize()?;
                 Ok::<_, zbus::Error>(Some((bus, holder, id, dbus)))
             };
@@ -1230,14 +1243,11 @@ pub(crate) mod linux {
                 }
             };
             loop {
+                // The same name: should another Skwir hold it now, it
+                // knows no such viewing of this launch's, and this one is
+                // told its Skwir ended.
                 let waited = bus
-                    .call_method(
-                        Some(holder.as_str()),
-                        PATH,
-                        Some(INTERFACE),
-                        "Viewed",
-                        &(id,),
-                    )
+                    .call_method(Some(name), PATH, Some(INTERFACE), "Viewed", &(id,))
                     .await;
                 let Err(error) = waited else {
                     return ViewedElsewhere::Closed;
@@ -1259,7 +1269,7 @@ pub(crate) mod linux {
                     "org.freedesktop.DBus.Error.Timeout",
                 ]);
                 let there = dbus
-                    .name_has_owner(zbus::names::BusName::from(holder.as_ref()))
+                    .name_has_owner(zbus::names::BusName::from(holder.clone()))
                     .await
                     .unwrap_or(false);
                 if !(gave_up && there) {
@@ -1270,8 +1280,139 @@ pub(crate) mod linux {
         })
     }
 
+    /// What stands for standard input, checked as the caller's own spool
+    /// (`super::spool_name`) and held: its folder open, never through a
+    /// link, and the file as it was found there. Removed, it is that name in
+    /// that folder, and only while it is still that file: a link put in the
+    /// path since, by whoever may write skwir's cache, changes nothing.
+    /// (Core's `fs::Dir` holds a folder but removes nothing in it: rustix
+    /// here, for this alone.)
+    pub(super) struct Spool {
+        /// `view/`, as opened when checked (links in the cache's own path
+        /// followed: the user's).
+        spools: rustix::fd::OwnedFd,
+        /// `view/<pid>`, opened in it never through a link.
+        folder: rustix::fd::OwnedFd,
+        /// That folder's name in `view/`: the launch's pid.
+        named: std::ffi::OsString,
+        /// The file's name there, and the file as it was.
+        name: std::ffi::OsString,
+        file: rustix::fs::Stat,
+        /// The process that asked, as the bus said.
+        pid: u32,
+    }
+
+    impl Spool {
+        /// `piped` checked as the spool of the process `pid` among `files`,
+        /// in `spools`, and held; `None` where it is not: named otherwise,
+        /// a link, no regular file, not the user's. I/O: never on the
+        /// bus's executor (`off_executor`).
+        pub(super) fn hold(
+            piped: &Path,
+            files: &[PathBuf],
+            spools: &Path,
+            pid: u32,
+        ) -> Option<Spool> {
+            use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+            let name = super::spool_name(piped, files, spools, pid)?.to_owned();
+            let opened = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+            let all = rustix::fs::open(spools, opened, Mode::empty()).ok()?;
+            let named = std::ffi::OsString::from(pid.to_string());
+            let folder =
+                rustix::fs::openat(&all, &named, opened | OFlags::NOFOLLOW, Mode::empty()).ok()?;
+            let user = rustix::process::getuid().as_raw();
+            let held = rustix::fs::fstat(&folder).ok()?;
+            let file = rustix::fs::statat(&folder, &name, AtFlags::SYMLINK_NOFOLLOW).ok()?;
+            let regular = FileType::from_raw_mode(file.st_mode) == FileType::RegularFile;
+            (regular && held.st_uid == user && file.st_uid == user).then_some(Spool {
+                spools: all,
+                folder,
+                named,
+                name,
+                file,
+                pid,
+            })
+        }
+
+        /// Remove the file, if its name there is still that file, and its
+        /// folder once empty, if what `view/` names so is still the one
+        /// held. I/O: called on a thread of its own.
+        fn let_go(&self) {
+            use rustix::fs::AtFlags;
+            let same = |a: &rustix::fs::Stat, b: &rustix::fs::Stat| {
+                a.st_dev == b.st_dev && a.st_ino == b.st_ino
+            };
+            if rustix::fs::statat(&self.folder, &self.name, AtFlags::SYMLINK_NOFOLLOW)
+                .is_ok_and(|now| same(&now, &self.file))
+            {
+                let _ = rustix::fs::unlinkat(&self.folder, &self.name, AtFlags::empty());
+            }
+            if let (Ok(now), Ok(held)) = (
+                rustix::fs::statat(&self.spools, &self.named, AtFlags::SYMLINK_NOFOLLOW),
+                rustix::fs::fstat(&self.folder),
+            ) && same(&now, &held)
+            {
+                let _ = rustix::fs::unlinkat(&self.spools, &self.named, AtFlags::REMOVEDIR);
+            }
+        }
+
+        #[cfg(test)]
+        pub(super) fn let_go_for_test(&self) {
+            self.let_go();
+        }
+
+        /// [`Spool::let_go`] on a thread of its own: a file of up to 1 GiB
+        /// freed, on a disk that may sleep, never holds the bus's executor.
+        /// With `ended`, only once the launch's process ended (the sweep's
+        /// rule): one that gave up views the file itself.
+        fn let_go_aside(self, ended: bool) {
+            let removed = std::thread::Builder::new()
+                .name("skwir-spool".into())
+                .spawn(move || {
+                    if !ended || crate::process::runs(self.pid) == Some(false) {
+                        self.let_go();
+                    }
+                });
+            if let Err(error) = removed {
+                tracing::debug!("what standard input gave stays: {error}");
+            }
+        }
+    }
+
+    /// `work` on a thread of its own, awaited: what may wait on the disk
+    /// never holds the shared connection's executor, which serves the media
+    /// keys, the portal's dialogs and every other launch. `None` where no
+    /// thread could be made.
+    async fn off_executor<T: Send + 'static>(
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        let done = Arc::new((parking_lot::Mutex::new(None), event_listener::Event::new()));
+        let told = Arc::clone(&done);
+        std::thread::Builder::new()
+            .name("skwir-viewing".into())
+            .spawn(move || {
+                *told.0.lock() = Some(work());
+                told.1.notify(usize::MAX);
+            })
+            .ok()?;
+        loop {
+            let listener = done.1.listen();
+            if let Some(value) = done.0.lock().take() {
+                return Some(value);
+            }
+            listener.await;
+        }
+    }
+
     /// A viewing a launch asked, by its number: what its launch's `Viewed`
-    /// finds.
+    /// finds, that launch alone.
+    struct Entry {
+        /// The connection that asked `View`: no other's `Viewed` is
+        /// answered for it.
+        launch: zbus::names::OwnedUniqueName,
+        handed: Handed,
+    }
+
     enum Handed {
         /// Asked (`View`), its launch yet to confirm it (its first
         /// `Viewed`): nothing shown, and nothing ever unless confirmed
@@ -1286,8 +1427,8 @@ pub(crate) mod linux {
     }
 
     /// The viewings launches asked, by their number, until their launches
-    /// go.
-    type Viewings = Arc<parking_lot::Mutex<std::collections::HashMap<u64, Handed>>>;
+    /// go (`follow`).
+    type Viewings = Arc<parking_lot::Mutex<std::collections::HashMap<u64, Entry>>>;
 
     fn not_taken() -> Refused {
         Refused::NotTaken("these files are not shown here".into())
@@ -1304,23 +1445,29 @@ pub(crate) mod linux {
         }
     }
 
-    /// What follows viewing `id`'s launch, from its `View` on: unconfirmed
-    /// within [`PATIENCE`], let go of unseen; confirmed, until its window
-    /// closes (then until its launch read so, [`PATIENCE`] at most) or its
-    /// launch goes first, which closes the window, and once the window let
-    /// go removes what stood for standard input (`piped`, checked when
-    /// asked): no launch is left to.
+    /// What follows viewing `id`'s launch, from its `View` until that launch
+    /// goes, then forgets it. Unconfirmed within [`PATIENCE`], not taken,
+    /// never shown. Confirmed, until its window closes (its launch then
+    /// waited for until it read so, [`PATIENCE`] at most, `wait_told`) or
+    /// its launch goes first, which closes the window; once that let go, what
+    /// stood for standard input (`spool`) is removed: no launch is left to.
+    /// A launch that went unconfirmed has its spool removed too once its
+    /// process ended: one that gave up views it itself.
     async fn follow(
         id: u64,
         state: Arc<super::ViewedState>,
-        piped: Option<PathBuf>,
+        spool: Option<Spool>,
         mut went: zbus::fdo::NameOwnerChangedStream,
         there: bool,
         viewings: Viewings,
         stopped: Arc<Stopped>,
     ) {
         use futures_lite::future::or;
-        let _released = super::Released(Arc::clone(&state));
+        let released = super::Released(Arc::clone(&state));
+        let timer = || async {
+            async_io::Timer::after(PATIENCE).await;
+            false
+        };
         // Each change taken as it comes: the stream never holds the
         // connection's other users.
         let mut gone = !there;
@@ -1330,25 +1477,32 @@ pub(crate) mod linux {
                     launch_went(&mut went).await;
                     true
                 },
-                async {
-                    async_io::Timer::after(PATIENCE).await;
-                    false
-                },
+                timer(),
             )
             .await;
         }
         let unconfirmed = {
             let mut held = viewings.lock();
-            match held.get(&id) {
+            match held.get_mut(&id).map(|entry| &mut entry.handed) {
                 Some(Handed::Shown(_)) => None,
-                // Its launch gave up, and views the files itself, or went:
-                // what it kept of standard input is its own.
-                Some(_) if gone => held.remove(&id),
-                Some(_) => held.insert(id, Handed::NotTaken),
-                None => return,
+                Some(handed) => Some(std::mem::replace(handed, Handed::NotTaken)),
+                None => Some(Handed::NotTaken),
             }
         };
-        if unconfirmed.is_some() {
+        if let Some(unconfirmed) = unconfirmed {
+            // Never shown, and let go of out of the lock.
+            drop(unconfirmed);
+            drop(released);
+            if !gone {
+                launch_went(&mut went).await;
+            }
+            viewings.lock().remove(&id);
+            if let Some(spool) = spool {
+                // Asked again a moment later: a launch just stopped is not
+                // yet seen to have ended.
+                async_io::Timer::after(PATIENCE).await;
+                spool.let_go_aside(true);
+            }
             return;
         }
         if !gone {
@@ -1377,52 +1531,75 @@ pub(crate) mod linux {
             match ended {
                 Ended::Gone => {}
                 Ended::Closed => {
-                    // Told: until its launch read so and went, or a while.
+                    // Told: until its launch read so and went, the
+                    // program's end waiting a while at most.
                     let went_now = or(
                         async {
                             launch_went(&mut went).await;
                             true
                         },
-                        async {
-                            async_io::Timer::after(PATIENCE).await;
-                            false
-                        },
+                        timer(),
                     )
                     .await;
-                    if went_now {
-                        viewings.lock().remove(&id);
+                    drop(released);
+                    if !went_now {
+                        launch_went(&mut went).await;
                     }
+                    viewings.lock().remove(&id);
                     return;
                 }
-                // What is asked again is answered by what is kept.
+                // What is asked again is answered by what is kept, which
+                // goes with what served it.
                 Ended::Stopped => return,
             }
         }
         if state.go() {
             state.closed().await;
-            if let Some(piped) = &piped {
-                super::let_go_of_spool(piped);
+            if let Some(spool) = spool {
+                spool.let_go_aside(false);
             }
         }
         viewings.lock().remove(&id);
     }
 
-    /// What a later launch calls.
+    /// What a later launch calls, on the program's one connection: only
+    /// as it is addressed to this instance's own name (`name`), which no
+    /// sandbox is given, never through another the connection holds (the
+    /// file manager's, ADR-140; the media controls'), which zbus does not
+    /// tell apart: a sandboxed program allowed one of those would
+    /// otherwise open what it names (a server mounted, ADR-077), view any
+    /// file, and ask the user to choose files.
     struct Finishing {
         gate: Arc<Gate>,
         viewings: Viewings,
         stopped: Arc<Stopped>,
+        name: String,
     }
 
     impl Finishing {
-        fn new(gate: &Arc<Gate>, stopped: &Arc<Stopped>) -> Finishing {
+        fn new(gate: &Arc<Gate>, stopped: &Arc<Stopped>, name: &str) -> Finishing {
             Finishing {
                 gate: Arc::clone(gate),
                 viewings: Viewings::default(),
                 stopped: Arc::clone(stopped),
+                name: name.to_owned(),
             }
         }
+
+        /// Whether a call was addressed to this instance's own name.
+        fn ours(&self, header: &zbus::message::Header<'_>) -> bool {
+            let ours = header
+                .destination()
+                .is_some_and(|to| to.as_str() == self.name);
+            if !ours {
+                tracing::debug!("refused: a call to Skwir by another name than its own");
+            }
+            ours
+        }
     }
+
+    /// Why a call not addressed to this instance's name is refused.
+    const NOT_OURS: &str = "Skwir answers this by its own name alone";
 
     /// Set once what serves launches on a connection stops (`Served`):
     /// what waits there for a viewing's window answers then, and lets go
@@ -1465,7 +1642,7 @@ pub(crate) mod linux {
         /// until its launch confirms it by asking `Viewed` (within
         /// [`PATIENCE`], else let go of). Refused, nothing to be shown
         /// ([`NOT_TAKEN`]), where Skwir no longer takes them, or where
-        /// `piped` is not the caller's own spool (`spooled_by`): the
+        /// `piped` is not the caller's own spool (`Spool::hold`): the
         /// window removes it as it closes, so a path anyone names would be
         /// a file anyone may have removed. Its launch followed: gone (its
         /// terminal's Ctrl+C), the window closes.
@@ -1477,6 +1654,9 @@ pub(crate) mod linux {
             piped: Vec<u8>,
             token: String,
         ) -> Result<u64, Refused> {
+            if !self.ours(&header) {
+                return Err(Refused::Failed(NOT_OURS.into()));
+            }
             let Some(launch) = header.sender().map(zbus::names::UniqueName::to_owned) else {
                 return Err(Refused::Failed("a viewing from no one".into()));
             };
@@ -1493,28 +1673,45 @@ pub(crate) mod linux {
                 token: (!token.is_empty()).then_some(token),
             };
             let dbus = zbus::fdo::DBusProxy::new(bus).await?;
-            if let Some(piped) = &viewing.piped {
-                // Who asked, as the bus says: through a sandbox's proxy,
-                // the proxy, whose folder the sandbox cannot make.
-                let pid = dbus
-                    .get_connection_unix_process_id(zbus::names::BusName::from(launch.as_ref()))
-                    .await?;
-                if !super::spooled_by(piped, &viewing.files, &super::spools(), pid) {
-                    tracing::debug!("refused: what stands for standard input is not the launch's");
-                    return Err(Refused::NotTaken(
-                        "what stands for standard input is not this launch's".into(),
-                    ));
+            let spool = match &viewing.piped {
+                None => None,
+                Some(piped) => {
+                    // Who asked, as the bus says: through a sandbox's
+                    // proxy, the proxy, whose folder the sandbox cannot make.
+                    let pid = dbus
+                        .get_connection_unix_process_id(zbus::names::BusName::from(launch.as_ref()))
+                        .await?;
+                    let (piped, files) = (piped.clone(), viewing.files.clone());
+                    let held =
+                        off_executor(move || Spool::hold(&piped, &files, &super::spools(), pid))
+                            .await
+                            .flatten();
+                    if held.is_none() {
+                        tracing::debug!(
+                            "refused: what stands for standard input is not the launch's \
+                             (another cache than this Skwir's, or not its spool)"
+                        );
+                        return Err(Refused::NotTaken(
+                            "what stands for standard input is not this launch's".into(),
+                        ));
+                    }
+                    held
                 }
-            }
+            };
             // Its launch followed from before it is answered: one that goes
             // meanwhile is let go of all the same.
             let went = dbus
                 .receive_name_owner_changed_with_args(&[(0, launch.as_str())])
                 .await?;
-            let piped = viewing.piped.clone();
             let (viewed, state) = super::Viewed::made(viewing, true);
             let id = state.id;
-            self.viewings.lock().insert(id, Handed::Asked(viewed));
+            self.viewings.lock().insert(
+                id,
+                Entry {
+                    launch: launch.clone().into(),
+                    handed: Handed::Asked(viewed),
+                },
+            );
             // An answer that fails is no launch gone: the stream follows it
             // still, and unconfirmed it is let go of anyway.
             let there = dbus
@@ -1524,31 +1721,47 @@ pub(crate) mod linux {
             let (viewings, stopped) = (Arc::clone(&self.viewings), Arc::clone(&self.stopped));
             bus.executor()
                 .spawn(
-                    follow(id, state, piped, went, there, viewings, stopped),
+                    follow(id, state, spool, went, there, viewings, stopped),
                     "skwir-viewed",
                 )
                 .detach();
             Ok(id)
         }
 
-        /// Asked first, confirms viewing `id`, which is shown from then on,
+        /// Asked first by the launch that asked `View` (no other is
+        /// answered), confirms viewing `id`, which is shown from then on,
         /// or refused ([`NOT_TAKEN`]) where it was let go of unconfirmed or
         /// Skwir no longer takes them. Answered once its window closes, at
-        /// once if it has, even once this Skwir no longer takes launches
-        /// over; [`NOT_TAKEN`] for a window that could not open; refused
-        /// once this Skwir stopped with the window up.
-        async fn viewed(&self, id: u64) -> Result<(), Refused> {
+        /// once if it has; [`NOT_TAKEN`] for a window that could not open;
+        /// refused once this Skwir stopped with the window up (a call
+        /// already waiting whose window closed as it stopped is told it
+        /// closed).
+        async fn viewed(
+            &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+            id: u64,
+        ) -> Result<(), Refused> {
+            if !self.ours(&header) {
+                return Err(Refused::Failed(NOT_OURS.into()));
+            }
+            let sender = header.sender().map(zbus::names::UniqueName::as_str);
             let (state, asked) = {
                 let mut viewings = self.viewings.lock();
-                match viewings.get(&id) {
-                    Some(Handed::Asked(viewed)) => {
+                let Some(entry) = viewings
+                    .get_mut(&id)
+                    .filter(|entry| Some(entry.launch.as_str()) == sender)
+                else {
+                    return Err(Refused::Failed("no such viewing here".into()));
+                };
+                match &entry.handed {
+                    Handed::Asked(viewed) => {
                         let state = Arc::clone(&viewed.holder.state);
-                        let asked = viewings.insert(id, Handed::Shown(Arc::clone(&state)));
-                        (state, asked)
+                        let asked =
+                            std::mem::replace(&mut entry.handed, Handed::Shown(Arc::clone(&state)));
+                        (state, Some(asked))
                     }
-                    Some(Handed::Shown(state)) => (Arc::clone(state), None),
-                    Some(Handed::NotTaken) => return Err(not_taken()),
-                    None => return Err(Refused::Failed("no such viewing here".into())),
+                    Handed::Shown(state) => (Arc::clone(state), None),
+                    Handed::NotTaken => return Err(not_taken()),
                 }
             };
             // Confirmed now: shown, if still taken (no lock held meanwhile
@@ -1556,7 +1769,10 @@ pub(crate) mod linux {
             if let Some(Handed::Asked(viewed)) = asked
                 && !self.gate.pass_viewing(viewed)
             {
-                self.viewings.lock().insert(id, Handed::NotTaken);
+                // What `follow` forgot meanwhile stays forgotten.
+                if let Some(entry) = self.viewings.lock().get_mut(&id) {
+                    entry.handed = Handed::NotTaken;
+                }
                 return Err(not_taken());
             }
             let closed = async {
@@ -1582,9 +1798,11 @@ pub(crate) mod linux {
         /// (`chooser`): the request as the portal gave it (`method`: 0
         /// open, 1 save, 2 save files), its dialog closable at `handle`
         /// here meanwhile; answered once the user decides (ADR-141, 3).
+        /// Asked by another name than this instance's, it fails unasked.
         #[allow(clippy::too_many_arguments)] // the portal's request, whole
         async fn choose(
             &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
             #[zbus(object_server)] server: &zbus::ObjectServer,
             method: u32,
             handle: zbus::zvariant::OwnedObjectPath,
@@ -1593,6 +1811,9 @@ pub(crate) mod linux {
             title: String,
             options: crate::chooser::linux::Options,
         ) -> (u32, crate::chooser::linux::Results) {
+            if !self.ours(&header) {
+                return crate::chooser::linux::results(crate::chooser::Answer::Failed);
+            }
             let raw = crate::chooser::linux::Raw {
                 method: crate::chooser::linux::Method::of(method),
                 app_id,
@@ -1611,15 +1832,21 @@ pub(crate) mod linux {
         /// read against `cwd`, the window brought forward with `token`
         /// (empty for none), the names `select` (bytes each) selected
         /// there once listed, with `properties` shown: answered once
-        /// taken.
+        /// taken. Refused by another name than this instance's.
+        // zbus hands a method its header owned, as it read it.
+        #[allow(clippy::needless_pass_by_value)]
         fn open(
             &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
             location: Vec<u8>,
             cwd: Vec<u8>,
             token: String,
             select: Vec<Vec<u8>>,
             properties: bool,
         ) -> zbus::fdo::Result<()> {
+            if !self.ours(&header) {
+                return Err(zbus::fdo::Error::AccessDenied(NOT_OURS.into()));
+            }
             let opening = Opening {
                 location: (!location.is_empty()).then(|| skwir_core::os_path::from_bytes(location)),
                 cwd: PathBuf::from(skwir_core::os_path::from_bytes(cwd)),
@@ -1949,7 +2176,7 @@ pub(crate) mod linux {
         ) -> Result<Served, NotTaken> {
             let objects = bus.object_server();
             let stopped = Arc::<Stopped>::default();
-            match objects.at(PATH, Finishing::new(gate, &stopped)) {
+            match objects.at(PATH, Finishing::new(gate, &stopped, name)) {
                 Ok(true) => {}
                 Ok(false) => {
                     tracing::debug!("this Skwir takes later launches over already");
@@ -2410,10 +2637,12 @@ mod pipe {
                         return;
                     }
                 }
-                if !gate.takes_viewing() || connected.write_all(&[frame::TAKEN]).is_err() {
+                if !gate.takes_viewing() {
                     return;
                 }
                 // The serve thread is not held while the launch confirms.
+                // Answered taken there alone: without that thread, the pipe
+                // closes unanswered, and the launch views the files itself.
                 let (gate, stop) = (Arc::clone(gate), Arc::clone(stop));
                 let followed = std::thread::Builder::new()
                     .name("skwir-viewed".into())
@@ -2426,12 +2655,15 @@ mod pipe {
         }
     }
 
-    /// A viewing taken on `connected`: shown once its launch confirms it
-    /// (`CONFIRMED`) within [`PATIENCE`], then followed until its window
-    /// closes (`follow_viewing`). Not confirmed in time, or no longer taken,
-    /// nothing is shown, and the launch is told so (`NOT_TAKEN`) should it
-    /// still read: it views the files itself.
+    /// A viewing taken on `connected`, answered `TAKEN` here: shown once its
+    /// launch confirms it (`CONFIRMED`) within [`PATIENCE`], then followed
+    /// until its window closes (`follow_viewing`). Not confirmed in time, or
+    /// no longer taken, nothing is shown, and the launch is told so
+    /// (`NOT_TAKEN`) should it still read: it views the files itself.
     fn show_viewing(mut connected: &File, viewing: super::Viewing, gate: &Gate, stop: &AtomicBool) {
+        if connected.write_all(&[frame::TAKEN]).is_err() {
+            return;
+        }
         let mut confirmed = [0u8];
         let in_time = matches!(
             wait(connected, 1, Instant::now() + PATIENCE, Some(stop)),
@@ -3462,9 +3694,12 @@ mod linux_tests {
         let bus = bus_or_skip!(folder.path(), &listen);
         let marker = folder.path().join("skwir").join("finishing");
         let (taking, viewed, _shared) = viewing_skwir(&bus, &marker);
+        let piped = spool("gif");
         {
+            // Gone unconfirmed, its process running (it views the files
+            // itself): what it kept stays.
             let launch = connector(&bus.address)().unwrap();
-            ask_view(&launch, &[], None).unwrap();
+            ask_view(&launch, &[piped.as_path()], Some(piped.as_path())).unwrap();
         }
         let late = connector(&bus.address)().unwrap();
         let id = ask_view(&late, &[], None).unwrap();
@@ -3482,9 +3717,14 @@ mod linux_tests {
             "{answered:?}"
         );
         assert!(viewed.lock().is_empty(), "nothing shown");
+        assert!(piped.exists(), "its launch runs, and views it itself");
         // Confirmed in time, a window that could not open is not taken
-        // either: the launch views the files itself.
-        let asked = Viewing::default();
+        // either: the launch views the files itself, and what it kept stays.
+        let asked = Viewing {
+            files: vec![piped.clone()],
+            piped: Some(piped.clone()),
+            token: None,
+        };
         let launch = {
             let (address, marker) = (bus.address.clone(), marker.clone());
             std::thread::spawn(move || {
@@ -3494,6 +3734,9 @@ mod linux_tests {
         until("the viewing handed in", &|| viewed.lock().len() == 1);
         viewed.lock()[0].not_shown();
         assert_eq!(launch.join().unwrap(), ViewedElsewhere::NotTaken);
+        viewed.lock().clear();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(piped.exists(), "not shown: the launch's to view");
         // No longer taking them: refused at once.
         assert!(taking.close_unless(|| false));
         let started = Instant::now();
@@ -3503,6 +3746,132 @@ mod linux_tests {
         );
         assert!(started.elapsed() < PATIENCE, "not waited out");
         drop(taking);
+        super::let_go_of_spool(&piped);
+    }
+
+    /// `Finishing` answers by the instance's own name alone: a call
+    /// addressed through another the connection holds (the file manager's,
+    /// which a sandbox may be allowed) is refused, whatever it asks.
+    #[test]
+    fn finishing_answers_by_its_own_name_alone() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let opened = Arc::new(parking_lot::Mutex::new(Vec::<Opening>::new()));
+        let (into, viewed) = (
+            Arc::clone(&opened),
+            Arc::new(parking_lot::Mutex::new(Vec::<Viewed>::new())),
+        );
+        let shown = Arc::clone(&viewed);
+        let gate = Gate::viewing(
+            move |opening| into.lock().push(opening),
+            move |handed| shown.lock().push(handed),
+        );
+        let taking =
+            super::linux::take_over_on(connector(&bus.address), marker.clone(), HELD.into(), gate)
+                .unwrap();
+        taking.answering().set(true);
+        until("the file manager's name held", &|| {
+            file_manager_owner(&bus.address).is_some()
+        });
+        let other = connector(&bus.address)().unwrap();
+        let call = |to: &str, method: &str| -> Result<(), String> {
+            let body: Result<zbus::Message, zbus::Error> = match method {
+                "Open" => other.call_method(
+                    Some(to),
+                    super::linux::PATH,
+                    Some(super::linux::INTERFACE),
+                    "Open",
+                    &(
+                        b"smb://elsewhere.example/x".to_vec(),
+                        b"/".to_vec(),
+                        "",
+                        Vec::<Vec<u8>>::new(),
+                        false,
+                    ),
+                ),
+                "View" => other.call_method(
+                    Some(to),
+                    super::linux::PATH,
+                    Some(super::linux::INTERFACE),
+                    "View",
+                    &(Vec::<Vec<u8>>::new(), Vec::<u8>::new(), ""),
+                ),
+                _ => other.call_method(
+                    Some(to),
+                    super::linux::PATH,
+                    Some(super::linux::INTERFACE),
+                    "Viewed",
+                    &(1u64,),
+                ),
+            };
+            body.map(drop).map_err(|error| error.to_string())
+        };
+        let owner = file_manager_owner(&bus.address).unwrap();
+        for to in ["org.freedesktop.FileManager1", owner.as_str()] {
+            for method in ["Open", "View", "Viewed"] {
+                assert!(call(to, method).is_err(), "{method} by {to}");
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            opened.lock().is_empty() && viewed.lock().is_empty(),
+            "nothing taken"
+        );
+        // By its own name, taken.
+        assert!(call(HELD, "Open").is_ok());
+        assert_eq!(opened.lock().len(), 1);
+        drop(taking);
+    }
+
+    /// A viewing is confirmed by the launch that asked it alone: another
+    /// connection's `Viewed` is refused, and the viewing waits, unshown,
+    /// for its own launch.
+    #[test]
+    fn a_viewing_is_confirmed_by_its_launch_alone() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let (taking, viewed, _shared) = viewing_skwir(&bus, &marker);
+        let launch = connector(&bus.address)().unwrap();
+        let other = connector(&bus.address)().unwrap();
+        let id = ask_view(&launch, &[], None).unwrap();
+        let answered = other.call_method(
+            Some(HELD),
+            super::linux::PATH,
+            Some(super::linux::INTERFACE),
+            "Viewed",
+            &(id,),
+        );
+        assert!(answered.is_err(), "{answered:?}");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(viewed.lock().is_empty(), "not shown for another");
+        confirm(&launch, id);
+        until("the viewing handed in", &|| viewed.lock().len() == 1);
+        viewed.lock()[0].close();
+        drop(taking);
+    }
+
+    /// The program's end waits for no one where no launch waits, and two
+    /// seconds at most for a launch told its window closed that never goes.
+    #[test]
+    fn the_end_waits_a_while_at_most() {
+        let started = Instant::now();
+        super::wait_told();
+        assert!(started.elapsed() < Duration::from_millis(100), "none waits");
+        let (viewed, state) = super::Viewed::made(Viewing::default(), true);
+        viewed.close();
+        let started = Instant::now();
+        super::wait_told();
+        let waited = started.elapsed();
+        assert!(waited + Duration::from_millis(50) >= PATIENCE, "{waited:?}");
+        assert!(waited < PATIENCE + Duration::from_secs(1), "{waited:?}");
+        state.release();
+        let started = Instant::now();
+        super::wait_told();
+        assert!(started.elapsed() < Duration::from_millis(100), "let go of");
     }
 
     /// What stands for standard input is taken only as the caller's own
@@ -3551,9 +3920,10 @@ mod linux_tests {
         super::let_go_of_spool(&others);
     }
 
-    /// The rule a spool keeps (`spooled_by`): the launch's own folder, a
+    /// The rule a spool keeps (`Spool::hold`): the launch's own folder, a
     /// regular file named `stdin` or `stdin.<extension>`, among the files,
-    /// no link, no step back.
+    /// no link, no step back. Removed, it is the file held: a folder made a
+    /// link since leads nowhere.
     #[test]
     fn a_spool_is_the_launchs_own_file() {
         let root = folder();
@@ -3564,14 +3934,17 @@ mod linux_tests {
         let png = folder.join("stdin.png");
         std::fs::write(&stdin, b"x").unwrap();
         std::fs::write(&png, b"x").unwrap();
-        let ok = |piped: &Path| super::spooled_by(piped, &[piped.to_owned()], &spools, 42);
+        let check = |piped: &Path, files: &[PathBuf], pid: u32| {
+            super::linux::Spool::hold(piped, files, &spools, pid)
+        };
+        let ok = |piped: &Path| check(piped, &[piped.to_owned()], 42).is_some();
         assert!(ok(&stdin) && ok(&png));
         assert!(
-            !super::spooled_by(&png, std::slice::from_ref(&stdin), &spools, 42),
+            check(&png, std::slice::from_ref(&stdin), 42).is_none(),
             "not among the files"
         );
         assert!(
-            !super::spooled_by(&png, std::slice::from_ref(&png), &spools, 43),
+            check(&png, std::slice::from_ref(&png), 43).is_none(),
             "another's"
         );
         // Named otherwise, a folder, a link, a step back.
@@ -3598,13 +3971,32 @@ mod linux_tests {
         std::fs::create_dir(&real).unwrap();
         std::fs::write(real.join("stdin"), b"x").unwrap();
         std::os::unix::fs::symlink(&real, spools.join("43")).unwrap();
-        assert!(!super::spooled_by(
-            &spools.join("43/stdin"),
-            &[spools.join("43/stdin")],
-            &spools,
-            43
-        ));
+        assert!(check(&spools.join("43/stdin"), &[spools.join("43/stdin")], 43).is_none());
         assert!(outside.exists() && real.join("stdin").exists());
+        // Held, then its folder moved away and a link to elsewhere put in
+        // its place: what is removed is the file held, never one there.
+        let held = check(&png, std::slice::from_ref(&png), 42).unwrap();
+        let moved = root.path().join("moved");
+        std::fs::rename(&folder, &moved).unwrap();
+        std::fs::write(real.join("stdin.png"), b"x").unwrap();
+        std::os::unix::fs::symlink(&real, &folder).unwrap();
+        held.let_go_for_test();
+        assert!(
+            real.join("stdin.png").exists(),
+            "the file a link leads to stays"
+        );
+        assert!(
+            !moved.join("stdin.png").exists(),
+            "the file held is removed"
+        );
+        // Held, then the file replaced by another of that name: it stays.
+        std::fs::remove_file(&folder).unwrap();
+        std::fs::rename(&moved, &folder).unwrap();
+        let held = check(&stdin, std::slice::from_ref(&stdin), 42).unwrap();
+        std::fs::remove_file(&stdin).unwrap();
+        std::fs::write(&stdin, b"another").unwrap();
+        held.let_go_for_test();
+        assert!(stdin.exists(), "another file, kept");
     }
 
     /// A viewing whose copies are all let go is closed: its launch is told
