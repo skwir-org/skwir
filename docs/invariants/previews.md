@@ -1474,7 +1474,11 @@ is still to come are in `docs/preview-frame.md`.
   or Full preview.
 - An item states the narrowest of the three variants that still shows
   it (`keep`). Text and a page give way alike: a tool in the same place
-  has the same `keep`.
+  has the same `keep`. Where even the narrow variant does not fit (a
+  viewer's card beside Properties, a narrow panel), the ways of looking
+  give way first, then every tool, the last variant More alone
+  (`preview_bar::variants`): More is reachable at any width, and what has
+  no button is its row; never a bar run off its end.
 - **A bar is of what is shown.** Its tools and what is lit among them
   come from what the panel shows and the request that content answered
   (`inspector::Display::origin`; `PreviewState::shown` for the others,
@@ -1500,8 +1504,10 @@ is still to come are in `docs/preview-frame.md`.
   Full preview). What a section says of itself (a sheet's name, lines as
   they are counted) takes the room the tools leave, cut short, and never
   decides which of them fit: its natural width is its least
-  (`preview_bar::spare`, a basis of 0 px: `flex_1`'s 0 %, measured with
-  no width as a variant is, counts as the whole text). So does a
+  (`preview_bar::spare`, a basis of that least, 64 px at 100 %: `flex_1`'s
+  0 %, measured with no width as a variant is, counts as the whole text,
+  and a basis of 0 under that least counts as nothing, so a variant
+  holding it was taken for narrower than it is drawn). So does a
   member's or a file's name in its bar, three shares of the spare room
   to the caption's one: neither moves as the other changes.
 - Copy has no button: it is Ctrl+C and the content's right-click menu

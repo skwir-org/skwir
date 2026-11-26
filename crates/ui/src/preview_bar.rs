@@ -13,6 +13,12 @@
 //! no button: it is Ctrl+C and the content's own right-click menu, where
 //! people look for it.
 //!
+//! The bar is the richest of its variants that fits (`AdaptiveRow`): wide,
+//! medium and narrow, as each tool says (`Item::keep`); then, where even the
+//! narrow one does not fit, the ways of looking give way first, then every
+//! tool, More alone being the last variant: More is reachable at any width,
+//! never run off the bar's end (`variants`).
+//!
 //! The menu rule is every responsive toolbar's: More holds what has no button
 //! in the variant the row chose this frame (`PopoverAnchor::popup_for`), plus
 //! what never has one (open externally, copy the path, a kind's own settings).
@@ -197,6 +203,32 @@ pub const HEIGHT: f32 = 42.;
 /// `keep` of an item no variant shows.
 const NEVER: usize = usize::MAX;
 
+/// The narrowest variant an item's `keep` names.
+const NARROW: usize = 2;
+
+/// The narrow variant without the ways of looking (`Slot::Look`): where
+/// even the narrow one does not fit, they give way first, rows of More.
+const NO_LOOKS: usize = 3;
+
+/// More alone (and a member's ×), every tool a row of it: it fits any room,
+/// so More is reachable at any width, never run off the bar's end.
+const MORE_ALONE: usize = 4;
+
+/// The variants a bar offers, widest first, as `AdaptiveRow` takes the
+/// first that fits: wide, medium, narrow, as the items' `keep` says; the
+/// narrow one without the ways of looking, where it has any; More alone.
+/// Each variant's More holds what it has no button for.
+fn variants(bar: &Bar) -> Vec<usize> {
+    let looks = bar
+        .items
+        .iter()
+        .any(|item| item.slot == Slot::Look && item.shown(NARROW));
+    (0..=NARROW)
+        .chain(looks.then_some(NO_LOOKS))
+        .chain([MORE_ALONE])
+        .collect()
+}
+
 /// The popup More opens; a tool names another with [`Item::opens`].
 pub const MORE: &str = "preview";
 
@@ -240,7 +272,9 @@ pub enum Tool {
 
 pub struct Item {
     slot: Slot,
-    /// The narrowest variant (0 wide, 1 medium, 2 narrow) that still shows it.
+    /// The narrowest variant (0 wide, 1 medium, 2 narrow) that still shows
+    /// it; past those, the ways of looking give way, then everything but
+    /// More (`NO_LOOKS`, `MORE_ALONE`).
     keep: usize,
     tool: Tool,
     /// The popup this button opens, which is then anchored to it.
@@ -306,8 +340,16 @@ impl Item {
         self
     }
 
+    /// Whether variant `mode` has a button for it (`variants`): the wide,
+    /// medium and narrow ones as its `keep` says; the narrow one without
+    /// the ways of looking; More alone, none.
     fn shown(&self, mode: usize) -> bool {
-        self.keep != NEVER && self.keep >= mode
+        self.keep != NEVER
+            && match mode {
+                NO_LOOKS => self.keep >= NARROW && self.slot != Slot::Look,
+                MORE_ALONE => false,
+                mode => self.keep >= mode,
+            }
     }
 
     pub fn opens(mut self, popup: &'static str) -> Self {
@@ -493,24 +535,30 @@ pub fn unit_popup(plain: skwir_core::words::Words) -> Popup {
     })
 }
 
+/// A name's shares of the bar's spare room, to a caption's one: what a
+/// name says is cut first where it is long.
+const NAMED: f32 = 3.;
+
+/// The least a name or a caption keeps in a bar, at 100 %.
+const LEAST: f32 = 64.;
+
 /// What takes the room the tools leave, and only that (a member's or a
 /// file's name, a section's caption): its natural width is its least,
 /// 64 px at 100 % (`sized`), so it never decides which tools fit (`AdaptiveRow`
 /// measures each variant at its natural width), and it is cut where it
 /// stands from its first frame, whatever comes beside it later. Its basis
-/// is a length: a percentage of no width (`flex_1`'s 0 %), as a bar is
-/// measured, counts as the whole text, which a long name made too wide
-/// for any variant that held it.
-/// A name's shares of the bar's spare room, to a caption's one: what a
-/// name says is cut first where it is long.
-const NAMED: f32 = 3.;
-
+/// is that least, a length: a percentage of no width (`flex_1`'s 0 %), as
+/// a bar is measured, counts as the whole text, which a long name made too
+/// wide for any variant that held it; and a basis of 0 under a least it
+/// may not go below counts as 0 there (taffy's widest content takes the
+/// basis, not the least), so a variant holding it was taken for 64 px
+/// narrower than it is drawn and ran More off the bar's end.
 pub fn spare() -> Div {
     div()
         .flex_grow(1.)
         .flex_shrink(1.)
-        .flex_basis(px(0.))
-        .min_w(sized(64.))
+        .flex_basis(sized(LEAST))
+        .min_w(sized(LEAST))
 }
 
 /// The way out of a member, the same whatever the member turned out to be:
@@ -1071,9 +1119,11 @@ pub fn render(
 ) -> AnyElement {
     let anchor = PopoverAnchor::default();
     let chosen = Chosen::default();
+    let modes = variants(bar);
     let mut root = div().relative().flex_none().child(AdaptiveRow {
-        variants: (0..3)
-            .map(|mode| row(bar, mode, active, &anchor, shell, theme, cx))
+        variants: modes
+            .iter()
+            .map(|&mode| row(bar, mode, active, &anchor, shell, theme, cx))
             .collect(),
         height: HEIGHT,
         chosen: Some(chosen.clone()),
@@ -1083,8 +1133,9 @@ pub fn render(
     };
     if let Some(popup) = shell.preview.menu.as_ref().filter(|_| active == MORE) {
         // One panel per variant; the row's choice picks it, this frame.
-        let panels = (0..3)
-            .map(|mode| {
+        let panels = modes
+            .iter()
+            .map(|&mode| {
                 let mut panel = toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
                     .max_h(sized(480.))
                     .overflow_y_scroll();
@@ -1318,4 +1369,50 @@ pub fn find_popup(
             .size_full()
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Bar, Item, MORE_ALONE, NARROW, NO_LOOKS, Slot, variants};
+    use crate::toolbar::Button;
+    use skwir_core::words::Words;
+
+    fn item(slot: Slot, keep: usize, id: &'static str) -> Item {
+        Item::button(
+            slot,
+            keep,
+            Button::new(id, "", Words::as_written(id), "ui.inspect"),
+        )
+    }
+
+    /// Past the narrow variant, the ways of looking give way first, then
+    /// every tool: the last variant is More alone, which fits any room, so
+    /// More is never run off the bar's end.
+    #[test]
+    fn the_ways_of_looking_give_way_then_every_tool() {
+        let mut bar = Bar::new("test-bar");
+        bar.push(item(Slot::View, NARROW, "zoom"));
+        bar.push(item(Slot::View, 1, "fit"));
+        bar.push(item(Slot::Tools, NARROW, "find"));
+        bar.push(item(Slot::Look, NARROW, "source"));
+        assert_eq!(variants(&bar), vec![0, 1, NARROW, NO_LOOKS, MORE_ALONE]);
+        let shown = |mode: usize| {
+            bar.items
+                .iter()
+                .filter(|item| item.shown(mode))
+                .map(|item| match &item.tool {
+                    super::Tool::Button(button) => button.id().to_string(),
+                    super::Tool::Widget(_) => String::new(),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shown(1), ["zoom", "fit", "find", "source"]);
+        assert_eq!(shown(NARROW), ["zoom", "find", "source"]);
+        assert_eq!(shown(NO_LOOKS), ["zoom", "find"]);
+        assert!(shown(MORE_ALONE).is_empty());
+        // A bar with no way of looking has no variant without them.
+        let mut plain = Bar::new("test-plain");
+        plain.push(item(Slot::View, NARROW, "zoom"));
+        assert_eq!(variants(&plain), vec![0, 1, NARROW, MORE_ALONE]);
+    }
 }
