@@ -19,10 +19,14 @@ its lineage (`mime::lineage`: the type, what it is a sub-class of, theirs
 in turn, and `text/plain` for a type whose top level is `text`). Which
 generic icon says which kind is read from `classify` itself, so the two
 never part; a `classify` that no longer reads kinds so is refused rather
-than mirrored wrong. A type is listed by the name the database gives it:
-the desktop unaliases a desktop entry's types as it unaliases a file's.
-Of them, those a desktop entry names are listed (`ENTRY_MEDIA_TYPES`):
-not message/news, nor x-epoc/x-sisx-app.
+than mirrored wrong. A type is listed by every name the database gives
+it, its own and its aliases: the desktop unaliases a desktop entry's
+types as it unaliases a file's, by the system's database, and one older
+than a rename knows the type by its old name alone (Ubuntu 24.04's
+shared-mime-info 2.4 types a shell script `application/x-shellscript`,
+an alias of `text/x-shellscript` since 2.5.1). Of these names, those a
+desktop entry names are listed (`ENTRY_MEDIA_TYPES`): not message/news,
+nor x-epoc/x-sisx-app, nor zz-application/zz-winassoc-doc.
 """
 
 import argparse
@@ -76,10 +80,11 @@ class Database:
     """What `classify` asks of the database, read from its source as
     update-mime-database compiles it: each type's generic icon
     (`generic-icons`), what it is a sub-class of (`subclasses`, the names
-    as written) and its other names (`aliases`)."""
+    as written) and its other names (`aliases`; `names`, as written, for
+    the entry)."""
 
     def __init__(self, path=DATABASE):
-        self.types, self.icons, self.parents, self.aliases = [], {}, {}, {}
+        self.types, self.icons, self.parents, self.aliases, self.names = [], {}, {}, {}, {}
         for element in ET.parse(path).getroot().iter(NS + "mime-type"):
             name = element.get("type")
             self.types.append(name)
@@ -88,8 +93,10 @@ class Database:
                 # xdg-mime compares types parsed, whatever their case.
                 self.icons[name.lower()] = icons[0]
             self.parents[name] = [parent.get("type") for parent in element.iter(NS + "sub-class-of")]
+            self.names[name] = [name]
             for alias in element.iter(NS + "alias"):
                 self.aliases[alias.get("type").lower()] = name
+                self.names[name].append(alias.get("type"))
 
     def unalias(self, name):
         return self.aliases.get(name.lower(), name)
@@ -132,12 +139,12 @@ def named_in_an_entry(name):
 
 
 def viewed(database=None, by_icon=None):
-    """Every type of a kind Skwir previews that a desktop entry names,
-    sorted."""
+    """Every name of every type of a kind Skwir previews, its own and its
+    aliases, that a desktop entry names, sorted."""
     database = database or Database()
     by_icon = by_icon or icon_kinds()
-    return sorted(name for name in database.types
-                  if database.kinds(name, by_icon) & set(PREVIEWED) and named_in_an_entry(name))
+    return sorted({alias for name in database.types if database.kinds(name, by_icon) & set(PREVIEWED)
+                   for alias in database.names[name] if named_in_an_entry(alias)})
 
 
 def line(types):
@@ -164,14 +171,14 @@ def main():
             sys.exit(f"{args.check}: its {KEY} line is not the types of the kinds Skwir previews, "
                      f"as {DATABASE.relative_to(ROOT)} groups them: run "
                      f"tools/package/viewer_types.py --write {args.check}")
-        print(f"ok: {args.check} opens the {made.count(';')} types of the kinds Skwir previews")
+        print(f"ok: {args.check} opens the types of the kinds Skwir previews, by {made.count(';')} names")
     elif args.write:
         text = args.write.read_text()
         if line_of(args.write) is None:
             sys.exit(f"{args.write}: no {KEY} line to make again")
         lines = [made if row.startswith(KEY) else row for row in text.splitlines()]
         args.write.write_text("\n".join(lines) + "\n")
-        print(f"{args.write}: {made.count(';')} types")
+        print(f"{args.write}: {made.count(';')} names")
     else:
         print(made)
 

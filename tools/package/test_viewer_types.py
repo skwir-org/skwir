@@ -58,14 +58,24 @@ class ViewerTypes(unittest.TestCase):
         self.assertEqual(kinds("inode/directory"), {"Folder"})
         self.assertEqual(kinds("application/x-executable"), {"Program"})
 
-    def test_listed_by_their_own_names_what_a_desktop_entry_names(self):
+    def test_listed_by_every_name_what_a_desktop_entry_names(self):
         for name in ("image/png", "video/mp4", "audio/flac", "font/ttf", "text/markdown",
-                     "application/vnd.oasis.opendocument.spreadsheet", "message/rfc822"):
+                     "application/vnd.oasis.opendocument.spreadsheet", "message/rfc822",
+                     "text/x-shellscript"):
             self.assertIn(name, self.viewed)
-        for name in ("inode/directory", "application/x-executable", "application/x-shellscript",
-                     "message/news", "x-epoc/x-sisx-app"):
+        # By its aliases too: a system whose database is older than a
+        # rename knows a type by its old name alone (Ubuntu 24.04's
+        # shell scripts are application/x-shellscript).
+        for name in ("application/x-shellscript", "video/x-matroska", "audio/x-flac",
+                     "audio/x-wav", "image/x-icon"):
+            self.assertIn(name, self.viewed)
+        for name in ("inode/directory", "application/x-executable", "message/news",
+                     "x-epoc/x-sisx-app", "zz-application/zz-winassoc-doc"):
             self.assertNotIn(name, self.viewed)
-        self.assertEqual(self.viewed, set(self.database.types) & self.viewed)
+        names = {alias for name in self.database.types for alias in self.database.names[name]}
+        self.assertEqual(self.viewed, names & self.viewed)
+        # Each alias beside the type it names.
+        self.assertEqual({self.database.unalias(name) for name in self.viewed} - self.viewed, set())
 
     def test_a_classify_read_otherwise_is_refused(self):
         source = viewer_types.CLASSIFY.read_text()
