@@ -1,6 +1,6 @@
 [package]
 name = "skwird-client"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -11,7 +11,7 @@ description = "skwird's client: finds or starts an engine, and asks it; and a fa
 # (docs/DESIGN.md, Protocol).
 
 [dependencies]
-skwird-protocol = { path = "../skwird-protocol", version = "0.2.0" }
+skwird-protocol = { path = "../skwird-protocol", version = "0.3.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1.5", features = ["fs", "net"] }

@@ -20,7 +20,8 @@ skwird commit it was copied from.
   replacing them, and `VENDORED` says so if skwird had changes not
   committed there. Read the diff: the protocol is experimental until
   skwird declares it stable, and a version may change meanwhile. Then run
-  the tests of what takes it.
+  the tests of what takes it, and `just skwird-check` with `SKWIRD`
+  naming an engine of the version copied, built from the same checkout.
 - **Dependencies.** The protocol's copy, by path. serde and serde_json
   come from crates.io through Skwir's lockfile, held to the advisories
   as Skwir's own (`just deny`); on Linux, rustix (its `fs` and `net`),
@@ -35,10 +36,20 @@ skwird commit it was copied from.
   macOS it looks for the system service at `/var/run/skwird/socket` and
   for the user's engine in the user's own temporary folder, as the engine
   serves there (macOS sets no `XDG_RUNTIME_DIR`; libc's `confstr`, its
-  only dependency there). skwird 0.2.0 ships engines for Windows and
-  macOS, tried on GitHub's runners; Skwir has asked neither, only
+  only dependency there). skwird ships engines for Windows and macOS
+  since 0.2.0, tried on GitHub's runners; Skwir has asked neither, only
   skwird's fake engine under Wine.
 - **Stopped.** A connect is stopped with a `Stopper` made before it
   (`Client::connect_stopped`): its hello and a started engine's wait end
   at once. Skwir's plugin stops it from the search's token and after a
   few seconds without a hello, by a timer of its own (`alarm.rs`).
+- **An engine stopped.** From skwird 0.3.0, an engine that says `stop`
+  in its hello stops as when idle when a client asks (`Client::stop`),
+  where it runs a program in the folder of the one named, and the client
+  waits for its end (on Windows, its process's, opened to wait on alone);
+  one that runs another copy's says so and is left running, and the
+  system service refuses. Skwir calls it nowhere: an engine ends by
+  itself a minute after its last client (ADR-050), and what must stop it
+  before replacing its files is an installer, which runs skwird's own
+  `skwird stop`. The fake engine answers it as its `Script`'s `program`
+  says.

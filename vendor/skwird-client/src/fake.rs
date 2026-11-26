@@ -11,7 +11,8 @@
 //! `exclude` with what was asked; `watch` as the script says, or each
 //! folder asked live since the epoch, with no share; `totals` with the
 //! script's children and done for the folder asked, in batches, only so
-//! many with `largest`, the rest summed. Made `silent`, it
+//! many with `largest`, the rest summed; `stop` as its `program` says.
+//! Made `silent`, it
 //! says hello and then nothing, as an engine that hangs: for a client's
 //! test of giving up on a call.
 
@@ -43,6 +44,11 @@ pub struct Script {
     /// What every `volumes` is answered, if given; refused otherwise, as
     /// by an engine that says no `volumes`.
     pub volumes: Option<Volumes>,
+    /// The program it says it runs, for `stop`: a stop naming a program
+    /// in another folder is answered `other_copy`, any other `stopping`,
+    /// and its connection is ended then, as an engine's ends with its
+    /// process. None: refused, as the system service refuses it.
+    pub program: Option<PathBuf>,
 }
 
 /// A fake engine serving until dropped.
@@ -196,7 +202,35 @@ mod imp {
                     message: "this engine keeps no removable volume".into(),
                 }),
             }),
+            Ask::Stop { program } => stop(script, program, out, id),
         }
+    }
+
+    /// A `stop` answered as the script's `program` says; after
+    /// `stopping`, the connection ended, as an engine's with its process.
+    fn stop(
+        script: &Script,
+        program: Option<WirePath>,
+        out: &mut Conn,
+        id: u64,
+    ) -> std::io::Result<()> {
+        let answer = match &script.program {
+            None => Answer::Error(wire::Failure {
+                what: "refused".into(),
+                message: "this engine is stopped by its service manager".into(),
+            }),
+            Some(runs) if program.is_some_and(|p| p.to_path().parent() != runs.parent()) => {
+                Answer::OtherCopy {
+                    program: WirePath::of(runs),
+                }
+            }
+            Some(_) => {
+                let answer = Answer::Stopping {};
+                wire::write(out, &Response { id, answer })?;
+                return Err(std::io::ErrorKind::ConnectionAborted.into());
+            }
+        };
+        wire::write(out, &Response { id, answer })
     }
 
     fn serve(stream: Conn, script: &Script, asked: &Asked) {
@@ -354,6 +388,7 @@ mod tests {
             totals: Vec::new(),
             features: vec!["names-both-forms".into()],
             volumes: None,
+            program: None,
         };
         let fake = Fake::start(dir.join("socket"), script).unwrap();
         let mut c = Client::connect(&Find {
@@ -465,6 +500,49 @@ mod tests {
             ]
         );
         drop(fake);
+    }
+
+    /// A `stop` names the client's program: an engine that runs another
+    /// folder's says so, and stays; one that runs a program of the same
+    /// folder's, or asked with none named, stops, and its connection's end
+    /// is waited for; one that no client stops refuses.
+    #[test]
+    fn a_stop_is_answered_by_the_program_the_engine_runs() {
+        use std::path::Path;
+        use std::time::Duration;
+        let dir = Dir::new("fake-stop");
+        let runs = PathBuf::from("/opt/skwir/bin/skwird");
+        let fake = Fake::start(
+            dir.join("socket"),
+            Script {
+                program: Some(runs.clone()),
+                features: vec![skwird_protocol::STOP.into()],
+                ..Script::default()
+            },
+        )
+        .unwrap();
+        let connect = |fake: &Fake| {
+            Client::connect(&Find {
+                socket: Some(fake.socket.clone()),
+                start: None,
+                ..Find::new("a test")
+            })
+            .unwrap()
+        };
+        let within = Duration::from_secs(5);
+        let elsewhere = connect(&fake).stop(Some(Path::new("/usr/bin/skwird")), within);
+        assert_eq!(elsewhere.unwrap(), crate::Stopped::OtherCopy(runs));
+        let beside = connect(&fake).stop(Some(Path::new("/opt/skwir/bin/skwirdw")), within);
+        assert_eq!(beside.unwrap(), crate::Stopped::Ended);
+        assert_eq!(
+            connect(&fake).stop(None, within).unwrap(),
+            crate::Stopped::Ended
+        );
+        let refusing = Fake::start(dir.join("refusing"), Script::default()).unwrap();
+        assert!(matches!(
+            connect(&refusing).stop(None, within),
+            Err(crate::Error::Engine(f)) if f.what == "refused"
+        ));
     }
 
     /// A `totals` through the real client: every child of the folder the

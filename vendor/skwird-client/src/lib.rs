@@ -892,6 +892,89 @@ impl Client {
             _ => Err(Error::Unexpected),
         }
     }
+
+    /// Stop the engine as when it is idle (what it heard applied, every
+    /// root saved), where it runs a program in the folder of `program`,
+    /// the caller's own as [`std::env::current_exe`] gives it; without
+    /// one, whichever it runs. Its end is waited for, `within` at most:
+    /// on Windows, its process's, whose program's file is free once it
+    /// ended; elsewhere, its end of the connection, which closes as its
+    /// process ends. The system service refuses it ([`Error::Engine`],
+    /// `refused`); an engine that says no [`protocol::STOP`] cannot read
+    /// it (`bad_request`).
+    pub fn stop(mut self, program: Option<&Path>, within: Duration) -> Result<Stopped, Error> {
+        let started = std::time::Instant::now();
+        #[cfg(windows)]
+        let process = self.reader.get_ref().server_process().ok().flatten();
+        let id = self.ask(Ask::Stop {
+            program: program.map(WirePath::of),
+        })?;
+        match self.answer(id)? {
+            Answer::Stopping {} => {}
+            Answer::OtherCopy { program } => return Ok(Stopped::OtherCopy(program.to_path())),
+            _ => return Err(Error::Unexpected),
+        }
+        let left = || within.saturating_sub(started.elapsed());
+        let ended = self.closed_within(left())?;
+        #[cfg(windows)]
+        let ended = process.map_or(ended, |p| p.wait(left()));
+        Ok(if ended {
+            Stopped::Ended
+        } else {
+            Stopped::Ending
+        })
+    }
+
+    /// Whether the engine's end of the connection closed within `within`,
+    /// whatever it says meanwhile passed over.
+    #[cfg(any(unix, windows))]
+    fn closed_within(&mut self, within: Duration) -> Result<bool, Error> {
+        let deadline = std::time::Instant::now() + within;
+        loop {
+            // A timeout of zero is refused: the shortest there is, instead.
+            let left = deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .max(Duration::from_millis(1));
+            // macOS refuses a timeout on a socket whose other end closed
+            // (EINVAL): the read after says it closed, at once.
+            #[cfg(unix)]
+            let _ = self.reader.get_ref().set_read_timeout(Some(left));
+            #[cfg(windows)]
+            self.reader.get_mut().set_timeout(Some(left));
+            match protocol::read::<_, protocol::Response>(&mut self.reader) {
+                Ok(Some(_)) => {}
+                Err(_) if self.stop.stopped() => return Err(Error::Stopped),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(false);
+                }
+                // Its end, or broken by it: closed.
+                Ok(None) | Err(_) => return Ok(true),
+            }
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn closed_within(&mut self, _: Duration) -> Result<bool, Error> {
+        match self.never {}
+    }
+}
+
+/// What [`Client::stop`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Stopped {
+    /// The engine stopped, and its process ended within the time given.
+    Ended,
+    /// The engine is stopping, but had not ended when the time given was
+    /// up.
+    Ending,
+    /// The engine runs this program, another folder's than the one named:
+    /// left running.
+    OtherCopy(PathBuf),
 }
 
 /// The program to start, a path relative to the client's folder made

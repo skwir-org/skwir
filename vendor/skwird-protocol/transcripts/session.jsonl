@@ -59,3 +59,11 @@
 # A root outside what the engine covers.
 > {"id":11,"coverage":{"root":"/srv/data"}}
 < {"id":11,"coverage":{"names":{"not_covered":"outside"},"attrs":{"not_covered":"outside"}}}
+# Stop, where the engine runs another folder's program than the client's:
+# its own named, and left running.
+> {"id":16,"stop":{"program":"/opt/skwir/bin/skwird"}}
+< {"id":16,"other_copy":{"program":"/usr/bin/skwird"}}
+# Stop, where it runs a program in the client's program's folder: what it
+# heard applied, every root saved, then the connection ends as it does.
+> {"id":17,"stop":{"program":"/usr/bin/skwird"}}
+< {"id":17,"stopping":{}}

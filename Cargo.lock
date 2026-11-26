@@ -10596,7 +10596,7 @@ dependencies = [
 
 [[package]]
 name = "skwird-client"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
  "rustix",
@@ -10606,7 +10606,7 @@ dependencies = [
 
 [[package]]
 name = "skwird-protocol"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",

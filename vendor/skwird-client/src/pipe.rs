@@ -33,7 +33,7 @@ use std::time::Duration;
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY,
     ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, GENERIC_READ, GetLastError, HANDLE,
-    INVALID_HANDLE_VALUE, LocalFree, WAIT_TIMEOUT,
+    INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
@@ -56,7 +56,8 @@ use windows_sys::Win32::System::Pipes::{
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, GetCurrentThread, INFINITE, OpenProcess, OpenProcessToken,
-    OpenThreadToken, PROCESS_QUERY_LIMITED_INFORMATION, SetEvent, WaitForSingleObject,
+    OpenThreadToken, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, SetEvent,
+    WaitForSingleObject,
 };
 
 /// The size of each side's buffer, in bytes.
@@ -66,6 +67,19 @@ const BUFFER: u32 = 64 * 1024;
 /// one of whom may run it by hand.
 const SYSTEM: &str = "S-1-5-18";
 const ADMINISTRATORS: &str = "S-1-5-32-544";
+
+/// A process, held to wait for its end ([`Stream::server_process`]).
+pub struct Process(Handle);
+
+impl Process {
+    /// Whether it ended, waited for at most `within`.
+    pub fn wait(&self, within: std::time::Duration) -> bool {
+        // Below INFINITE, which waits for ever.
+        let ms = u32::try_from(within.as_millis()).unwrap_or(INFINITE - 1);
+        // SAFETY: the handle is a process's, opened to wait on it.
+        unsafe { WaitForSingleObject(self.0.0, ms.min(INFINITE - 1)) == WAIT_OBJECT_0 }
+    }
+}
 
 /// A handle, closed once dropped.
 struct Handle(HANDLE);
@@ -268,6 +282,26 @@ impl Stream {
         // SAFETY: every overlapped call on the handle, whichever thread made
         // it, is cancelled; each waits for its cancel before it returns.
         unsafe { CancelIoEx(self.end.handle.0, std::ptr::null()) };
+    }
+
+    /// The process at the other end of this, a client's end, held to wait
+    /// for its end: none where it is this one, which cannot wait for its
+    /// own (a test's engine of its own making).
+    pub fn server_process(&self) -> std::io::Result<Option<Process>> {
+        let mut pid = 0u32;
+        // SAFETY: the handle is a pipe's client end; the id is ours.
+        if unsafe { GetNamedPipeServerProcessId(self.end.handle.0, &raw mut pid) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if pid == std::process::id() {
+            return Ok(None);
+        }
+        // SAFETY: the least access that waits for a process's end.
+        let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        if process.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Some(Process(Handle(process))))
     }
 
     /// Whether the process at the other end runs as the user `sid` names.

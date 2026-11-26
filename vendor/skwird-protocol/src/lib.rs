@@ -478,6 +478,17 @@ pub enum Ask {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         release_at: Vec<WirePath>,
     },
+    /// Stop the user's engine as when it is idle (`docs/DESIGN.md`,
+    /// Protocol, `stop`), where it runs a program in the folder of
+    /// `program`, the client's own: answered [`Answer::Stopping`], the
+    /// connection then ending as the engine's process does; otherwise
+    /// [`Answer::OtherCopy`], and left running. Without `program`, it
+    /// stops whichever it runs. The system service refuses it (`refused`),
+    /// and an engine that says no [`STOP`] cannot read it (`bad_request`).
+    Stop {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        program: Option<WirePath>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,6 +527,10 @@ pub const VOLUMES: &str = "volumes";
 /// ASCII form. A client that matches so asks no engine without it for a
 /// term whose forms differ: the index would hold less than it matches.
 pub const NAMES_BOTH_FORMS: &str = "names-both-forms";
+
+/// A [`Welcome::features`] word: the engine answers [`Ask::Stop`], since
+/// 0.3.
+pub const STOP: &str = "stop";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Done {
@@ -801,7 +816,7 @@ pub struct Complete {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Failure {
     /// What went wrong, for a client to tell: `bad_request`, `version`,
-    /// `not_a_folder`, `bad_pattern`, `busy`, `internal`.
+    /// `not_a_folder`, `bad_pattern`, `busy`, `refused`, `internal`.
     pub what: String,
     pub message: String,
 }
@@ -835,6 +850,14 @@ pub enum Answer {
     /// The removable volumes this client keeps, and those mounted, after
     /// its `volumes`.
     Volumes(Volumes),
+    /// The engine stops, after its `stop`: the connection ends as its
+    /// process does.
+    Stopping {},
+    /// The engine runs another folder's program than the one its `stop`
+    /// named, this one: left running.
+    OtherCopy {
+        program: WirePath,
+    },
     Error(Failure),
 }
 
