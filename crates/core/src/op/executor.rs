@@ -1573,6 +1573,10 @@ pub struct Executor {
     /// ([`HandOver`]): from one to the other, a plan is never out of both
     /// ([`Executor::busy_or_waiting`]).
     handing: std::sync::atomic::AtomicUsize,
+    /// How many times every plan was stopped at once (`cancel_all`): a
+    /// plan going on by itself, taken out before and queued after, is
+    /// cancelled as it is queued (`answered`).
+    stops: std::sync::atomic::AtomicU64,
     /// The mounts of the servers stopped plans wait for, each asked by a
     /// thread of its own whether it answers again (`look_for`).
     looking: Mutex<std::collections::HashSet<PathBuf>>,
@@ -1802,6 +1806,7 @@ impl Executor {
             clash_asker: Mutex::new(None),
             stopped: Mutex::default(),
             handing: std::sync::atomic::AtomicUsize::new(0),
+            stops: std::sync::atomic::AtomicU64::new(0),
             looking: Mutex::default(),
             look_every: Mutex::new(LOOK_EVERY),
             waiting_kept: Mutex::new(None),
@@ -2170,8 +2175,12 @@ impl Executor {
     /// server to go on by itself (ADR-080, 9) waits no more: Stop says it
     /// does not go on, and only Retry, asked, takes it on from there.
     pub fn cancel_all(&self) {
-        for stopped in self.stopped.lock().iter_mut() {
-            stopped.waits = Waits::default();
+        {
+            let mut stopped = self.stopped.lock();
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            for one in stopped.iter_mut() {
+                one.waits = Waits::default();
+            }
         }
         {
             let mut lane = self.lane.lock();
@@ -2423,6 +2432,11 @@ impl Executor {
     ) -> Option<(Work, HandOver<'_>)> {
         let mut stopped = self.stopped.lock();
         let at = stopped.iter().position(|s| s.plan == plan)?;
+        // Going on by itself, only while it still waits for its server:
+        // Stop (`cancel_all`) may have said since that it does not go on.
+        if by_itself && !stopped[at].goes_on_by_itself() {
+            return None;
+        }
         let Stopped {
             seq,
             origin,
@@ -2551,6 +2565,10 @@ impl Executor {
             self.emit(ExecEvent::WaitsForServer { plan });
         }
         for (plan, next, title) in going {
+            // Read before it is taken out: Stop since then leaves it
+            // waiting no more (`taken_to_retry`), and Stop after cancels
+            // it as it is queued, wherever it is by then.
+            let stops = self.stops.load(Ordering::SeqCst);
             let Some((work, handing)) = self.taken_to_retry(plan, true, |waits| Waits {
                 down: false,
                 tries: waits.tries + 1,
@@ -2560,7 +2578,12 @@ impl Executor {
             };
             tracing::info!(title = %title.english(), "its server answers again: it goes on");
             self.emit(ExecEvent::GoesOn { plan, next, title });
-            self.submit(work, CancelToken::new());
+            let cancel = CancelToken::new();
+            self.submit(work, cancel.clone());
+            if self.stops.load(Ordering::SeqCst) != stops {
+                cancel.cancel();
+                self.dispatch();
+            }
             drop(handing);
         }
     }
@@ -5200,13 +5223,21 @@ impl Executor {
         // (Cancel, a write-out), or an error a Retry meets again (a file
         // larger than its volume keeps), is not retried: what it staged
         // goes with its context.
+        // Cancelled while its step was held by a server that stopped
+        // answering (a write waiting on sshfs), it failed of that, not of
+        // Cancel: it stops for Retry, but never waits for its server to go
+        // on by itself, which Stop said it would not (ADR-151, 4).
         let stop = match (failed, &result.error, cancelled || for_good) {
             (Some(at), Some(_), false) => Some(Stop {
                 at,
                 partial: ctx.take_partial(),
-                server: super::guarded(|| Ok(server_of(plan.steps[at].as_ref())))
-                    .ok()
-                    .flatten(),
+                server: if cancel.is_cancelled() {
+                    None
+                } else {
+                    super::guarded(|| Ok(server_of(plan.steps[at].as_ref())))
+                        .ok()
+                        .flatten()
+                },
             }),
             _ => None,
         };
@@ -8137,6 +8168,105 @@ mod tests {
             "it went on by itself"
         );
         assert!(!served.join("a").exists());
+        assert!(executor.can_retry(plan.id), "Retry takes it on");
+    }
+
+    /// A step held by its server (a write on sshfs waiting) as everything
+    /// is stopped fails later of that, not of Cancel: it stops for Retry,
+    /// and never waits for its server to go on by itself (ADR-151, 4).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cancelled_all_a_step_held_by_its_server_does_not_wait_for_it() {
+        use std::os::unix::fs::PermissionsExt;
+        /// Makes `path` once `open`, then fails as a server gone would.
+        #[derive(Debug, Clone)]
+        struct Held {
+            path: PathBuf,
+            began: Arc<std::sync::atomic::AtomicBool>,
+            open: Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>,
+        }
+        impl Operation for Held {
+            fn kind(&self) -> &'static str {
+                "held"
+            }
+            fn args(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn describe(&self) -> Change {
+                Change::Create {
+                    path: self.path.clone(),
+                    directory: false,
+                    words: None,
+                }
+            }
+            fn check(&self, _: &StepContext) -> StepStatus {
+                StepStatus::Pending { reversible: true }
+            }
+            fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+                self.began.store(true, Ordering::SeqCst);
+                let mut open = self.open.0.lock();
+                while !*open {
+                    self.open.1.wait(&mut open);
+                }
+                Err(std::io::Error::from_raw_os_error(5).into())
+            }
+            fn clone_box(&self) -> Box<dyn Operation> {
+                Box::new(self.clone())
+            }
+            fn footprint(&self, _: &super::super::footprint::Volumes) -> Option<Footprint> {
+                Some(Footprint::default().made(&self.path))
+            }
+        }
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("t-")
+            .tempdir_in(base)
+            .unwrap();
+        let served = tmp.path().join("served");
+        std::fs::create_dir(&served).unwrap();
+        crate::fs::reach::pretend_remote(&served);
+        let executor = Executor::new(Scheduler::new(2));
+        executor.set_server_look(Duration::from_millis(100));
+        let mode = |mode: u32| {
+            std::fs::set_permissions(&served, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let held = Held {
+            path: served.join("a"),
+            began: Arc::default(),
+            open: Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new())),
+        };
+        let plan = Plan::with_steps(
+            Words::as_written("write to the server"),
+            vec![Box::new(held.clone()) as Box<dyn Operation>],
+        );
+        executor.execute(plan.clone(), CancelToken::new());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !held.began.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "the step never began");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Stopped while held; the server is gone, then the step fails.
+        executor.cancel_all();
+        mode(0o000);
+        *held.open.0.lock() = true;
+        held.open.1.notify_all();
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::Finished { plan: p, .. } if *p == plan.id),
+        );
+        std::thread::sleep(Duration::from_millis(600));
+        mode(0o755);
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(
+            executor.events().try_iter().all(|e| !matches!(
+                e,
+                ExecEvent::WaitsForServer { .. } | ExecEvent::GoesOn { .. }
+            )),
+            "it waited for its server"
+        );
+        assert!(!executor.waits_for_server(plan.id));
+        assert!(!executor.busy_or_waiting(), "nothing keeps the program");
         assert!(executor.can_retry(plan.id), "Retry takes it on");
     }
 
