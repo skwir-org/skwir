@@ -222,10 +222,10 @@ written on Linux and never run.
   and the installer could name the task only by `UserSID`, which
   Microsoft documents up to Vista alone; and PowerShell, which could
   end a process by its path, opens a console of its own. A stop of the
-  engine of the copy
-  that runs it alone is asked of skwird; the installer would run it as
-  an immediate action before `InstallValidate`, on every removal, an
-  upgrade's included, from the first package that carries it.
+  engine of the copy that runs it alone is asked of skwird; the
+  installer would run it as an immediate action before
+  `InstallValidate`, on every removal, an upgrade's included, from the
+  first package that carries it.
   The installer is per user and never elevated, so it cannot take back a
   system service; skwird's `service add`, an administrator's, is not for
   a copy in the user's own folder, which that user, unelevated, could
