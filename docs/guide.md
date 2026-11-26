@@ -848,9 +848,12 @@ and no file manager around it.
   cache while the window is open, 1 GB at most.
 - **No file named:** the system's dialog asks which.
 
-It is a program of its own, beside a Skwir already open: it starts only
-what showing a file needs, and the terminal waits until its window
-closes. A file manager can offer it in Open With, as **Skwir Preview**.
+With Skwir open, the window is that Skwir's: it opens at once, and the
+terminal waits until it closes (`Ctrl+C` there closes it). With none
+open, with `skw --new-instance`, and always on macOS, it is a program of
+its own that starts only what showing a file needs and ends with its
+window; the terminal waits for it all the same. A file manager can offer
+it in Open With, as **Skwir Preview**.
 
 ## Properties
 
