@@ -141,11 +141,20 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   again with the bundle, as it signs every program there: its code hash
   is the bundle's seal's, and its signature is no longer its archive's.
   A permission given to skwird's own copy (Full Disk Access, which macOS
-  grants a signature) is not this copy's. The disk image and the zip have
-  no uninstaller: a LaunchAgent added from the carried copy (`skwird logon
-  add`, which names the program that runs it) is its user's to take back
-  (`skwird logon remove`) before the app goes to the Trash, and a
-  LaunchDaemon (`sudo skwird service add`) theirs to remove the same way.
+  grants a signature) is not this copy's. Skwir never registers skwird
+  itself: a search starts it, and it ends a minute after its last client.
+  But the disk image and the zip have no uninstaller, and skwird's
+  LaunchAgent (`skwird logon add`) and LaunchDaemon (`sudo skwird service
+  add`) name the program that registered them: added from the copy in the
+  app, they are left naming a program that is gone once the app is in
+  the Trash, and launchd fails to start it at every login or boot. So
+  the user guide says to take them back with that copy before deleting
+  the app: `/Applications/skwir.app/Contents/MacOS/skwird logon remove`
+  and `sudo /Applications/skwir.app/Contents/MacOS/skwird service remove`
+  (the app's own path where it is elsewhere). A LaunchDaemon running as
+  root a program in `/Applications`, which an administrator's programs
+  may change without `sudo`, is better not registered from this copy at
+  all.
   Looked over (`macos-check.sh`): both in the zip and the disk image,
   skwird arm64, for macOS 11 or later, linked to the system's libraries
   alone, naming no folder of the machine that built it, its licences its

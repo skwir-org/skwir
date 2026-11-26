@@ -73,9 +73,10 @@ MuPDF readers are not in it yet. It has never run anywhere: everything below is
 new. Intel Macs have no build yet. It carries skwird, the index that
 answers name searches (`skwir.app/Contents/MacOS/skwird`), which a
 search starts on its own. The app has no uninstaller: if you ran that
-copy's `skwird logon add` (or `sudo skwird service add`), run its
-`logon remove` (or `sudo … service remove`) before moving the app to
-the Trash, or macOS keeps trying to start a program that is gone.
+copy's `skwird logon add` (or `sudo skwird service add`), run
+`skwir.app/Contents/MacOS/skwird logon remove` (or `sudo
+skwir.app/Contents/MacOS/skwird service remove`) before moving the app
+to the Trash, or macOS keeps trying to start a program that is gone.
 
 1. **It opens** (try). The window draws, a folder lists, the sidebar shows
    the home folder's places and the volumes under `/Volumes`, scrolling a
