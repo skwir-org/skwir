@@ -727,6 +727,9 @@ pub enum Hex {
 /// function pushes them all, so the order is the same in every kind's
 /// bar.
 pub fn look_tools(bar: &mut Bar, looks: Looks) {
+    /// Pointed at, its title says what it shows; in More, where a narrow
+    /// bar leaves it, its row says what its button says (Source, not the
+    /// file's own text as written).
     fn tool(
         id: &'static str,
         icon: &'static str,
@@ -735,9 +738,11 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
         label: impl Into<Words>,
         on: bool,
     ) -> Button {
+        let label: Words = label.into();
         Button::new(id, icon, title, "ui.inspect")
             .args(args)
-            .label(label)
+            .label(label.clone())
+            .named(label)
             .active(on)
     }
     for WayLook { id, way, on } in looks.ways {
