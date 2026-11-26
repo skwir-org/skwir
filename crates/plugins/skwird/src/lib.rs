@@ -18,6 +18,7 @@
 
 mod alarm;
 mod kept;
+mod program;
 mod volumes;
 
 use std::collections::HashSet;
@@ -137,10 +138,7 @@ impl Plugin for SkwirdPlugin {
                 skwird_needs = "Searches answered from its index of names",
                 note = "On the Plugins page, what needs skwird, a program the user installs."
             ),
-            || {
-                skwir_core::os_path::find_program("skwird").is_some()
-                    || skwird_client::system_socket().exists()
-            },
+            program::found,
         )]
     }
 
@@ -232,10 +230,11 @@ pub(crate) fn find(engines: &Engines, start: bool) -> Option<Find> {
     find.runtime = skwir_core::xdg::runtime_dir();
     find.state = skwir_core::xdg::state_home();
     match engines {
-        // Where the Plugins page finds it (`requirements`): on macOS an
-        // application's `PATH` lacks Homebrew's folders, which the client,
-        // given a bare name, would not look in.
-        Engines::Machine if start => find.start = skwir_core::os_path::find_program("skwird"),
+        // Where the Plugins page finds it (`requirements`): on `PATH`, with
+        // Homebrew's folders, which a Mac's application's `PATH` lacks and
+        // the client, given a bare name, would not look in; else the copy
+        // a package carries beside Skwir's program (`program`).
+        Engines::Machine if start => find.start = program::find(),
         Engines::Machine => find.start = None,
         Engines::At(socket) => {
             find.socket = Some(socket.clone());
