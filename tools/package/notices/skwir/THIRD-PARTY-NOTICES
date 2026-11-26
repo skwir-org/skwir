@@ -424,7 +424,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: blake3 1.8.7, constant_time_eq 0.4.2, constant_time_eq 0.6.1, cranelift-assembler-x64 0.135.10, cranelift-bitset 0.135.10, pulley-interpreter 48.0.10, pulley-macros 48.0.10, rbook 0.7.13, rmcp 3.11.0, ryu 1.0.23, spirv 0.4.0+sdk-1.4.341.0, wasmtime-c-api-impl 48.0.10, wasmtime-internal-c-api-macros 48.0.10, wasmtime-internal-component-macro 48.0.10, wasmtime-internal-component-util 48.0.10, wasmtime-internal-core 48.0.10, wasmtime-internal-jit-icache-coherence 48.0.10, wasmtime-internal-versioned-export-macros 48.0.10, wasmtime-internal-wit-bindgen 48.0.10
+Used by: blake3 1.8.7, constant_time_eq 0.4.2, constant_time_eq 0.6.2, cranelift-assembler-x64 0.135.10, cranelift-bitset 0.135.10, pulley-interpreter 48.0.10, pulley-macros 48.0.10, rbook 0.7.13, rmcp 3.11.0, ryu 1.0.23, spirv 0.4.0+sdk-1.4.341.0, wasmtime-c-api-impl 48.0.10, wasmtime-internal-c-api-macros 48.0.10, wasmtime-internal-component-macro 48.0.10, wasmtime-internal-component-util 48.0.10, wasmtime-internal-core 48.0.10, wasmtime-internal-jit-icache-coherence 48.0.10, wasmtime-internal-versioned-export-macros 48.0.10, wasmtime-internal-wit-bindgen 48.0.10
 
 Apache License
 Version 2.0, January 2004
@@ -938,7 +938,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: cranelift-bforest 0.135.10, cranelift-codegen 0.135.10, cranelift-codegen-shared 0.135.10, cranelift-control 0.135.10, cranelift-entity 0.135.10, cranelift-frontend 0.135.10, cranelift-native 0.135.10, regalloc2 0.15.3, target-lexicon 0.13.5, wasmtime 48.0.10, wasmtime-environ 48.0.10, wasmtime-internal-cache 48.0.10, wasmtime-internal-cranelift 48.0.10, wasmtime-internal-unwinder 48.0.10
+Used by: cranelift-bforest 0.135.10, cranelift-codegen 0.135.10, cranelift-codegen-shared 0.135.10, cranelift-control 0.135.10, cranelift-entity 0.135.10, cranelift-frontend 0.135.10, cranelift-native 0.135.10, regalloc2 0.15.3, target-lexicon 0.13.6, wasmtime 48.0.10, wasmtime-environ 48.0.10, wasmtime-internal-cache 48.0.10, wasmtime-internal-cranelift 48.0.10, wasmtime-internal-unwinder 48.0.10
 
 Apache License
                            Version 2.0, January 2004
@@ -2509,7 +2509,7 @@ SUCH DAMAGE.
 ------------------------------------------------------------------------
 BSD 2-Clause "Simplified" License (BSD-2-Clause)
 
-Used by: zstd-sys 2.1.3+zstd.1.5.7
+Used by: zstd-sys 2.2.0+zstd.1.6.0
 
 The decoders for legacy formats, in zstd/lib/legacy/, include code under the
 2-clause BSD license:
@@ -2714,7 +2714,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ------------------------------------------------------------------------
 BSD 3-Clause "New" or "Revised" License (BSD-3-Clause)
 
-Used by: zstd 0.13.5, zstd-safe 7.4.1, zstd-sys 2.1.3+zstd.1.5.7
+Used by: zstd 0.13.6, zstd-safe 7.4.2, zstd-sys 2.2.0+zstd.1.6.0
 
 BSD 3-Clause License
 
@@ -3318,7 +3318,7 @@ That's all there is to it!
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: accesskit 0.24.1, accesskit_atspi_common 0.19.1, accesskit_consumer 0.38.0, accesskit_unix 0.22.1, brotli-decompressor 5.0.3, brotli-decompressor 6.3.2, chrono 0.4.45, djvu-bitmap 0.46.0, djvu-bzz 0.46.0, djvu-iff 0.46.0, djvu-iw44 0.46.0, djvu-jb2 0.46.0, djvu-pixmap 0.46.0, djvu-zp 0.46.0, harfrust 0.5.2, krilla 0.8.2, krilla-svg 0.8.1, libm 0.2.16, lyon 1.0.19, lyon_algorithms 1.0.22, lyon_geom 1.0.20, lyon_path 1.0.19, lyon_tessellation 1.0.23, md5 0.8.1, pathfinder_geometry 0.5.1, pathfinder_simd 0.5.7, pdfium-render 0.9.6, profiling 1.0.18, profiling-procmacros 1.0.18, seahash 4.1.0, svg_fmt 0.4.5, taffy 0.15.0, wuff 0.2.10, xim-ctext 0.3.0, xim-parser 0.2.1, zune-inflate 0.2.54
+Used by: accesskit 0.24.1, accesskit_atspi_common 0.19.1, accesskit_consumer 0.38.0, accesskit_unix 0.22.1, brotli-decompressor 5.0.3, brotli-decompressor 6.4.0, chrono 0.4.45, djvu-bitmap 0.46.0, djvu-bzz 0.46.0, djvu-iff 0.46.0, djvu-iw44 0.46.0, djvu-jb2 0.46.0, djvu-pixmap 0.46.0, djvu-zp 0.46.0, harfrust 0.5.2, krilla 0.8.2, krilla-svg 0.8.1, libm 0.2.16, lyon 1.0.19, lyon_algorithms 1.0.22, lyon_geom 1.0.20, lyon_path 1.0.19, lyon_tessellation 1.0.23, md5 0.8.1, pathfinder_geometry 0.5.1, pathfinder_simd 0.5.7, pdfium-render 0.9.6, profiling 1.0.18, profiling-procmacros 1.0.18, seahash 4.1.0, svg_fmt 0.4.5, taffy 0.15.0, wuff 0.2.10, xim-ctext 0.3.0, xim-parser 0.2.1, zune-inflate 0.2.54
 
 MIT License
 
@@ -3465,7 +3465,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: ahash 0.8.13
+Used by: ahash 0.8.14
 
 Copyright (c) 2018 Tom Kaitchuck
 
@@ -3496,7 +3496,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: aho-corasick 1.1.5, byteorder 1.5.0, byteorder-lite 0.1.0, csv 1.4.0, csv-core 0.1.13, encoding_rs_io 0.1.8, globset 0.4.22, grep-matcher 0.1.10, grep-regex 0.1.15, grep-searcher 0.1.18, ignore 0.4.35, jiff 1.0.2, jiff-core 1.0.1, memchr 2.8.3, termcolor 1.4.1, walkdir 2.5.1
+Used by: aho-corasick 1.1.5, byteorder 1.5.0, byteorder-lite 0.1.0, csv 1.4.0, csv-core 0.1.13, encoding_rs_io 0.1.8, globset 0.4.22, grep-matcher 0.1.10, grep-regex 0.1.15, grep-searcher 0.1.18, ignore 0.4.35, jiff 1.0.3, jiff-core 1.0.2, memchr 2.8.3, termcolor 1.4.1, walkdir 2.5.1
 
 The MIT License (MIT)
 
@@ -4732,7 +4732,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: crc32fast 1.5.5
+Used by: crc32fast 1.5.6
 
 MIT License
 
@@ -6422,7 +6422,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: h2 0.4.20
+Used by: h2 0.4.21
 
 Copyright (c) 2017 h2 authors
 
@@ -7283,7 +7283,7 @@ THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: litrs 1.0.1
+Used by: litrs 1.1.0
 
 Copyright (c) 2020 Project Developers
 
@@ -7521,7 +7521,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: md-5 0.11.0, sha2 0.11.1
+Used by: md-5 0.11.0, sha2 0.11.2
 
 Copyright (c) 2016-2026 The RustCrypto Project Developers
 Copyright (c) 2016 Artyom Pavlov
@@ -8678,7 +8678,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: rangemap 1.8.0
+Used by: rangemap 1.9.0
 
 Copyright 2019 Jeffrey Parsons
 
@@ -9109,7 +9109,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: serde_spanned 1.1.3, toml 0.9.12+spec-1.1.0, toml 1.2.2+spec-1.1.0, toml_datetime 0.7.5+spec-1.1.0, toml_datetime 1.1.3+spec-1.1.0, toml_edit 0.25.20+spec-1.1.0, toml_parser 1.1.6+spec-1.1.0, toml_writer 1.2.0+spec-1.1.0
+Used by: serde_spanned 1.1.3, toml 0.9.12+spec-1.1.0, toml 1.2.3+spec-1.1.0, toml_datetime 0.7.5+spec-1.1.0, toml_datetime 1.1.3+spec-1.1.0, toml_edit 0.25.21+spec-1.1.0, toml_parser 1.1.7+spec-1.1.0, toml_writer 1.2.0+spec-1.1.0
 
 Copyright (c) Individual contributors
 
@@ -10839,7 +10839,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: zerocopy 0.8.64, zerocopy-derive 0.8.64
+Used by: zerocopy 0.8.66, zerocopy-derive 0.8.66
 
 Copyright 2023 The Fuchsia Authors
 
@@ -12249,7 +12249,7 @@ the following restrictions:
 ------------------------------------------------------------------------
 zlib License (Zlib)
 
-Used by: zlib-rs 0.6.8
+Used by: zlib-rs 0.6.9
 
 (C) 2024 Trifecta Tech Foundation 
 
