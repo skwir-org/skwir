@@ -43,9 +43,10 @@ working in an area, also read that area's rules (see
    tightened when the reference improves, never loosened without an ADR.
 3. **Stateless and idempotent.** No daemon of its own, no database, one
    deletable cache (`skwir_core::cache`). skwird, the index of names a
-   search asks, is installed apart; a search may start it, and it ends a
-   minute after its last client (ADR-050). Re-applying an applied plan is
-   a no-op.
+   search asks, is a program of its own, installed apart or carried beside
+   Skwir's by a package; a search, or keeping or forgetting a drive's
+   index, may start it, and it ends a minute after its last client
+   (ADR-050). Re-applying an applied plan is a no-op.
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the
    MIME database, bookmarks, zoxide, recently-used and installed tools
    (`ffmpeg`, `plocate`, `$EDITOR`, `$TERMINAL`) before building our own.

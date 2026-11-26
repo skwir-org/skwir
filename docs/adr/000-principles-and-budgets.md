@@ -23,9 +23,10 @@ this record makes them binding and attaches numbers, so that "fast" and
 3. **Stateless and idempotent.** No daemon of Skwir's own, no database. One
    content-addressed cache directory that can be deleted at any time.
    Re-applying an applied plan is a no-op. An index installed apart is the
-   environment's (4): skwird, which a search may start where it is
-   installed and which ends a minute after its last client, is no daemon
-   of Skwir's (ADR-050).
+   environment's (4): skwird, which a search, or keeping or forgetting a
+   drive's index, may start where it is installed or carried beside
+   Skwir, and which ends a minute after its last client, is no daemon of
+   Skwir's (ADR-050).
 4. **Harness the environment.** Reuse OS thumbnails, icon themes, the MIME
    database, bookmarks, existing indexes and installed tools before building
    our own.
