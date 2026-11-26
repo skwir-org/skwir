@@ -32,14 +32,14 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-25)
+## Current status (2026-11-26)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.7.0, released 2026-11-25 on GitHub, the AUR and the
-  repositories, skwird 0.2.0 published the same day (Homebrew's cask
-  held: on a Mac, the app's GStreamer framework fails its seal, as in
-  every Mac build since 2026-10-21; STATUS-LOG, 2026-11-25: 0.7.0
-  released); 0.6.1 2026-11-23 on GitHub, the AUR and the
+  version 0.7.1, released 2026-11-26 on GitHub, the AUR and Homebrew's
+  tap (its cask's job checked the app's seal on a Mac), the repositories
+  with the site's next push; skwird carried by its packages and
+  recommended by the others (STATUS-LOG, 2026-11-26: 0.7.1 released); 0.7.0
+  2026-11-25 with skwird 0.2.0; 0.6.1 2026-11-23 on GitHub, the AUR and the
   repositories, 0.6.0 2026-11-21 on GitHub and the AUR's three bases,
   0.5.1 2026-11-16, 0.5.0 2026-11-14, 0.4.0 2026-11-10, 0.3.1
   2026-11-05, 0.3.0 2026-11-03, 0.2.0 2026-10-20, 0.1.0
@@ -49,7 +49,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   their gates. Maps and Notes everywhere are built, their gates not
   closed, as is much that no phase planned ([Built beyond the
   plan](#built-beyond-the-plan)).
-- **Next:** that release; the user's review of the French drafts and a
+- **Next:** the user's review of the French drafts and a
   speaker's of the Simplified Chinese and the Italian
   ([words in every language](#words-in-every-language-adr-139), step G);
   then skwird's steps (ADR-050) and
@@ -1428,17 +1428,15 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**The Mac app's GStreamer framework fails its seal** (found 2026-11-25
-by the tap's first cask job, the first Mac ever to check a release):
-`codesign --verify --deep --strict` refuses it, as every Mac build
-since 285f685b (2026-10-21) is. The framework's main binary is a link
-to `lib/libgstreamer-1.0.0.dylib`, which rcodesign signs as a library,
-seals, then signs again through the link. Left: a framework rcodesign
-seals once (its binary a file, not a link) and a look-over in
-`package-macos` that checks every bundle's seal as codesign does, both
-done in 0952a7be and passed on Linux. Left: 0.7.1's Mac
-build checked by a Mac (the tap's cask job runs codesign's deep check),
-and then the cask on the tap's main (it waits on `cask/skwir`).
+**Wine leaves `schtasks /Query` running** (found 2026-11-26): the
+remote plugin asks it on a refresh's thread
+(`login::Manager::installed_of`); under Wine it never returns, and a
+test process that ends meanwhile leaves it, which keeps the shared test
+prefix's wineserver and services alive (six runs' leftovers, one of
+them two days old). Windows ends it with Skwir (`KILL_ON_JOB_CLOSE`);
+Wine does not. Left: `tools/cross/test-windows.sh` ending the prefix's
+programs when it is the last run using it (a shared lock held while
+testing, taken alone at the end), or the tests not asking it under Wine.
 
 **A file's preview from a terminal** (ADR-151, built 2026-11-25:
 `skwir view`, `skw`; amended 2026-11-26: a Skwir running shows the files
@@ -1674,11 +1672,11 @@ quarantined as Homebrew downloads it, its caveats saying Open Anyway and
 `brew trust skwir-org/tap`. The tap's workflow gains a `skwir` job
 (style, `audit --cask --strict --online`, install, the seal, the
 quarantine and the Caskroom checked, uninstall), on the tap's local
-branch `cask/skwir`. Left: pushed by the user with the first release
-after 0.6.1, never before (0.6.1's copy does not read the Caskroom);
-nothing run on a Mac, and `brew style` and `brew audit` not run here
-(the tap's workflow runs them once pushed); the site's download page
-does not name the cask yet.
+branch `cask/skwir`. On the tap's main since 0.7.1 (2026-11-26), its
+job passed on GitHub's macOS runner, the app's seal checked by codesign.
+Left: Homebrew warns that the `url` stanza's `verified:` is deprecated
+(`cask.py` writes it; style and audit pass); the app never started on a
+Mac (the job installs and checks it, starts nothing).
 
 **Names in both forms** (the user's choice with skwird, 2026-11-24;
 built that evening, ADR-150 17). A name term is matched composed and

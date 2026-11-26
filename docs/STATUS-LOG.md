@@ -24527,3 +24527,74 @@ within their ranges (8f433717).
   program to inspect it.
 - **Measured:** see 40f4bcf3 and ADR-128 (the list made again, a
   viewer's start laid out after the file manager's).
+
+## 2026-11-26: 0.7.1 released
+
+On the user's choices: the night's work up to the GitHub draft, then,
+once they published it, Homebrew's cask, the AUR and this record.
+
+- **The first `release-build`** (on 40bbc177) stopped in test-all: the
+  remote plugin's `servers_another_program_changes_are_read_again`
+  failed, the file it replaces never read again. Alone, 30 runs, it
+  failed once: a race, not load. A read of the servers watched the way
+  to each file only after publishing them, so a file replaced as its
+  folder was made reached no watch. `Sources::follow` now says when a
+  folder is watched that was not after the read before, and the servers
+  are read once more (11832de8; a test of the late watch; 40 runs alone,
+  none failing). The second run stopped at `cargo fmt --check` (that
+  commit's line, folded into it).
+- **The viewer's Open With entry, before publishing** (the user's two
+  answers): named "skwir view", the brand as the window writes it, and
+  declaring `application/octet-stream` alone (53b39ab2, ADR-151 8
+  amended). Checked with GIO 2.90 (`gio mime`, a private set of entries,
+  stub programs on `PATH`, as GIO hides an entry whose program is not
+  there): with the 813 types, where no list names a default, `video/mp4`
+  went to the first declaring application by desktop ID (mpv before
+  `org.skwir.skwir.view`, which came before `vlc`), and `text/markdown`
+  to the viewer even past a list's `text/plain` default. With
+  `application/octet-stream` alone, GIO offers it only for a file of no
+  known type: not for `image/png`, `video/mp4` nor `text/markdown`. KDE
+  not checked (kservice 6.32 ships no query client). The third run,
+  begun before the answers, was stopped for it.
+- **The fourth run** (on 53b39ab2, the tag moved there) passed whole;
+  `release-verify` agreed. Pushed main (c2368390..53b39ab2) and the tag.
+  `release-upload` made one draft, 44 assets (each the bundle's), its
+  notes 2.1 KB. The user published it (19:55 UTC).
+- **The repositories:** `just repositories v0.7.1` wrote both into the
+  site's static folder: skwird 0.2.0's `.deb` in both apt suites, its
+  `.rpm` left out of Fedora's (unsigned, `skwird.lock`). The site's
+  session checked every signature and hash and committed it (its
+  7e03bbe, with skwird's pool redirects e0d9908 in the same push); the
+  push is the user's.
+- **Homebrew's tap:** `just cask v0.7.1` wrote the cask (the tap's
+  1c9d690: the published zip's SHA-256, GitHub's digest alike; `skw`
+  linked; skwird's caveat), pushed to `cask/skwir`. Its job (run
+  45891792537) passed whole on GitHub's macOS arm64 runner: style,
+  `audit --strict --online`, install, then `codesign --verify --deep
+  --strict` on the installed app, the first Mac to accept a Skwir app's
+  seal since 2026-10-21 (0952a7be's framework), still quarantined,
+  uninstalled without a trace; skwird's formula job too. Homebrew warns
+  that `verified:` in the `url` stanza is deprecated. The tap's main
+  fast-forwarded to it: `brew install skwir-org/tap/skwir` gives 0.7.1.
+- **The AUR:** skwir 92d88da, skwir-bin 0fd6ec1, skwir-git ad5af7e
+  (`aur-prepare` checked the published source archive and tarball
+  against the bundle).
+- **Idle memory**, `just idle-pss` by the user on their display, after
+  the release: own share 97.5 MiB median (97.2 to 98.4), within the 100;
+  the binary 45.9, anonymous 37.1, GPU buffers 11.6, the driver's code
+  24.4. 83.2 on 2026-11-09, the last reading on that display: the binary
+  +10.1 (the startup order is traced on a headless display, so code only
+  the session runs lies scattered; the translations' 6 MiB), anonymous
+  +3.4. First frame 160, 238 and 321 ms, idle CPU 0.8 to 1.2 %, read
+  under a five-minute load of 13.7 with the leftovers below running:
+  to be read again.
+- **Leftovers of the checks:** six systemd scopes of the agent's runs
+  under Wine since 2026-11-24 (test-windows, two gates, the 0.7.0 and
+  0.7.1 builds) were still there, each holding one to five
+  `schtasks.exe /Query /FO CSV /NH`; one kept the test prefix's
+  wineserver and services for two days (6 h of CPU in all). Under Wine
+  that query never returns; the remote plugin asks it on a refresh's
+  thread (`login::Manager::installed_of`), and a test that ends
+  meanwhile leaves it. Windows kills it with its parent (each program
+  Skwir starts is in a `KILL_ON_JOB_CLOSE` job); Wine does not. Stopped;
+  the harness's fix is in What is left.
