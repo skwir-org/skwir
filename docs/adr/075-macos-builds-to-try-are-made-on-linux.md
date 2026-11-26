@@ -127,3 +127,27 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
     (ADR-142). Then it uninstalls it.
   - Still not notarized.
 
+- 2026-11-26, the user's decision (ADR-050, amended the same day): the
+  bundle carries skwird, skwir's index of names, as its own release built
+  it: skwird 0.2.0's macOS archive (Apple silicon, signed ad hoc, for
+  macOS 11 and later), pinned by its sum in `tools/package/skwird.lock`
+  and checked before it is unpacked (`tools/package/skwird.py`).
+  `Contents/MacOS/skwird` stands beside skwir, where skwir looks for
+  skwird once `PATH` has none (Homebrew's `skwird` comes first); its
+  licences (`LICENSE-MIT`, `LICENSE-APACHE`) and the notices of the
+  crates its program links for macOS (`tools/package/notices/macos/skwird`,
+  made by `notices.py` from skwird's own `Cargo.lock` at that tag: its
+  release ships none) in `Resources/licenses/skwird`. rcodesign signs it
+  again with the bundle, as it signs every program there: its code hash
+  is the bundle's seal's, and its signature is no longer its archive's.
+  A permission given to skwird's own copy (Full Disk Access, which macOS
+  grants a signature) is not this copy's. The disk image and the zip have
+  no uninstaller: a LaunchAgent added from the carried copy (`skwird logon
+  add`, which names the program that runs it) is its user's to take back
+  (`skwird logon remove`) before the app goes to the Trash, and a
+  LaunchDaemon (`sudo skwird service add`) theirs to remove the same way.
+  Looked over (`macos-check.sh`): both in the zip and the disk image,
+  skwird arm64, for macOS 11 or later, linked to the system's libraries
+  alone, naming no folder of the machine that built it, its licences its
+  release's; the seals of both bundles whole (229 entries, 106 programs
+  and libraries signed). Never run.

@@ -545,6 +545,44 @@ def check_fonts(app):
     print("ok: skwir's own fonts and their licences", flush=True)
 
 
+def check_skwird(app, work, carried):
+    """skwird, skwir's index of names (ADR-050): the tarball carries it
+    beside skwir, where skwir looks for it after PATH, with its licences
+    and its crates' notices; the AppImage carries none of it, its mount
+    ending with skwir while skwird outlives its last client (ADR-052,
+    amended 2026-11-26). The tarball's starts its engine on a home of its
+    own, which indexes a folder whose names are not ASCII and finds a name
+    in it, as skwir asks it."""
+    named = sorted(str(p.relative_to(app)) for p in app.rglob("skwird*"))
+    if not carried:
+        assert not named, ("the AppImage carries skwird", named)
+        print("ok: the AppImage carries no skwird", flush=True)
+        return
+    program = app / "usr/bin/skwird"
+    assert program.is_file() and os.access(program, os.X_OK), "the tarball carries no usr/bin/skwird"
+    for licence in ("LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES"):
+        assert (app / "usr/share/licenses/skwird" / licence).is_file(), (licence, "is not carried")
+    assert named == ["usr/bin/skwird", "usr/share/licenses/skwird"], named
+    lock = (ROOT / "tools/package/skwird.lock").read_text()
+    version = re.search(r"^release v(.*)$", lock, re.M).group(1)
+    home = work / "skwird's home"
+    folder = home / "notes d'été"
+    folder.mkdir(parents=True)
+    (folder / "café — note.txt").write_text("")
+    (folder / "other.txt").write_text("")
+    runtime = work / "skwird's run"
+    runtime.mkdir(mode=0o700)
+    env = dict(os.environ, HOME=str(home), XDG_RUNTIME_DIR=str(runtime), SKWIRD_IDLE="1",
+               **{f"XDG_{kind}_HOME": str(home / kind.lower()) for kind in ("CONFIG", "CACHE", "DATA", "STATE")})
+    said = run([program, "status"], env=env, capture_output=True, text=True).stdout
+    assert said.startswith(f"skwird {version} "), said
+    run([program, "sync", folder], env=env, stdout=subprocess.DEVNULL)
+    found = run([program, "find", "CAFÉ", "--in", folder], env=env, capture_output=True, text=True).stdout
+    assert found.splitlines() == [str(folder / "café — note.txt")], found
+    print(f"ok: the tarball carries skwird {version} and its licences; it indexes a folder and finds a name",
+          flush=True)
+
+
 def check_window(app, work, launcher):
     # Reuse the real-window harness, then exercise a packaged helper
     # through its user-facing command and a host program through Skwir.
@@ -626,6 +664,7 @@ def main():
         check_helpers(app, said.removeprefix("skwir "))
         check_fonts(app)
         check_channel(app, "appimage" if artifact.name.endswith(".AppImage") else "tarball")
+        check_skwird(app, work, carried=not artifact.name.endswith(".AppImage"))
         for engine in ("pdfium", "poppler", "mupdf"):
             worker = "skwir-pdf-worker" if engine == "pdfium" else f"skwir-{engine}-worker"
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,

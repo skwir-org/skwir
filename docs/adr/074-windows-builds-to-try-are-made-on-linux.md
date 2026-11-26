@@ -168,3 +168,35 @@ written on Linux and never run.
   its end waited for the last helper to go. At start, skwir marks its
   standard handles not inheritable (`process::keep_own_handles`); a
   program asked to share them is given copies by std, as before.
+- 2026-11-26, the user's decision (ADR-050, amended the same day): the
+  zip and the installer carry skwird, skwir's index of names, as its own
+  release built it: skwird 0.2.0's Windows zip, pinned by its sum in
+  `tools/package/skwird.lock` and checked before it is unpacked
+  (`tools/package/skwird.py`). `skwird.exe` and `skwirdw.exe` (skwird
+  with no console, which its logon task runs) stand beside `skwir.exe`,
+  where skwir looks for skwird once `PATH` has none; its licences
+  (`LICENSE-MIT`, `LICENSE-APACHE`) and the notices of the crates its
+  program links for Windows (`tools/package/notices/windows/skwird`, made
+  by `notices.py` from skwird's own `Cargo.lock` at that tag: its release
+  ships none) in `licenses\skwird`. skwird registers its logon task
+  (`skwird logon add`) with the path of the program it runs, so a task
+  added from the carried copy names skwir's folder: the installer's
+  removal runs that copy's `skwird.exe logon remove` first, deferred, as
+  the user, its answer ignored (none registered: nothing lost), not when
+  an upgrade removes the older skwir (`skwir.wxs`). wixl 0.106 places an
+  action `Before="RemoveFiles"` ahead of `InstallInitialize`, where a
+  deferred one fails the removal: it is placed after `InstallInitialize`.
+  The installer is per user and never elevated, so it cannot take back a
+  system service; skwird's `service add`, an administrator's, is not for
+  a copy in the user's own folder, which that user, unelevated, could
+  replace under a service running as LocalSystem. The zip has no
+  uninstaller: a task added from it is its user's to take back (`skwird
+  logon remove`) before the folder goes. Under Wine
+  (`windows-check.sh`): the zip holds both programs and their licences,
+  byte for byte the release's; `skwird.exe` starts from the zip and the
+  installed copy; the installer's action is the one meant (`msiinfo`: its
+  type, program, command, condition and step); and a logon task added
+  from the installed copy (Wine keeps it, its actions left out: Wine runs
+  no task) is gone once skwir is removed. Not checked under Wine: the
+  task starting skwird at a logon, and a running engine holding
+  `skwirdw.exe` as the files go.

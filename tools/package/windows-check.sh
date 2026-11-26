@@ -5,9 +5,11 @@
 # beside it), every file it should hold; the archive helper making and
 # reading archives with the libarchive linked into it; the media helper
 # playing clips with the GStreamer beside it (H.264 and AAC by FFmpeg's
-# decoders: Wine has no Direct3D or Media Foundation decoders); then the
+# decoders: Wine has no Direct3D or Media Foundation decoders); skwird,
+# carried beside skwir, its release's own programs, starting; then the
 # installer, per user, quietly: the programs where it puts them, its Start
-# menu entry, and nothing of them left once it is removed.
+# menu entry, and nothing of them left once it is removed, the logon task
+# skwird registered from the copy it installed taken back first.
 #
 # Wine is not Windows. It cannot draw skwir's window (its DirectWrite has
 # no font sets; Direct Manipulation and DirectComposition are missing), so
@@ -51,6 +53,13 @@ answer() {
     *"$version"*) echo "ok: skwir.exe --version: $said" ;;
     *) echo "skwir.exe --version said: $said" >&2; exit 1 ;;
     esac
+    # skwird has no --version: a command it does not know, answered with
+    # its usage, says it starts.
+    said="$(wine "$folder/skwird.exe" help 2>&1 | tr -d '\r' || true)"
+    case "$said" in
+    "usage: skwird serve"*) echo "ok: skwird.exe starts" ;;
+    *) echo "skwird.exe said: $said" >&2; exit 1 ;;
+    esac
     for program in $programs; do
         [ "$program" = skwir ] && continue
         wine "$folder/$(place "$program")/$program.exe" --probe >/dev/null 2>&1 || { echo "$program.exe --probe failed" >&2; exit 1; }
@@ -72,6 +81,9 @@ folder = into / name
 # The media helper among GStreamer's libraries; the others beside skwir.
 at = lambda p: f"gstreamer/bin/{p}.exe" if p == "skwir-media-worker" else f"{p}.exe"
 wanted = [at(p) for p in programs] + [
+    # skwird (tools/package/skwird.py): its programs, its licences, its crates' notices.
+    "skwird.exe", "skwirdw.exe", "licenses/skwird/LICENSE-MIT", "licenses/skwird/LICENSE-APACHE",
+    "licenses/skwird/THIRD-PARTY-NOTICES",
     "pdfium.dll", "share/mime/globs2", "share/mime/magic", "share/mime/COPYING",
     "licenses/LICENSE", "licenses/THIRD-PARTY-NOTICES", "licenses/mingw-w64/COPYING",
     "licenses/pdfium/LICENSE", "licenses/libarchive/COPYING", "licenses/libarchive/VERSIONS",
@@ -90,10 +102,18 @@ assert not missing, f"missing from the zip: {missing}"
 assert (folder / "share/skwir/channel").read_text() == "windows-zip\n", "the zip's channel"
 top = {p.name for p in folder.iterdir()}
 beside = {f"{p}.exe" for p in programs if "/" not in at(p)}
-assert top == beside | {"pdfium.dll", "share", "licenses", "gstreamer"}, top
+assert top == beside | {"skwird.exe", "skwirdw.exe", "pdfium.dll", "share", "licenses", "gstreamer"}, top
 print(f"ok: the zip holds {len(names)} files in {name}/")
 EOF
 answer "$unpacked/$name"
+# skwird's programs and licences are its release's, byte for byte, the zip
+# its sum pinned (tools/package/skwird.lock).
+python3 tools/package/skwird.py windows "$scratch/skwird"
+for file in skwird.exe skwirdw.exe licenses/skwird/LICENSE-MIT licenses/skwird/LICENSE-APACHE \
+    licenses/skwird/THIRD-PARTY-NOTICES; do
+    cmp -s "$scratch/skwird/$file" "$unpacked/$name/$file" || { echo "$file is not skwird's release's" >&2; exit 1; }
+done
+echo "ok: skwird.exe and skwirdw.exe are skwird $(sed -n 's/^release v//p' tools/package/skwird.lock)'s, its licences beside"
 # Nothing names a folder of the machine that built it (windows.sh's
 # remapping).
 for program in $programs; do
@@ -169,6 +189,29 @@ for codecs in h264-aac vp9-opus; do
     echo "ok: the media helper plays $codecs: $(echo "$said" | tail -n 1)"
 done
 
+# The installer's action taking skwird's logon task back as skwir is
+# removed (skwir.wxs): skwird.exe, run with `logon remove`, its answer
+# ignored, deferred, as the user, in the removal's script but not an
+# upgrade's, before the files go.
+python3 - "$made/$name.msi" <<'EOF'
+import subprocess, sys
+msi = sys.argv[1]
+def table(name):
+    rows = subprocess.run(["msiinfo", "export", msi, name], check=True, capture_output=True, text=True).stdout
+    return [row.split("\t") for row in rows.splitlines()[3:]]
+actions = {row[0]: row for row in table("CustomAction")}
+# 18: a program the package installs (its File key); 64: its answer
+# ignored; 1024: deferred; not 2048, so as the user.
+assert actions["SkwirdLogonRemove"][1:4] == ["1106", "skwird.exe", "logon remove"], actions
+files = {row[0]: row for row in table("File")}
+assert files["skwird.exe"][2] == "skwird.exe", files["skwird.exe"]
+steps = {row[0]: (row[1], int(row[2])) for row in table("InstallExecuteSequence")}
+condition, at = steps["SkwirdLogonRemove"]
+assert condition == 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE', condition
+assert steps["InstallInitialize"][1] < at < steps["RemoveFiles"][1], (at, steps)
+print(f"ok: the installer runs skwird.exe logon remove as it removes skwir, step {at} of its script")
+EOF
+
 # The installer, per user, then removed.
 user="$(wine cmd /c 'echo %USERNAME%' 2>/dev/null | tr -d '\r')"
 home="$WINEPREFIX/drive_c/users/$user"
@@ -185,10 +228,26 @@ echo "ok: the installed copy's channel says windows-installer"
 [ -f "$shortcut" ] || { echo "no Start menu entry: $shortcut" >&2; exit 1; }
 echo "ok: a Start menu entry"
 answer "$installed"
+# skwird's logon task, registered from the installed copy, as its user
+# would (Wine keeps a task in system32\tasks, its actions left out: Wine
+# never runs it). Wine's task service may not answer the first time it
+# starts in a prefix.
+tasks="$WINEPREFIX/drive_c/windows/system32/tasks"
+for attempt in 1 2 3; do
+    said="$(wine "$installed/skwird.exe" logon add 2>&1)" && break
+    [ "$attempt" -lt 3 ] || { echo "skwird.exe logon add failed under Wine: $said" >&2; exit 1; }
+    sleep 2
+done
+ls "$tasks"/skwird-S-1-* >/dev/null 2>&1 || { echo "no logon task of skwird's in $tasks" >&2; exit 1; }
+echo "ok: skwird.exe logon add, from the installed copy, registered its task"
 wine msiexec /x "$made/$name.msi" /qn
 left="$(find "$installed" -type f 2>/dev/null | wc -l)"
 [ "$left" -eq 0 ] && [ ! -e "$shortcut" ] || { echo "removed, $left files and the entry left" >&2; exit 1; }
-echo "ok: removed, nothing of it left"
+if ls "$tasks"/skwird-S-1-* >/dev/null 2>&1; then
+    echo "removed, skwird's logon task left: it would start nothing at each logon" >&2
+    exit 1
+fi
+echo "ok: removed, nothing of it left, skwird's logon task taken back"
 echo "$name: passed under Wine"
 # What passed, where a release collects it (SKWIR_PACKAGE_OUT, as try.sh).
 if [ -n "${SKWIR_PACKAGE_OUT:-}" ]; then

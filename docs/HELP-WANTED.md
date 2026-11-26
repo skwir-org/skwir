@@ -70,7 +70,12 @@ command is then the way to try it. Homebrew's cask waits for a build that
 passes that check. It reads PDFs,
 DjVu, 3D models and archives and plays audio and video; the Poppler and
 MuPDF readers are not in it yet. It has never run anywhere: everything below is
-new. Intel Macs have no build yet.
+new. Intel Macs have no build yet. It carries skwird, the index that
+answers name searches (`skwir.app/Contents/MacOS/skwird`), which a
+search starts on its own. The app has no uninstaller: if you ran that
+copy's `skwird logon add` (or `sudo skwird service add`), run its
+`logon remove` (or `sudo … service remove`) before moving the app to
+the Trash, or macOS keeps trying to start a program that is gone.
 
 1. **It opens** (try). The window draws, a folder lists, the sidebar shows
    the home folder's places and the volumes under `/Volumes`, scrolling a
@@ -158,7 +163,14 @@ and asks no administrator. Neither is signed: Windows warns first ("Windows
 protected your PC": More info, then Run anyway). It reads PDFs, DjVu, 3D
 models and archives and plays audio and video; the Poppler and MuPDF
 readers are not in it yet. Wine started its programs and installed it, but cannot draw its
-window: everything below is new.
+window: everything below is new. Both carry skwird, the index that
+answers name searches (`skwird.exe` beside `skwir.exe`), which a search
+starts on its own. Removing the installer's copy takes back the logon
+task that copy's `skwird logon add` registered; with the zip, run
+`skwird logon remove` before deleting its folder. Do not register
+skwird's system service (`skwird service add`) from either: they sit in
+your own folder, which a program of yours could change under a service
+running as the system.
 
 1. **It opens** (try). The window draws, a folder lists, the drives are in
    the sidebar, scrolling stays smooth, and idle CPU returns to about 0%

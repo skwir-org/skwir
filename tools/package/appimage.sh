@@ -22,6 +22,9 @@ mkdir -p "$cache" "$out" "$dist"
 exec 9>"$cache/build.lock"
 flock -n 9 || { echo 'An AppImage build is already running' >&2; exit 1; }
 python3 "$tree/tools/package/appimage/fetch.py" "$cache/downloads"
+# skwird's source, which the tarball's skwird is built from in the root
+# (tools/package/appimage/skwird.sh), checked against skwird.lock.
+python3 "$tree/tools/package/skwird.py" fetch source "$cache/downloads" >/dev/null
 if [ ! -d "$root" ]; then
     mkdir -p "$root"
     tar --no-same-owner -xzf "$cache/downloads/ubuntu-base.tar.gz" -C "$root" --exclude='./dev/*'

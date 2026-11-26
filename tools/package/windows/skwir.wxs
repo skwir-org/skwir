@@ -5,7 +5,8 @@
      skwir.wxs files.wxs`.
      files.wxs, made there by wixl-heat, holds every file of the folder
      (the programs, PDFium, the licences, the type database), so nothing
-     here lists them again. Per user, in %LocalAppData%\Programs\skwir, no
+     here lists them again, but skwird.exe, named here for the action that
+     runs it. Per user, in %LocalAppData%\Programs\skwir, no
      administrator asked; a Start menu entry. Unsigned. -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="skwir" Manufacturer="skwir" Language="1033"
@@ -22,7 +23,13 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="LocalPrograms" Name="Programs">
-          <Directory Id="INSTALLDIR" Name="skwir" />
+          <Directory Id="INSTALLDIR" Name="skwir">
+            <!-- skwird, carried beside skwir (ADR-050, amended
+                 2026-11-26), the program the action below runs. -->
+            <Component Id="Skwird" Guid="*" Win64="$(var.Win64)">
+              <File Id="skwird.exe" Source="$(var.Dist)/skwird.exe" KeyPath="yes" />
+            </Component>
+          </Directory>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
@@ -42,7 +49,28 @@
     </Directory>
     <Feature Id="Main" Level="1">
       <ComponentRef Id="StartMenu" />
+      <ComponentRef Id="Skwird" />
       <ComponentGroupRef Id="Files" />
     </Feature>
+    <!-- skwird registers the task that starts it at its user's logon
+         (`skwird logon add`) with the path of the program it runs, the
+         skwirdw.exe beside it: the carried copy's, once its user asked
+         that copy. Removed with skwir, that task would start nothing at
+         each logon, so the carried skwird takes it back first, while its
+         files are there (`skwird logon remove`), as its user, its answer
+         ignored: where none was registered, it fails and nothing is lost.
+         Not when an upgrade removes the older skwir: the newer puts
+         skwird where the task names it. A per-user install is never
+         elevated, so it cannot take back a system service; skwird's
+         `service add`, an administrator's, is not for a copy in the user's
+         own folder (ADR-074, amended 2026-11-26). The first step of the
+         removal's script: wixl 0.106 places an action Before="RemoveFiles"
+         ahead of InstallInitialize, outside the script, where a deferred
+         action fails the removal (windows-check.sh reads its place). -->
+    <CustomAction Id="SkwirdLogonRemove" FileKey="skwird.exe" ExeCommand="logon remove"
+                  Execute="deferred" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="SkwirdLogonRemove" After="InstallInitialize">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
   </Product>
 </Wix>

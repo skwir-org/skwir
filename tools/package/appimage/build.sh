@@ -8,6 +8,9 @@ export CARGO_TARGET_DIR=/build/target
 export CARGO_INCREMENTAL=0
 python3 tools/package/appimage/gstreamer.py
 python3 tools/package/appimage/heif.py
+# skwird, for the tarball alone, before skwir's link is ordered: its own
+# build, from its release's source (skwird.sh).
+sh tools/package/appimage/skwird.sh
 # A film for the bundle's check (check.py's check_film), made by the
 # GStreamer built here: twelve seconds of VP8 and Vorbis in Matroska.
 /opt/skwir-gstreamer/bin/gst-launch-1.0 -q \
@@ -56,8 +59,9 @@ rm -f "$image.zsync" "./$(basename "$image").zsync"
 zsyncmake -u "$site/files/v$version/$(basename "$image")" -o "/build/$zsync" "$image"
 # The same usr tree as a tarball, for a system without FUSE or a folder
 # of the user's choosing: the program at its top, and `skw` beside it,
-# none of the AppImage's own files. Names sorted, owned by root and dated
-# by the source, so the archive depends on the tree alone.
+# none of the AppImage's own files, and skwird beside skwir, which the
+# AppImage never carries (skwird.sh). Names sorted, owned by root and
+# dated by the source, so the archive depends on the tree alone.
 tarball="skwir-$version-linux-x86_64"
 rm -rf /build/tarball
 mkdir -p "/build/tarball/$tarball"
@@ -66,6 +70,10 @@ cp -al /build/AppDir/usr "/build/tarball/$tarball/usr"
 # AppImage's, which the link would share.
 rm "/build/tarball/$tarball/usr/share/skwir/channel"
 install -m644 tools/package/channel/tarball "/build/tarball/$tarball/usr/share/skwir/channel"
+# New files beside the AppImage's, never written into those the link
+# shares with it.
+install -m755 /build/skwird/carried/usr/bin/skwird "/build/tarball/$tarball/usr/bin/skwird"
+cp -R /build/skwird/carried/usr/share/licenses/skwird "/build/tarball/$tarball/usr/share/licenses/"
 ln -s usr/bin/skwir "/build/tarball/$tarball/skwir"
 # Started under this name, skwir is `skwir view` (ADR-151).
 ln -s usr/bin/skwir "/build/tarball/$tarball/skw"

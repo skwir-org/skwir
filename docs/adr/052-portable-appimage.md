@@ -9,6 +9,9 @@ all of it built at one version, not Ubuntu's 1.20 plugins beside it, and
 PulseAudio's client library and libva built too.
 Decision 2 amended 2026-11-22 (ADR-148): libheif and libde265 built
 too, for the HEIF helper.
+Decision 7 amended 2026-11-26 (ADR-050, the user's decision): the
+tarball carries skwird, built in the root from its release's source;
+the AppImage never does.
 
 ## Context
 
@@ -120,6 +123,31 @@ filesystem, as `tools/package/try.sh` already does.
    are: one folder, no absolute or parent paths, no special files. No
    installer: the README says how to link the program onto `PATH` and
    add the desktop entry and icon.
+   **Amended 2026-11-26:** the tarball carries skwird, skwir's index of
+   names (ADR-050), beside skwir in `usr/bin`, where skwir looks for it
+   once `PATH` has none, with its licences and its crates' notices in
+   `usr/share/licenses/skwird`. It is built in the same root, against the
+   same glibc, from the source archive of the release
+   `tools/package/skwird.lock` pins (`tools/package/appimage/skwird.sh`):
+   the archive fetched beside the root's other downloads and checked
+   against its sum there and again in the root (`tools/package/skwird.py`);
+   the 26 crates from crates.io its `Cargo.lock` names fetched (`cargo
+   fetch --locked`, the build's one use of the network for it), then
+   built offline (`--frozen`,
+   `--profile dist`, as skwird's release builds it), by the root's Rust
+   (skwir's channel, `RUSTUP_TOOLCHAIN`: skwird's own pin would have
+   rustup download a toolchain with its checks' targets); the build's
+   paths rewritten as skwird's release rewrites them (`/cargo`, `/rust`,
+   `/skwird`), and the build refused if the program names a folder of the
+   root. Its notices are made from skwird's own `Cargo.lock` at the tag
+   (`tools/package/notices/skwird`, `notices.py`). The AppImage never
+   carries skwird, nor its notices: its files are a FUSE mount that ends
+   with skwir, while skwird outlives its last client, so the engine's
+   program would go from under it. The tarball's tree is the AppImage's
+   linked, and skwird's files are new ones beside them, never written
+   into those the link shares. `check.py` refuses an AppImage holding
+   any of it, and starts the tarball's on a home of its own, where it
+   indexes a folder and finds a name.
 
 ## Consequences
 
@@ -181,3 +209,17 @@ FFmpeg's H.264 decoders ranked out for the test, the new image's helper
 opened the Intel GPU's driver (`/run/opengl-driver/lib/dri/iHD_drv_video.so`,
 `__vaDriverInit_1_24`) and decoded with `vah264dec`; 0.5.0's libva did not
 open it (`va_openDriver() returns -1`).
+
+skwird in the tarball, 2026-11-26: `tools/package/appimage/skwird.sh`
+built skwird 0.2.0 in the Ubuntu 22.04 root in 53 s, and found it built
+the next time (0.2 s: its source, unpacked anew, keeps the archive's
+dates), its Rust the root's
+1.99.1 with Linux's target alone; the program needs glibc 2.34 at most,
+names `/cargo` and none of the root's folders, and links libc, libm,
+libgcc_s. Then `build.sh`'s staging, without skwir's own build (its
+0.7.0 programs kept from the last), made both artifacts, and `check.py`
+passed each in the runtime-only root, but its `skw` check, which 0.7.0's
+programs predate: the tarball's 285 ELFs (the AppImage's 284 and
+skwird), its skwird finding a name in a folder it indexed; the AppImage
+carrying none of skwird. Not built: the whole of `just package-appimage`
+with skwir's programs of now.

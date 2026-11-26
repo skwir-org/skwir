@@ -309,7 +309,8 @@ package-nix variant="default":
 package-nix-check *variants:
     tools/package/nix/check.sh {{variants}}
 
-# The notices of the crates each package's programs link, into
+# The notices of the crates each package's programs link, skwird's from its
+# own Cargo.lock at the release tools/package/skwird.lock pins, into
 # tools/package/notices, kept with the source for the packages to copy
 # (ADR-063): made again when a dependency, or what a package ships,
 # changes. cargo-about, every platform's crates read offline.
@@ -400,16 +401,17 @@ package-try distribution:
     fi
     exec tools/package/try.sh {{quote(distribution)}}
 
-# Windows' build to try, made on Linux (ADR-074): skwir and its helpers
-# that carry no library, as a zip and a per-user installer (wixl), into
-# target/package/windows, then both tried under Wine.
+# Windows' build to try, made on Linux (ADR-074): skwir, its helpers that
+# carry no library and skwird's release's programs, as a zip and a per-user
+# installer (wixl), into target/package/windows, then both tried under Wine.
 package-windows:
     tools/package/windows.sh
     tools/package/windows-check.sh
 
 # macOS's build to try, made on Linux (ADR-075): skwir.app for Apple silicon,
-# signed ad hoc, zipped and in a disk image in target/package/macos, then
-# looked over (nothing here runs it). Needs Apple's SDK: `just macos-sdk`.
+# skwird's release's program in it, signed ad hoc, zipped and in a disk
+# image in target/package/macos, then looked over (nothing here runs it).
+# Needs Apple's SDK: `just macos-sdk`.
 package-macos:
     tools/package/macos.sh
     tools/package/macos-check.sh

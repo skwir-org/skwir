@@ -5,8 +5,9 @@
 # bundle, file for file, beside a link to Applications; Info.plist names
 # what is there, and the languages skwir speaks, an .lproj each;
 # the icon holds every side; each program is arm64, for macOS 12 or later,
-# linked to the system's libraries alone; the bundle's seal verifies
-# (rcodesign); no program names a folder of the machine that built it.
+# linked to the system's libraries alone, skwird's beside them, from its
+# release; the bundle's seal verifies (rcodesign); no program names a
+# folder of the machine that built it.
 # Whether it opens is for people on a Mac (docs/HELP-WANTED.md).
 #
 #     tools/package/macos-check.sh [version]
@@ -47,7 +48,7 @@ with zipfile.ZipFile(archive) as zipped:
             zipped.extract(entry, into)
             target.chmod(mode & 0o777)
 app = into / "skwir.app/Contents"
-for program in programs:
+for program in [*programs, "skwird"]:
     path = app / "MacOS" / program
     assert path.is_file() and path.stat().st_mode & 0o111, f"{program} missing or not executable"
 for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/share/mime/globs2",
@@ -59,6 +60,8 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
                "Resources/share/skwir/fonts/JetBrainsMono-Regular.ttf",
                "Resources/licenses/fonts/Inter/LICENSE.txt",
                "Resources/licenses/fonts/JetBrainsMono/OFL.txt",
+               "Resources/licenses/skwird/LICENSE-MIT", "Resources/licenses/skwird/LICENSE-APACHE",
+               "Resources/licenses/skwird/THIRD-PARTY-NOTICES",
                "Resources/licenses/libarchive/COPYING", "Resources/licenses/libarchive/VERSIONS",
                "Resources/licenses/zstd/LICENSE", "_CodeSignature/CodeResources",
                "Frameworks/GStreamer.framework/Versions/1.0/lib/libgstreamer-1.0.0.dylib",
@@ -141,6 +144,38 @@ for program in $programs; do
     fi
     echo "ok: $program: arm64, macOS 12 or later, the system's libraries (and the bundle's GStreamer) alone, no build folder"
 done
+# skwird, carried beside skwir (tools/package/skwird.py): its release's
+# program, for Apple silicon and macOS 11 or later (skwird's own floor,
+# below skwir's), linked to the system's libraries alone, signed again
+# with the bundle (the seal below) and so no longer bearing its archive's
+# signature; its licences are its release's.
+python3 tools/package/skwird.py macos "$scratch/skwird"
+binary="$app/MacOS/skwird"
+file -b "$binary" | grep -q '^Mach-O 64-bit arm64 executable' || { echo "skwird: not an arm64 program" >&2; exit 1; }
+minos="$(llvm-otool -l "$binary" | sed -n '/LC_BUILD_VERSION/,/ntools/s/^ *minos //p')"
+case "$minos" in
+11.* | 12.0) ;;
+*) echo "skwird: for macOS $minos, after skwir's 12.0" >&2; exit 1 ;;
+esac
+for library in $(llvm-otool -L "$binary" | tail -n +2 | awk '{print $1}'); do
+    case "$library" in
+    /usr/lib/* | /System/Library/*) ;;
+    *) echo "skwird links $library" >&2; exit 1 ;;
+    esac
+done
+if strings "$binary" | grep -qE "$HOME|/nix/store/[a-z0-9]{32}-"; then
+    echo "skwird names a folder of the machine that built it" >&2
+    exit 1
+fi
+for licence in LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES; do
+    cmp -s "$scratch/skwird/licenses/skwird/$licence" "$app/Resources/licenses/skwird/$licence" \
+        || { echo "Resources/licenses/skwird/$licence is not skwird's" >&2; exit 1; }
+done
+if cmp -s "$scratch/skwird/skwird" "$binary"; then
+    echo "skwird bears its archive's signature: the bundle's signing left it" >&2
+    exit 1
+fi
+echo "ok: skwird $(sed -n 's/^release v//p' tools/package/skwird.lock): arm64, macOS $minos or later, the system's libraries alone, no build folder, signed again with the bundle, its licences beside"
 # GStreamer in the bundle (tools/package/gstreamer.py, ADR-076), a
 # framework whose main binary is libgstreamer: each library, plugin and
 # the scanner Apple silicon's alone, and what each loads the system's or
@@ -180,8 +215,9 @@ echo "ok: skwir-archive-worker carries its own libarchive"
 # --strict`; rcodesign's `verify` reads no bundle): the app and each bundle
 # it holds (GStreamer's framework). A bundle's main program binds its
 # Info.plist and its list of resources; that list holds each file's
-# digest, each link's target and each program or bundle nested in it by
-# its code's hash; nothing else is there. A main program that is a link
+# digest, each link's target (relative, leading inside that bundle) and
+# each program or bundle nested in it by its code's hash; nothing else is
+# there. A main program that is a link
 # fails it: rcodesign seals what the link names as a resource, then signs
 # it again as the main program (every Mac build to 0.7.0, refused by a
 # Mac on 2026-11-25).
@@ -239,6 +275,13 @@ for root in roots:
             continue
         if "symlink" in entry:
             assert target.is_symlink() and os.readlink(target) == entry["symlink"], f"{where}: {path} is not the link sealed"
+            # And it leads, relative, to what is there inside the bundle that
+            # seals it: `codesign --strict` refuses a link out of its bundle,
+            # which on another Mac names something else or nothing.
+            assert not os.path.isabs(entry["symlink"]), f"{where}: {path} is an absolute link"
+            led = pathlib.Path(os.path.realpath(target))
+            assert led.exists() and led.is_relative_to(root.resolve()), \
+                f"{where}: {path} leads out of its bundle, to {led}"
         elif "cdhash" in entry:
             assert cdhash(nested(target)) == entry["cdhash"], f"{where}: {path} is not the code sealed"
         else:

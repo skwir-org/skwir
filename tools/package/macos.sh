@@ -8,15 +8,16 @@
 #
 # What the bundle holds: tools/package/macos/programs in Contents/MacOS
 # (skwir and the helpers that carry no library of their own, the archive
-# helper, with libarchive linked in, and the media helper), PDFium in
+# helper, with libarchive linked in, and the media helper), skwird beside
+# them, its own release's build (ADR-050, amended 2026-11-26), PDFium in
 # Contents/Frameworks (ADR-041) and GStreamer, cut down to what the media
 # helper plays with, a framework in Contents/Frameworks (ADR-076), and in
 # Contents/Resources the icon, an .lproj for each language skwir speaks
 # (ADR-139), the type database (ADR-037) in share/mime,
 # and in licenses skwir's licence, its crates' notices
-# (tools/package/notices/macos), PDFium's, libarchive's and its
-# compressors' (tools/package/libarchive.sh), and GStreamer's and its
-# components' (tools/package/gstreamer.py).
+# (tools/package/notices/macos), PDFium's, skwird's and its crates',
+# libarchive's and its compressors' (tools/package/libarchive.sh), and
+# GStreamer's and its components' (tools/package/gstreamer.py).
 #
 #     tools/package/macos.sh [version]      # into target/package/macos/
 set -eu
@@ -79,6 +80,17 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resourc
 for program in $programs; do
     cp "$CARGO_TARGET_DIR/$target/dist/$program" "$app/Contents/MacOS/"
 done
+# skwird, skwir's index of names (ADR-050), as its own release built it
+# (tools/package/skwird.lock; tools/package/skwird.py checks the archive's
+# sum before it unpacks it), beside skwir in Contents/MacOS, where skwir
+# looks for it after PATH: signed ad hoc in its archive, signed again
+# with the bundle below, as the other programs are. Its licences and its
+# crates' notices in Resources/licenses/skwird. A disk image has no
+# uninstaller: a LaunchAgent `skwird logon add` made from this copy is
+# its user's to take back (`skwird logon remove`) before the app goes.
+python3 tools/package/skwird.py macos "$out/work/skwird"
+cp "$out/work/skwird/skwird" "$app/Contents/MacOS/"
+cp -R "$out/work/skwird/licenses/skwird" "$app/Contents/Resources/licenses/"
 tools/package/pdfium.sh mac-arm64 "$out/work/pdfium"
 cp "$out/work/pdfium/libpdfium.dylib" "$app/Contents/Frameworks/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"

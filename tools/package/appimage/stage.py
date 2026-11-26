@@ -94,8 +94,10 @@ def main():
     shutil.copytree(ROOT / "target/pdfium/licenses", licences, dirs_exist_ok=True)
     shutil.copytree(ROOT / "target/fonts/licenses", licences, dirs_exist_ok=True)
     # The notices of Debian's packages, which together cover every program
-    # here; arch/ holds Arch's own.
-    shutil.copytree(TOOLS / "notices", licences / "crates", ignore=shutil.ignore_patterns("arch"))
+    # here; arch/ holds Arch's own, and skwird's (each system's) are for
+    # the packages that carry it: the tarball puts its own beside skwird
+    # (build.sh), the AppImage carries none.
+    shutil.copytree(TOOLS / "notices", licences / "crates", ignore=shutil.ignore_patterns("arch", "skwird"))
     shutil.copytree(TOOLS / "licenses", licences / "readers")
     for notice in pathlib.Path("/inputs").glob("runtime*"):
         if notice.name != "runtime-x86_64":

@@ -9,12 +9,14 @@
 # What the folder holds: tools/package/windows/programs (skwir and the
 # helpers that carry no library of their own, the archive helper, with
 # libarchive linked in, and the media helper, in gstreamer\bin among
-# GStreamer's libraries), PDFium beside them (ADR-041), GStreamer cut down
-# to what the media helper plays with in gstreamer (ADR-076), the type
-# database (ADR-037) in share\mime, and in licenses skwir's licence, its
-# crates' notices (tools/package/notices/windows), PDFium's, libarchive's
-# and its compressors' (tools/package/libarchive.sh), GStreamer's and its
-# components' (tools/package/gstreamer.py) and MinGW-w64's.
+# GStreamer's libraries), PDFium beside them (ADR-041), skwird beside them
+# too, as its own release built it (ADR-050, amended 2026-11-26),
+# GStreamer cut down to what the media helper plays with in gstreamer
+# (ADR-076), the type database (ADR-037) in share\mime, and in licenses
+# skwir's licence, its crates' notices (tools/package/notices/windows),
+# PDFium's, skwird's and its crates', libarchive's and its compressors'
+# (tools/package/libarchive.sh), GStreamer's and its components'
+# (tools/package/gstreamer.py) and MinGW-w64's.
 #
 #     tools/package/windows.sh [version]      # into target/package/windows/
 set -eu
@@ -72,6 +74,14 @@ place() { case "$1" in skwir-media-worker) echo gstreamer/bin ;; *) echo . ;; es
 for program in $programs; do
     cp "$CARGO_TARGET_DIR/$target/dist/$program.exe" "$folder/$(place "$program")/"
 done
+# skwird, skwir's index of names (ADR-050), as its own release built it
+# (tools/package/skwird.lock; tools/package/skwird.py checks the zip's sum
+# before it unpacks it): skwird.exe and skwirdw.exe, the twin with no
+# console that its logon task runs, beside skwir.exe, where skwir looks
+# for it after PATH; its licences and its crates' notices in
+# licenses\skwird. The installer takes its logon task back before it
+# removes it (skwir.wxs).
+python3 tools/package/skwird.py windows "$folder" --downloads "$out/work/skwird"
 tools/package/pdfium.sh win-x64 "$out/work/pdfium"
 cp "$out/work/pdfium/pdfium.dll" "$folder/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$folder/licenses/"
@@ -109,8 +119,9 @@ EOF
 cp tools/package/channel/windows-installer "$folder/share/skwir/channel"
 # The installer: every file of the folder (wixl-heat), under skwir.wxs's
 # folder, shortcut and upgrade, with the icon skwir.exe carries (its
-# group icon, resource type 14).
-find "$folder" -type f | LC_ALL=C sort | wixl-heat -p "$folder/" --directory-ref INSTALLDIR \
+# group icon, resource type 14). skwird.exe is skwir.wxs's own, named
+# there for the action that runs it as skwir is removed.
+find "$folder" -type f | LC_ALL=C sort | grep -vxF "$folder/skwird.exe" | wixl-heat -p "$folder/" --directory-ref INSTALLDIR \
     --component-group Files --var var.Dist --win64 > "$out/work/files.wxs"
 wrestool -x -t 14 "$folder/skwir.exe" > "$out/work/skwir.ico"
 wixl -a x64 -D "Version=$version" -D "Dist=$folder" -D "Icon=$out/work/skwir.ico" -D Win64=yes \
