@@ -19,6 +19,9 @@
 #
 # Fails if any crate's tests fail, naming each; names, in its last lines,
 # the tests that passed only when run again (FLAKY), which fail nothing.
+#
+# SKWIR_WINE_CRATES, a list of default members, runs those alone from the
+# same build: one crate under Wine without `-p`'s build of its own.
 set -eu
 if [ -z "${SKWIR_WINE_HARNESS:-}" ]; then
     exec tools/cross/test-windows.sh
@@ -29,6 +32,15 @@ m = json.load(sys.stdin)
 members = set(m["workspace_default_members"])
 print(" ".join(sorted(p["name"] for p in m["packages"] if p["id"] in members)))
 ')"
+if [ -n "${SKWIR_WINE_CRATES:-}" ]; then
+    for crate in $SKWIR_WINE_CRATES; do
+        case " $crates " in
+            *" $crate "*) ;;
+            *) echo "SKWIR_WINE_CRATES: $crate is no default member" >&2; exit 2 ;;
+        esac
+    done
+    crates="$SKWIR_WINE_CRATES"
+fi
 # What this run builds and says, apart from any other run's (agents, two
 # terminals) sharing the target folder.
 work="$(mktemp -d "$CARGO_TARGET_DIR/each.XXXXXX")"

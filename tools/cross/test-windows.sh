@@ -9,7 +9,8 @@
 # and nextest's XDG isolation (Wine's Recycle Bin is the freedesktop trash
 # of XDG_DATA_HOME). Arguments go to nextest (`-p skwir-core`, a filter);
 # given none, every default member's tests, one crate at a time from one
-# build (test-windows-each.sh, run here in this environment).
+# build (test-windows-each.sh, run here in this environment), or those
+# SKWIR_WINE_CRATES names alone from that build.
 set -eu
 if ! command -v wine >/dev/null; then
     exec nix develop .#windows --command "$0" "$@"
@@ -74,7 +75,24 @@ REAL_CARGO="$(command -v cargo)"
 export REAL_CARGO
 # What test-windows-each.sh asks to know it runs here.
 export SKWIR_WINE_HARNESS=1
+# A test program that ends while a program it started still runs leaves
+# that program, and with it the prefix's wineserver and services, running
+# for good: Windows ends what Skwir starts with Skwir (a job,
+# `KILL_ON_JOB_CLOSE`), Wine does not, and under Wine `schtasks /Query`
+# never returns (found 2026-11-26: six runs' leftovers, one two days old).
+# Each run holds the prefix shared while it tests, its programs not
+# holding it (`-o`); the run that ends with no other holding it takes it
+# alone and ends what is left there, while a run starting waits.
+lock="$scratch/prefix.lock"
+end_left_over() {
+    flock -n -x -o "$lock" sh -c 'wineserver -k 2>/dev/null; wineserver -w' || true
+}
+trap end_left_over EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if [ "$#" -eq 0 ]; then
-    exec tools/cross/test-windows-each.sh
+    flock -s -o "$lock" tools/cross/test-windows-each.sh
+else
+    CARGO="$(pwd)/tools/cross/zig-nextest" \
+        flock -s -o "$lock" cargo-zigbuild test --target x86_64-pc-windows-gnu "$@"
 fi
-CARGO="$(pwd)/tools/cross/zig-nextest" exec cargo-zigbuild test --target x86_64-pc-windows-gnu "$@"

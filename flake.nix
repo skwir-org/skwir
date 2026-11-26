@@ -284,6 +284,8 @@
             pkgs.icoutils
             pkgs.xvfb
             pkgs.pkgsCross.mingwW64.buildPackages.binutils-unwrapped
+            # flock: the runs sharing the tests' prefix (test-windows.sh).
+            pkgs.util-linux
           ];
         SKWIR_LIBARCHIVE_SOURCES = libarchiveSources;
         SKWIR_WINE_WOW64 = lib.optionalString stdenv.hostPlatform.isLinux "${pkgs.wineWow64Packages.stable}/bin";
