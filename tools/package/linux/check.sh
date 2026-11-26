@@ -11,8 +11,8 @@
 # may say it cannot work where the system has none, as a test root has
 # not. skwir's licence and PDFium's notices are installed, and the
 # libraries skwir opens at run time are there, and so are `skw`, a link
-# to skwir (ADR-151), the desktop entries (skwir's and Skwir Preview's)
-# and the metainfo, in every language translated, and the icon.
+# to skwir (ADR-151), the desktop entries (the file manager's and the
+# viewer's) and the metainfo, in every language translated, and the icon.
 # Skwir's own fonts are where skwir finds those a
 # package carries (ADR-118); with `system-fonts`, for a package that
 # carries none (the AUR's source package), they are the system's optional

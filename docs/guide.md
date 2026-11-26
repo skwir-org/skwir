@@ -888,8 +888,10 @@ With Skwir open, the window is that Skwir's: it opens at once, and the
 terminal waits until it closes (`Ctrl+C` there closes it). With none
 open, with `skw --new-instance`, and always on macOS, it is a program of
 its own that starts only what showing a file needs and ends with its
-window; the terminal waits for it all the same. A file manager can offer
-it in Open With, as **Skwir Preview**.
+window; the terminal waits for it all the same. It is in Skwir's own Open
+With for every file, as **skwir view**. Other file managers offer it for
+files of no known type; where one lets you type a command, `skwir view`
+opens any file.
 
 ## Properties
 

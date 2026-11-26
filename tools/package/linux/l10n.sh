@@ -3,7 +3,7 @@
 # are translated to (ADR-139, 13), merged where each package is made.
 #
 # The English is the files beside this script, valid as they are:
-# org.skwir.skwir.desktop, Skwir Preview's org.skwir.skwir.view.desktop
+# org.skwir.skwir.desktop, the viewer's org.skwir.skwir.view.desktop
 # (ADR-151, 8) and org.skwir.skwir.metainfo.xml. What of them is
 # translated is extracted by xgettext into po/skwir.pot: the desktop
 # entries' GenericName, Comment and Keywords (their Name is the brand,
@@ -56,15 +56,15 @@ merge() {
 # names it as its PO file does (zh_CN), the metainfo as BCP 47 does, which
 # msgfmt writes with the script CLDR gives it (zh-Hans-CN), or, from
 # gettext 0.21 (Ubuntu 22.04's, which the AppImage is built on), as the PO
-# file does (zh_CN), which AppStream reads as well. Skwir Preview's entry
+# file does (zh_CN), which AppStream reads as well. The viewer's entry
 # is there too, and speaks each language once it speaks one: its words
 # wait for their translations, which msgfmt leaves out until then.
 installed() {
     missing=0
     if [ -s "$1/applications/$viewer" ]; then
-        echo "ok: Skwir Preview's desktop entry"
+        echo "ok: the viewer's desktop entry"
     else
-        echo "missing: Skwir Preview's desktop entry, $1/applications/$viewer"
+        echo "missing: the viewer's desktop entry, $1/applications/$viewer"
         missing=1
     fi
     for language in $(languages); do
@@ -78,7 +78,7 @@ installed() {
         fi
         if grep -q '^[A-Za-z-]*\[[^]]*\]=' "$1/applications/$viewer" 2>/dev/null &&
             ! grep -q "^[A-Za-z-]*\[$language\]=" "$1/applications/$viewer"; then
-            echo "missing: Skwir Preview's desktop entry in $language, in $1"
+            echo "missing: the viewer's desktop entry in $language, in $1"
             missing=1
         fi
     done

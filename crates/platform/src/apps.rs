@@ -221,8 +221,8 @@ impl Catalog {
                 let index = catalog.apps.len();
                 for m in &app.mime_types {
                     let declaring = catalog.declared.entry(canonical(m)).or_default();
-                    // A type named twice (by its name and an alias, as
-                    // Skwir Preview's entry names it) is declared once.
+                    // A type named twice (by its name and an alias) is
+                    // declared once.
                     if declaring.last() != Some(&index) {
                         declaring.push(index);
                     }
@@ -302,34 +302,15 @@ impl Catalog {
     /// has its own; else, most lists naming no default for most types, the
     /// first application associated with the nearest type that has one,
     /// added by a list or declared by its entry, and not removed.
-    ///
-    /// Skwir Preview is no such first application (ADR-151, 8): its entry
-    /// declares every type Skwir previews, the specific ones (Markdown,
-    /// Matroska, a ZIP archive) that an editor, a player or an archiver
-    /// often leaves to their parent, so it would take every file the
-    /// lists name no default for from the application that declares its
-    /// parent type or sorts after it. Its declaration alone offers it
-    /// (Open With); it opens a type when a list names it, as a default or
-    /// an addition (an Open With elsewhere that remembers its choice).
     pub fn default_for_lineage(&self, lineage: &[Mime]) -> Option<&Application> {
         lineage
             .iter()
             .find_map(|m| self.default_for(m.as_str()))
             .or_else(|| {
-                lineage.iter().find_map(|m| {
-                    self.for_type(m.as_str())
-                        .into_iter()
-                        .find(|app| !is_skwir_preview(&app.id) || self.adds(m.as_str(), &app.id))
-                })
+                lineage
+                    .iter()
+                    .find_map(|m| self.for_type(m.as_str()).into_iter().next())
             })
-    }
-
-    /// Whether a list adds `id` for `mime` (`[Added Associations]`, not
-    /// removed by a more important list).
-    fn adds(&self, mime: &str, id: &str) -> bool {
-        self.lists
-            .get(mime)
-            .is_some_and(|a| a.added.iter().any(|added| added == id))
     }
 
     /// The applications associated with `mime` itself: its default, then
@@ -362,16 +343,6 @@ impl Catalog {
         }
         out
     }
-}
-
-/// Whether `id` is Skwir Preview's desktop entry
-/// (`org.skwir.skwir.view.desktop`, `tools/package/linux`), under the
-/// prefix a subfolder or an `AppImage`'s integration gives it
-/// (`appimagekit_…-`).
-fn is_skwir_preview(id: &str) -> bool {
-    id.strip_suffix(".view.desktop")
-        .and_then(|stem| stem.strip_suffix(skwir_core::APP_ID))
-        .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('-'))
 }
 
 /// A type as the catalog keeps it: by its canonical name, as GIO keeps
@@ -1315,97 +1286,6 @@ mod tests {
             "what opens any stream of bytes, as the desktop would"
         );
         assert_eq!(default(&["inode/directory"]), None, "nothing opens it");
-    }
-
-    /// Skwir Preview's entry declares the specific types (ADR-151, 8): it
-    /// opens none of them for what declares their parent or sorts after
-    /// it, unless a list names it, and it is still offered.
-    #[test]
-    fn skwir_preview_opens_only_what_a_list_names_it_for() {
-        let tmp = tempfile::tempdir().unwrap();
-        let apps = tmp.path().join("applications");
-        let entry = |name: &str, mime: &str| {
-            format!(
-                "[Desktop Entry]\nType=Application\nName={name}\nExec={name} %F\nNoDisplay=true\nMimeType={mime}\n"
-            )
-        };
-        write(
-            &apps,
-            "org.skwir.skwir.view.desktop",
-            &entry(
-                "preview",
-                "text/markdown;video/mp4;image/png;application/zip;image/gif;",
-            ),
-        );
-        // The same entry, as an AppImage's integration names it.
-        write(
-            &apps,
-            "appimagekit_0a1b-org.skwir.skwir.view.desktop",
-            &entry("integrated", "application/x-tar;application/x-cpio;"),
-        );
-        // Another's entry whose name merely ends alike.
-        write(
-            &apps,
-            "zorg.skwir.skwir.view.desktop",
-            &entry("lookalike", "image/gif;"),
-        );
-        write(&apps, "notes.desktop", &entry("notes", "text/plain;"));
-        // Read after Skwir Preview's, as its ID sorts.
-        write(&apps, "vlc.desktop", &entry("vlc", "video/mp4;"));
-        let list = tmp.path().join("mimeapps.list");
-        write(
-            tmp.path(),
-            "mimeapps.list",
-            "[Added Associations]\nimage/png=org.skwir.skwir.view.desktop;\n\n\
-             [Default Applications]\napplication/x-tar=appimagekit_0a1b-org.skwir.skwir.view.desktop;\n",
-        );
-        let catalog = Catalog::from_paths(&[apps], &[list]);
-        let default = |types: &[&str]| {
-            let lineage: Vec<Mime> = types.iter().map(|t| Mime((*t).into())).collect();
-            catalog.default_for_lineage(&lineage).map(|a| a.id.clone())
-        };
-        assert_eq!(
-            default(&["text/markdown", "text/plain", "application/octet-stream"]).as_deref(),
-            Some("notes.desktop"),
-            "only Skwir Preview declares the type: what declares its parent"
-        );
-        assert_eq!(
-            default(&["video/mp4", "application/octet-stream"]).as_deref(),
-            Some("vlc.desktop"),
-            "the type's next application"
-        );
-        assert_eq!(
-            default(&["application/zip", "application/octet-stream"]),
-            None,
-            "nothing else opens it: the desktop's opener"
-        );
-        assert_eq!(
-            default(&["application/x-cpio", "application/octet-stream"]),
-            None,
-            "under an integration's prefix too"
-        );
-        assert_eq!(
-            default(&["image/png", "application/octet-stream"]).as_deref(),
-            Some("org.skwir.skwir.view.desktop"),
-            "added by a list"
-        );
-        assert_eq!(
-            default(&["application/x-tar", "application/octet-stream"]).as_deref(),
-            Some("appimagekit_0a1b-org.skwir.skwir.view.desktop"),
-            "the default a list names"
-        );
-        assert_eq!(
-            default(&["image/gif", "application/octet-stream"]).as_deref(),
-            Some("zorg.skwir.skwir.view.desktop"),
-            "another's entry is no Skwir Preview"
-        );
-        assert!(
-            catalog
-                .for_type("text/markdown")
-                .iter()
-                .any(|a| a.id == "org.skwir.skwir.view.desktop"),
-            "offered still"
-        );
     }
 
     /// The default named for folders, as `named_default` reads it: the

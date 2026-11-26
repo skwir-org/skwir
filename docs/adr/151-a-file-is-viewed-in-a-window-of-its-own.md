@@ -23,7 +23,9 @@ steps, the launch confirming it (1), and what stands for standard input
 is removed only as the caller's own spool (7). Amended the same day,
 from a review of the window: what a viewer offers is each command's to
 say, as for dialogs, and More's rows, keys and buttons ask it (5); what
-it says is drawn over its card (3).
+it says is drawn over its card (3). Amended the same day, on the user's
+answers before 0.7.1 was published: the Open With entry is named "skwir
+view" and declares `application/octet-stream` alone (8).
 
 ## Context
 
@@ -317,10 +319,14 @@ it says is drawn over its card (3).
        of files named, still go to the Skwir running, rather than start
        a second program each.
 8. **Open With.**
-   - A desktop entry of its own, "Skwir Preview", runs `skwir view %F`.
-   - Its types are the kinds Skwir previews, as the desktop's database
-     groups them (`mime::Kind`). They are listed from the database and
-     checked against it, never written by hand.
+   - A desktop entry of its own, "skwir view", runs `skwir view %F`: the
+     brand as the window writes it, and the command it runs.
+   - It declares one type, `application/octet-stream`: it never takes a
+     type another application declares. A desktop that offers what
+     declares that type for every file offers it so; GIO (2.90) offers
+     it only for a file of no known type, which leaves it to `skw` and
+     to Skwir's own Open With, where every file's lineage ends with that
+     type.
    - It is translated as the program's entry is, and kept out of the
      launcher's list (`NoDisplay`): it opens what it is given.
 
@@ -354,6 +360,17 @@ it says is drawn over its card (3).
   its terminal, and its errors with it.
 - **Space closing it, as peek's does:** Space plays what plays, and the
   window is not over the user's files.
+- **Declaring the kinds Skwir previews** (813 types, by every name the
+  database gives them; built, then set aside before 0.7.1 was
+  published): where the lists name no default for a type, the desktop
+  takes the first application declaring it, in the order of their
+  desktop IDs, and a type's own declarations before its parent's
+  default. It became the opener of VLC's videos (`org.skwir.skwir.view`
+  sorts before `vlc`) and of Markdown past `text/plain`'s default,
+  editors leaving it to its parent: checked with GIO 2.90; xdg-utils and
+  KService read so in their source. No key of an entry says "offered,
+  never first". Skwir's own catalog had refused it as a first
+  application, which the desktop did not.
 
 ## Consequences
 

@@ -41,9 +41,9 @@ class Translations(unittest.TestCase):
             self.assertIn("missing: the desktop entry or the metainfo in", told.stdout)
 
     @unittest.skipUnless(GETTEXT, "gettext is in the Nix shell")
-    def test_skwir_preview_is_merged_with_its_types(self):
-        # Its MimeType line, longer than any other, as the English says it
-        # (viewer_types.py checks the English against the database).
+    def test_the_viewers_entry_is_merged_with_its_type(self):
+        # What is not translated (its name, its program, its type) as the
+        # English says it.
         with tempfile.TemporaryDirectory() as share:
             self.assertEqual(run("merge", share).returncode, 0)
             merged = Path(share, "applications", VIEWER.name).read_text().splitlines()
@@ -54,7 +54,7 @@ class Translations(unittest.TestCase):
                                      [row for row in english if row.startswith(key)])
 
     @unittest.skipUnless(GETTEXT, "gettext is in the Nix shell")
-    def test_skwir_preview_missing_or_short_of_a_language_is_told(self):
+    def test_the_viewers_entry_missing_or_short_of_a_language_is_told(self):
         with tempfile.TemporaryDirectory() as share:
             self.assertEqual(run("merge", share).returncode, 0)
             viewer = Path(share, "applications", VIEWER.name)
@@ -62,14 +62,14 @@ class Translations(unittest.TestCase):
             viewer.unlink()
             told = run("installed", share)
             self.assertNotEqual(told.returncode, 0)
-            self.assertIn("missing: Skwir Preview's desktop entry", told.stdout)
+            self.assertIn("missing: the viewer's desktop entry", told.stdout)
             # Once it speaks one language, it speaks each.
             languages = [word for row in (L10N.parent / "po/LINGUAS").read_text().splitlines()
                          for word in row.split("#")[0].split()]
             viewer.write_text(english + f"GenericName[{languages[0]}]=…\n")
             told = run("installed", share)
             self.assertNotEqual(told.returncode, 0)
-            self.assertIn(f"missing: Skwir Preview's desktop entry in {languages[-1]}", told.stdout)
+            self.assertIn(f"missing: the viewer's desktop entry in {languages[-1]}", told.stdout)
             viewer.write_text(english + "".join(f"GenericName[{language}]=…\n" for language in languages))
             installed = run("installed", share)
             self.assertEqual(installed.returncode, 0, installed.stdout)

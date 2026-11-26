@@ -15,8 +15,8 @@ index of names, with its packages.
   `skw -` shows what is piped in; with no file, the system's dialog asks
   which. With Skwir open, the window is that Skwir's and opens at once;
   otherwise it is a program of its own that starts only what showing a
-  file needs. Either way the terminal waits until the window closes. A
-  file manager can offer it in Open With, as Skwir Preview
+  file needs. Either way the terminal waits until the window closes.
+  Skwir's Open With offers it for every file, as skwir view
   ([ADR-151](docs/adr/151-a-file-is-viewed-in-a-window-of-its-own.md)).
 - **skwird comes with Skwir**: the Windows and Mac builds and the Linux
   tarball carry it; the `.deb` and `.rpm` packages recommend it, and
@@ -63,9 +63,9 @@ happens](docs/HELP-WANTED.md).
 - **Skwir's apt and dnf repositories** list skwird's own packages, each
   suite its own (ADR-142); an `.rpm` the repositories' key did not sign is
   left out of Fedora's.
-- **Skwir Preview** is never Skwir's own default opener unless a list names
-  it, and its types are listed by their aliases too, for older type
-  databases. `skw` works through a link to the AppImage.
+- **The viewer's Open With entry**, skwir view, declares
+  `application/octet-stream` alone: it takes no type from the
+  applications that open it. `skw` works through a link to the AppImage.
 - **Dependencies** updated within their ranges; the packages' notices made
   again.
 

@@ -128,8 +128,8 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # beside it, a link to it (started under that name, skwir is `skwir
 # view`, ADR-151), its helpers where a distribution keeps a program's own
 # (`process::helper_folders`), PDFium beside its helper, the desktop
-# entries (skwir's and Skwir Preview's), the metainfo and the icon (the
-# UI's own, crates/ui/assets/org.skwir.skwir.svg). Built on
+# entries (the file manager's and the viewer's), the metainfo and the
+# icon (the UI's own, crates/ui/assets/org.skwir.skwir.svg). Built on
 # the distribution each is for, whose libraries they depend on:
 # tools/package/deb.sh, rpm.sh, and the AUR's tools/package/aur/PKGBUILD,
 # which lists the same files. A helper whose libraries most systems do

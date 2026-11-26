@@ -39,13 +39,13 @@ msgstr "浏览、查找和整理您的文件"
 msgid "files;folders;browser;tags;search;"
 msgstr "文件;文件夹;文件管理器;资源管理器;标签;搜索;"
 
-#. Translators: what kind of program Skwir Preview is, shown under its
+#. Translators: what kind of program skwir view is, shown under its
 #. name. It shows one file, or several, in a window of its own.
 #: org.skwir.skwir.view.desktop:6
 msgid "File Viewer"
 msgstr ""
 
-#. Translators: what Skwir Preview does, shown where a file is opened with
+#. Translators: what skwir view does, shown where a file is opened with
 #. it (Open With).
 #: org.skwir.skwir.view.desktop:9
 msgid "Show a file's preview"

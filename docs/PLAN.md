@@ -1449,14 +1449,14 @@ share, a viewer's own program 73.0, one handed to skwir 22.8 more, its
 first frame 26 ms from the launch against 85). Left:
 - the system's dialog with no file named, tried only where no portal
   answers (it ends, saying why);
-- the packages' `skw` link and Skwir Preview entry, built by 0.7.1's
-  release; the RPM owns no `skw` link (cargo-generate-rpm has no
-  symlink asset: an upstream pull request would let it);
-- Skwir Preview's declared types: other programs (GIO, xdg-open, KDE)
-  take it as the default opener of each type it declares that no list
-  names directly, and its desktop ID sorts before `vlc`; Skwir's own
-  Open no longer does (7fcbb415). How many it declares is the user's
-  call;
+- the packages' `skw` link and the viewer's entry ("skwir view"),
+  built by 0.7.1's release; the RPM owns no `skw` link
+  (cargo-generate-rpm has no symlink asset: an upstream pull request
+  would let it);
+- the viewer's entry declares `application/octet-stream` alone (the
+  user's choice, ADR-151 8): GIO 2.90 offers it only for files of no
+  known type (checked); what KDE's Open With offers with it is not
+  checked;
 - Windows: the handover tried under Wine (the pipe), its window
   compiled only; a release build's terminal does not wait for `skw`
   (the window subsystem), and a later Ctrl+C in that console ends the

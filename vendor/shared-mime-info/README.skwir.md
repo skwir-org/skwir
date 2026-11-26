@@ -11,13 +11,10 @@ It is data, not code Skwir builds. `tools/package/mime-database.sh`
 compiles it with shared-mime-info's `update-mime-database` into the files
 the macOS and Windows packages carry beside Skwir, as the fallback of each
 system's own types (ADR-037). On Linux Skwir reads the database the desktop
-installed, never this one. Skwir Preview's desktop entry lists the types it
-opens from it (`tools/package/viewer_types.py`, ADR-151).
+installed, never this one.
 
 Left out: the translations (`po/`; each system names types in its own
 words), the compiler and its tests.
 
 To update: replace `freedesktop.org.xml.in` and `COPYING` with a new
-release's, update `VERSION`, and list Skwir Preview's types again:
-`tools/package/viewer_types.py --write
-tools/package/linux/org.skwir.skwir.view.desktop`.
+release's, and update `VERSION`.
