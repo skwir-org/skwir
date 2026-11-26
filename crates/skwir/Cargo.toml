@@ -152,9 +152,10 @@ folders, previews of documents, pictures, music, films, archives and \
 maps, tags kept on the files themselves, and every change undoable."""
 depends = "$auto, libvulkan1, libfontconfig1"
 # skwird, skwir's index of names (ADR-050), from skwir's own repository,
-# which lists its release's packages (ADR-142); installed, it turns
-# nothing on, and its engine starts at skwir's first search. Where no
-# repository has it, apt installs skwir without it, which walks instead.
+# which lists its release's packages (ADR-142); installed, it makes its
+# system service's user (`skwird`) and installs its units, enabling none,
+# and its engine starts at skwir's first search. Where no repository has
+# it, apt installs skwir without it, which walks instead.
 recommends = "skwird, skwir-media, skwir-heif, mesa-vulkan-drivers, bubblewrap, udisks2"
 # Beside the other readers and what previews use: the tools remote
 # folders mount through (ADR-077), the FUSE rclone and the phone helper
