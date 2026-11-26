@@ -201,8 +201,16 @@ people never had it, every search walked, and nothing said why. So:
   website's download page at skwird's section
   (`https://skwir.org/download#skwird`). A search that walked says
   `no index` in its footer, with those words as its tooltip; a click
-  opens Settings › Index. A note, never a question or a toast. Kept
-  live no longer promises that the next search starts an engine.
+  opens Settings › Index (the words alone in a window that runs no
+  Settings: another program's dialog's, a viewer's). Only a search that
+  walked whole for want of it says so: its run tells the listing
+  (`ListingEvent::WalkedWithout`), for a query an index of names is
+  asked (not a tag alone), below a root the missing index would have
+  answered (a local folder, on no server's mount nor the kernel's own
+  filesystems, told from the mount table in memory); a run an index
+  answered, or the tags' index covered, takes it back. A note, never a
+  question or a toast. Kept live no longer promises that the next
+  search starts an engine.
 - **From memory.** Whether skwird is missing is looked at off the
   window's thread, as a window comes to the front (`Plugin::on_looked_at`)
   and as a search finds no engine; an engine answering clears it. The

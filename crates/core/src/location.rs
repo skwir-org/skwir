@@ -244,6 +244,14 @@ pub enum ListingEvent {
     /// listing that may rest on either, so a run that walks takes back
     /// what an earlier one said.
     RestsOn(Option<RestsOn>),
+    /// The names index a run walked the folders for want of: one that
+    /// would have answered below the root, its program not installed
+    /// (`names::NameIndex::absent`), said where the answer is. `None` from
+    /// every other run: an index answered, another covered it (the tags'),
+    /// the query is none an index of names is asked, none is missing, or
+    /// none would have answered there (a server's folder). Said by each run
+    /// of a search, so a run takes back what an earlier one said.
+    WalkedWithout(Option<crate::names::Absent>),
     /// How many folders below the root a walk left out (ADR-125: the list
     /// of `walks::LeftOut`, caches, trash, network mounts), said so rather
     /// than silently. Said by each run of a listing that walks, none
@@ -3149,6 +3157,9 @@ pub struct Listing {
     rests_on: Option<RestsOn>,
     /// How many folders the walk left out (`ListingEvent::LeftOut`).
     left_out: usize,
+    /// The names index the walk was for want of
+    /// (`ListingEvent::WalkedWithout`).
+    walked_without: Option<crate::names::Absent>,
     /// Incremented on every change, so views know when to recompute. An
     /// event that changes nothing (a stat that found what the listing
     /// already had) leaves it alone, so work keyed on it cannot loop.
@@ -3320,6 +3331,7 @@ impl Default for Listing {
             error: None,
             rests_on: None,
             left_out: 0,
+            walked_without: None,
             version: id,
             names_version: id,
             fields_version: id,
@@ -4004,6 +4016,10 @@ impl Listing {
             ListingEvent::LeftOut(n) => {
                 delta.any = self.left_out != n;
                 self.left_out = n;
+            }
+            ListingEvent::WalkedWithout(absent) => {
+                delta.any = self.walked_without != absent;
+                self.walked_without = absent;
             }
             ListingEvent::Redirect(location) => {
                 self.redirect = Some(location);
@@ -4809,6 +4825,13 @@ impl Listing {
         self.rests_on.as_ref()
     }
 
+    /// The names index the folders were walked for want of, where one
+    /// would have answered (`ListingEvent::WalkedWithout`): why it is
+    /// missing, in its words.
+    pub fn walked_without(&self) -> Option<&crate::names::Absent> {
+        self.walked_without.as_ref()
+    }
+
     /// How many folders below the root the walk left out.
     pub fn left_out(&self) -> usize {
         self.left_out
@@ -5470,6 +5493,31 @@ mod tests {
             "a walk takes it back"
         );
         assert_eq!(listing.rests_on(), None);
+    }
+
+    #[test]
+    fn the_index_a_walk_was_for_want_of_is_kept_until_a_run_says_otherwise() {
+        let mut listing = Listing::default();
+        assert_eq!(listing.walked_without(), None);
+        let absent = crate::names::Absent {
+            why: Words::as_written("an index is not installed"),
+            label: Words::as_written("Get it"),
+            url: "https://example.org/download".to_owned(),
+        };
+        let before = listing.version();
+        assert!(listing.apply(ListingEvent::WalkedWithout(Some(absent.clone()))));
+        assert_eq!(listing.walked_without(), Some(&absent));
+        assert_ne!(listing.version(), before, "who draws it sees it");
+        let said = listing.version();
+        assert!(!listing.apply(ListingEvent::WalkedWithout(Some(absent.clone()))));
+        assert_eq!(listing.version(), said, "said again, nothing changed");
+        assert!(listing.apply(ListingEvent::Complete));
+        assert_eq!(listing.walked_without(), Some(&absent), "complete keeps it");
+        assert!(
+            listing.apply(ListingEvent::WalkedWithout(None)),
+            "a run an index answered takes it back"
+        );
+        assert_eq!(listing.walked_without(), None);
     }
 
     #[test]

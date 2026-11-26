@@ -205,6 +205,7 @@ pub(crate) fn render(
         sweep,
         total,
         rests_on,
+        walked_without,
         reads,
         left_out,
         looking,
@@ -214,7 +215,7 @@ pub(crate) fn render(
         let pane = ws.pane(shell.pane);
         pane.map_or(
             (
-                None, 0, true, None, false, None, None, None, false, 0, false, None,
+                None, 0, true, None, false, None, None, None, None, false, 0, false, None,
             ),
             |p| {
                 (
@@ -230,6 +231,7 @@ pub(crate) fn render(
                     p.is_filtered()
                         .then(|| p.listing.order_shown(p.sorting()).len()),
                     p.listing.rests_on().cloned(),
+                    p.listing.walked_without().cloned(),
                     p.read_filter().is_some_and(|r| r.metadata),
                     p.listing.left_out(),
                     p.looks_below(),
@@ -362,19 +364,19 @@ pub(crate) fn render(
         ),
         None => items,
     };
-    // A search that walked, where an index answers nowhere (its program
-    // not installed), says so in the index's words (`NameIndex::absent`),
-    // asked from memory: nothing is looked up here. Nothing where none is
-    // absent, so the footer never makes room for it.
-    let absent = (is_query && complete && error.is_none() && rests_on.is_none())
-        .then(|| shell.app.names.absent().into_iter().next())
-        .flatten();
+    // A search that walked the folders for want of a names index, one that
+    // would have answered there with its program installed, says so in the
+    // index's words, as its run said it (`Listing::walked_without`): never
+    // of a search an index answered or would not have. Nothing otherwise,
+    // so the footer never makes room for it.
+    let absent = walked_without.filter(|_| is_query && complete && error.is_none());
     let no_index = absent.as_ref().map(|_| {
         words!(
             status_no_index = "no index",
             note = "In a search's footer, after its count, when the search went through the \
                     folders one by one because the index that would answer it is not installed \
-                    (skwird). Its tooltip says why; a click opens Settings at Index."
+                    (skwird). Its tooltip says why; a click opens Settings at Index, where the \
+                    window offers Settings."
         )
     });
     // An index's answer says how far it is proven (ADR-050, ADR-150): as
@@ -458,28 +460,29 @@ pub(crate) fn render(
     }
     if let (Some(absent), Some(text)) = (absent, no_index) {
         let tip: gpui::SharedString = absent.why.say().into();
-        let said = text.say();
-        bar = bar.child(
-            div()
-                .id("listing-no-index")
-                .role(gpui::Role::Button)
+        let index_page = serde_json::json!({ "page": skwir_core::settings::page::INDEX });
+        // A button to Settings › Index where the window runs Settings; in
+        // one that does not (another program's dialog's, a viewer's), the
+        // words alone, with their tooltip.
+        let opens = shell.runs_here("ui.settings", &index_page);
+        let item = div()
+            .id("listing-no-index")
+            .flex_none()
+            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+            .child(text.say());
+        bar = bar.child(if opens {
+            item.role(gpui::Role::Button)
                 .when(shell.a11y, |d| d.aria_label(absent.why.say_plain()))
-                .flex_none()
                 .px_2()
                 .rounded_md()
                 .cursor_pointer()
                 .hover(|s| s.bg(theme.hover))
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.run(
-                        "ui.settings",
-                        serde_json::json!({ "page": skwir_core::settings::page::INDEX }),
-                        window,
-                        cx,
-                    );
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.run("ui.settings", index_page.clone(), window, cx);
                 }))
-                .child(said),
-        );
+        } else {
+            item.when(shell.a11y, |d| d.aria_label(absent.why.say_plain()))
+        });
     }
     if let Some(text) = left_out {
         bar = bar.child(

@@ -203,6 +203,7 @@ impl Plugin for SkwirdPlugin {
                 secrets: Mutex::default(),
                 kept,
                 presence,
+                answers_below,
                 hello: HELLO,
                 release_within: RELEASE_WITHIN,
             }),
@@ -263,10 +264,24 @@ struct Index {
     /// Whether skwird is missing: looked at again as a search finds no
     /// engine, cleared as one answers.
     presence: Arc<program::Presence>,
+    /// Whether skwird would answer a search below a root: `answers_below`,
+    /// or a test's.
+    answers_below: fn(&Path) -> bool,
     /// How long a connect waits for a hello: `HELLO`, or a test's.
     hello: Duration,
     /// How long a release waits, all of it: `RELEASE_WITHIN`, or a test's.
     release_within: Duration,
+}
+
+/// Whether skwird, installed, would answer a search below `root`: a local
+/// folder, on no remote mount nor one of the kernel's own filesystems,
+/// told from the mount table in memory, nothing read. What a missing
+/// skwird is said of (`NameIndex::absent`): installing it changes nothing
+/// for a search of a server's folder.
+fn answers_below(root: &Path) -> bool {
+    use skwir_core::fs::reach;
+    reach::of(root).is_none()
+        && reach::volume_of(root).is_none_or(|volume| !reach::kernel_point(&volume))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -473,14 +488,17 @@ impl NameIndex for Index {
         }
     }
 
-    /// A session on an engine already running, nothing started nor sent
-    /// but what is asked: what follows `root`'s journal (ADR-150, D5).
-    /// skwird missing at the last look (`program::Presence`): said from
-    /// memory, as the window draws.
-    fn absent(&self) -> Option<Absent> {
-        self.presence.missing().then(absent)
+    /// skwird missing at the last look (`program::Presence`), where it
+    /// would have answered a search below `root` (none: anywhere, the
+    /// Index page): a local folder (`answers_below`). Said from memory,
+    /// as the window draws.
+    fn absent(&self, root: Option<&Path>) -> Option<Absent> {
+        let would_answer = root.is_none_or(|root| (self.answers_below)(root));
+        (would_answer && self.presence.missing()).then(absent)
     }
 
+    /// A session on an engine already running, nothing started nor sent
+    /// but what is asked: what follows `root`'s journal (ADR-150, D5).
     fn follow(&self, root: &Path, cancel: &CancelToken) -> Option<Opened> {
         let find = find(&self.engines, false)?;
         if cancel.is_cancelled() {

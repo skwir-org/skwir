@@ -21,6 +21,7 @@ use skwir_core::location::{
     EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
     RestsOn,
 };
+use skwir_core::names::Absent;
 use skwir_core::op::Change;
 use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::walks::{Below, LeftOut};
@@ -1899,6 +1900,27 @@ impl Shared {
         }
     }
 
+    /// Say which names index this run walked the folders for want of
+    /// (`ListingEvent::WalkedWithout`): `None` from a run an index answered
+    /// or covered, so a run takes back what an earlier one said.
+    fn walked_without(&self, cancel: &CancelToken, absent: Option<Absent>) {
+        let _walk = self.walk.lock();
+        if !cancel.is_cancelled() {
+            self.tx.send(ListingEvent::WalkedWithout(absent));
+        }
+    }
+
+    /// The names index a walk of `q` was for want of: where an index of
+    /// names is asked such a query (`Query::named`), the first missing that
+    /// would have answered below its root (`NameIndex::absent`: its program
+    /// not installed, the root a local folder), from memory. None for a
+    /// query no index of names answers (a tag alone), which walks anyway.
+    fn wanted(&self, q: &Query) -> Option<Absent> {
+        let root = skwir_core::os_path::canonical(&q.root).ok()?;
+        q.named(root.clone())?;
+        self.ctx.names.absent(Some(&root)).into_iter().next()
+    }
+
     /// Say how many folders this run left out below the root
     /// (`ListingEvent::LeftOut`), none included: never silently (ADR-125).
     fn left_out(&self, cancel: &CancelToken, folders: usize) {
@@ -1951,6 +1973,9 @@ impl Shared {
             hinted
         };
         if self.covered_by_an_index(q) {
+            // Answered by what the hints name: no names index, no walk.
+            self.rests_on(cancel, None);
+            self.walked_without(cancel, None);
             batcher.finish();
             return;
         }
@@ -1966,6 +1991,7 @@ impl Shared {
             let walked = Self::walk_holes(q, &below, &holes, &considered, &batcher, &deferred);
             self.left_out(cancel, left_out + walked);
             self.rests_on(cancel, Some(rests_on));
+            self.walked_without(cancel, None);
         } else {
             // Walked whole, as Enter's search answers it too: shown as
             // typed, Enter leaves it as it is (ADR-098).
@@ -1978,6 +2004,9 @@ impl Shared {
             let left_out = Self::walk_below(q, &q.root, &below, &considered, &batcher, &deferred);
             self.left_out(cancel, left_out);
             self.rests_on(cancel, None);
+            // For want of an index, where one missing would have answered.
+            let wanted = self.wanted(q);
+            self.walked_without(cancel, wanted);
         }
         deferred.finish();
         batcher.finish();
@@ -2852,6 +2881,7 @@ mod tests {
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
                 | ListingEvent::RestsOn(_)
+                | ListingEvent::WalkedWithout(_)
                 | ListingEvent::LeftOut(_)
                 | ListingEvent::Redirect(_)
                 | ListingEvent::Moved(_) => {}

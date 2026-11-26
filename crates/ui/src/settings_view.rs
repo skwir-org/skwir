@@ -1914,7 +1914,7 @@ impl SettingsView {
     /// nothing looked up as the page draws; gone once the index finds it
     /// again, at a look at the window or a search. A note, never asked.
     fn index_absent(&mut self, items: &mut Vec<AnyElement>, theme: &Theme, cx: &mut Context<Self>) {
-        for (n, absent) in self.app.names.absent().into_iter().enumerate() {
+        for (n, absent) in self.app.names.absent(None).into_iter().enumerate() {
             let focus = self.handle(&format!("index-absent:{n}"), cx);
             self.stop(&focus, Some(items.len()), None);
             let url: SharedString = absent.url.into();

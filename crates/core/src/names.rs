@@ -357,11 +357,11 @@ pub struct Opened {
 }
 
 /// Why an index answers no search here ([`NameIndex::absent`]): its
-/// program is not installed. Said where a search walked instead (its
-/// footer's tooltip) and on the settings' Index page, beside a button
-/// opening the page it is got from: the index's words, the shell naming
-/// no index.
-#[derive(Clone, Debug)]
+/// program is not installed. Said where a search walked for want of it
+/// (`location::ListingEvent::WalkedWithout`: its footer's tooltip) and on
+/// the settings' Index page, beside a button opening the page it is got
+/// from: the index's words, the shell naming no index.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Absent {
     /// Why, in whole sentences: what is missing, what searches do without
     /// it, what it would do, and where it is got.
@@ -434,11 +434,13 @@ pub trait NameIndex: Send + Sync {
 
     /// Why it answers no search here, where that is what it last found
     /// (its program not installed), with what the Index page offers for
-    /// it ([`Absent`]). Asked as the window draws (a search's footer, the
-    /// Index page): from memory, never looked up where it is asked; the
-    /// index looks again off the window's thread and wakes it when the
-    /// answer changes. `None` (the default) where it may answer.
-    fn absent(&self) -> Option<Absent> {
+    /// it ([`Absent`]): only where it would have answered a search below
+    /// `root` (a real path; a local folder, not a server's), or anywhere
+    /// for `None` (the Index page). Asked by a search that walked whole,
+    /// and as the window draws: from memory, never looked up where it is
+    /// asked; the index looks again off the window's thread and wakes it
+    /// when the answer changes. `None` (the default) where it may answer.
+    fn absent(&self, _root: Option<&Path>) -> Option<Absent> {
         None
     }
 }
@@ -527,11 +529,15 @@ impl NameIndexes {
         covered
     }
 
-    /// Why each index that answers no search here does not
-    /// ([`NameIndex::absent`]), in registration order: from memory, as the
-    /// window draws.
-    pub fn absent(&self) -> Vec<Absent> {
-        self.list.all().iter().filter_map(|i| i.absent()).collect()
+    /// Why each index that answers no search here does not, of those
+    /// that would have answered one below `root` (`None`: anywhere)
+    /// ([`NameIndex::absent`]), in registration order: from memory.
+    pub fn absent(&self, root: Option<&Path>) -> Vec<Absent> {
+        self.list
+            .all()
+            .iter()
+            .filter_map(|i| i.absent(root))
+            .collect()
     }
 
     /// Every index let go of `point` before its volume is unmounted
@@ -620,7 +626,8 @@ mod tests {
         }
     }
 
-    /// An index whose program is missing, saying so.
+    /// An index whose program is missing, saying so of what is below
+    /// `/local`.
     struct Missing(&'static str);
 
     impl NameIndex for Missing {
@@ -636,45 +643,55 @@ mod tests {
         fn open(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
             None
         }
-        fn absent(&self) -> Option<Absent> {
-            Some(Absent {
-                why: Words::as_written(format!("{} is not installed", self.0)),
-                label: Words::as_written(format!("Get {}", self.0)),
-                url: "https://example.org/download".to_owned(),
-            })
+        fn absent(&self, root: Option<&Path>) -> Option<Absent> {
+            root.is_none_or(|root| root.starts_with("/local"))
+                .then(|| Absent {
+                    why: Words::as_written(format!("{} is not installed", self.0)),
+                    label: Words::as_written(format!("Get {}", self.0)),
+                    url: "https://example.org/download".to_owned(),
+                })
         }
     }
 
     /// An index says why it answers nowhere only where it says so: by
     /// default none does. What those that do say is listed in their
-    /// order, and withdrawn with their owner.
+    /// order, of those that would have answered below the root asked (all
+    /// for none), and withdrawn with their owner.
     #[test]
     fn only_an_index_that_says_it_is_absent_is() {
         let indexes = NameIndexes::default();
-        assert!(indexes.absent().is_empty(), "no index");
+        assert!(indexes.absent(None).is_empty(), "no index");
         indexes.register("a", Arc::new(Fixed("answers", Coverage::as_of(None))));
         assert!(
-            indexes.absent().is_empty(),
+            indexes.absent(None).is_empty(),
             "an index of none's default is not absent"
         );
         indexes.register("b", Arc::new(Missing("first")));
         indexes.register("c", Arc::new(Missing("second")));
-        let said = |indexes: &NameIndexes| -> Vec<String> {
+        let said = |indexes: &NameIndexes, root: Option<&Path>| -> Vec<String> {
             indexes
-                .absent()
+                .absent(root)
                 .iter()
                 .map(|absent| absent.why.english())
                 .collect()
         };
         assert_eq!(
-            said(&indexes),
+            said(&indexes, None),
             ["first is not installed", "second is not installed"]
         );
-        let absent = indexes.absent().remove(0);
+        assert_eq!(
+            said(&indexes, Some(Path::new("/local/docs"))),
+            ["first is not installed", "second is not installed"]
+        );
+        assert!(
+            said(&indexes, Some(Path::new("/server/docs"))).is_empty(),
+            "below a root they would not have answered"
+        );
+        let absent = indexes.absent(None).remove(0);
         assert_eq!(absent.label.english(), "Get first");
         assert_eq!(absent.url, "https://example.org/download");
         indexes.unregister_owner("b");
-        assert_eq!(said(&indexes), ["second is not installed"]);
+        assert_eq!(said(&indexes, None), ["second is not installed"]);
     }
 
     /// Before a volume is unmounted, every index is asked to let go of it,

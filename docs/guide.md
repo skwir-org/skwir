@@ -607,8 +607,8 @@ it, **+ Filter** adds one, and the text can be typed as is:
     as the system.
   - Where skwird is missing, Settings › Index says so, with a button to
     the [download page](https://skwir.org/download#skwird), and a search
-    that walked says `no index` in its footer; a click there opens
-    Settings › Index.
+    by name that walked the folders of this computer for want of it says
+    `no index` in its footer; a click there opens Settings › Index.
   - Below a folder skwird keeps live, the answer comes at once and up to
     date. Elsewhere in your home, skwird checks what changed first,
     about half a second.

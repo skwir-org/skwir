@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use skwir_core::cancel::CancelToken;
 use skwir_core::coverage::{Coverage, Hole, Proof, Why};
 use skwir_core::location::{ListingEvent, LocationProvider, OpenContext, RestsOn};
-use skwir_core::names::{Answer, NameIndex, NameIndexes, Opened, Query, Session};
+use skwir_core::names::{Absent, Answer, NameIndex, NameIndexes, Opened, Query, Session};
 use skwir_core::scheduler::Scheduler;
 use skwir_core::words::Words;
 use skwir_plugin_query::provider::{QueryProvider, Searches};
@@ -53,6 +53,9 @@ struct Fake {
     /// Whether its engine says, on each connection, that it matches a term
     /// in both its forms.
     both_forms: bool,
+    /// Its program missing: it opens nothing, and says why below its root
+    /// (`NameIndex::absent`).
+    missing: Option<Absent>,
 }
 
 impl Fake {
@@ -68,7 +71,26 @@ impl Fake {
             running: false,
             calls: Arc::default(),
             both_forms: false,
+            missing: None,
         }
+    }
+
+    /// An index whose program is missing, which would have answered
+    /// below `root`.
+    fn missing(root: &Path) -> Fake {
+        Fake {
+            missing: Some(absent()),
+            ..Fake::new(root, Coverage::not_covered(Why::Outside), vec![None])
+        }
+    }
+}
+
+/// What a missing index says of itself.
+fn absent() -> Absent {
+    Absent {
+        why: Words::as_written("the fake index is not installed"),
+        label: Words::as_written("Get it"),
+        url: "https://example.org/download".to_owned(),
     }
 }
 
@@ -132,7 +154,7 @@ impl NameIndex for Fake {
     }
     fn open(&self, root: &Path, _: &CancelToken) -> Option<Opened> {
         self.calls.lock().push("open".into());
-        Some(self.session(root))
+        self.missing.is_none().then(|| self.session(root))
     }
     /// What runs alone, nothing started.
     fn follow(&self, root: &Path, _: &CancelToken) -> Option<Opened> {
@@ -143,6 +165,11 @@ impl NameIndex for Fake {
     fn covers_both_forms(&self, _: &Query, _: &CancelToken) -> Option<Coverage> {
         self.calls.lock().push("covers both forms".into());
         (self.running && self.both_forms).then(|| self.coverage.clone())
+    }
+    fn absent(&self, root: Option<&Path>) -> Option<Absent> {
+        self.missing
+            .clone()
+            .filter(|_| root.is_none_or(|root| root.starts_with(&self.root)))
     }
 }
 
@@ -171,6 +198,8 @@ impl Fake {
 struct Searched {
     found: BTreeSet<String>,
     rests_on: Vec<Option<RestsOn>>,
+    /// The missing index each run said it walked for want of.
+    walked_without: Vec<Option<Absent>>,
     /// The order things were said in: "added <names>", "rests on".
     said: Vec<String>,
     removed: bool,
@@ -229,6 +258,7 @@ fn said(root: &Path, expr: &str, open: &dyn skwir_core::location::OpenLocation) 
     let mut searched = Searched {
         found: BTreeSet::new(),
         rests_on: Vec::new(),
+        walked_without: Vec::new(),
         said: Vec::new(),
         removed: false,
     };
@@ -255,6 +285,7 @@ fn said(root: &Path, expr: &str, open: &dyn skwir_core::location::OpenLocation) 
                 searched.said.push("rests on".into());
                 searched.rests_on.push(rests_on);
             }
+            ListingEvent::WalkedWithout(absent) => searched.walked_without.push(absent),
             ListingEvent::Removed(_) => searched.removed = true,
             ListingEvent::Complete => complete = true,
             ListingEvent::Error(e) => panic!("{expr}: {e}"),
@@ -583,6 +614,48 @@ fn as_of_stands_where_no_sync_can_prove_it_and_is_walked_where_one_failed() {
     );
     assert!(walked.found.contains("unnamed/report nobody named.txt"));
     assert_eq!(walked.rests_on, [None], "a walk answered");
+}
+
+/// A search that walked whole says the missing index it walked for want
+/// of, where that index would have answered below its root (the footer's
+/// `no index`); nothing where an index answered, where the query is none
+/// an index of names is asked (a tag alone), where the missing index would
+/// not have answered there (a server's folder), or where none is missing.
+#[test]
+fn a_walk_says_the_missing_index_it_was_for_want_of() {
+    let (_tmp, root) = tree();
+    let walked = search(&root, "report", vec![Fake::missing(&root)]);
+    assert_eq!(walked.rests_on, [None]);
+    assert_eq!(walked.walked_without, [Some(absent())]);
+
+    let covered = proven(Proof::Live { since: at() }, Vec::new());
+    let mut answering = Fake::new(
+        &root,
+        covered.clone(),
+        vec![Some((vec!["docs/report.pdf"], covered.clone(), false))],
+    );
+    answering.synced = Some(covered);
+    let answered = search(&root, "report", vec![Fake::missing(&root), answering]);
+    assert_eq!(answered.rests_on, rests_on(Proof::Live { since: at() }));
+    assert_eq!(answered.walked_without, [None], "an index answered");
+
+    let tagged = search(&root, "tag:x", vec![Fake::missing(&root)]);
+    assert_eq!(tagged.walked_without, [None], "no index of names asked");
+
+    let elsewhere = search(
+        &root,
+        "report",
+        vec![Fake::missing(Path::new("/elsewhere"))],
+    );
+    assert_eq!(
+        elsewhere.walked_without,
+        [None],
+        "it would not have answered"
+    );
+
+    let not_covered = Fake::new(&root, Coverage::not_covered(Why::Outside), vec![None]);
+    let none_missing = search(&root, "report", vec![not_covered]);
+    assert_eq!(none_missing.walked_without, [None], "none missing");
 }
 
 /// Where no index covers the root, where the one that does cannot answer

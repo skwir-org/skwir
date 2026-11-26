@@ -65,6 +65,7 @@ fn index(engines: Engines) -> Index {
         kept: kept::Kept::new(Weak::new(), engines.clone()),
         engines,
         presence: Arc::new(program::Presence::never()),
+        answers_below: |root| !root.starts_with("/fixture/remote"),
         secrets: Mutex::default(),
         hello: HELLO,
         release_within: RELEASE_WITHIN,
@@ -378,9 +379,9 @@ fn skwird_is_said_missing_once_a_search_finds_neither_it_nor_an_engine() {
     let cancel = CancelToken::new();
     let root = PathBuf::from("/fixture/root");
     let missing = index_looking(Engines::At(tmp.path().join("no socket")), false);
-    assert!(missing.absent().is_none(), "not looked at yet");
+    assert!(missing.absent(None).is_none(), "not looked at yet");
     assert!(missing.open(&root, &cancel).is_none());
-    let absent = missing.absent().expect("said missing");
+    let absent = missing.absent(None).expect("said missing");
     assert!(
         absent
             .why
@@ -397,17 +398,40 @@ fn skwird_is_said_missing_once_a_search_finds_neither_it_nor_an_engine() {
     );
     assert_eq!(absent.label.english(), "Get skwird");
     assert_eq!(absent.url, "https://skwir.org/download#skwird");
+    // Of a search, only below a folder skwird would have answered: a local
+    // one, not a server's.
+    assert!(
+        missing
+            .absent(Some(Path::new("/fixture/root/docs")))
+            .is_some()
+    );
+    assert!(
+        missing
+            .absent(Some(Path::new("/fixture/remote/docs")))
+            .is_none(),
+        "a server's folder"
+    );
     // Installed, no engine running yet: nothing said.
     let installed = index_looking(Engines::At(tmp.path().join("no socket")), true);
     assert!(installed.open(&root, &cancel).is_none());
-    assert!(installed.absent().is_none());
+    assert!(installed.absent(None).is_none());
     // An engine answering: nothing said, whatever a look found before.
     let fake = engine(tmp.path(), &root, false);
     let answering = index_looking(Engines::At(fake.socket.clone()), false);
     answering.presence.look();
-    assert!(answering.absent().is_some());
+    assert!(answering.absent(None).is_some());
     assert!(answering.open(&root, &cancel).is_some());
-    assert!(answering.absent().is_none(), "an engine answered");
+    assert!(answering.absent(None).is_none(), "an engine answered");
+}
+
+/// skwird would answer a search of a local folder, never one of the
+/// kernel's own filesystems: told from the mount table in memory.
+#[cfg(target_os = "linux")]
+#[test]
+fn skwird_would_answer_a_local_folder_not_the_kernel_s() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(answers_below(tmp.path()));
+    assert!(!answers_below(Path::new("/proc/self")), "the kernel's");
 }
 
 /// The app's names indexes say skwird is missing once a window was
@@ -428,11 +452,11 @@ fn a_look_at_the_window_says_whether_skwird_is_missing() {
         Arc::clone(&plugin) as Arc<dyn skwir_core::plugin::Plugin>,
         &app,
     );
-    assert!(app.names.absent().is_empty(), "not looked at yet");
+    assert!(app.names.absent(None).is_empty(), "not looked at yet");
     app.plugins.looked_at(&app);
-    until(|| !app.names.absent().is_empty());
+    until(|| !app.names.absent(None).is_empty());
     assert!(app.plugins.set_enabled(ID, false, &app));
-    assert!(app.names.absent().is_empty(), "turned off");
+    assert!(app.names.absent(None).is_empty(), "turned off");
 
     let headless = App::new(skwir_core::app::AppConfig::ephemeral(
         tmp.path().join("other"),
@@ -450,7 +474,7 @@ fn a_look_at_the_window_says_whether_skwird_is_missing() {
     // The look the window's would start, made here.
     let presence = plugin.presence.lock().clone().expect("registered");
     presence.look();
-    assert!(headless.names.absent().is_empty());
+    assert!(headless.names.absent(None).is_empty());
 }
 
 /// An engine that says hello and then nothing holds the search until it is

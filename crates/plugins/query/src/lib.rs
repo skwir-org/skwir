@@ -1806,6 +1806,7 @@ mod tests {
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
                 | ListingEvent::RestsOn(_)
+                | ListingEvent::WalkedWithout(_)
                 | ListingEvent::LeftOut(_)
                 | ListingEvent::Redirect(_)
                 | ListingEvent::Moved(_) => {}
