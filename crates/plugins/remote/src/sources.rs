@@ -76,10 +76,17 @@ impl Sources {
     /// too: a folder removed and made again is another, which the watcher
     /// let go of with the first. Watching resolves each folder's path: never
     /// under a lock another thread waits on.
-    pub fn follow(&mut self, followed: Followed, at: u64) {
+    ///
+    /// Whether a folder is watched now that was not after the read before
+    /// (the way to a file grown, its folder made since): what changed there
+    /// between this read and its watch was told to no one, so the caller
+    /// reads the servers once more, the watch in place. Never after the
+    /// first read, which nothing was watched before.
+    pub fn follow(&mut self, followed: Followed, at: u64) -> bool {
         if at < self.at {
-            return;
+            return false;
         }
+        let first = self.at == 0;
         self.at = at;
         let Followed {
             every,
@@ -101,14 +108,16 @@ impl Sources {
             self.watched.remove(&gone);
         }
         self.misses = unwatched;
+        let mut added = false;
         for folder in folders {
             if self.watcher.watch(&folder) {
-                self.watched.insert(folder);
+                added |= self.watched.insert(folder);
             } else {
                 self.misses = true;
                 self.watched.remove(&folder);
             }
         }
+        added && !first
     }
 
     /// Whether a folder followed could not be watched (the system's
@@ -534,6 +543,37 @@ mod tests {
         );
         assert!(sources.misses(), "an older read's never in its place");
         assert_eq!(sources.watched(), std::slice::from_ref(&here));
+    }
+
+    /// A folder watched only after a read (its file's folder made since)
+    /// is said so, that the servers be read once more with the watch in
+    /// place; never at the first read, nor for folders watched already.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_watched_late_is_said_so() {
+        use super::{Followed, Sources};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(tmp.path()).unwrap();
+        let config = root.join("its configuration");
+        let file = config.join("servers");
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut sources = Sources::start(move || tx.send(()).is_ok()).unwrap();
+        assert!(
+            !sources.follow(Followed::of(vec![Source::File(file.clone())]), 1),
+            "the first read watches what it found"
+        );
+        assert_eq!(sources.watched(), std::slice::from_ref(&root));
+        assert!(
+            !sources.follow(Followed::of(vec![Source::File(file.clone())]), 2),
+            "the same folder watched again"
+        );
+        std::fs::create_dir(&config).unwrap();
+        assert!(
+            sources.follow(Followed::of(vec![Source::File(file.clone())]), 3),
+            "its folder made since is watched late"
+        );
+        assert_eq!(sources.watched(), std::slice::from_ref(&config));
+        assert!(!sources.follow(Followed::of(vec![Source::File(file)]), 4));
     }
 
     /// A link to a path from the root without a drive (`\dir\file`)

@@ -1464,11 +1464,16 @@ impl Remotes {
                 state.login_ids = ids;
                 (whole || kept_changed || found, follow)
             };
-            if let Some((from, sources)) = follow {
-                sources.lock().follow(from, servers_at);
-            }
+            // A folder watched only now may have changed since this read
+            // (a file replaced as its folder was made): read once more, the
+            // watch in place, rather than wait for a change that came.
+            let watched_late =
+                follow.is_some_and(|(from, sources)| sources.lock().follow(from, servers_at));
             if shown && let Some(app) = weak.upgrade() {
                 this.publish(&app);
+            }
+            if watched_late && let Some(app) = weak.upgrade() {
+                this.sources_told(&app);
             }
         };
         if servers || bridges == Bridges::Listed {
