@@ -67,17 +67,38 @@ Skwir's own dialog first, as the file manager does (5).
      The launch waits in its terminal until that window closes, as
      viewers do there. The launch going first (its terminal's Ctrl+C,
      the terminal closed) closes the window.
-     - Linux: `Finishing.View` on the bus, answered once taken with the
-       viewing's number, then `Viewed`, answered once its window closes
-       (asked again should the bus give up on a call waiting that long).
-       The launch is followed by its name on the bus.
-     - Windows: the pipe's message says it views (`VIEW`), and its
-       connection stays until the window closes (`CLOSED`). The Skwir
-       looks four times a second whether the launch is still there: a
-       synchronous pipe's read would hold the write that says the window
-       closed.
-     - One that does not take them within two seconds is given up on.
-       Where none runs, it costs a stat (Linux) or a pipe not found.
+     - Taken in two steps, so that the launch alone decides whether it
+       is (amended 2026-11-26, from a review: a Skwir answering just
+       after the launch gave up showed the files a second time, and
+       removed the launch's spool under its own window). The Skwir
+       answers it taken and shows nothing; the launch confirms it, and
+       from then on waits whatever comes; only then is it shown. A
+       launch that gave up confirms nothing, and the Skwir lets the
+       viewing go unseen once that launch goes, or two seconds after it
+       answered.
+     - Linux: `Finishing.View` on the bus, answered with the viewing's
+       number; then `Viewed`, whose first asking is the confirmation,
+       answered once its window closes (asked again should the bus give
+       up on a call waiting that long; a window closed is told so to a
+       `Viewed` asked again even once that Skwir stopped). The launch is
+       followed by its name on the bus.
+     - Windows: the pipe's message says it views (`VIEW`), answered
+       `TAKEN`; the launch confirms (`CONFIRMED`), and its connection
+       stays until the window closes (`CLOSED`). The Skwir looks four
+       times a second whether the launch is still there: a synchronous
+       pipe's read would hold the write that says the window closed.
+       The message's version is 4: both ends are one build.
+     - Nothing shown after all (confirmed too late, that Skwir no longer
+       taking them, its window refused by the system: `NotTaken`, or
+       `NOT_TAKEN` on the pipe), the launch views the files itself, as
+       where none runs.
+     - One that does not take them within two seconds is given up on,
+       connecting to the bus included. Where none runs, it costs a stat
+       (Linux) or a pipe not found.
+     - The program ends with its last viewer (4): it waits, two seconds
+       at most, until each launch whose window closed has read so and
+       gone (`handover::wait_told`), else that launch would read that
+       its Skwir ended.
    - Where none runs, with `--new-instance`, and on macOS (the system
      brings a running application forward rather than hand it anything,
      ADR-122), it is a process of its own beside any Skwir running. It
@@ -171,15 +192,32 @@ Skwir's own dialog first, as the file manager does (5).
    - Then the viewer opens on what was chosen.
    - Cancelled, nothing opens, and a Skwir started for it ends.
 7. **`-`, standard input.**
-   - The launch reads it, before handing over, into a file of Skwir's
-     cache (`view/`), named by the type its bytes have (`stdin.png`; the
-     extension the type's first), or `stdin` where none.
+   - The launch reads it, before handing over and once every other
+     argument is known good, into a file of Skwir's cache: its own
+     spool, `view/<pid>/stdin`, named by the type its bytes have
+     (`stdin.png`; the extension the type's first), or `stdin` where
+     none (`handover::spool_file`, the one rule both ends use).
    - It reads 1 GiB at most, room for a film. Past that, it stops, says
      so with status 1, and opens nothing: a file cut short would be
      shown as whole.
-   - The file is removed once the window showing it closes. One a
-     program left by ending otherwise is removed at a later start, once
-     a day old.
+   - The file is removed once the window showing it closes, and by the
+     launch once its wait ends however it does. Its launch gone first
+     (its terminal's Ctrl+C), the Skwir showing it removes it once the
+     window let go. One a program left by ending otherwise is removed at
+     a later start, once a day old and its process ended.
+   - Handed over, it is the Skwir that removes it (amended 2026-11-26,
+     from a review: the path was taken as the caller named it, so a
+     program allowed to talk to Skwir on the bus, a sandboxed one
+     allowed `org.freedesktop.FileManager1` included, could have any
+     file of the user's removed). So `piped` is taken only as the
+     caller's own spool: one of the files, exactly
+     `<cache>/view/<pid>/stdin` or `stdin.<extension>`, a regular file
+     in a real folder, both the user's, no link, `<pid>` the caller's
+     process as the bus says it (`GetConnectionUnixProcessID`) or the
+     pipe (`GetNamedPipeClientProcessId`). Anything else refuses the
+     viewing whole (`NotTaken`), rather than show it and leave the file:
+     a launch of Skwir's never names another, and refused it views the
+     files itself, its spool kept.
 8. **Open With.**
    - A desktop entry of its own, "Skwir Preview", runs `skwir view %F`.
    - Its types are the kinds Skwir previews, as the desktop's database

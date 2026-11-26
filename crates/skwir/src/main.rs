@@ -77,7 +77,7 @@ fn main() -> anyhow::Result<()> {
     // which takes nothing over, started with what viewing needs.
     if let Some(asked) = skwir::view::asked(&program, &args) {
         let cwd = std::env::current_dir().unwrap_or_default();
-        let (asked, apart) = skwir::view::apart(asked);
+        let (asked, apart) = skwir::view::apart(&asked);
         if apart {
             skwir_platform::handover::keep_apart();
         }
@@ -88,7 +88,12 @@ fn main() -> anyhow::Result<()> {
         viewing.token = skwir_platform::handover::launch_token();
         match skwir_platform::handover::view_elsewhere(&viewing) {
             skwir_platform::handover::ViewedElsewhere::NotTaken => {}
-            skwir_platform::handover::ViewedElsewhere::Closed => return Ok(()),
+            // Its window removed what standard input gave, unless it never
+            // opened: removed here then.
+            skwir_platform::handover::ViewedElsewhere::Closed => {
+                skwir::view::let_go_of_piped(&viewing);
+                return Ok(());
+            }
             skwir_platform::handover::ViewedElsewhere::Ended => {
                 skwir::view::let_go_of_piped(&viewing);
                 eprintln!("skwir view: the Skwir showing it ended");
@@ -198,6 +203,10 @@ fn main() -> anyhow::Result<()> {
     tracing::info!("starting");
     let launch = windowless.is_none().then_some(opening);
     let ran = skwir_ui::run_from(app, initial, started, launch, windowless);
+    // The program ends with its last viewer (ADR-151, 4): the launch that
+    // waited on it reads that it closed before the bus would tell it this
+    // Skwir ended. At once where none waits.
+    skwir_platform::handover::wait_told();
     if windowless.is_some() && skwir_ui::ended_unasked() {
         // Started by the bus and ended asked nothing: not 0, which
         // dbus-daemon reads as a program gone to the background and

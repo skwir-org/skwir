@@ -46,16 +46,16 @@ own instead. Escape closes the window, F shows the preview on the whole
 screen.";
 
 /// What this launch asks to view, if it views: started as `skw`, or as
-/// `skwir view`. Its arguments after the subcommand.
-pub fn asked<'a>(program: &OsStr, args: &'a [OsString]) -> Option<&'a [OsString]> {
+/// `skwir view`, `--new-instance` before the subcommand as `skwir`'s
+/// options come (`skwir --new-instance view a.png`). Its arguments but the
+/// subcommand, that option kept for [`apart`].
+pub fn asked(program: &OsStr, args: &[OsString]) -> Option<Vec<OsString>> {
     let name = Path::new(program).file_stem();
     if name == Some(OsStr::new(LINK)) {
-        return Some(args);
+        return Some(args.to_vec());
     }
-    match args.split_first() {
-        Some((first, rest)) if first == SUBCOMMAND => Some(rest),
-        _ => None,
-    }
+    let at = args.iter().position(|arg| arg != NEW_INSTANCE)?;
+    (args[at] == SUBCOMMAND).then(|| args[..at].iter().chain(&args[at + 1..]).cloned().collect())
 }
 
 /// `args` without `--new-instance` (before a `--`), and whether it was
@@ -79,10 +79,13 @@ pub fn apart(args: &[OsString]) -> (Vec<OsString>, bool) {
 /// The files `args` name, read against `cwd`, and standard input's file
 /// where `-` asks it; else the exit status, what was wrong said on
 /// standard error (2 for a wrong usage, 1 for a file not there), or 0 for
-/// `--help`.
+/// `--help`. Standard input is read last, once every other argument is
+/// known good: nothing it gave stays behind one that is not.
 pub fn read(args: &[OsString], cwd: &Path) -> Result<Viewing, i32> {
     let mut viewing = Viewing::default();
     let mut options = true;
+    // Where `-` stands among the files.
+    let mut stdin_at = None;
     for arg in args {
         if options && arg == "--" {
             options = false;
@@ -93,13 +96,11 @@ pub fn read(args: &[OsString], cwd: &Path) -> Result<Viewing, i32> {
             return Err(0);
         }
         if options && arg == "-" {
-            if viewing.piped.is_some() {
+            if stdin_at.is_some() {
                 eprintln!("skwir view: standard input is named twice");
                 return Err(2);
             }
-            let piped = piped(&skwir_core::cache::Cache::default_root())?;
-            viewing.files.push(piped.clone());
-            viewing.piped = Some(piped);
+            stdin_at = Some(viewing.files.len());
             continue;
         }
         if options && arg.as_encoded_bytes().starts_with(b"-") {
@@ -117,27 +118,34 @@ pub fn read(args: &[OsString], cwd: &Path) -> Result<Viewing, i32> {
         }
         viewing.files.push(path);
     }
+    if let Some(at) = stdin_at {
+        let piped = piped()?;
+        viewing.files.insert(at, piped.clone());
+        viewing.piped = Some(piped);
+    }
     Ok(viewing)
 }
 
-/// What standard input gives, read into a file of this program's in the
-/// cache, named by the type its bytes have (`stdin.png`), or `stdin`.
-/// Folders of earlier viewers left a day ago go first.
-fn piped(cache: &Path) -> Result<PathBuf, i32> {
+/// What standard input gives, read into this launch's spool in the cache
+/// (`handover::spool_file`: the one place a Skwir it hands it to removes),
+/// named by the type its bytes have (`stdin.png`), or `stdin`. Folders of
+/// earlier viewers left a day ago go first.
+fn piped() -> Result<PathBuf, i32> {
+    use skwir_platform::handover::{spool_file, spool_folder, spools};
     let mut input = std::io::stdin().lock();
     if input.is_terminal() {
         eprintln!("skwir view: standard input is a terminal: give a file through a pipe");
         return Err(2);
     }
-    let all = cache.join("view");
-    sweep(&all);
-    let folder = all.join(std::process::id().to_string());
+    sweep(&spools());
+    let pid = std::process::id();
+    let folder = spool_folder(pid);
     let failed = |error: std::io::Error| {
         eprintln!("skwir view: standard input cannot be kept: {error}");
         1
     };
     skwir_core::folders::private(&folder).map_err(failed)?;
-    let read = folder.join("stdin");
+    let read = spool_file(pid, None);
     let written = (|| {
         let mut file = std::fs::File::create(&read)?;
         let copied = std::io::copy(&mut (&mut input).take(PIPED_MOST + 1), &mut file)?;
@@ -165,26 +173,25 @@ fn piped(cache: &Path) -> Result<PathBuf, i32> {
     }
     let named = skwir_platform::mime::by_content(read.as_path())
         .and_then(|mime| skwir_platform::mime::extensions(&mime).into_iter().next())
-        .map(|extension| folder.join(format!("stdin.{extension}")));
+        .map(|extension| spool_file(pid, Some(&extension)));
     Ok(match named {
-        Some(named) if std::fs::rename(&read, &named).is_ok() => named,
+        Some(named) if named != read && std::fs::rename(&read, &named).is_ok() => named,
         _ => read,
     })
 }
 
-/// Remove what standard input gave, and its folder: the Skwir that showed
-/// it ended before its window closed, which would have.
+/// Remove what standard input gave, and its folder, once this launch's
+/// wait ended: its window closed (the window removed it, unless it never
+/// opened), or the Skwir that showed it ended before.
 pub fn let_go_of_piped(viewing: &Viewing) {
     if let Some(piped) = &viewing.piped {
-        let _ = std::fs::remove_file(piped);
-        if let Some(folder) = piped.parent() {
-            let _ = std::fs::remove_dir(folder);
-        }
+        skwir_platform::handover::let_go_of_spool(piped);
     }
 }
 
 /// Remove what earlier viewers kept of standard input and left a day ago
-/// or more: each folder is a viewer's, named by its process.
+/// or more: each folder is a viewer's, named by its process, and kept
+/// while that process runs (a viewer may stay up for days).
 fn sweep(all: &Path) {
     let Ok(folders) = std::fs::read_dir(all) else {
         return;
@@ -197,7 +204,12 @@ fn sweep(all: &Path) {
             .ok()
             .and_then(|modified| now.duration_since(modified).ok())
             .is_some_and(|age| age >= PIPED_KEPT);
-        if old && folder.file_type().is_ok_and(|kind| kind.is_dir()) {
+        let ended = folder
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+            .is_none_or(|pid| skwir_platform::process::runs(pid) == Some(false));
+        if old && ended && folder.file_type().is_ok_and(|kind| kind.is_dir()) {
             let _ = std::fs::remove_dir_all(folder.path());
         }
     }
@@ -213,15 +225,74 @@ mod tests {
     }
 
     /// Started as `skw`, every argument is a file; as `skwir`, only after
-    /// `view`.
+    /// `view`, which `--new-instance` may come before.
     #[test]
     fn a_launch_views_as_skw_or_skwir_view() {
         let given = args(&["a picture.png"]);
-        assert_eq!(asked("/usr/bin/skw".as_ref(), &given), Some(&given[..]));
+        assert_eq!(asked("/usr/bin/skw".as_ref(), &given), Some(given.clone()));
         assert_eq!(asked("skwir".as_ref(), &given), None);
         let given = args(&["view", "a picture.png"]);
-        assert_eq!(asked("/usr/bin/skwir".as_ref(), &given), Some(&given[1..]));
+        assert_eq!(
+            asked("/usr/bin/skwir".as_ref(), &given),
+            Some(given[1..].to_vec())
+        );
         assert_eq!(asked("skwir".as_ref(), &args(&["cmd"])), None);
+        let given = args(&["--new-instance", "view", "a picture.png"]);
+        let viewed = asked("skwir".as_ref(), &given).unwrap();
+        assert_eq!(viewed, args(&["--new-instance", "a picture.png"]));
+        assert_eq!(apart(&viewed), (args(&["a picture.png"]), true));
+        assert_eq!(asked("skwir".as_ref(), &args(&["--new-instance"])), None);
+        assert_eq!(
+            asked("skwir".as_ref(), &args(&["--new-instance", "a folder"])),
+            None
+        );
+    }
+
+    /// `-` is read last: an argument that is wrong after it ends the launch
+    /// before standard input is read, so nothing it gave stays behind.
+    #[test]
+    fn standard_input_is_read_once_all_else_is_good() {
+        let dir = tempfile::tempdir().unwrap();
+        for (given, code) in [
+            (&["-", "nowhere.txt"][..], 1),
+            (&["-", "--wat"][..], 2),
+            (&["-", "-"][..], 2),
+            (&["-", "--help"][..], 0),
+        ] {
+            assert_eq!(
+                read(&args(given), dir.path()).err(),
+                Some(code),
+                "{given:?}"
+            );
+        }
+        assert!(
+            !skwir_platform::handover::spool_folder(std::process::id()).exists(),
+            "nothing kept"
+        );
+    }
+
+    /// The sweep takes away a folder a viewer left a day ago once its
+    /// process ended, never one whose process runs.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_spares_a_viewer_that_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let own = root.path().join(std::process::id().to_string());
+        // No process has this id (above Linux's largest, and macOS's).
+        let ended = root.path().join("4194304");
+        let old =
+            std::time::SystemTime::now() - super::PIPED_KEPT - std::time::Duration::from_secs(60);
+        for folder in [&own, &ended] {
+            std::fs::create_dir(folder).unwrap();
+            std::fs::write(folder.join("stdin"), b"x").unwrap();
+            std::fs::File::open(folder)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+        super::sweep(root.path());
+        assert!(own.join("stdin").exists(), "its viewer runs");
+        assert!(!ended.exists());
     }
 
     /// Files are read against the folder started in; one not there, or an
