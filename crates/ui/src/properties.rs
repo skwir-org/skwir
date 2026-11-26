@@ -2441,7 +2441,9 @@ pub fn places(
 
 /// Tags as chips in their colors: a click searches for the tag where the
 /// pane is (`query.refine`, which Back undoes); a right click opens the
-/// tag's menu (`Shell::open_tag_menu`).
+/// tag's menu (`Shell::open_tag_menu`). Where the window does not search
+/// (a viewer's, ADR-151, 5: `Shell::runs_here`), they are what they say,
+/// no control.
 fn tag_chips(
     shell: &Shell,
     tags: &[String],
@@ -2457,10 +2459,17 @@ fn tag_chips(
         .gap_1()
         .children(tags.iter().enumerate().map(|(i, tag)| {
             let search = tag.clone();
-            crate::tags::chip_in_full(tag, shell.tag_colors.of_given(tag, given), theme)
+            let chip = crate::tags::chip_in_full(tag, shell.tag_colors.of_given(tag, given), theme)
                 .id(("detail-tag", row * 64 + i))
-                .cursor_pointer()
-                .text_color(theme.text)
+                .text_color(theme.text);
+            let refines = shell.runs_here(
+                "query.refine",
+                &serde_json::json!({ "facet": "tag", "value": &search, "pane": pane }),
+            );
+            if !refines {
+                return chip;
+            }
+            chip.cursor_pointer()
                 .hover(gpui::Styled::underline)
                 .on_mouse_down(
                     gpui::MouseButton::Right,
@@ -2485,8 +2494,11 @@ fn tag_chips(
 }
 
 /// Five stars to click: the nth rates `target` n stars, and the one it has
-/// already takes its rating away.
+/// already takes its rating away. Where the window does not rate (a
+/// viewer's, ADR-151, 5: `Shell::runs_here`), the rating as it is, no
+/// control.
 fn star_picker(
+    shell: &Shell,
     rating: Option<u64>,
     target: &EntryRef,
     row: usize,
@@ -2494,6 +2506,10 @@ fn star_picker(
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
     let current = rating.unwrap_or(0);
+    let rates = shell.runs_here(
+        "notes.rate",
+        &serde_json::json!({ "stars": 0, "entries": [target] }),
+    );
     div()
         .flex()
         .items_center()
@@ -2501,10 +2517,13 @@ fn star_picker(
         .children((1..=5u64).map(|n| {
             let stars = if current == n * 2 { 0 } else { n };
             let target = target.clone();
-            div()
+            let star = div()
                 .id(("detail-star", row * 8 + n as usize))
-                .cursor_pointer()
-                .child(crate::tags::star(n, current, 14., theme))
+                .child(crate::tags::star(n, current, 14., theme));
+            if !rates {
+                return star;
+            }
+            star.cursor_pointer()
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.run(
@@ -3008,7 +3027,7 @@ fn row_element(
         Show::Tags { tags, given } => (!tags.is_empty())
             .then(|| tag_chips(shell, tags, given, id, theme, cx).into_any_element()),
         Show::Rating { rating, target } => {
-            Some(star_picker(*rating, target, id, theme, cx).into_any_element())
+            Some(star_picker(shell, *rating, target, id, theme, cx).into_any_element())
         }
         Show::Count { .. } => None,
     };
