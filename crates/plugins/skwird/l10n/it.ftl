@@ -1,6 +1,12 @@
 # Italian catalog of skwir-plugin-skwird, drafted by a model from en.ftl (ADR-139, docs/glossary-it.md): every message is a draft until reviewed.
 
 # draft
+skwird_absent = skwird non è installato, quindi le ricerche percorrono le cartelle una a una. skwird risponde subito alle ricerche per nome su dischi interi, da un indice che tiene aggiornato; scaricalo dalla pagina di download di { $site }.
+
+# draft
+skwird_absent_get = Ottieni skwird
+
+# draft
 skwird_forget_volume = Dimentica l’indice di un’unità
 
 # draft
@@ -163,7 +169,7 @@ skwird_plugin_title = Indice dei nomi di skwird
 skwird_start = Avvia skwird se non è in esecuzione
 
 # draft
-skwird_start_description = La prima ricerca avvia un motore di skwird, che termina un minuto dopo l’ultima.
+skwird_start_description = Una ricerca, o l’indicizzazione di un’unità, avvia un motore di skwird, che termina un minuto dopo che il suo ultimo client si è disconnesso.
 
 # draft
 skwird_start_description_more = Il primo avvio legge tutta la tua cartella personale: qualche secondo, e memoria mentre costruisce l’indice. Se disattivato, si interpella solo un motore già in esecuzione.

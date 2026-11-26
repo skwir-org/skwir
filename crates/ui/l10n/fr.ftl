@@ -1777,6 +1777,12 @@ commands_key_terminal_paste_primary = Terminal : coller le dernier texte sélec
 commands_key_view_buttons = Choisir les boutons de la barre : ceux des vues, Dossier parent
 
 # draft
+commands_key_viewer_next = Visionneuse : fichier suivant
+
+# draft
+commands_key_viewer_previous = Visionneuse : fichier précédent
+
+# draft
 commands_key_volume_down = Volume : baisser
 
 # draft
@@ -2657,6 +2663,18 @@ commands_view_buttons_shown_description = Afficher les boutons des vues à côt�
 
 # draft
 commands_view_description = Afficher les fichiers du panneau dans une vue
+
+# draft
+commands_viewer_reveal = Afficher dans Skwir
+
+# draft
+commands_viewer_reveal_description = Ouvrir dans Skwir le dossier du fichier qu’affiche une fenêtre de visionneuse, avec ce fichier sélectionné
+
+# draft
+commands_viewer_step = Visionneuse : fichier suivant
+
+# draft
+commands_viewer_step_description = Dans une fenêtre de visionneuse, afficher le fichier suivant ou précédent de son dossier, ou des fichiers qui lui ont été donnés
 
 # draft
 commands_volume_step = Volume : changer d’un cran
@@ -4158,6 +4176,9 @@ keymap_place_toolbars = Barres d’outils
 
 # draft
 keymap_place_view_buttons = Boutons de vue
+
+# draft
+keymap_place_viewer = Visionneuse de fichiers
 
 # draft
 keymap_place_volume = Volume
@@ -5887,6 +5908,9 @@ preview_video_at_of = { $seconds } s / { $total } s
 
 # draft
 preview_video_still = Image fixe de la vidéo · { $width } × { $height }
+
+# draft
+preview_viewer_reveal = Afficher dans Skwir
 
 # draft
 preview_volume_device = Périphérique
@@ -8387,6 +8411,9 @@ status_loading_items = Chargement… { $count ->
 status_looking = { $items } · Recherche dans les dossiers…
 
 # draft
+status_no_index = sans index
+
+# draft
 status_nothing_to_paste = Rien à coller
 
 # draft
@@ -9472,6 +9499,12 @@ usage_updating = mise à jour…
 usage_within = { $what } dans { $trail }
 
 # draft
+viewer_reveal_failed = Skwir n’a pas démarré : { $error }
+
+# draft
+viewer_size_setting = La taille de la dernière fenêtre affichant un fichier (skwir view)
+
+# draft
 views_arriving_copying = copie
 
 # draft
@@ -9605,6 +9638,9 @@ window_tag_chooser = Sélecteur de fichiers
 
 # draft
 window_tag_main = Fenêtre principale
+
+# draft
+window_tag_viewer = Visionneuse de fichiers
 
 # draft
 work_told_asks = Skwir attend une réponse

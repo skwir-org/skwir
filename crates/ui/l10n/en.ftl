@@ -1521,6 +1521,10 @@ commands_key_terminal_paste_primary = Terminal: paste the text selected last
 # What a key does: choose which buttons the row above the files has, the views' and Up's.
 commands_key_view_buttons = Choose the row's buttons: the views', Up
 
+commands_key_viewer_next = Viewer: next file
+
+commands_key_viewer_previous = Viewer: previous file
+
 commands_key_volume_down = Volume: down
 
 commands_key_volume_highest = Volume: highest
@@ -2140,6 +2144,14 @@ commands_view_buttons_shown = Show view buttons
 commands_view_buttons_shown_description = Show the views' buttons beside the address, or one button for them, the view shown, that opens the View menu
 
 commands_view_description = Show the pane's files in a view
+
+commands_viewer_reveal = Show in Skwir
+
+commands_viewer_reveal_description = Open the folder of the file a viewer's window shows in Skwir, the file selected
+
+commands_viewer_step = Viewer: next file
+
+commands_viewer_step_description = In a viewer's window, show the next or previous file of its folder, or of the files it was given
 
 commands_volume_step = Volume: step
 
@@ -3584,6 +3596,9 @@ keymap_place_toolbars = Toolbars
 
 # A place in the window: the buttons that choose the list, the grid or another view.
 keymap_place_view_buttons = View buttons
+
+# A place: a window showing one file's preview alone, opened from a terminal (skwir view).
+keymap_place_viewer = File viewer
 
 # A place in the window: the media player's volume slider.
 keymap_place_volume = Volume
@@ -5154,6 +5169,9 @@ preview_video_at_of = { $seconds } s / { $total } s
 
 # A preview's caption while it shows a picture of a film: its size in pixels, width by height (1920 × 1080).
 preview_video_still = Video still · { $width } × { $height }
+
+# A row of the More menu of a window showing one file's preview alone (skwir view): open the file's folder in Skwir, the file selected.
+preview_viewer_reveal = Show in Skwir
 
 # A row's label in Properties' Volume: the device a drive is (/dev/sda1), or where it is mounted from.
 preview_volume_device = Device
@@ -7546,6 +7564,9 @@ status_loading_items = Loading… { $count ->
 # A pane's footer while a filter looks in the folders below for what it matches: how many items it shows so far (3 of 12 items).
 status_looking = { $items } · Looking in folders…
 
+# In a search's footer, after its count, when the search went through the folders one by one because the index that would answer it is not installed (skwird). Its tooltip says why; a click opens Settings at Index, where the window offers Settings.
+status_no_index = no index
+
 # Said when Paste is asked and nothing waits to be pasted.
 status_nothing_to_paste = Nothing to paste
 
@@ -8614,6 +8635,12 @@ usage_updating = updating…
 # Usage, pointing at a block of several entries inside a folder: what it holds (3 hidden items), then the folders it is in (Photos › 2024).
 usage_within = { $what } in { $trail }
 
+# Said in a viewer's window when Show in Skwir could not start Skwir. error: why, as the system says it.
+viewer_reveal_failed = Skwir did not start: { $error }
+
+# What a kept setting holds: the size the last window showing one file's preview alone was left at, so the next opens so.
+viewer_size_setting = The size of the last window viewing a file (skwir view)
+
 # On a pill beside a file a copy brings into the folder: it is being copied, how far not known.
 views_arriving_copying = copying
 
@@ -8748,6 +8775,9 @@ window_tag_chooser = File chooser
 
 # What an ordinary Skwir window is for, as the desktop may show it (a window rule's list, a screen reader).
 window_tag_main = Main window
+
+# What a window showing one file's preview alone (skwir view) is for, as the desktop may show it (a window rule's list, a screen reader).
+window_tag_viewer = File viewer
 
 # The title of the desktop's notice of a question waiting while no window is up to ask it.
 work_told_asks = Skwir needs an answer

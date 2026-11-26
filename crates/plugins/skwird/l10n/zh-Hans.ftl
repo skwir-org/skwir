@@ -1,6 +1,12 @@
 # Simplified Chinese catalog of skwir-plugin-skwird, drafted by a model from en.ftl (ADR-139): every message is a draft until reviewed.
 
 # draft
+skwird_absent = 未安装 skwird，因此搜索会逐个遍历文件夹。skwird 依据其持续更新的索引，一次即可回答整个磁盘范围内的文件名搜索；请从 { $site } 的下载页面获取。
+
+# draft
+skwird_absent_get = 获取 skwird
+
+# draft
 skwird_forget_volume = 忘记驱动器的索引
 
 # draft
@@ -163,7 +169,7 @@ skwird_plugin_title = skwird 的文件名索引
 skwird_start = 在 skwird 未运行时启动它
 
 # draft
-skwird_start_description = 第一次搜索会启动一个 skwird 引擎，它会在最后一次搜索一分钟后结束。
+skwird_start_description = 搜索或为驱动器编制索引时，会启动一个 skwird 引擎，它会在最后一个客户端断开一分钟后结束。
 
 # draft
 skwird_start_description_more = 首次启动会读取您的整个主文件夹：需要几秒钟，构建期间还会占用内存。关闭时，只会询问已在运行的引擎。

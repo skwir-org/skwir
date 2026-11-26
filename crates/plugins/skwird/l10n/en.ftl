@@ -1,5 +1,11 @@
 # Made from the code by `just words` (tools/words/extract.py): never edit by hand.
 
+# Where skwird, a program the user installs apart, is missing: on the Index page of the settings, and in the tooltip of a search's footer that went through the folders. skwird is a program's name, as written; site: Skwir's website, as written (skwir.org).
+skwird_absent = skwird is not installed, so searches go through the folders one by one. skwird answers name searches across whole disks at once, from an index it keeps current; get it from the download page of { $site }.
+
+# The button beside the words saying skwird is not installed, on the Index page of the settings: opens the website's page saying how to install it. skwird is a program's name, as written.
+skwird_absent_get = Get skwird
+
 skwird_forget_volume = Forget a Drive's Index
 
 skwird_forget_volume_description = Have skwird index a removable drive no more, by the identity skwird spells, and remove its index
@@ -139,11 +145,11 @@ skwird_plugin_description = Searches answered from skwird's index of every file'
 # A plugin's name on the Plugins page. skwird is a program's name, as written.
 skwird_plugin_title = skwird's index of names
 
-# A setting's title on the Index page: whether a search starts skwird's engine. skwird is a program's name, as written.
+# A setting's title on the Index page: whether a search, or indexing a drive's names, starts skwird's engine. skwird is a program's name, as written.
 skwird_start = Start skwird where none runs
 
-# What the setting starting skwird's engine says.
-skwird_start_description = The first search starts an engine of skwird's, which ends a minute after the last one.
+# What the setting starting skwird's engine says: a client is a program asking the engine (Skwir, another).
+skwird_start_description = A search, or indexing a drive, starts an engine of skwird's, which ends a minute after its last client.
 
 # What a setting's description says after its first sentence, in its tooltip.
 skwird_start_description_more = A first start reads your whole home: seconds, and memory while it builds. Off, only an engine already running is asked.

@@ -1724,6 +1724,12 @@ commands_key_terminal_paste_primary = 终端：粘贴最后选中的文字
 commands_key_view_buttons = 选择该行的按钮：视图的按钮、向上
 
 # draft
+commands_key_viewer_next = 查看器：下一个文件
+
+# draft
+commands_key_viewer_previous = 查看器：上一个文件
+
+# draft
 commands_key_volume_down = 音量：降低
 
 # draft
@@ -2604,6 +2610,18 @@ commands_view_buttons_shown_description = 在地址旁显示各视图的按钮�
 
 # draft
 commands_view_description = 在某个视图中显示窗格的文件
+
+# draft
+commands_viewer_reveal = 在 Skwir 中显示
+
+# draft
+commands_viewer_reveal_description = 在 Skwir 中打开查看器窗口所显示文件的文件夹，并选中该文件
+
+# draft
+commands_viewer_step = 查看器：下一个文件
+
+# draft
+commands_viewer_step_description = 在查看器窗口中，显示其文件夹中或交给它的文件中的下一个或上一个文件
 
 # draft
 commands_volume_step = 音量：调节
@@ -3997,6 +4015,9 @@ keymap_place_toolbars = 工具栏
 
 # draft
 keymap_place_view_buttons = 视图按钮
+
+# draft
+keymap_place_viewer = 文件查看器
 
 # draft
 keymap_place_volume = 音量
@@ -5673,6 +5694,9 @@ preview_video_at_of = { $seconds } 秒 / { $total } 秒
 
 # draft
 preview_video_still = 视频静帧 · { $width } × { $height }
+
+# draft
+preview_viewer_reveal = 在 Skwir 中显示
 
 # draft
 preview_volume_device = 设备
@@ -8078,6 +8102,9 @@ status_loading_items = 正在加载… { $count } 个项目
 status_looking = { $items } · 正在查找文件夹…
 
 # draft
+status_no_index = 无索引
+
+# draft
 status_nothing_to_paste = 没有可粘贴的内容
 
 # draft
@@ -9038,6 +9065,12 @@ usage_updating = 正在更新…
 usage_within = { $trail } 中的 { $what }
 
 # draft
+viewer_reveal_failed = Skwir 未能启动：{ $error }
+
+# draft
+viewer_size_setting = 上一个查看文件的窗口的大小（skwir view）
+
+# draft
 views_arriving_copying = 正在复制
 
 # draft
@@ -9165,6 +9198,9 @@ window_tag_chooser = 文件选择器
 
 # draft
 window_tag_main = 主窗口
+
+# draft
+window_tag_viewer = 文件查看器
 
 # draft
 work_told_asks = Skwir 需要您的回答

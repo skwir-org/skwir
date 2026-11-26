@@ -1791,6 +1791,12 @@ commands_key_terminal_paste_primary = Terminale: incolla l’ultimo testo selezi
 commands_key_view_buttons = Scegli i pulsanti della riga: quelli delle viste, Su
 
 # draft
+commands_key_viewer_next = Visualizzatore: file successivo
+
+# draft
+commands_key_viewer_previous = Visualizzatore: file precedente
+
+# draft
 commands_key_volume_down = Volume: giù
 
 # draft
@@ -2671,6 +2677,18 @@ commands_view_buttons_shown_description = Mostra i pulsanti delle viste accanto 
 
 # draft
 commands_view_description = Mostra i file del riquadro in una vista
+
+# draft
+commands_viewer_reveal = Mostra in Skwir
+
+# draft
+commands_viewer_reveal_description = Apri in Skwir la cartella del file mostrato dalla finestra di un visualizzatore, con il file selezionato
+
+# draft
+commands_viewer_step = Visualizzatore: file successivo
+
+# draft
+commands_viewer_step_description = In una finestra del visualizzatore, mostra il file successivo o precedente della sua cartella, o dei file che ha ricevuto
 
 # draft
 commands_volume_step = Volume: passaggio
@@ -4167,6 +4185,9 @@ keymap_place_toolbars = Barre degli strumenti
 
 # draft
 keymap_place_view_buttons = Pulsanti della vista
+
+# draft
+keymap_place_viewer = Visualizzatore di file
 
 # draft
 keymap_place_volume = Volume
@@ -5895,6 +5916,9 @@ preview_video_at_of = { $seconds } s / { $total } s
 
 # draft
 preview_video_still = Fotogramma del video · { $width } × { $height }
+
+# draft
+preview_viewer_reveal = Mostra in Skwir
 
 # draft
 preview_volume_device = Dispositivo
@@ -8393,6 +8417,9 @@ status_loading_items = Caricamento… { $count ->
 status_looking = { $items } · Ricerca nelle cartelle…
 
 # draft
+status_no_index = senza indice
+
+# draft
 status_nothing_to_paste = Niente da incollare
 
 # draft
@@ -9486,6 +9513,12 @@ usage_updating = aggiornamento…
 usage_within = { $what } in { $trail }
 
 # draft
+viewer_reveal_failed = Skwir non si è avviato: { $error }
+
+# draft
+viewer_size_setting = Le dimensioni dell’ultima finestra che mostrava un file (skwir view)
+
+# draft
 views_arriving_copying = copia in corso
 
 # draft
@@ -9619,6 +9652,9 @@ window_tag_chooser = Selettore di file
 
 # draft
 window_tag_main = Finestra principale
+
+# draft
+window_tag_viewer = Visualizzatore di file
 
 # draft
 work_told_asks = Skwir ha bisogno di una risposta
