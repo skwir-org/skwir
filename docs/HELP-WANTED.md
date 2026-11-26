@@ -66,10 +66,13 @@ Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. Every
 build to 0.7.0 failed macOS's check of its signature in the GStreamer
 framework it carries (`codesign --verify --deep --strict`), so macOS
 could say the app is damaged, with no Open Anyway: the `xattr` command
-was then the way to try it. This release seals that framework once,
-checked on Linux as `codesign` checks it but not yet by a Mac: if macOS
-still says the app is damaged, the `xattr` command still works, and
-please tell us. Homebrew's cask waits for a build a Mac has checked. It reads PDFs,
+was then the way to try it. 0.7.1 seals that framework once, and a Mac
+has checked it: Homebrew's cask job installs the app on GitHub's macOS
+runner and `codesign --verify --deep --strict` accepts it. So Homebrew
+installs it too (`brew install skwir-org/tap/skwir`, after `brew trust
+skwir-org/tap`), still quarantined: Open Anyway the first time. If macOS
+says the app is damaged all the same, the `xattr` command still works,
+and please tell us. It reads PDFs,
 DjVu, 3D models and archives and plays audio and video; the Poppler and
 MuPDF readers are not in it yet. It has never run anywhere: everything below is
 new. Intel Macs have no build yet. It carries skwird, the index that
