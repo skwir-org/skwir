@@ -63,11 +63,13 @@ beside Windows' on each release's page: `skwir-<version>-macos-arm64.dmg`, a dis
 `skwir-<version>-macos-arm64.zip`; for macOS 12 or later. It is signed ad hoc but not notarized, so macOS refuses
 it at first: open it once from System Settings, Privacy & Security ("Open
 Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. Every
-build so far, 0.7.0's included, fails macOS's check of its signature in
-the GStreamer framework it carries (`codesign --verify --deep --strict`),
-so macOS may say the app is damaged, with no Open Anyway: the `xattr`
-command is then the way to try it. Homebrew's cask waits for a build that
-passes that check. It reads PDFs,
+build to 0.7.0 failed macOS's check of its signature in the GStreamer
+framework it carries (`codesign --verify --deep --strict`), so macOS
+could say the app is damaged, with no Open Anyway: the `xattr` command
+was then the way to try it. This release seals that framework once,
+checked on Linux as `codesign` checks it but not yet by a Mac: if macOS
+still says the app is damaged, the `xattr` command still works, and
+please tell us. Homebrew's cask waits for a build a Mac has checked. It reads PDFs,
 DjVu, 3D models and archives and plays audio and video; the Poppler and
 MuPDF readers are not in it yet. It has never run anywhere: everything below is
 new. Intel Macs have no build yet. It carries skwird, the index that

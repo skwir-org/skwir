@@ -1,20 +1,73 @@
 # Changes
 
-## Unreleased
+## 0.7.1 (2026-11-26)
+
+Skwir 0.7.1 shows a file's preview from a terminal, and brings skwird, its
+index of names, with its packages.
+
+[Installation instructions](README.md#installing)
 
 - **A file's preview from a terminal**: `skwir view notes.md`, or `skw
-  notes.md`, shows the preview in a window of its own, the arrows stepping
-  through the folder (or through the files given, `skw *.jpg`), `F` on
-  the whole screen, `Escape`, `Ctrl+Q` or its × closing it; `skw -` shows
-  what is piped in, and with no file the system's dialog asks which. A
-  program of its own that starts only what showing a file needs, offered
-  in Open With as Skwir Preview
+  notes.md`, shows it in a window of its own: the arrows step through its
+  folder (or through the files given, `skw *.jpg`), `F` shows it on the
+  whole screen, `Ctrl+P` prints it through Skwir's own Print dialog, and
+  its More menu opens it in another application or shows it in Skwir.
+  `skw -` shows what is piped in; with no file, the system's dialog asks
+  which. With Skwir open, the window is that Skwir's and opens at once;
+  otherwise it is a program of its own that starts only what showing a
+  file needs. Either way the terminal waits until the window closes. A
+  file manager can offer it in Open With, as Skwir Preview
   ([ADR-151](docs/adr/151-a-file-is-viewed-in-a-window-of-its-own.md)).
+- **skwird comes with Skwir**: the Windows and Mac builds and the Linux
+  tarball carry it; the `.deb` and `.rpm` packages recommend it, and
+  Skwir's apt repository lists it for Debian and Ubuntu (Fedora's once its
+  package is signed); the AUR lists it as optional. Where it is missing,
+  Settings › Index says so and how to get it, and a search that went
+  through the folders says `no index` in its footer.
 - **`skwir FILE` opens its folder with the file selected**, as Show in
   Skwir does from the viewer.
-- **The Mac app's signature holds**: in every Mac build to 0.7.0, a library
-  of GStreamer's framework was signed again once sealed, so macOS's check
-  of the app's signature failed, and macOS could call the app damaged.
+- **Lighter at start**: the release build lays out again what a start runs,
+  the file manager's and a viewer's (idle memory 82.7 → 76.5 MiB, a
+  viewer's own program 73 MiB, measured on a headless display).
+- **The Mac app is sealed once**: in every Mac build to 0.7.0, a library of
+  GStreamer's framework was signed again after the framework was sealed, so
+  macOS could call the app damaged. Checked on Linux as `codesign` checks
+  it; a Mac's own check comes with Homebrew's cask.
+
+**Windows and macOS builds to try** come with this release too, made on
+Linux and never run there: please [try them and tell us what
+happens](docs/HELP-WANTED.md).
+
+### All changes
+
+- **The viewer** (ADR-151): a viewer's window is a kind of window of its
+  own (never recorded for the next start, nor where a launch or an agent
+  goes); its card's header is its top row, the window's buttons at its
+  ends; what it offers is each command's to say, as for dialogs (Open With,
+  Print…, Properties, a document's links, Show in Skwir; nothing that
+  changes files); what it says is drawn over its card. A launch hands its
+  files to the Skwir running (a bus name on Linux, a pipe on Windows) in two
+  steps, the launch confirming, and only the caller's own spool of standard
+  input is ever removed; Skwir's internal interface answers only calls
+  addressed to its own instance name, never through FileManager1's.
+- **Printing in a viewer** asks Skwir's dialog first (as shown or as a
+  booklet, the pages, a printer or a PDF), and a PDF saved says so there.
+- **skwird beside Skwir** (ADR-050): looked for on `PATH` first, then
+  beside Skwir's own program; carried in the Windows installer and zip
+  (its uninstall takes back skwird's logon task), in the Mac app
+  (`Contents/MacOS`, signed with the app) and in the Linux tarball (built
+  from skwird's source in the tarball's root); every archive checked
+  against `tools/package/skwird.lock` before it is read. The AppImage
+  carries none: its files end with Skwir, and skwird outlives its last
+  client by a minute.
+- **Skwir's apt and dnf repositories** list skwird's own packages, each
+  suite its own (ADR-142); an `.rpm` the repositories' key did not sign is
+  left out of Fedora's.
+- **Skwir Preview** is never Skwir's own default opener unless a list names
+  it, and its types are listed by their aliases too, for older type
+  databases. `skw` works through a link to the AppImage.
+- **Dependencies** updated within their ranges; the packages' notices made
+  again.
 
 ## 0.7.0 (2026-11-25)
 
