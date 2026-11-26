@@ -585,15 +585,19 @@ it, **+ Filter** adds one, and the text can be typed as is:
   - skwird comes with Skwir for Windows and macOS and in the Linux
     tarball, beside Skwir's own program. The `.deb` and `.rpm` packages
     recommend skwird's own, and the AUR lists it as optional; the
-    AppImage has none. A skwird installed on its own (on the `PATH`) is
-    used rather than the one beside Skwir.
+    AppImage has none. skwird's `.deb` and `.rpm` make a system user,
+    `skwird`, for its system service, and start nothing. A skwird
+    installed on its own (on the `PATH`) is used rather than the one
+    beside Skwir.
   - Skwir starts the skwird beside it for searches and a drive's index
     only, and never has it start at login or at boot. If you did that
     yourself (`skwird logon add`, `skwird service add`), take it back
     with the same copy before you remove Skwir, or the system keeps
     trying to start a program that is gone. On Windows, removing the
-    installed Skwir takes back the logon task by itself; with the zip,
-    run `skwird.exe logon remove` from its folder before deleting it. On
+    installed Skwir takes back skwird's logon task by itself, even one a
+    skwird installed on its own registered: run that skwird's
+    `skwird logon add` again after. With the zip, run
+    `skwird.exe logon remove` from its folder before deleting it. On
     macOS, before moving the app to the Trash, run
     `/Applications/skwir.app/Contents/MacOS/skwird logon remove`, and
     `sudo /Applications/skwir.app/Contents/MacOS/skwird service remove`

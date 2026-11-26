@@ -122,11 +122,14 @@ and the folders it manages unless all are granted, and bubblewrap
   bring skwird): the `.deb` and the `.rpm` recommend `skwird`, Skwir's
   index of names (decision 3's Recommended), and Skwir's repositories list
   skwird's own packages. apt and dnf install it by default where the
-  repository is added. Installing it turns nothing on: its engine starts
-  at Skwir's first search. Where no repository has it (a `.deb` installed
-  without the repository; Fedora, until skwird's `.rpm` is signed by the
-  repositories' key), Skwir is installed without it and walks for its
-  searches. The AUR's three bases suggest it (`optdepends`, the same
-  words in each). `skwir-bin` installs the release's tarball, which
-  carries skwird; a skwird pacman installs is on `PATH`, where Skwir
-  looks first, and takes the carried copy's place.
+  repository is added. Installing it turns nothing on: its package makes
+  the system service's user, `skwird` (`systemd-sysusers`, its home
+  `/var/lib/skwird`), and installs its units (a user's socket and
+  service, the system service), and enables and starts none; its engine
+  starts at Skwir's first search. Where no repository has it (a `.deb`
+  installed without the repository; Fedora, until skwird's `.rpm` is
+  signed by the repositories' key), Skwir is installed without it and
+  walks for its searches. The AUR's three bases suggest it
+  (`optdepends`, the same words in each). `skwir-bin` installs the
+  release's tarball, which carries skwird; a skwird pacman installs is on
+  `PATH`, where Skwir looks first, and takes the carried copy's place.

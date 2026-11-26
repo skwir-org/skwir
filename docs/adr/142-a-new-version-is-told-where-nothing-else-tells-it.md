@@ -598,7 +598,10 @@ index of names (ADR-050, amended the same day). The `.deb` and the `.rpm`
 recommend it (ADR-040, amended), and apt and dnf install what is
 recommended by default. Neither Debian, Ubuntu nor Fedora has a skwird
 package, so Skwir's repositories list skwird's own. Installing it turns
-nothing on: its engine starts at Skwir's first search.
+nothing on: its package makes the system service's user, `skwird`
+(`systemd-sysusers`, its home `/var/lib/skwird`), and installs its units
+(a user's socket and service, the system service), and enables and
+starts none; its engine starts at Skwir's first search.
 
 - **What is listed.** The packages of the one skwird release that
   `tools/package/skwird.lock` pins: its tag, and each file's SHA-256 as

@@ -1,7 +1,7 @@
 """skwird as skwir's packages carry it (tools/package/skwird.py, ADR-050
 amended 2026-11-26): the lock read, each archive checked against its sum
 before it is read, and what Windows' zip, macOS's archive and the source
-give, nothing outside their folder taken."""
+give, nothing outside their folder taken and no link at all."""
 
 import hashlib
 import io
@@ -17,11 +17,16 @@ sys.path.insert(0, str(HERE))
 import skwird  # noqa: E402
 
 
-def zipped(members):
+def zipped(members, links=()):
+    """A zip of `members`: name -> bytes, the names in `links` marked as
+    links (Unix mode 0120777), their bytes the target."""
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w") as archive:
         for name, data in members.items():
-            archive.writestr(name, data)
+            info = zipfile.ZipInfo(name)
+            if name in links:
+                info.external_attr = 0o120777 << 16
+            archive.writestr(info, data)
     return out.getvalue()
 
 
@@ -30,19 +35,21 @@ MADE = 1_700_000_000
 
 
 def tarred(members):
-    """A gzipped tar of `members`: name -> bytes (a file, mode 0644, or
-    0755 if the name ends in `*`), None (a folder), ("link", target) or
-    ("fifo",)), each dated MADE."""
+    """A gzipped tar of `members`, in their order: name -> bytes (a file,
+    mode 0644, or 0755 if the name ends in `*`), None (a folder), ("link",
+    target), ("hard", target) or ("fifo",), each dated MADE. `members` may
+    be a list of (name, what), to name a member twice."""
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode="w:gz") as archive:
-        for name, what in members.items():
+        for name, what in (members.items() if isinstance(members, dict) else members):
             info = tarfile.TarInfo(name.rstrip("*"))
             info.mtime = MADE
             if what is None:
                 info.type, info.mode = tarfile.DIRTYPE, 0o755
                 archive.addfile(info)
-            elif isinstance(what, tuple) and what[0] == "link":
-                info.type, info.linkname = tarfile.SYMTYPE, what[1]
+            elif isinstance(what, tuple) and what[0] in ("link", "hard"):
+                info.type = tarfile.SYMTYPE if what[0] == "link" else tarfile.LNKTYPE
+                info.linkname = what[1]
                 archive.addfile(info)
             elif isinstance(what, tuple):
                 info.type = tarfile.FIFOTYPE
@@ -196,6 +203,15 @@ class Carried(Case):
             skwird.carry("windows", self.folder / "out", lock=lock, opener=served)
         self.assertFalse((self.folder / "evil.exe").exists())
 
+    def test_a_link_in_the_windows_zip_is_refused(self):
+        # A link standing for the program would be carried as its target's
+        # name, written as the program.
+        name = "skwird-1.2.3-windows-x86_64/skwird.exe"
+        lock, served = self.lock(windows=zipped({**WINDOWS, name: b"../../elsewhere.exe"}, links={name}))
+        with self.assertRaisesRegex(skwird.Refused, "a link"):
+            skwird.carry("windows", self.folder / "out", lock=lock, opener=served)
+        self.assertFalse((self.folder / "out/skwird.exe").exists())
+
     def test_macos_program_executable(self):
         lock, served = self.lock(macos=tarred(MACOS))
         out = self.folder / "out"
@@ -210,14 +226,19 @@ class Carried(Case):
         with self.assertRaisesRegex(skwird.Refused, "not executable"):
             skwird.carry("macos", self.folder / "out", lock=lock, opener=served)
 
+    def test_a_link_in_the_macos_archive_is_refused(self):
+        for link in (("link", "LICENSE-MIT"), ("hard", "skwird-1.2.3-macos-arm64/LICENSE-MIT")):
+            lock, served = self.lock(macos=tarred({**MACOS, "skwird-1.2.3-macos-arm64/extra": link}))
+            with self.assertRaisesRegex(skwird.Refused, "a link", msg=link):
+                skwird.carry("macos", self.folder / "out", lock=lock, opener=served)
+
 
 class Source(Case):
-    def test_the_tree_its_modes_and_links_inside_it(self):
+    def test_the_tree_and_its_modes(self):
         lock, served = self.lock(source=tarred({
             "skwird-1.2.3": None, "skwird-1.2.3/Cargo.toml": b"[workspace]\n",
             "skwird-1.2.3/LICENSE-MIT": b"mit", "skwird-1.2.3/LICENSE-APACHE": b"apache",
-            "skwird-1.2.3/tools/gate.sh*": b"#!/bin/sh\n", "skwird-1.2.3/CLAUDE.md": ("link", "AGENTS.md"),
-            "skwird-1.2.3/AGENTS.md": b"rules"}))
+            "skwird-1.2.3/tools/gate.sh*": b"#!/bin/sh\n", "skwird-1.2.3/AGENTS.md": b"rules"}))
         out = self.folder / "out"
         tree = skwird.source(out, lock=lock, opener=served)
         self.assertEqual(tree, out / "skwird-1.2.3")
@@ -226,19 +247,44 @@ class Source(Case):
         self.assertFalse((tree / "Cargo.toml").stat().st_mode & 0o100)
         # Dated as the archive dates them: a build finds its crates unchanged.
         self.assertEqual((tree / "Cargo.toml").stat().st_mtime, MADE)
-        self.assertEqual((tree / "CLAUDE.md").read_text(), "rules")
+        self.assertEqual((tree / "AGENTS.md").read_text(), "rules")
         self.assertEqual((out / "licenses/skwird/THIRD-PARTY-NOTICES").read_text(), "crates of skwird for source\n")
         # Unpacked anew: what an earlier run left in the tree goes.
         (tree / "stale.rs").write_text("")
         skwird.source(out, lock=lock, opener=served, notices=False)
         self.assertFalse((tree / "stale.rs").exists())
 
-    def test_a_link_out_of_the_tree_is_refused(self):
-        for target in ("../../outside", "/etc/passwd", "sub/../../.."):
+    def test_every_link_is_refused_and_none_is_made(self):
+        # Inside the tree or out of it, symbolic or hard: skwird's tree
+        # holds none.
+        for link in (("link", "AGENTS.md"), ("link", "../../outside"), ("link", "/etc/passwd"),
+                     ("link", "sub/../../.."), ("hard", "skwird-1.2.3/LICENSE-MIT")):
             lock, served = self.lock(source=tarred({
-                "skwird-1.2.3/LICENSE-MIT": b"m", "skwird-1.2.3/escape": ("link", target)}))
-            with self.assertRaises(skwird.Refused, msg=target):
-                skwird.source(self.folder / "out", lock=lock, opener=served)
+                "skwird-1.2.3/LICENSE-MIT": b"m", "skwird-1.2.3/LICENSE-APACHE": b"a",
+                "skwird-1.2.3/AGENTS.md": b"rules", "skwird-1.2.3/linked": link}))
+            out = self.folder / "out"
+            with self.assertRaisesRegex(skwird.Refused, "a link", msg=link):
+                skwird.source(out, lock=lock, opener=served)
+            self.assertFalse((out / "skwird-1.2.3/linked").is_symlink(), link)
+            self.assertFalse((out / "skwird-1.2.3/linked").exists(), link)
+
+    def test_a_chain_of_links_writes_nothing_out_of_the_tree(self):
+        # Each link, read as text from where it stands, stays in the tree:
+        # `x/l1` is the tree itself, so `x/l1/l2` is the folder above it,
+        # and the file below would be written there (review P2-4).
+        lock, served = self.lock(source=tarred([
+            ("skwird-1.2.3/LICENSE-MIT", b"m"), ("skwird-1.2.3/LICENSE-APACHE", b"a"), ("skwird-1.2.3/x", None),
+            ("skwird-1.2.3/x/l1", ("link", "..")), ("skwird-1.2.3/x/l1/l2", ("link", "..")),
+            ("skwird-1.2.3/x/l1/l2/escaped.txt", b"out of the tree")]))
+        out = self.folder / "out"
+        refused = None
+        try:
+            skwird.source(out, lock=lock, opener=served)
+        except skwird.Refused as error:
+            refused = error
+        self.assertFalse((out / "escaped.txt").exists(), "written out of the tree")
+        self.assertEqual([p for p in out.rglob("*") if p.is_symlink()], [])
+        self.assertRegex(str(refused), "a link")
 
     def test_a_special_file_is_refused(self):
         lock, served = self.lock(source=tarred({"skwird-1.2.3/LICENSE-MIT": b"m", "skwird-1.2.3/pipe": ("fifo",)}))

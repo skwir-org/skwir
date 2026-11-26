@@ -130,7 +130,10 @@ filesystem, as `tools/package/try.sh` already does.
    same glibc, from the source archive of the release
    `tools/package/skwird.lock` pins (`tools/package/appimage/skwird.sh`):
    the archive fetched beside the root's other downloads and checked
-   against its sum there and again in the root (`tools/package/skwird.py`);
+   against its sum there and again in the root, then unpacked as folders
+   and files alone, every link in it refused, symbolic or hard
+   (`tools/package/skwird.py`: skwird's tree holds none, and a member
+   written through a link an earlier one made could land outside it);
    the 26 crates from crates.io its `Cargo.lock` names fetched (`cargo
    fetch --locked`, the build's one use of the network for it), then
    built offline (`--frozen`,

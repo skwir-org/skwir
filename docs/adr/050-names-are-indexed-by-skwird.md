@@ -183,7 +183,11 @@ people never had it, every search walked, and nothing said why. So:
   registers it to start neither at login nor at boot. A user who runs its
   `logon add` or `service add` registers that copy, and takes it back
   with that copy before removing Skwir (the guide says how). Windows'
-  installer, per user, runs `skwird logon remove` as it uninstalls; the
+  installer, per user, runs `skwird logon remove` as it uninstalls. In
+  skwird 0.2.0 that takes back the user's one logon task, `skwird-<SID>`,
+  whichever copy registered it last, a skwird installed on its own
+  included, which its own `skwird logon add` registers again; and it
+  leaves running the engine that task started (ADR-074, amended). The
   zip and the Mac's app have no uninstaller (ADR-075, amended). skwird's
   system service is never to be registered from the carried copy: it
   sits in a folder the user's own programs can change, under a service

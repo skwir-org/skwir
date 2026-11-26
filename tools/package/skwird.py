@@ -29,6 +29,7 @@ import http.client
 import os
 import pathlib
 import shutil
+import stat
 import sys
 import tarfile
 import time
@@ -156,11 +157,14 @@ def member_path(name, top):
 
 
 def unpacked_zip(archive, top):
-    """Each file a zip holds below its folder: path -> bytes."""
+    """Each file a zip holds below its folder: path -> bytes. A link (a
+    member whose Unix mode says so) is refused, as in a tar."""
     out = {}
     with zipfile.ZipFile(archive) as zipped:
         for info in zipped.infolist():
             path = member_path(info.filename.rstrip("/"), top)
+            if stat.S_ISLNK(info.external_attr >> 16):
+                raise Refused(f"{info.filename}: a link, which skwird's archives hold none of")
             if not info.is_dir() and path.parts:
                 out[path] = zipped.read(info)
     return out
@@ -169,28 +173,24 @@ def unpacked_zip(archive, top):
 def unpacked_tar(archive, top, into=None):
     """Each file a gzipped tar holds below its folder: path -> (bytes,
     executable), or, with `into`, the whole tree written there: its
-    folders, files (their modes executable or not, their dates the
+    folders and files (their modes executable or not, their dates the
     archive's, so that a build of a tree unpacked anew finds its crates
-    unchanged) and relative links that stay in it. Nothing else is taken
-    (no device, no link out)."""
+    unchanged). Nothing else is taken: a link, symbolic or hard, is
+    refused, as a device or a pipe is. skwird's tree and its archives hold
+    none, and a tree holding no link is one no later member can be
+    written out of through an earlier one."""
     out = {}
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar:
             path = member_path(member.name.rstrip("/"), top)
+            if member.issym() or member.islnk():
+                raise Refused(f"{member.name}: a link, which skwird's archives hold none of")
             if member.isdir():
                 if into is not None:
                     (into / path).mkdir(parents=True, exist_ok=True)
                 continue
-            if member.issym():
-                target = pathlib.PurePosixPath(member.linkname)
-                if target.is_absolute() or _escapes(path.parent, target):
-                    raise Refused(f"{member.name}: a link out of the archive's folder")
-                if into is not None:
-                    (into / path).parent.mkdir(parents=True, exist_ok=True)
-                    (into / path).symlink_to(member.linkname)
-                continue
             if not member.isfile():
-                raise Refused(f"{member.name}: not a file, a folder or a link")
+                raise Refused(f"{member.name}: not a file or a folder")
             data = tar.extractfile(member).read()
             executable = bool(member.mode & 0o111)
             if into is None:
@@ -201,16 +201,6 @@ def unpacked_tar(archive, top, into=None):
                 (into / path).chmod(0o755 if executable else 0o644)
                 os.utime(into / path, (member.mtime, member.mtime))
     return out
-
-
-def _escapes(folder, target):
-    """Whether `target`, a link's, read from `folder`, leaves the tree."""
-    depth = len(folder.parts)
-    for part in target.parts:
-        depth += -1 if part == ".." else 0 if part == "." else 1
-        if depth < 0:
-            return True
-    return False
 
 
 def taken(files, name, kind):

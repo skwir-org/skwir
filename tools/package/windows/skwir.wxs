@@ -59,6 +59,12 @@
          each logon, so the carried skwird takes it back first, while its
          files are there (`skwird logon remove`), as its user, its answer
          ignored: where none was registered, it fails and nothing is lost.
+         skwird 0.2.0 takes back the user's one task whichever copy
+         registered it, a skwird installed on its own included, and leaves
+         its engine running (ADR-074). skwird.exe, not skwirdw.exe: from
+         skwirdw, which has no console, the schtasks.exe skwird starts
+         opens a console window of its own all the same, and skwirdw makes
+         skwird's state folder and log first.
          Not when an upgrade removes the older skwir: the newer puts
          skwird where the task names it. A per-user install is never
          elevated, so it cannot take back a system service; skwird's

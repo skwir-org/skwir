@@ -166,9 +166,11 @@ models and archives and plays audio and video; the Poppler and MuPDF
 readers are not in it yet. Wine started its programs and installed it, but cannot draw its
 window: everything below is new. Both carry skwird, the index that
 answers name searches (`skwird.exe` beside `skwir.exe`), which a search
-starts on its own. Removing the installer's copy takes back the logon
-task that copy's `skwird logon add` registered; with the zip, run
-`skwird logon remove` before deleting its folder. Do not register
+starts on its own. Removing the installer's copy takes back skwird's
+logon task (`skwird logon add`), whichever copy registered it, a skwird
+installed on its own included, whose own `skwird logon add` registers it
+again; with the zip, run `skwird logon remove` before deleting its
+folder. Do not register
 skwird's system service (`skwird service add`) from either: they sit in
 your own folder, which a program of yours could change under a service
 running as the system.
@@ -220,6 +222,11 @@ running as the system.
 11. **The package** (code). `tools/package/windows.sh` makes the zip and the
    installer on Linux (ADR-074); try the installer on a fresh account:
    installing, the Start menu entry, updating over an older one, removing.
+   With skwird: remove or update the installed copy within a minute of a
+   search, and after `skwird logon add` from it, and say whether Windows
+   asks for a restart or leaves `skwird.exe` or `skwirdw.exe` in its
+   folder (an engine still running holds its program, and nothing ends it
+   first: ADR-074), and whether a console window flashes as it is removed.
    The helpers that link libraries (Poppler, MuPDF) need those built for
    Windows. Signing needs a
    code-signing certificate: the project decides that with you.

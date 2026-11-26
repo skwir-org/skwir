@@ -68,7 +68,7 @@ class TheDisplay(unittest.TestCase):
     Xvfb and folders of its own for the sockets and locks."""
 
     # As Xvfb: a display whose lock is there is refused at once; else its
-    # lock names it and its socket comes. :<first+1> is another's, which
+    # lock names it and its socket comes. :<first+2> is another's, which
     # makes its socket and lock as this Xvfb ends.
     XVFB = """#!/bin/sh
 number="${1#:}"

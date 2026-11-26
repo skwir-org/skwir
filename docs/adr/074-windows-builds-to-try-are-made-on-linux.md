@@ -186,6 +186,46 @@ written on Linux and never run.
   an upgrade removes the older skwir (`skwir.wxs`). wixl 0.106 places an
   action `Before="RemoveFiles"` ahead of `InstallInitialize`, where a
   deferred one fails the removal: it is placed after `InstallInitialize`.
+  skwird 0.2.0 names one logon task a user, `skwird-<SID>`, which the
+  copy that ran `logon add` last owns (`/F`), and takes it back by that
+  name without reading what it runs: removing Skwir takes back the task
+  of a skwird installed on its own too, which that skwird's own `skwird
+  logon add` registers again. A removal that takes back only a task
+  naming its own copy is asked of skwird. The action runs `skwird.exe`,
+  a console program, which Windows gives a console of its own, msiexec
+  having none: a window flashes as Skwir goes. `skwirdw.exe` would not
+  spare it: skwird 0.2.0 starts `schtasks.exe` through std's `Command`,
+  which sets no `CREATE_NO_WINDOW`, so from a program with no console
+  `schtasks` opens one of its own; and skwirdw, unless `SKWIRD_LOG` names
+  a log, first makes skwird's state folder and its `engine.log`, which a
+  removal would leave behind for a user who never ran skwird. wixl 0.106
+  carries one extension, WiX's dialogs, not WixUtilExtension's quiet
+  exec.
+  An engine running from the carried copy holds its program: one its
+  logon task started (`serve --forever`, which `logon remove` does not
+  end in 0.2.0) until the user logs off, and one a search started for
+  the minute it outlives its last client, when Skwir is removed or an
+  upgrade removes the older copy (the older package's sequence: the
+  action above does not run then). The package authors no FilesInUse or
+  MsiRMFilesInUse dialog, nor `MSIRESTARTMANAGERCONTROL`,
+  `MSIRMSHUTDOWN` or `REBOOT` (`msiinfo`), so Windows Installer's
+  defaults apply: it asks Restart Manager (`MSIRESTARTMANAGERCONTROL`
+  0, the default), and, as Microsoft's pages say of installing, a file
+  still in use is replaced or deleted when the system restarts, a
+  restart asked. They say neither whether a removal with no UI restarts
+  by itself, nor how Restart Manager closes a program with no window
+  (skwirdw.exe; a console program is sent `CTRL_C_EVENT`). Nothing ends
+  the engine first: skwird 0.2.0 has no command that stops one;
+  `taskkill` finds a process by its program's name, not its path, so it
+  would end a skwird installed on its own too; `schtasks /End` of the
+  logon task ends only the engine the task started, whichever copy's,
+  and the installer could name the task only by `UserSID`, which
+  Microsoft documents up to Vista alone; and PowerShell, which could
+  end a process by its path, opens a console of its own. A stop of the
+  engine of the copy
+  that runs it alone is asked of skwird; the installer would run it as
+  an immediate action before `InstallValidate`, on every removal, an
+  upgrade's included, from the first package that carries it.
   The installer is per user and never elevated, so it cannot take back a
   system service; skwird's `service add`, an administrator's, is not for
   a copy in the user's own folder, which that user, unelevated, could
@@ -198,5 +238,6 @@ written on Linux and never run.
   type, program, command, condition and step); and a logon task added
   from the installed copy (Wine keeps it, its actions left out: Wine runs
   no task) is gone once skwir is removed. Not checked under Wine: the
-  task starting skwird at a logon, and a running engine holding
-  `skwirdw.exe` as the files go.
+  task starting skwird at a logon, a running engine holding
+  `skwird.exe` or `skwirdw.exe` as the files go, at a removal or an
+  upgrade's, and the console window the action opens (Wine shows none).
