@@ -16,7 +16,8 @@ Amended 2026-11-26, on the user's question whether both could be had: a
 Skwir running shows the files a launch hands it, the launch waiting in
 its terminal; where none runs, the program of its own, as before. A
 viewer's program neither takes later viewers nor becomes the file
-manager (Rejected).
+manager (Rejected). Amended the same day: Print… in a viewer asks
+Skwir's own dialog first, as the file manager does (5).
 
 ## Context
 
@@ -151,6 +152,14 @@ manager (Rejected).
    - the previews' commands and what plays in them;
    - the window's own, its buttons and Quit;
    - Open With, Print…;
+     - Print… (Ctrl+P, the preview's More) asks Skwir's own dialog
+       first, in the viewer's window, as the file manager does (ADR-111):
+       a printer or a PDF, the pages, as shown or as a booklet. In a
+       viewer's own program too, which shows no window of the user's: it
+       asks wherever the window it was pressed in can ask
+       (`App::can_ask`). What is printed is the file shown; a listing is
+       not offered, the pane being never drawn (amended 2026-11-26, the
+       user having found the system's dialog opened at once there).
    - Show in Skwir (`ui.viewer_reveal`): a window of the user's own on
      the folder, the file selected.
    - Nothing that changes files, nor tabs, the split, the terminal or

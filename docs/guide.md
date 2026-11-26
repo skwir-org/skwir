@@ -837,10 +837,12 @@ and no file manager around it.
 - **Stepping:** the arrows go to the next file of its folder, in the
   order Skwir shows that folder in. Given several files
   (`skw *.jpg`), they go through those.
-- **Keys:** `F` shows the preview on the whole screen; `Escape`, `Ctrl+Q`
-  and the × close the window.
+- **Keys:** `F` shows the preview on the whole screen; `Ctrl+P` prints
+  it; `Escape`, `Ctrl+Q` and the × close the window.
 - **More:** the menu opens the file in another application, prints it,
-  or shows it in Skwir, its folder open and the file selected.
+  or shows it in Skwir, its folder open and the file selected. Printing
+  asks first in Skwir's Print dialog, as the file manager does: a
+  printer or a PDF, the pages, as shown or as a booklet.
 - **Standard input:** `skw -` shows what is piped in, whatever it is:
   `curl -s https://example.org/logo.png | skw -`. It is kept in Skwir's
   cache while the window is open, 1 GB at most.

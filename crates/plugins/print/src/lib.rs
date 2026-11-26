@@ -4,7 +4,8 @@
 //! print helper makes of what the preview shows (`make`).
 //!
 //! One Print… (the file menu, the preview's, Ctrl+P) asks Skwir's own
-//! dialog first (`dialog`): to a printer or a PDF, which pages, as shown,
+//! dialog first (`dialog`), in the window it was asked in, a viewer's
+//! (ADR-151) too: to a printer or a PDF, which pages, as shown,
 //! folded as a booklet or as a contact sheet. A printer is then chosen in
 //! the system's dialog (`skwir_platform::print`), with the paper, the
 //! copies and the sides; Skwir applies the pages, the sides and the order
@@ -271,8 +272,8 @@ pub struct PrintArgs {
     /// reads (a PDF's `/ViewerPreferences /Direction`, a book's page
     /// progression, HTML's `dir`), else, a text Skwir lays out, its first
     /// letter that has a direction; else `left`. Skwir's dialog (Print…
-    /// without `asked`, a window shown) opens on that edge, an agent's
-    /// call included; Save as PDF and `asked` ask no dialog.
+    /// without `asked`, with a window to ask in) opens on that edge, an
+    /// agent's call included; Save as PDF and `asked` ask no dialog.
     #[serde(default)]
     pub bound: Option<skwir_core::print::booklet::Bound>,
     /// The way the document reads (`left_to_right`, `right_to_left`), a
@@ -389,7 +390,11 @@ impl Plugin for PrintPlugin {
                 note = "Read by agents and in F1's list of actions: the words in backticks are the command's arguments, as written."
             ),
             move |a, app| {
-                if a.asked || !app.window_shown() {
+                // Asked first wherever a window can ask: the one whose key
+                // or menu ran it (a viewer's too, in a program that shows
+                // no window of the user's: ADR-151, 5), else one up for an
+                // agent's call. With none, the system's dialog alone.
+                if a.asked || !app.can_ask() {
                     match request(app, &a) {
                         Ok(request) => start(app, request),
                         Err(error) => app.notify(NotifyLevel::Error, Words::of_error(error)),
@@ -461,7 +466,9 @@ impl Plugin for PrintPlugin {
             .plans();
         menus(app);
         // Ctrl+P prints the files selected, the pane's listing with none,
-        // or what the preview shows.
+        // or what the preview shows: in the preview, and in a viewer's
+        // window (ADR-151), whose card holds the keyboard where its preview
+        // does not, and whose pane, never drawn, has no listing to print.
         for (when, command) in [
             ("pane file !place", Invocation::new("print.print")),
             (
@@ -470,6 +477,10 @@ impl Plugin for PrintPlugin {
             ),
             (
                 "preview",
+                Invocation::new("ui.preview_invoke").with("command", "print.print"),
+            ),
+            (
+                "viewer",
                 Invocation::new("ui.preview_invoke").with("command", "print.print"),
             ),
         ] {
@@ -2582,5 +2593,77 @@ mod tests {
         let long = listing_name(&tag, &"x".repeat(300));
         assert!(long.len() <= 255, "{}", long.len());
         assert!(long.to_string_lossy().ends_with("x (listing).pdf"));
+    }
+
+    /// In a viewer's own program, which shows no window of the user's
+    /// (ADR-151), Print… pressed in the viewer's window asks Skwir's dialog
+    /// there, not the system's at once: the file shown, as shown or as a
+    /// booklet, never a listing. Ctrl+P reaches it from the viewer's card.
+    #[test]
+    fn a_viewer_s_print_asks_skwir_s_dialog_in_its_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Should Print… go straight to the system's dialog, it finds no
+        // bus, never the session's: no dialog on the desktop running this.
+        // SAFETY: before any thread of this test reads the environment;
+        // nextest runs each test in a process of its own.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}", tmp.path().join("no-bus").display()),
+            );
+        }
+        let (app, file) = standing_in(tmp.path());
+        app.plugins.add(Arc::new(PrintPlugin::default()), &app);
+        let notes = file("l'été notes.md", b"Notes\n");
+        let (_, _, pane) = app
+            .open_viewer_window(Location::from_path(tmp.path()))
+            .unwrap();
+        assert!(!app.window_shown(), "no window of the user's is up");
+        // As the viewer's window runs its preview's Print… (`Shell::run`).
+        {
+            let _asking = skwir_core::app::asking_in(Some(pane));
+            let print = Invocation::new("print.print")
+                .with(
+                    "entries",
+                    [EntryArg::from(EntryRef::from_path(&notes).unwrap())],
+                )
+                .with("pane", pane);
+            app.dispatch(&print).unwrap();
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let (asked_in, asked) = loop {
+            if let Some(taken) = app.take_forms_to(Some).pop() {
+                break taken;
+            }
+            assert!(std::time::Instant::now() < deadline, "no dialog was asked");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert_eq!(asked_in, Some(pane), "asked in the viewer's window");
+        assert_eq!(asked.form.title.english(), "Print “l'été notes.md”");
+        let layout = asked
+            .form
+            .fields
+            .iter()
+            .find(|field| field.key == "layout")
+            .expect("a layout");
+        let layouts: Vec<&str> = layout.choices().iter().map(|c| c.value.as_str()).collect();
+        assert_eq!(layouts, ["as_shown", "booklet"]);
+        assert!(app.answer_form(asked.id, None), "closed, nothing is done");
+        let viewer_key =
+            app.registry.keymap.all().into_iter().find(|binding| {
+                binding.keys == "ctrl-p" && binding.when.as_deref() == Some("viewer")
+            });
+        let invoked = viewer_key.map(|binding| binding.command);
+        assert_eq!(
+            invoked.as_ref().map(|command| &*command.name),
+            Some("ui.preview_invoke")
+        );
+        assert_eq!(
+            invoked
+                .as_ref()
+                .map(|command| command.args["command"].clone()),
+            Some(serde_json::json!("print.print"))
+        );
     }
 }
