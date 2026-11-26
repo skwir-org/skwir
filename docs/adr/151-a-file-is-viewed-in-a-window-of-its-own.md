@@ -12,6 +12,12 @@ no argument it opens the system's dialog. An Open With entry and
 standard input come with it. Built on Linux the same day and checked
 in a window on Xvfb; macOS and Windows compiled only.
 
+Amended 2026-11-26, on the user's question whether both could be had: a
+Skwir running shows the files a launch hands it, the launch waiting in
+its terminal; where none runs, the program of its own, as before. A
+viewer's program neither takes later viewers nor becomes the file
+manager (Rejected).
+
 ## Context
 
 - **The preview is the window's.** What draws a file is about 25
@@ -50,15 +56,34 @@ in a window on Xvfb; macOS and Windows compiled only.
 
 ## Decision
 
-1. **`skwir view [FILE…]`, and `skw [FILE…]`: a program of its own.**
+1. **`skwir view [FILE…]`, and `skw [FILE…]`: a window of the Skwir
+   running, else a program of its own** (amended 2026-11-26).
    - `skw` is a link to the program, installed by the packages. Started
      under that name, it is `skwir view`.
-   - It is always a process of its own, beside any Skwir running: it
-     hands nothing over and takes nothing over (no launches, no
-     FileManager1, no portal's dialogs: ADR-122, 140, 141). It waits in
-     its terminal while its window is open, as viewers do there, and
-     ends once that window closes.
-   - It starts only what viewing needs. Of the plugins, those that show
+   - Where a Skwir of its instance runs (ADR-122: the same build,
+     settings and display), the launch hands it the files, as a launch
+     hands it a folder, and that Skwir shows them in a viewer's window.
+     The launch waits in its terminal until that window closes, as
+     viewers do there. The launch going first (its terminal's Ctrl+C,
+     the terminal closed) closes the window.
+     - Linux: `Finishing.View` on the bus, answered once taken with the
+       viewing's number, then `Viewed`, answered once its window closes
+       (asked again should the bus give up on a call waiting that long).
+       The launch is followed by its name on the bus.
+     - Windows: the pipe's message says it views (`VIEW`), and its
+       connection stays until the window closes (`CLOSED`). The Skwir
+       looks four times a second whether the launch is still there: a
+       synchronous pipe's read would hold the write that says the window
+       closed.
+     - One that does not take them within two seconds is given up on.
+       Where none runs, it costs a stat (Linux) or a pipe not found.
+   - Where none runs, with `--new-instance`, and on macOS (the system
+     brings a running application forward rather than hand it anything,
+     ADR-122), it is a process of its own beside any Skwir running. It
+     hands nothing over and takes nothing over: no launches, no later
+     viewer, no FileManager1, no portal's dialogs (ADR-122, 140, 141).
+     It ends once its window closes.
+   - That program starts only what viewing needs. Of the plugins, those that show
      files or act on the one shown: each says it (`Plugin::for_viewer`),
      and a test refuses one that registers a preview, a thumbnail or map
      tiles without saying it. Plugins from outside are not looked for.
@@ -71,9 +96,10 @@ in a window on Xvfb; macOS and Windows compiled only.
      saves it writes over the files as they stand, its own keys alone
      (`Settings::persist`), and it never records the user's windows
      (`finishing::record_windows`).
-   - A relative path is read against the folder it is started in. A file
-     that is not there is said on standard error with status 1, before
-     any window.
+   - A relative path is read against the folder it is started in, by
+     the launch. A file that is not there is said on standard error with
+     status 1, before any window or handover. The Skwir showing them
+     ending before their window closed is said there too, with status 1.
 2. **A viewer's window is the program's, not the user's own.**
    - Its kind is a window's kind in the core (`WindowKind::Viewer`), as
      a dialog's is (`WindowKind::Chooser`).
@@ -106,11 +132,17 @@ in a window on Xvfb; macOS and Windows compiled only.
 4. **Its keys.**
    - Peek's: the arrows step, F goes to the whole screen.
    - Escape, Ctrl+W, Quit (Ctrl+Q), the window's Close and the card's ×
-     close the window, ending the program: whatever ends peek there ends
-     the window (`Shell::close_peek`; amended as tried, 2026-11-25, the ×
-     having closed only the preview). On the whole screen, Escape leaves
-     the whole screen first. Quit asks first while something runs (a print
-     being sent), as anywhere (ADR-115).
+     close the window: whatever ends peek there ends the window
+     (`Shell::close_peek`; amended as tried, 2026-11-25, the × having
+     closed only the preview). On the whole screen, Escape leaves the
+     whole screen first. In a viewer's own program, that ends it, once
+     what runs (a print being sent) is finished, as a window's closing
+     does (ADR-115).
+   - In the Skwir running (amended 2026-11-26), a viewer's Quit closes
+     that viewer alone. The user's Quit closes their windows and the
+     dialogs' and leaves viewers', which launches wait on: what it stops
+     is stopped at once (`Executor::cancel_all`), and the program ends
+     with the last viewer. A signal ends all, viewers included.
    - Steps go through the folder, in the order that folder is shown in
      (ADR-132), as peek's do. With several files given, they go through
      those alone, in the order given.
@@ -151,10 +183,28 @@ in a window on Xvfb; macOS and Windows compiled only.
 
 - **A separate binary:** about 100 MB beside skwir for a few MiB less
   of code read, and the preview pulled out of the window first.
-- **A window of the running Skwir** (chosen first, then set aside the
-  same day): it opens at once and costs a few MiB, but a preview that
-  fails takes the user's windows with it, and a viewer started from a
-  terminal would wait there or not depending on whether a Skwir ran.
+- **A window of the running Skwir alone** (chosen first, then set aside
+  the same day): it opens at once and costs a few MiB, but a preview
+  that fails takes the user's windows with it, and a viewer started from
+  a terminal would wait there or not depending on whether a Skwir ran.
+  Taken back where a Skwir runs (2026-11-26): the launch now waits for
+  its window, which answers the second reason; the first is the price.
+- **A viewer's program taking later viewers** (2026-11-26): it is a child
+  of the terminal that started it, so Ctrl+C there, or closing that
+  terminal, would close the windows other terminals wait on. Avoiding it
+  means starting every viewer detached, its errors and log reaching no
+  terminal, for a gain only while two viewers are up.
+- **A viewer's program becoming the file manager as skwir starts**
+  (2026-11-26):
+  - the file manager would live in the viewer's terminal: that terminal
+    waiting until Quit, its Ctrl+C ending a copy midway, its log
+    printed there;
+  - it would carry that terminal's environment (a `nix develop` PATH, a
+    `LANG` set for one command) into all it starts;
+  - everything a start does once before its first window would need a
+    second, late path, tried both ways;
+  - for a gain lasting only while that viewer is open: every later
+    viewer goes to the Skwir started.
 - **Returning to the terminal at once:** the viewer would have to leave
   its terminal, and its errors with it.
 - **Space closing it, as peek's does:** Space plays what plays, and the
@@ -162,8 +212,24 @@ in a window on Xvfb; macOS and Windows compiled only.
 
 ## Consequences
 
-- Each viewer is a process, with what a window costs (the GPU, fonts,
-  the catalogs): measured once built, against the user's Skwir.
+- A viewer shown by the Skwir running costs a window; one in a program
+  of its own costs a process, with what a window costs (the GPU, fonts,
+  the catalogs). Measured 2026-11-26 on the `dist` build, on a headless
+  sway drawing on the Intel GPU, a text file shown, medians of three
+  idle starts (PSS, Skwir's own share):
+  - skwir alone, 82.6 MiB (its binary's pages 44.2, anonymous 33.8);
+  - a viewer's own program, 90.4 MiB (binary 58.0, anonymous 27.7):
+    more than skwir, its start reading code ADR-128's order lays out for
+    skwir's start;
+  - a viewer handed to skwir, 28.8 MiB more, the launch waiting
+    included (binary 22.6, anonymous 5.8, the launch's 5.5 of it);
+  - from the launch to the window's first frame (five runs): handed,
+    22 to 38 ms (26 the median); its own program, 63 to 130 (85).
+- A preview that fails in the Skwir running takes the user's windows
+  with it, as it would in its preview panel.
+- While viewers' windows alone are up, what runs without the user's
+  windows shows no presence, as with dialogs' windows (ADR-141); it
+  shows once they close.
 - Where code asked whether a window answered a dialog to mean "not the
   user's own", it now asks that (`WindowTabs::is_own`), and a viewer's
   window is not.

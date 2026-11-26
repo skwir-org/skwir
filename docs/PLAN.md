@@ -1441,13 +1441,18 @@ build checked by a Mac (the tap's cask job runs codesign's deep check),
 and then the cask on the tap's main (it waits on `cask/skwir`).
 
 **A file's preview from a terminal** (ADR-151, built 2026-11-25:
-`skwir view`, `skw`, checked in a window on Xvfb). Left: its memory and
-first frame measured in a `dist` build against the user's Skwir (the
-debug build on Xvfb read 338 MiB against 363, both mostly the debug
-binary and llvmpipe); the system's dialog with no file named, tried
-only where no portal answers (it ends, saying why); the packages'
+`skwir view`, `skw`, checked in a window on Xvfb; amended 2026-11-26: a
+Skwir running shows the files a launch hands it, the launch waiting in
+its terminal, checked on a headless sway; `dist` measured there: a
+viewer's own program 90.4 MiB own share, more than skwir's 82.6, one
+handed to skwir 28.8 more, its first frame 26 ms from the launch
+against 85). Left: a viewer's own start traced by `just startup-order`
+too, so ADR-128 lays out its code (its program reads 58 MiB of the
+binary, skwir's start 44); the system's dialog with no file named,
+tried only where no portal answers (it ends, saying why); the packages'
 `skw` link and Skwir Preview entry built and installed (written, no
-package built); macOS and Windows compiled only.
+package built); Windows's handover tried under Wine (the pipe), its
+window and macOS compiled only.
 
 **A folder comes back with its volume** (ADR-149, built and amended
 twice 2026-11-22). Left: a folder deleted and made again at its path is

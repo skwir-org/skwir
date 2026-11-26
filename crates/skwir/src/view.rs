@@ -1,8 +1,9 @@
-//! `skwir view` and `skw` (ADR-151): a program of its own viewing files,
-//! started with only what viewing needs. What its command line asks is
-//! read here, before anything logs or reaches the display: a file that is
-//! not there, or standard input past its bound, is said on standard error,
-//! and no window opens.
+//! `skwir view` and `skw` (ADR-151): files viewed in a window of the Skwir
+//! running, which this launch hands them to and waits on, else in a program
+//! of its own started with only what viewing needs. What its command line
+//! asks is read here, before anything logs or reaches the display: a file
+//! that is not there, or standard input past its bound, is said on standard
+//! error, and no window opens.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{IsTerminal, Read, Write};
@@ -17,6 +18,10 @@ pub const LINK: &str = "skw";
 
 /// The subcommand.
 const SUBCOMMAND: &str = "view";
+
+/// The option that keeps a launch apart from the Skwir running, a program
+/// of its own (ADR-122), as `skwir` takes it.
+const NEW_INSTANCE: &str = "--new-instance";
 
 /// The most read from standard input: room for a film. Past it nothing is
 /// shown, as a file cut short would be shown as whole (ADR-151, 7).
@@ -35,7 +40,10 @@ usage: skwir view [<file>…]     show the files, stepping from one to the next
        skwir view -             show what standard input gives
        skw [<file>…]            the same
 
-Escape closes the window, F shows the preview on the whole screen.";
+A Skwir running shows them in a window of its own, and this command waits
+until that window closes; --new-instance views them in a program of its
+own instead. Escape closes the window, F shows the preview on the whole
+screen.";
 
 /// What this launch asks to view, if it views: started as `skw`, or as
 /// `skwir view`. Its arguments after the subcommand.
@@ -48,6 +56,24 @@ pub fn asked<'a>(program: &OsStr, args: &'a [OsString]) -> Option<&'a [OsString]
         Some((first, rest)) if first == SUBCOMMAND => Some(rest),
         _ => None,
     }
+}
+
+/// `args` without `--new-instance` (before a `--`), and whether it was
+/// there: the launch is then a program of its own.
+pub fn apart(args: &[OsString]) -> (Vec<OsString>, bool) {
+    let mut options = true;
+    let mut apart = false;
+    let mut kept = Vec::with_capacity(args.len());
+    for arg in args {
+        if options && arg == "--" {
+            options = false;
+        } else if options && arg == NEW_INSTANCE {
+            apart = true;
+            continue;
+        }
+        kept.push(arg.clone());
+    }
+    (kept, apart)
 }
 
 /// The files `args` name, read against `cwd`, and standard input's file
@@ -146,6 +172,17 @@ fn piped(cache: &Path) -> Result<PathBuf, i32> {
     })
 }
 
+/// Remove what standard input gave, and its folder: the Skwir that showed
+/// it ended before its window closed, which would have.
+pub fn let_go_of_piped(viewing: &Viewing) {
+    if let Some(piped) = &viewing.piped {
+        let _ = std::fs::remove_file(piped);
+        if let Some(folder) = piped.parent() {
+            let _ = std::fs::remove_dir(folder);
+        }
+    }
+}
+
 /// Remove what earlier viewers kept of standard input and left a day ago
 /// or more: each folder is a viewer's, named by its process.
 fn sweep(all: &Path) {
@@ -168,7 +205,7 @@ fn sweep(all: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{asked, read};
+    use super::{apart, asked, read};
     use std::ffi::OsString;
 
     fn args(list: &[&str]) -> Vec<OsString> {
@@ -207,5 +244,20 @@ mod tests {
             read(&[], dir.path()).unwrap().files.is_empty(),
             "the dialog asks"
         );
+    }
+
+    /// `--new-instance` keeps the launch apart, a file of that name after
+    /// `--` stays a file.
+    #[test]
+    fn new_instance_keeps_the_launch_apart() {
+        assert_eq!(
+            apart(&args(&["--new-instance", "a.png"])),
+            (args(&["a.png"]), true)
+        );
+        assert_eq!(
+            apart(&args(&["a.png", "--", "--new-instance"])),
+            (args(&["a.png", "--", "--new-instance"]), false)
+        );
+        assert_eq!(apart(&args(&["a.png"])), (args(&["a.png"]), false));
     }
 }

@@ -2156,6 +2156,28 @@ impl Executor {
     }
 
     /// Cancel every plan, undo and redo, whether it runs, waits paused or
+    /// waits its turn, as [`Executor::wind_down`] does, without waiting and
+    /// taking more after: Stop and quit while a viewer's window stays, the
+    /// program going on until it closes (ADR-151, 4). Each takes back its
+    /// own partial work as it stops.
+    pub fn cancel_all(&self) {
+        {
+            let mut lane = self.lane.lock();
+            lane.version += 1;
+            for token in lane
+                .queue
+                .iter()
+                .map(|job| &job.cancel)
+                .chain(lane.started.iter().map(|b| &b.cancel))
+            {
+                token.cancel();
+            }
+        }
+        // Cancelled, what waited starts at once and ends.
+        self.dispatch();
+    }
+
+    /// Cancel every plan, undo and redo, whether it runs, waits paused or
     /// waits its turn, and take no more; then wait up to `timeout` for all
     /// to end. A cancelled step takes back its own partial work as
     /// it stops (a copy removes its staging folder), so a process that
@@ -8005,6 +8027,48 @@ mod tests {
         }
         assert!(executor.wind_down(std::time::Duration::from_secs(10)));
         assert_eq!(applied.load(Ordering::SeqCst), 0, "held before its step");
+    }
+
+    /// Cancelled all, a plan held before its step ends having done
+    /// nothing, and the executor takes the next one, unlike a wind-down.
+    #[test]
+    fn cancelled_all_it_takes_the_next_plan() {
+        let executor = Executor::new(Scheduler::new(1));
+        let applied = Arc::new(AtomicUsize::new(0));
+        let probe = || {
+            Plan::with_steps(
+                Words::as_written("one"),
+                vec![Box::new(Probe {
+                    applied: Arc::clone(&applied),
+                    conflict: false,
+                }) as Box<dyn Operation>],
+            )
+        };
+        let (held, next) = (probe(), probe());
+        let (held_id, next_id) = (held.id, next.id);
+        let weak = Arc::downgrade(&executor);
+        executor.set_waker(Some(Arc::new(move || {
+            if let Some(executor) = weak.upgrade() {
+                executor.pause(held_id);
+            }
+        })));
+        executor.execute(held, CancelToken::new());
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::Paused { plan } if *plan == held_id),
+        );
+        executor.cancel_all();
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::Finished { plan, .. } if *plan == held_id),
+        );
+        assert_eq!(applied.load(Ordering::SeqCst), 0, "held before its step");
+        executor.execute(next, CancelToken::new());
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::Finished { plan, .. } if *plan == next_id),
+        );
+        assert_eq!(applied.load(Ordering::SeqCst), 1, "the next plan ran");
     }
 
     /// Files deleted for good from a folder that keeps others are not

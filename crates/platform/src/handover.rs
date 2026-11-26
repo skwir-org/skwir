@@ -132,6 +132,212 @@ pub struct Opening {
     pub properties: bool,
 }
 
+/// What a launch viewing files (`skwir view`, `skw`, ADR-151) asks the
+/// running Skwir of its instance: a viewer's window showing them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Viewing {
+    /// The files, each a whole path, in the order given; none for the
+    /// system's dialog to ask which.
+    pub files: Vec<PathBuf>,
+    /// The one of them standing for standard input: removed once the
+    /// window showing it closes.
+    pub piped: Option<PathBuf>,
+    /// The desktop's token to bring the window forward ([`launch_token`]).
+    pub token: Option<String>,
+}
+
+/// How a launch handing its files over ended ([`view_elsewhere`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewedElsewhere {
+    /// No Skwir of this instance took them (none runs, none answered in
+    /// time, or this system hands nothing over): the launch views them
+    /// itself.
+    NotTaken,
+    /// Their window closed.
+    Closed,
+    /// The Skwir showing them ended before their window closed.
+    Ended,
+}
+
+/// A viewing a launch handed over ([`view_elsewhere`]), for the window
+/// that shows it: what it asks, whether its launch went, and how that
+/// launch is told the window closed ([`Viewed::close`]). Every copy let go,
+/// the launch is told it closed.
+#[derive(Clone)]
+pub struct Viewed {
+    viewing: Arc<Viewing>,
+    holder: Arc<ViewedHolder>,
+}
+
+impl std::fmt::Debug for Viewed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Viewed")
+            .field("id", &self.holder.state.id)
+            .field("viewing", &self.viewing)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Viewed {
+    /// A viewing of `viewing` that no launch waits for: for tests. What
+    /// takes launches over makes the others.
+    #[must_use]
+    pub fn new(viewing: Viewing) -> Viewed {
+        Viewed::made(viewing).0
+    }
+
+    fn made(viewing: Viewing) -> (Viewed, Arc<ViewedState>) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let state = Arc::new(ViewedState {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            told: parking_lot::Mutex::default(),
+            changed: parking_lot::Condvar::new(),
+            #[cfg(target_os = "linux")]
+            event: event_listener::Event::new(),
+        });
+        let viewed = Viewed {
+            viewing: Arc::new(viewing),
+            holder: Arc::new(ViewedHolder {
+                state: Arc::clone(&state),
+            }),
+        };
+        (viewed, state)
+    }
+
+    #[must_use]
+    pub fn viewing(&self) -> &Viewing {
+        &self.viewing
+    }
+
+    /// The window closed: its launch is told, and ends.
+    pub fn close(&self) {
+        self.holder.state.close();
+    }
+
+    /// Whether its launch went (its terminal's Ctrl+C, the terminal
+    /// closed): the window then closes.
+    #[must_use]
+    pub fn is_gone(&self) -> bool {
+        self.holder.state.told.lock().gone
+    }
+
+    /// Call `hook` once its launch goes, at once if it has; on the thread
+    /// that is told, so it must return at once (a wake). Never once the
+    /// window closed.
+    pub fn when_gone(&self, hook: impl Fn() + Send + Sync + 'static) {
+        let mut told = self.holder.state.told.lock();
+        if told.closed {
+            return;
+        }
+        if told.gone {
+            drop(told);
+            hook();
+            return;
+        }
+        told.on_gone.push(Box::new(hook));
+    }
+
+    /// Its launch went: for tests, as what serves launches tells it.
+    #[cfg(all(test, target_os = "linux"))]
+    fn gone_for_test(&self) {
+        self.holder.state.go();
+    }
+}
+
+/// What every copy of a viewing holds: let go of by all, its window is
+/// closed.
+struct ViewedHolder {
+    state: Arc<ViewedState>,
+}
+
+impl Drop for ViewedHolder {
+    fn drop(&mut self) {
+        self.state.close();
+    }
+}
+
+/// Where the end of a viewing is told, shared by its window and what
+/// serves its launch.
+struct ViewedState {
+    /// Its own number, for this program's life: what its launch waits on.
+    id: u64,
+    told: parking_lot::Mutex<ViewedTold>,
+    // What serves a launch on the pipe waits on it (Windows).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    changed: parking_lot::Condvar,
+    // What serves a launch on the bus waits on it (Linux).
+    #[cfg(target_os = "linux")]
+    event: event_listener::Event,
+}
+
+#[derive(Default)]
+struct ViewedTold {
+    /// Its window closed.
+    closed: bool,
+    /// Its launch went.
+    gone: bool,
+    on_gone: Vec<Box<dyn Fn() + Send + Sync>>,
+}
+
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+impl ViewedState {
+    fn close(&self) {
+        {
+            let mut told = self.told.lock();
+            if told.closed {
+                return;
+            }
+            told.closed = true;
+            told.on_gone.clear();
+        }
+        self.changed.notify_all();
+        #[cfg(target_os = "linux")]
+        self.event.notify(usize::MAX);
+    }
+
+    /// Its launch went: told to the window, unless it closed.
+    fn go(&self) {
+        let hooks = {
+            let mut told = self.told.lock();
+            if told.closed || told.gone {
+                return;
+            }
+            told.gone = true;
+            std::mem::take(&mut told.on_gone)
+        };
+        for hook in hooks {
+            hook();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_closed(&self) -> bool {
+        self.told.lock().closed
+    }
+
+    /// Once its window closes.
+    #[cfg(target_os = "linux")]
+    async fn closed(&self) {
+        loop {
+            let listener = self.event.listen();
+            if self.is_closed() {
+                return;
+            }
+            listener.await;
+        }
+    }
+
+    /// Whether its window closed, waiting `within` at most for it.
+    #[cfg(windows)]
+    fn closed_within(&self, within: Duration) -> bool {
+        let mut told = self.told.lock();
+        if !told.closed {
+            let _ = self.changed.wait_for(&mut told, within);
+        }
+        told.closed
+    }
+}
+
 /// How long a launch waits for the finishing Skwir's answer, and (on
 /// Windows) the finishing Skwir for a launch to say what it asks: one
 /// that takes longer is given up on.
@@ -186,6 +392,43 @@ pub fn hand_over(opening: &Opening) -> bool {
     {
         let _ = opening;
         false
+    }
+}
+
+/// Hand `viewing` to the running Skwir of this [`Instance`], as
+/// [`hand_over`] hands a launch, and wait until the window showing it
+/// closes: the launch stays in its terminal meanwhile, as a viewer there
+/// does (ADR-151, 1), and where it ends first (its terminal's Ctrl+C, the
+/// terminal closed) the window closes. Where none is, a stat (Linux) or a
+/// pipe not found (Windows), nothing more. One that does not take it within
+/// two seconds is given up on ([`ViewedElsewhere::NotTaken`]). Never taken
+/// on macOS and other systems, nor once [`keep_apart`] was asked.
+pub fn view_elsewhere(viewing: &Viewing) -> ViewedElsewhere {
+    if apart() {
+        return ViewedElsewhere::NotTaken;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let instance = Instance::here();
+        linux::marker(&instance).map_or(ViewedElsewhere::NotTaken, |marker| {
+            linux::view_at(
+                &marker,
+                &linux::name(&instance),
+                linux::waiting_session,
+                viewing,
+            )
+        })
+    }
+    #[cfg(windows)]
+    {
+        pipe::name(&Instance::here()).map_or(ViewedElsewhere::NotTaken, |name| {
+            pipe::view_through(&name, viewing)
+        })
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = viewing;
+        ViewedElsewhere::NotTaken
     }
 }
 
@@ -311,12 +554,19 @@ pub fn take_over(taken: impl Fn(Opening) + Send + Sync + 'static) -> Result<Taki
 /// [`take_over`], other programs' open and save dialogs taken too and
 /// handed to `chose` (ADR-141, 2): on Linux the portal's back end is
 /// served beside, its name asked in the queue behind a skwir the bus
-/// started. `chose` is called as `taken` is, and must return at once.
-pub fn take_over_choosing(
+/// started. And the files a launch views (`skw`, ADR-151, 1), handed to
+/// `viewed` (Linux and Windows). Each is called as `taken` is, and must
+/// return at once.
+pub fn take_over_all(
     taken: impl Fn(Opening) + Send + Sync + 'static,
     chose: impl Fn(crate::chooser::Choosing) + Send + Sync + 'static,
+    viewed: impl Fn(Viewed) + Send + Sync + 'static,
 ) -> Result<TakingOver, NotTaken> {
-    take_over_gate(Gate::choosing(taken, chose))
+    take_over_gate(Gate::taking(
+        Box::new(taken),
+        Some(Box::new(chose)),
+        Some(Box::new(viewed)),
+    ))
 }
 
 fn take_over_gate(gate: Arc<Gate>) -> Result<TakingOver, NotTaken> {
@@ -442,32 +692,53 @@ impl Drop for TakingOver {
 #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 struct Gate(parking_lot::Mutex<Option<Taker>>);
 
-/// What takes what the gate passes: launches, and other programs'
-/// dialogs where they are taken (ADR-141).
+/// What takes what the gate passes: launches, other programs' dialogs
+/// where they are taken (ADR-141), and the files launches view (ADR-151).
 struct Taker {
     opening: Box<dyn Fn(Opening) + Send + Sync>,
     // Dialogs come only through the portal (Linux, ADR-141, 11).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    choosing: Option<Box<dyn Fn(crate::chooser::Choosing) + Send + Sync>>,
+    choosing: Option<Choose>,
+    #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+    viewing: Option<View>,
 }
+
+type Choose = Box<dyn Fn(crate::chooser::Choosing) + Send + Sync>;
+type View = Box<dyn Fn(Viewed) + Send + Sync>;
 
 #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 impl Gate {
     fn new(taken: impl Fn(Opening) + Send + Sync + 'static) -> Arc<Gate> {
-        Arc::new(Gate(parking_lot::Mutex::new(Some(Taker {
-            opening: Box::new(taken),
-            choosing: None,
-        }))))
+        Gate::taking(Box::new(taken), None, None)
     }
 
     /// A gate that passes other programs' dialogs to `chose` too.
+    #[cfg(all(test, target_os = "linux"))]
     fn choosing(
         taken: impl Fn(Opening) + Send + Sync + 'static,
         chose: impl Fn(crate::chooser::Choosing) + Send + Sync + 'static,
     ) -> Arc<Gate> {
+        Gate::taking(Box::new(taken), Some(Box::new(chose)), None)
+    }
+
+    /// A gate that passes the files launches view to `viewed` too.
+    #[cfg(all(test, any(target_os = "linux", windows)))]
+    fn viewing(
+        taken: impl Fn(Opening) + Send + Sync + 'static,
+        viewed: impl Fn(Viewed) + Send + Sync + 'static,
+    ) -> Arc<Gate> {
+        Gate::taking(Box::new(taken), None, Some(Box::new(viewed)))
+    }
+
+    fn taking(
+        opening: Box<dyn Fn(Opening) + Send + Sync>,
+        choosing: Option<Choose>,
+        viewing: Option<View>,
+    ) -> Arc<Gate> {
         Arc::new(Gate(parking_lot::Mutex::new(Some(Taker {
-            opening: Box::new(taken),
-            choosing: Some(Box::new(chose)),
+            opening,
+            choosing,
+            viewing,
         }))))
     }
 
@@ -500,6 +771,17 @@ impl Gate {
             return false;
         };
         choose(choosing);
+        true
+    }
+
+    /// Give the files a launch views to the taker if it still takes them:
+    /// whether it took them. Held meanwhile, as [`Gate::pass`].
+    fn pass_viewing(&self, viewed: Viewed) -> bool {
+        let held = self.0.lock();
+        let Some(view) = held.as_ref().and_then(|taker| taker.viewing.as_ref()) else {
+            return false;
+        };
+        view(viewed);
         true
     }
 
@@ -625,11 +907,285 @@ pub(crate) mod linux {
         }
     }
 
+    /// A launch's own connection for viewing files ([`super::view_elsewhere`]):
+    /// its calls are never given up on, as a viewer's window may stay for
+    /// hours; asking is given up on after [`PATIENCE`] by the launch itself
+    /// (`view_at`).
+    pub(super) fn waiting_session() -> zbus::Result<Connection> {
+        zbus::blocking::connection::Builder::session()?.build()
+    }
+
+    /// [`super::view_elsewhere`] to the Skwir `marker` says finishes, as
+    /// [`hand_over_at`]: `View` asked within [`PATIENCE`] of the one that
+    /// holds `name`, then `Viewed` until its window closes, asked again
+    /// should the bus give up on it while that Skwir still holds the name.
+    pub(super) fn view_at(
+        marker: &Path,
+        name: &str,
+        connect: impl FnOnce() -> zbus::Result<Connection>,
+        viewing: &super::Viewing,
+    ) -> super::ViewedElsewhere {
+        use super::ViewedElsewhere;
+        if std::fs::symlink_metadata(marker).is_err() {
+            return ViewedElsewhere::NotTaken;
+        }
+        let bus = match connect() {
+            Ok(bus) => bus.into_inner(),
+            Err(error) => {
+                tracing::debug!("these files are not handed over: {error}");
+                return ViewedElsewhere::NotTaken;
+            }
+        };
+        async_io::block_on(async {
+            let asked = async {
+                let dbus = zbus::fdo::DBusProxy::new(&bus).await?;
+                let name = zbus::names::BusName::try_from(name)?;
+                // Asked first, so a name no one holds is not started by
+                // the bus, and a stale marker costs no failed call.
+                if !dbus.name_has_owner(name.clone()).await? {
+                    return Ok(None);
+                }
+                let holder = dbus.get_name_owner(name).await?;
+                let files: Vec<&[u8]> = viewing
+                    .files
+                    .iter()
+                    .map(|file| file.as_os_str().as_encoded_bytes())
+                    .collect();
+                let piped = viewing
+                    .piped
+                    .as_deref()
+                    .map_or(&[][..], |piped| piped.as_os_str().as_encoded_bytes());
+                let token = viewing.token.as_deref().unwrap_or_default();
+                let reply = bus
+                    .call_method(
+                        Some(holder.as_str()),
+                        PATH,
+                        Some(INTERFACE),
+                        "View",
+                        &(files, piped, token),
+                    )
+                    .await?;
+                let id: u64 = reply.body().deserialize()?;
+                Ok::<_, zbus::Error>(Some((holder, id, dbus)))
+            };
+            let late = async {
+                async_io::Timer::after(PATIENCE).await;
+                Err(zbus::Error::Failure("no answer".into()))
+            };
+            let (holder, id, dbus) = match futures_lite::future::or(asked, late).await {
+                Ok(Some(taken)) => taken,
+                Ok(None) => return ViewedElsewhere::NotTaken,
+                Err(error) => {
+                    tracing::debug!("these files are not handed over: {error}");
+                    return ViewedElsewhere::NotTaken;
+                }
+            };
+            loop {
+                let waited = bus
+                    .call_method(
+                        Some(holder.as_str()),
+                        PATH,
+                        Some(INTERFACE),
+                        "Viewed",
+                        &(id,),
+                    )
+                    .await;
+                let Err(error) = waited else {
+                    return ViewedElsewhere::Closed;
+                };
+                // A bus that gives up on a call waiting long (a reply's
+                // time limit) while the Skwir is there: asked again. One
+                // gone answers no more.
+                let gave_up = matches!(&error, zbus::Error::MethodError(name, ..)
+                    if name.as_str() == "org.freedesktop.DBus.Error.NoReply"
+                        || name.as_str() == "org.freedesktop.DBus.Error.Timeout");
+                let there = dbus
+                    .name_has_owner(zbus::names::BusName::from(holder.as_ref()))
+                    .await
+                    .unwrap_or(false);
+                if !(gave_up && there) {
+                    tracing::debug!("the Skwir viewing these files ended: {error}");
+                    return ViewedElsewhere::Ended;
+                }
+            }
+        })
+    }
+
+    /// The viewings handed over and not yet closed, by their number: what
+    /// their launches wait on (`Viewed`).
+    type Viewings =
+        Arc<parking_lot::Mutex<std::collections::HashMap<u64, Arc<super::ViewedState>>>>;
+
     /// What a later launch calls.
-    struct Finishing(Arc<Gate>);
+    struct Finishing {
+        gate: Arc<Gate>,
+        viewings: Viewings,
+        stopped: Arc<Stopped>,
+    }
+
+    impl Finishing {
+        fn new(gate: &Arc<Gate>, stopped: &Arc<Stopped>) -> Finishing {
+            Finishing {
+                gate: Arc::clone(gate),
+                viewings: Viewings::default(),
+                stopped: Arc::clone(stopped),
+            }
+        }
+    }
+
+    /// Set once what serves launches on a connection stops (`Served`):
+    /// what waits there for a viewing's window answers then, and lets go
+    /// of the connection, which its launch would otherwise wait on for
+    /// good.
+    #[derive(Default)]
+    pub(super) struct Stopped {
+        stopped: std::sync::atomic::AtomicBool,
+        told: event_listener::Event,
+    }
+
+    impl Stopped {
+        fn stop(&self) {
+            self.stopped
+                .store(true, std::sync::atomic::Ordering::Release);
+            self.told.notify(usize::MAX);
+        }
+
+        fn is_stopped(&self) -> bool {
+            self.stopped.load(std::sync::atomic::Ordering::Acquire)
+        }
+
+        async fn wait(&self) {
+            loop {
+                let listener = self.told.listen();
+                if self.is_stopped() {
+                    return;
+                }
+                listener.await;
+            }
+        }
+    }
 
     #[zbus::interface(name = "org.skwir.skwir.Finishing")]
     impl Finishing {
+        /// View `files` (each a path's bytes; none for the system's dialog
+        /// to ask which), `piped` the one standing for standard input
+        /// (empty for none), the window brought forward with `token` (empty
+        /// for none): answered once taken, with the viewing's number, which
+        /// `Viewed` waits on. Its launch followed: gone (its terminal's
+        /// Ctrl+C), the window closes.
+        async fn view(
+            &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+            #[zbus(connection)] bus: &zbus::Connection,
+            files: Vec<Vec<u8>>,
+            piped: Vec<u8>,
+            token: String,
+        ) -> zbus::fdo::Result<u64> {
+            let Some(launch) = header.sender().map(zbus::names::UniqueName::to_owned) else {
+                return Err(zbus::fdo::Error::Failed("a viewing from no one".into()));
+            };
+            let viewing = super::Viewing {
+                files: files
+                    .into_iter()
+                    .map(|file| PathBuf::from(skwir_core::os_path::from_bytes(file)))
+                    .collect(),
+                piped: (!piped.is_empty())
+                    .then(|| PathBuf::from(skwir_core::os_path::from_bytes(piped))),
+                token: (!token.is_empty()).then_some(token),
+            };
+            // Its launch followed from before it is taken: one that goes
+            // as it is taken closes its window all the same.
+            let dbus = zbus::fdo::DBusProxy::new(bus).await?;
+            let mut went = dbus
+                .receive_name_owner_changed_with_args(&[(0, launch.as_str())])
+                .await?;
+            let (viewed, state) = super::Viewed::made(viewing);
+            let id = state.id;
+            self.viewings.lock().insert(id, Arc::clone(&state));
+            if !self.gate.pass_viewing(viewed) {
+                self.viewings.lock().remove(&id);
+                return Err(zbus::fdo::Error::Failed(
+                    "Skwir no longer takes launches over".into(),
+                ));
+            }
+            let there = dbus
+                .name_has_owner(zbus::names::BusName::from(launch.as_ref()))
+                .await
+                .unwrap_or(false);
+            let (viewings, stopped) = (Arc::clone(&self.viewings), Arc::clone(&self.stopped));
+            bus.executor()
+                .spawn(
+                    async move {
+                        // Each change taken as it comes: the stream never
+                        // holds the connection's other users.
+                        let gone = async {
+                            use futures_lite::StreamExt as _;
+                            if there {
+                                while let Some(changed) = went.next().await {
+                                    if changed.args().is_ok_and(|args| args.new_owner().is_none()) {
+                                        break;
+                                    }
+                                }
+                            }
+                            true
+                        };
+                        let closed = async {
+                            state.closed().await;
+                            false
+                        };
+                        let stopped = async {
+                            stopped.wait().await;
+                            false
+                        };
+                        let gone = futures_lite::future::or(
+                            gone,
+                            futures_lite::future::or(closed, stopped),
+                        )
+                        .await;
+                        if gone {
+                            state.go();
+                        }
+                        viewings.lock().remove(&id);
+                    },
+                    "skwir-viewed",
+                )
+                .detach();
+            Ok(id)
+        }
+
+        /// Answered once the window of viewing `id` closes, at once if it
+        /// has; refused once this Skwir no longer takes launches over.
+        async fn viewed(&self, id: u64) -> zbus::fdo::Result<()> {
+            let refused = || {
+                Err(zbus::fdo::Error::Failed(
+                    "Skwir no longer takes launches over".into(),
+                ))
+            };
+            let state = self.viewings.lock().get(&id).cloned();
+            // Gone from the viewings: its window closed, or this Skwir
+            // stopped (which lets go of them all, once it says so).
+            let Some(state) = state else {
+                return if self.stopped.is_stopped() {
+                    refused()
+                } else {
+                    Ok(())
+                };
+            };
+            let closed = async {
+                state.closed().await;
+                true
+            };
+            let stopped = async {
+                self.stopped.wait().await;
+                false
+            };
+            if futures_lite::future::or(closed, stopped).await {
+                Ok(())
+            } else {
+                refused()
+            }
+        }
+
         /// Answer another program's dialog a skwir the bus started took
         /// (`chooser`): the request as the portal gave it (`method`: 0
         /// open, 1 save, 2 save files), its dialog closable at `handle`
@@ -652,7 +1208,7 @@ pub(crate) mod linux {
                 title,
                 options,
             };
-            let gate = Arc::clone(&self.0);
+            let gate = Arc::clone(&self.gate);
             crate::chooser::linux::ask(server, handle, raw, move |choosing| {
                 gate.pass_choosing(choosing)
             })
@@ -682,7 +1238,7 @@ pub(crate) mod linux {
                     .collect(),
                 properties,
             };
-            if self.0.pass(opening) {
+            if self.gate.pass(opening) {
                 Ok(())
             } else {
                 Err(zbus::fdo::Error::Failed(
@@ -983,6 +1539,8 @@ pub(crate) mod linux {
         name: String,
         /// Other programs answered here too while it is wanted.
         answer: Arc<Answer>,
+        /// What waits for viewings' windows here, told it stopped.
+        stopped: Arc<Stopped>,
     }
 
     impl Served {
@@ -998,7 +1556,8 @@ pub(crate) mod linux {
             name: &str,
         ) -> Result<Served, NotTaken> {
             let objects = bus.object_server();
-            match objects.at(PATH, Finishing(Arc::clone(gate))) {
+            let stopped = Arc::<Stopped>::default();
+            match objects.at(PATH, Finishing::new(gate, &stopped)) {
                 Ok(true) => {}
                 Ok(false) => {
                     tracing::debug!("this Skwir takes later launches over already");
@@ -1030,6 +1589,7 @@ pub(crate) mod linux {
                 marker: marker.to_owned(),
                 name: name.to_owned(),
                 answer: Arc::clone(answer),
+                stopped,
             };
             if let Err(error) = write_marker(marker) {
                 // Dropped: neither the name nor the object kept.
@@ -1052,6 +1612,9 @@ pub(crate) mod linux {
 
     impl Drop for Served {
         fn drop(&mut self) {
+            // What waits for viewings' windows answers: their launches end,
+            // not waiting for good on a connection that stays for them.
+            self.stopped.stop();
             // Other programs first, then the name: a launch that finds
             // the marker meanwhile finds no one holds it.
             self.answer.disconnected();
@@ -1162,32 +1725,52 @@ mod pipe {
     pub(super) fn hand_over_to(pipe: &OsStr, opening: &Opening) -> bool {
         // Larger than a pipe's buffer: not handed over (never so for a
         // path Windows opens).
-        let Some(message) = frame::encode(&frame::Fields::of(opening)) else {
-            return false;
+        frame::encode(&frame::Message::Open(frame::Fields::of(opening)))
+            .and_then(|message| ask(pipe, &message))
+            .is_some()
+    }
+
+    /// [`super::view_elsewhere`] through `pipe`: once taken, the pipe
+    /// held until the Skwir says the window closed, or goes.
+    pub(super) fn view_through(pipe: &OsStr, viewing: &super::Viewing) -> super::ViewedElsewhere {
+        use super::ViewedElsewhere;
+        let Some(mut connected) = frame::encode(&frame::Message::View(frame::Viewing::of(viewing)))
+            .and_then(|message| ask(pipe, &message))
+        else {
+            return ViewedElsewhere::NotTaken;
         };
+        // Only this thread uses its end: a read that waits for the one
+        // byte the Skwir writes as the window closes, or for its end gone.
+        let mut answer = [0u8];
+        match connected.read_exact(&mut answer) {
+            Ok(()) if answer[0] == frame::CLOSED => ViewedElsewhere::Closed,
+            _ => ViewedElsewhere::Ended,
+        }
+    }
+
+    /// Say `message` to the Skwir serving `pipe`: its end, once it
+    /// answered taken within [`PATIENCE`].
+    fn ask(pipe: &OsStr, message: &[u8]) -> Option<File> {
         let deadline = Instant::now() + PATIENCE;
-        let Some(mut connected) = connect(pipe, deadline) else {
-            return false;
-        };
+        let mut connected = connect(pipe, deadline)?;
         // Anyone may make a pipe of a name not taken: one another user
         // made first would be told what this launch opens, answer it
         // taken, and keep Skwir from starting. Nothing is said, and no
         // window let forward, before the pipe is known to be this user's.
         let Some(server) = our_server(&connected) else {
             tracing::debug!("the pipe of that name is not this user's: not handed over");
-            return false;
+            return None;
         };
         // SAFETY: a process id, nothing else. Allowed or not, the window
         // still opens.
         unsafe { AllowSetForegroundWindow(server) };
         // Within the pipe's buffer: written at once, read or not.
-        if connected.write_all(&message).is_err() {
-            return false;
-        }
+        connected.write_all(message).ok()?;
         let mut answer = [0u8];
-        matches!(wait(&connected, 1, deadline, None), Waited::Ready)
+        (matches!(wait(&connected, 1, deadline, None), Waited::Ready)
             && connected.read_exact(&mut answer).is_ok()
-            && answer[0] == frame::TAKEN
+            && answer[0] == frame::TAKEN)
+            .then_some(connected)
     }
 
     /// The process serving `connected`, where it is this user's in this
@@ -1357,8 +1940,7 @@ mod pipe {
             // stays this Skwir's (no one makes it first meanwhile), and a
             // launch finds it busy a moment, never gone.
             let next = crate::windows::pipe::instance(pipe, false);
-            answer(&connected, gate, stop);
-            drop(connected);
+            answer(connected, gate, stop);
             match next {
                 Ok(next) => waiting = next,
                 Err(error) => {
@@ -1370,11 +1952,13 @@ mod pipe {
     }
 
     /// Read a launch's message from `connected`, give it to `gate`, and
-    /// answer it taken; given up on after [`PATIENCE`], or at `stop`.
-    fn answer(mut connected: &File, gate: &Gate, stop: &AtomicBool) {
+    /// answer it taken; given up on after [`PATIENCE`], or at `stop`. A
+    /// viewing keeps its connection, on a thread of its own, until its
+    /// window closes (`follow_viewing`).
+    fn answer(mut connected: File, gate: &Gate, stop: &AtomicBool) {
         let deadline = Instant::now() + PATIENCE;
         let mut length = [0u8; 4];
-        if !matches!(wait(connected, 4, deadline, Some(stop)), Waited::Ready)
+        if !matches!(wait(&connected, 4, deadline, Some(stop)), Waited::Ready)
             || connected.read_exact(&mut length).is_err()
         {
             return;
@@ -1386,20 +1970,71 @@ mod pipe {
             return;
         };
         let mut body = vec![0; length];
-        if !matches!(wait(connected, length, deadline, Some(stop)), Waited::Ready)
-            || connected.read_exact(&mut body).is_err()
+        if !matches!(
+            wait(&connected, length, deadline, Some(stop)),
+            Waited::Ready
+        ) || connected.read_exact(&mut body).is_err()
         {
             return;
         }
-        let Some(fields) = frame::decode(&body) else {
-            return;
-        };
-        if !gate.pass(fields.into_opening()) || connected.write_all(&[frame::TAKEN]).is_err() {
-            return;
+        match frame::decode(&body) {
+            Some(frame::Message::Open(fields)) => {
+                if !gate.pass(fields.into_opening())
+                    || connected.write_all(&[frame::TAKEN]).is_err()
+                {
+                    return;
+                }
+                // The answer read before the connection goes, which would
+                // take it along: until the launch lets go (never more to
+                // read).
+                let _ = wait(&connected, usize::MAX, deadline, Some(stop));
+            }
+            Some(frame::Message::View(viewing)) => {
+                let (viewed, state) = super::Viewed::made(viewing.into_viewing());
+                if !gate.pass_viewing(viewed) {
+                    return;
+                }
+                if connected.write_all(&[frame::TAKEN]).is_err() {
+                    state.go();
+                    return;
+                }
+                let followed = std::thread::Builder::new()
+                    .name("skwir-viewed".into())
+                    .spawn(move || follow_viewing(&connected, &state));
+                if let Err(error) = followed {
+                    tracing::debug!("a viewing's launch is not followed: {error}");
+                }
+            }
+            None => {}
         }
-        // The answer read before the connection goes, which would take
-        // it along: until the launch lets go (never more to read).
-        let _ = wait(connected, usize::MAX, deadline, Some(stop));
+    }
+
+    /// How often a viewing's thread looks whether its launch went: a
+    /// synchronous pipe's read would hold the write that says the window
+    /// closed, so its end is looked at rather than read, while the window
+    /// is up alone.
+    const LOOK_VIEWED: Duration = Duration::from_millis(250);
+
+    /// Until the window of `state` closes, told then to its launch on
+    /// `connected`; or its launch goes first, told to the window.
+    fn follow_viewing(mut connected: &File, state: &super::ViewedState) {
+        loop {
+            if state.closed_within(LOOK_VIEWED) {
+                if connected.write_all(&[frame::CLOSED]).is_ok() {
+                    // Read before the connection goes, which would take it
+                    // along.
+                    let _ = wait(connected, usize::MAX, Instant::now() + PATIENCE, None);
+                }
+                return;
+            }
+            if matches!(
+                wait(connected, usize::MAX, Instant::now(), None),
+                Waited::Closed
+            ) {
+                state.go();
+                return;
+            }
+        }
     }
 }
 
@@ -1407,31 +2042,47 @@ mod pipe {
 /// little-endian:
 ///
 /// - `[u32 length][body]`, the body at most `LARGEST` bytes;
-/// - the body `[u8 VERSION][location][cwd][token]`, nothing after;
+/// - the body `[u8 VERSION][u8 kind]` and what the kind says, nothing
+///   after: `OPEN`'s `[location][cwd][token][u32 count][names…][u8
+///   properties]`, `VIEW`'s `[token][u32 count][files…][piped]`;
 /// - each field `[u32 length in bytes][bytes]`, `u32::MAX` alone for none
-///   (the folder is never none): the location's and the folder's UTF-16
+///   (the folder, a name, a file are never none): paths' and names' UTF-16
 ///   code units (so a lone surrogate, which a Windows name may hold, goes
 ///   across whole), the token's UTF-8.
 ///
 /// The answer is one byte, `TAKEN`, once the launch is taken; anything
-/// else (the pipe closed first) is a launch not taken. A message of
-/// another version is not read, and the launch goes on as a process of
-/// its own: a later Skwir launched while an earlier one finishes.
+/// else (the pipe closed first) is a launch not taken. A viewing's
+/// connection stays until its window closes, which `CLOSED` then says. A
+/// message of another version is not read, and the launch goes on as a
+/// process of its own: a later Skwir launched while an earlier one
+/// finishes.
 #[cfg(any(windows, test))]
 #[cfg_attr(not(windows), allow(dead_code))]
 mod frame {
-    /// What the body starts with: 2 since a launch says what to select
-    /// (ADR-140). Both ends are one build: no other is read.
-    pub(super) const VERSION: u8 = 2;
+    /// What the body starts with: 3 since a launch may view files
+    /// (ADR-151). Both ends are one build: no other is read.
+    pub(super) const VERSION: u8 = 3;
+    /// The kinds of message: a launch opening a folder, one viewing files.
+    pub(super) const OPEN: u8 = 0;
+    pub(super) const VIEW: u8 = 1;
     /// The answer: taken.
     pub(super) const TAKEN: u8 = 1;
+    /// What a viewing's connection says last: its window closed.
+    pub(super) const CLOSED: u8 = 2;
     /// The most a body holds: within a pipe's buffer, so it is written at
     /// once, and above any path Windows opens.
     pub(super) const LARGEST: usize = 60 * 1024;
     /// A field's length saying it is none.
     const NONE: u32 = u32::MAX;
 
-    /// What a message carries.
+    /// What a message says.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) enum Message {
+        Open(Fields),
+        View(Viewing),
+    }
+
+    /// What a launch opening a folder carries.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(super) struct Fields {
         pub(super) location: Option<Vec<u16>>,
@@ -1439,6 +2090,14 @@ mod frame {
         pub(super) token: Option<String>,
         pub(super) select: Vec<Vec<u16>>,
         pub(super) properties: bool,
+    }
+
+    /// What a launch viewing files carries.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) struct Viewing {
+        pub(super) token: Option<String>,
+        pub(super) files: Vec<Vec<u16>>,
+        pub(super) piped: Option<Vec<u16>>,
     }
 
     #[cfg(windows)]
@@ -1474,30 +2133,75 @@ mod frame {
         }
     }
 
-    /// The message saying `fields`, its length first; `None` when its
-    /// body would be larger than [`LARGEST`].
-    pub(super) fn encode(fields: &Fields) -> Option<Vec<u8>> {
-        let mut body = vec![VERSION];
-        units(&mut body, fields.location.as_deref());
-        units(&mut body, Some(&fields.cwd));
-        field(&mut body, fields.token.as_deref().map(str::as_bytes));
-        // How many names, then each; one too many for a `u32` makes the
-        // body too large.
-        body.extend(
-            u32::try_from(fields.select.len())
-                .unwrap_or(NONE)
-                .to_le_bytes(),
-        );
-        for name in &fields.select {
-            units(&mut body, Some(name));
+    #[cfg(windows)]
+    impl Viewing {
+        pub(super) fn of(viewing: &super::Viewing) -> Viewing {
+            use std::os::windows::ffi::OsStrExt;
+            Viewing {
+                token: viewing.token.clone(),
+                files: viewing
+                    .files
+                    .iter()
+                    .map(|file| file.as_os_str().encode_wide().collect())
+                    .collect(),
+                piped: viewing
+                    .piped
+                    .as_ref()
+                    .map(|piped| piped.as_os_str().encode_wide().collect()),
+            }
         }
-        body.push(u8::from(fields.properties));
+
+        pub(super) fn into_viewing(self) -> super::Viewing {
+            use std::os::windows::ffi::OsStringExt;
+            super::Viewing {
+                files: self
+                    .files
+                    .iter()
+                    .map(|file| std::ffi::OsString::from_wide(file).into())
+                    .collect(),
+                piped: self
+                    .piped
+                    .map(|piped| std::ffi::OsString::from_wide(&piped).into()),
+                token: self.token,
+            }
+        }
+    }
+
+    /// The message saying `message`, its length first; `None` when its
+    /// body would be larger than [`LARGEST`].
+    pub(super) fn encode(message: &Message) -> Option<Vec<u8>> {
+        let mut body = vec![VERSION];
+        match message {
+            Message::Open(fields) => {
+                body.push(OPEN);
+                units(&mut body, fields.location.as_deref());
+                units(&mut body, Some(&fields.cwd));
+                field(&mut body, fields.token.as_deref().map(str::as_bytes));
+                list(&mut body, &fields.select);
+                body.push(u8::from(fields.properties));
+            }
+            Message::View(viewing) => {
+                body.push(VIEW);
+                field(&mut body, viewing.token.as_deref().map(str::as_bytes));
+                list(&mut body, &viewing.files);
+                units(&mut body, viewing.piped.as_deref());
+            }
+        }
         if body.len() > LARGEST {
             return None;
         }
-        let mut message = u32::try_from(body.len()).ok()?.to_le_bytes().to_vec();
-        message.extend(body);
-        Some(message)
+        let mut said = u32::try_from(body.len()).ok()?.to_le_bytes().to_vec();
+        said.extend(body);
+        Some(said)
+    }
+
+    /// How many, then each; one too many for a `u32` makes the body too
+    /// large.
+    fn list(into: &mut Vec<u8>, each: &[Vec<u16>]) {
+        into.extend(u32::try_from(each.len()).unwrap_or(NONE).to_le_bytes());
+        for one in each {
+            units(into, Some(one));
+        }
     }
 
     fn units(into: &mut Vec<u8>, units: Option<&[u16]>) {
@@ -1519,52 +2223,87 @@ mod frame {
     }
 
     /// What a message's body (its length taken off) says; `None` when it
-    /// is not one of [`VERSION`], cut short, or more.
-    pub(super) fn decode(body: &[u8]) -> Option<Fields> {
-        let (&version, mut rest) = body.split_first()?;
+    /// is not one of [`VERSION`], of no kind known, cut short, or more.
+    pub(super) fn decode(body: &[u8]) -> Option<Message> {
+        let (&version, rest) = body.split_first()?;
         if version != VERSION {
             return None;
         }
-        let location = match take(&mut rest)? {
-            Field::Bytes(bytes) => Some(units_of(bytes)?),
-            Field::None => None,
+        let (&kind, mut rest) = rest.split_first()?;
+        let message = match kind {
+            OPEN => {
+                let location = match take(&mut rest)? {
+                    Field::Bytes(bytes) => Some(units_of(bytes)?),
+                    Field::None => None,
+                };
+                let Field::Bytes(cwd) = take(&mut rest)? else {
+                    return None;
+                };
+                let cwd = units_of(cwd)?;
+                let Token(token) = token(&mut rest)?;
+                let select = taken_list(&mut rest)?;
+                let (&properties, after) = rest.split_first()?;
+                rest = after;
+                let properties = match properties {
+                    0 => false,
+                    1 => true,
+                    _ => return None,
+                };
+                Message::Open(Fields {
+                    location,
+                    cwd,
+                    token,
+                    select,
+                    properties,
+                })
+            }
+            VIEW => {
+                let Token(token) = token(&mut rest)?;
+                let files = taken_list(&mut rest)?;
+                let piped = match take(&mut rest)? {
+                    Field::Bytes(bytes) => Some(units_of(bytes)?),
+                    Field::None => None,
+                };
+                Message::View(Viewing {
+                    token,
+                    files,
+                    piped,
+                })
+            }
+            _ => return None,
         };
-        let Field::Bytes(cwd) = take(&mut rest)? else {
-            return None;
-        };
-        let cwd = units_of(cwd)?;
-        let token = match take(&mut rest)? {
-            Field::Bytes(bytes) => Some(String::from_utf8(bytes.to_vec()).ok()?),
-            Field::None => None,
-        };
+        rest.is_empty().then_some(message)
+    }
+
+    /// A token; `None` when it is not UTF-8 or cut short.
+    fn token(rest: &mut &[u8]) -> Option<Token> {
+        Some(match take(rest)? {
+            Field::Bytes(bytes) => Token(Some(String::from_utf8(bytes.to_vec()).ok()?)),
+            Field::None => Token(None),
+        })
+    }
+
+    /// A token read, which may be none.
+    struct Token(Option<String>);
+
+    /// A count and as many paths or names, none of them none.
+    fn taken_list(rest: &mut &[u8]) -> Option<Vec<Vec<u16>>> {
         let (count, after) = rest.split_first_chunk::<4>()?;
-        rest = after;
+        *rest = after;
         let count = usize::try_from(u32::from_le_bytes(*count)).ok()?;
-        // Each name takes four bytes at least: a count larger than what
-        // is left is refused before anything is kept for it.
+        // Each takes four bytes at least: a count larger than what is
+        // left is refused before anything is kept for it.
         if count > rest.len() / 4 {
             return None;
         }
-        let mut select = Vec::with_capacity(count);
+        let mut each = Vec::with_capacity(count);
         for _ in 0..count {
-            let Field::Bytes(name) = take(&mut rest)? else {
+            let Field::Bytes(one) = take(rest)? else {
                 return None;
             };
-            select.push(units_of(name)?);
+            each.push(units_of(one)?);
         }
-        let (&properties, rest) = rest.split_first()?;
-        let properties = match properties {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        rest.is_empty().then_some(Fields {
-            location,
-            cwd,
-            token,
-            select,
-            properties,
-        })
+        Some(each)
     }
 
     /// A field as read.
@@ -1595,7 +2334,9 @@ mod frame {
 
 #[cfg(test)]
 mod frame_tests {
-    use super::frame::{Fields, LARGEST, TAKEN, VERSION, decode, encode};
+    use super::frame::{
+        CLOSED, Fields, LARGEST, Message, OPEN, TAKEN, VERSION, VIEW, Viewing, decode, encode,
+    };
 
     fn body(message: &[u8]) -> &[u8] {
         let (length, body) = message.split_first_chunk::<4>().unwrap();
@@ -1646,15 +2387,74 @@ mod frame_tests {
                 properties: false,
             },
         ] {
-            let message = encode(&fields).unwrap();
-            assert_eq!(decode(body(&message)), Some(fields));
+            let message = Message::Open(fields);
+            let said = encode(&message).unwrap();
+            assert_eq!(decode(body(&said)), Some(message));
         }
         assert_ne!(TAKEN, 0, "an answer is told apart from nothing");
+        assert_ne!(
+            CLOSED, TAKEN,
+            "a viewing's end is told apart from its taking"
+        );
+    }
+
+    fn viewing() -> Viewing {
+        Viewing {
+            token: Some("token 2".into()),
+            // Two files, one with a lone surrogate.
+            files: vec![
+                r"C:\Users\someone\it's a note.md".encode_utf16().collect(),
+                [u16::from(b'C'), u16::from(b':'), 0xD800].to_vec(),
+            ],
+            piped: Some(
+                r"C:\Users\someone\AppData\stdin.png"
+                    .encode_utf16()
+                    .collect(),
+            ),
+        }
+    }
+
+    /// A viewing says its files, the one piped and the token, or none of
+    /// them (the system's dialog asks which); cut short, of a kind not
+    /// known, or naming a file that is none, it is refused.
+    #[test]
+    fn a_viewing_says_what_it_carries() {
+        let bare = Viewing {
+            token: None,
+            files: Vec::new(),
+            piped: None,
+        };
+        for viewing in [viewing(), bare.clone()] {
+            let message = Message::View(viewing);
+            let said = encode(&message).unwrap();
+            assert_eq!(body(&said)[1], VIEW);
+            assert_eq!(decode(body(&said)), Some(message));
+        }
+        let said = encode(&Message::View(viewing())).unwrap();
+        let whole = body(&said);
+        for end in 0..whole.len() {
+            assert_eq!(decode(&whole[..end]), None, "cut at {end}");
+        }
+        let mut other = whole.to_vec();
+        other[1] = VIEW + 1;
+        assert_eq!(decode(&other), None);
+        // No token, then one file that is none, nothing piped.
+        let mut none = vec![VERSION, VIEW];
+        none.extend(u32::MAX.to_le_bytes());
+        none.extend(1u32.to_le_bytes());
+        none.extend(u32::MAX.to_le_bytes());
+        none.extend(u32::MAX.to_le_bytes());
+        assert_eq!(decode(&none), None);
+        let mut nothing = vec![VERSION, VIEW];
+        nothing.extend(u32::MAX.to_le_bytes());
+        nothing.extend(0u32.to_le_bytes());
+        nothing.extend(u32::MAX.to_le_bytes());
+        assert_eq!(decode(&nothing), Some(Message::View(bare)));
     }
 
     #[test]
     fn what_is_not_a_message_is_refused() {
-        let message = encode(&every()).unwrap();
+        let message = encode(&Message::Open(every())).unwrap();
         let whole = body(&message);
         // Cut short anywhere.
         for end in 0..whole.len() {
@@ -1683,7 +2483,7 @@ mod frame_tests {
         };
         // Three fields, then no names and no Properties.
         let made = |fields: [Option<&[u8]>; 3]| {
-            let mut body = vec![VERSION];
+            let mut body = vec![VERSION, OPEN];
             for f in fields {
                 body.extend(field(f));
             }
@@ -1721,11 +2521,11 @@ mod frame_tests {
             select: Vec::new(),
             properties: false,
         };
-        // The version, three lengths, the folder, no names counted, no
-        // Properties.
-        let around = (LARGEST - 1 - 12 - 4 - 1) / 2;
-        assert!(encode(&at(around)).is_some());
-        assert_eq!(encode(&at(around + 1)), None);
+        // The version, the kind, three lengths, the folder, no names
+        // counted, no Properties.
+        let around = (LARGEST - 2 - 12 - 4 - 1) / 2;
+        assert!(encode(&Message::Open(at(around))).is_some());
+        assert_eq!(encode(&Message::Open(at(around + 1))), None);
     }
 }
 
@@ -1962,6 +2762,121 @@ mod linux_tests {
         assert!(hand_over_at(&marker, HELD, patient(&bus.address), &bare));
         assert_eq!(*told.lock(), [first, bare]);
         drop(taking);
+    }
+
+    /// What a launch views arrives whole (a path not UTF-8, the file piped,
+    /// a token), and the launch waits until its window closes, launches
+    /// taken meanwhile. A launch that goes (its terminal's Ctrl+C) is told
+    /// to its window; one waiting while the Skwir ends is told it ended.
+    #[test]
+    fn a_viewing_waits_for_its_window() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let viewed = Arc::new(parking_lot::Mutex::new(Vec::<Viewed>::new()));
+        let into = Arc::clone(&viewed);
+        let gate = Gate::viewing(|_| {}, move |handed| into.lock().push(handed));
+        let taking =
+            super::linux::take_over_on(connector(&bus.address), marker.clone(), HELD.into(), gate)
+                .unwrap();
+        let asked = Viewing {
+            files: vec![
+                PathBuf::from(OsString::from_vec(b"/srv/caf\xe9/it's a note.md".to_vec())),
+                PathBuf::from("/srv/stdin.png"),
+            ],
+            piped: Some(PathBuf::from("/srv/stdin.png")),
+            token: Some("activation-2".into()),
+        };
+        let launch = {
+            let (address, marker, asked) = (bus.address.clone(), marker.clone(), asked.clone());
+            std::thread::spawn(move || {
+                super::linux::view_at(&marker, HELD, connector(&address), &asked)
+            })
+        };
+        until("the viewing handed in", &|| !viewed.lock().is_empty());
+        let first = viewed.lock()[0].clone();
+        assert_eq!(first.viewing(), &asked);
+        assert!(!first.is_gone());
+        // A launch opening a folder is taken while the viewing waits.
+        assert!(hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!launch.is_finished(), "the launch waits for its window");
+        first.close();
+        assert_eq!(launch.join().unwrap(), ViewedElsewhere::Closed);
+
+        // A launch that goes: its window is told, and closes.
+        let gone = Arc::new(AtomicBool::new(false));
+        {
+            let launch = connector(&bus.address)().unwrap();
+            let _: u64 = launch
+                .call_method(
+                    Some(HELD),
+                    "/org/skwir/skwir",
+                    Some("org.skwir.skwir.Finishing"),
+                    "View",
+                    &(Vec::<Vec<u8>>::new(), Vec::<u8>::new(), ""),
+                )
+                .unwrap()
+                .body()
+                .deserialize()
+                .unwrap();
+            until("the second viewing handed in", &|| viewed.lock().len() == 2);
+            let second = viewed.lock()[1].clone();
+            assert!(second.viewing().files.is_empty(), "the dialog asks which");
+            let told = Arc::clone(&gone);
+            second.when_gone(move || told.store(true, Ordering::SeqCst));
+            assert!(!gone.load(Ordering::SeqCst));
+        }
+        until("the launch gone is told", &|| gone.load(Ordering::SeqCst));
+        assert!(viewed.lock()[1].is_gone());
+
+        // The Skwir ends while a launch waits.
+        let launch = {
+            let (address, marker, asked) = (bus.address.clone(), marker.clone(), asked.clone());
+            std::thread::spawn(move || {
+                super::linux::view_at(&marker, HELD, connector(&address), &asked)
+            })
+        };
+        until("the third viewing handed in", &|| viewed.lock().len() == 3);
+        drop(taking);
+        assert_eq!(launch.join().unwrap(), ViewedElsewhere::Ended);
+        // None holds launches: nothing is taken, and the launch views them
+        // itself.
+        std::fs::write(&marker, "1\n").unwrap();
+        assert_eq!(
+            super::linux::view_at(&marker, HELD, connector(&bus.address), &asked),
+            ViewedElsewhere::NotTaken
+        );
+    }
+
+    /// A viewing whose copies are all let go is closed: its launch is told
+    /// so, and its launch going is no more told.
+    #[test]
+    fn a_viewing_let_go_is_closed() {
+        let viewed = Viewed::new(Viewing::default());
+        let state = Arc::clone(&viewed.holder.state);
+        let told = Arc::new(AtomicBool::new(false));
+        let into = Arc::clone(&told);
+        viewed.when_gone(move || into.store(true, Ordering::SeqCst));
+        let copy = viewed.clone();
+        drop(viewed);
+        assert!(!state.is_closed(), "a copy holds it");
+        drop(copy);
+        assert!(state.is_closed());
+        state.go();
+        assert!(!told.load(Ordering::SeqCst), "closed first: never gone");
+        // Gone first: told at once, to a hook given after too.
+        let viewed = Viewed::new(Viewing::default());
+        viewed.gone_for_test();
+        let into = Arc::clone(&told);
+        viewed.when_gone(move || into.store(true, Ordering::SeqCst));
+        assert!(told.load(Ordering::SeqCst));
     }
 
     /// A marker left after a crash: no one answers, the launch goes on,
@@ -2717,6 +3632,88 @@ mod windows_tests {
         };
         assert!(pipe::hand_over_to(&pipe, &bare));
         assert_eq!(*told.lock(), [first, bare]);
+        drop(taking);
+    }
+
+    fn until(what: &str, done: &dyn Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// What a launch views arrives whole (a lone surrogate in a path, the
+    /// file piped), and the launch waits until its window closes, launches
+    /// taken meanwhile. A launch that goes is told to its window.
+    #[test]
+    fn a_viewing_waits_for_its_window() {
+        use std::io::{Read, Write};
+        let pipe = test_pipe();
+        let viewed = Arc::new(parking_lot::Mutex::new(Vec::<Viewed>::new()));
+        let into = Arc::clone(&viewed);
+        let gate = Gate::viewing(|_| {}, move |handed| into.lock().push(handed));
+        let taking = pipe::take_over_on(pipe.clone(), gate).unwrap();
+        let asked = Viewing {
+            files: vec![
+                PathBuf::from(OsString::from_wide(
+                    &"C:\\Dossier d'été\\"
+                        .encode_utf16()
+                        .chain([0xD800])
+                        .collect::<Vec<_>>(),
+                )),
+                PathBuf::from(r"C:\Users\someone\stdin.png"),
+            ],
+            piped: Some(PathBuf::from(r"C:\Users\someone\stdin.png")),
+            token: None,
+        };
+        let launch = {
+            let (pipe, asked) = (pipe.clone(), asked.clone());
+            std::thread::spawn(move || pipe::view_through(&pipe, &asked))
+        };
+        until("the viewing handed in", &|| !viewed.lock().is_empty());
+        let first = viewed.lock()[0].clone();
+        assert_eq!(first.viewing(), &asked);
+        assert!(pipe::hand_over_to(&pipe, &opening()), "a launch meanwhile");
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!launch.is_finished(), "the launch waits for its window");
+        first.close();
+        assert_eq!(launch.join().unwrap(), ViewedElsewhere::Closed);
+
+        // A launch that goes: its window is told.
+        let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut launch = loop {
+                match std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&pipe)
+                {
+                    Ok(launch) => break launch,
+                    Err(error) => {
+                        assert!(Instant::now() < deadline, "the pipe: {error}");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            };
+            let message = frame::encode(&frame::Message::View(frame::Viewing {
+                token: None,
+                files: Vec::new(),
+                piped: None,
+            }))
+            .unwrap();
+            launch.write_all(&message).unwrap();
+            let mut answer = [0u8];
+            launch.read_exact(&mut answer).unwrap();
+            assert_eq!(answer[0], frame::TAKEN);
+            until("the second viewing handed in", &|| viewed.lock().len() == 2);
+            let second = viewed.lock()[1].clone();
+            assert!(second.viewing().files.is_empty(), "the dialog asks which");
+            let told = Arc::clone(&gone);
+            second.when_gone(move || told.store(true, Ordering::SeqCst));
+        }
+        until("the launch gone is told", &|| gone.load(Ordering::SeqCst));
         drop(taking);
     }
 

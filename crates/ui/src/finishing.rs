@@ -32,7 +32,6 @@
 //! takes nothing more (`Shell::leave`).
 
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -47,7 +46,7 @@ use skwir_core::op::PlanId;
 use skwir_core::workspace::{PaneId, WindowId, WindowKind, WindowTabs};
 use skwir_platform::chooser::Answer;
 use skwir_platform::desktop::{Asked, Presence, Standing};
-use skwir_platform::handover::{NotTaken, Opening, TakingOver};
+use skwir_platform::handover::{NotTaken, Opening, TakingOver, Viewed};
 
 use skwir_core::words::Words;
 
@@ -167,6 +166,9 @@ pub(crate) struct Takers {
     /// is gone of their programs' folders is read (`Asking::read`): held
     /// here meanwhile, so that the program does not end without them.
     choosings: Arc<Mutex<Vec<crate::chooser::Asking>>>,
+    /// The files later launches view (`skw`, ADR-151, 1), for the next
+    /// wake.
+    viewings: Arc<Mutex<Vec<Viewed>>>,
 }
 
 impl Takers {
@@ -180,13 +182,16 @@ impl Takers {
             passing: Arc::default(),
             openings,
             choosings: Arc::default(),
+            viewings: Arc::default(),
         }
     }
 
     /// Whether a launch or a request waits, or one is on its way (a dialog
     /// whose program's folders are being read).
     fn asked(&self) -> bool {
-        !self.openings.lock().is_empty() || !self.choosings.lock().is_empty()
+        !self.openings.lock().is_empty()
+            || !self.choosings.lock().is_empty()
+            || !self.viewings.lock().is_empty()
     }
 
     /// Whether a program started without a window may end now that nothing
@@ -394,7 +399,7 @@ pub(crate) fn start(
         })
         .detach();
         listen(cx, wakes);
-        view_files(cx, view.files);
+        view_files(cx, view, None);
         return;
     }
     // Later launches of this Skwir (ADR-122) come here, for its life. Asked
@@ -483,12 +488,17 @@ fn prepare_viewer(app: &Arc<skwir_core::App>) {
     crate::session::declare(app);
 }
 
-/// A viewer's window on `files` (ADR-151): none given, the system's dialog
-/// asks which first, several taken; cancelled, or none it can show, the
-/// program ends.
-fn view_files(cx: &mut App, files: Vec<PathBuf>) {
-    if !files.is_empty() {
-        open_viewer(cx, files);
+/// A viewer's window on what `viewing` names (ADR-151): none given, the
+/// system's dialog asks which first, several taken. Cancelled, or none it
+/// can show, it ends (`not_viewed`). `handed` is the launch that handed it
+/// over, waiting for the window; none in a viewer's own program.
+fn view_files(cx: &mut App, viewing: crate::viewer::Viewing, handed: Option<Viewed>) {
+    if handed.as_ref().is_some_and(Viewed::is_gone) {
+        // Its launch went before the window could open.
+        return;
+    }
+    if !viewing.files.is_empty() {
+        open_viewer(cx, viewing, handed);
         return;
     }
     let chosen = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -509,48 +519,71 @@ fn view_files(cx: &mut App, files: Vec<PathBuf>) {
         };
         cx.update(|cx| {
             if files.is_empty() {
-                quit(cx);
+                not_viewed(cx, handed.as_ref());
             } else {
-                open_viewer(cx, files);
+                let viewing = crate::viewer::Viewing { files, ..viewing };
+                open_viewer(cx, viewing, handed);
             }
         });
     })
     .detach();
 }
 
-/// Open a viewer's window on `files`, the first shown (ADR-151, 2): its
-/// pane on that file's folder, the file selected once listed.
-fn open_viewer(cx: &mut App, files: Vec<PathBuf>) {
+/// Nothing to view (the dialog cancelled, a window that cannot open): a
+/// viewer's own program ends; a launch that handed its files over is told
+/// its window closed.
+fn not_viewed(cx: &mut App, handed: Option<&Viewed>) {
+    match handed {
+        Some(handed) => handed.close(),
+        None => quit(cx),
+    }
+}
+
+/// Open a viewer's window on `viewing`'s files, the first shown (ADR-151,
+/// 2): its pane on that file's folder, the file selected once listed.
+fn open_viewer(cx: &mut App, viewing: crate::viewer::Viewing, handed: Option<Viewed>) {
     let app = Arc::clone(&cx.global::<Finishing>().app);
+    let crate::viewer::Viewing {
+        files,
+        piped,
+        token,
+    } = viewing;
     let Some(first) = files.first() else {
-        quit(cx);
+        not_viewed(cx, handed.as_ref());
         return;
     };
     let (folder, name) = crate::viewer::place_of(first);
-    // The core's other windows (its first, untouched) stay asleep: a
-    // viewer's program opens its window alone (ADR-151, 1).
+    // With none of the user's own windows up, the core's others stay
+    // asleep (a viewer's own program's first, untouched; the user's, kept
+    // as the last of them closed), as a dialog's window leaves them
+    // (ADR-151, 1).
     {
         let state = cx.global_mut::<Finishing>();
         let up: HashSet<WindowId> = state.windows.iter().map(|(id, _)| *id).collect();
         let ws = app.workspace.read();
-        state.asleep.extend(
-            ws.windows()
-                .iter()
-                .map(|w| w.id)
-                .filter(|id| !up.contains(id)),
-        );
+        let own_up = up
+            .iter()
+            .any(|id| ws.window(*id).is_some_and(WindowTabs::is_own));
+        if !own_up {
+            state.asleep.extend(
+                ws.windows()
+                    .iter()
+                    .map(|w| w.id)
+                    .filter(|id| !up.contains(id)),
+            );
+        }
     }
     let opened = app.open_viewer_window(Location::from_path(folder));
     let (id, pane) = match opened {
         Ok((id, _, pane)) => (id, pane),
         Err(error) => {
             tracing::error!("a viewer's window has no pane: {error:#}");
-            quit(cx);
+            not_viewed(cx, handed.as_ref());
             return;
         }
     };
-    if !open_window(cx, id, false, None, false, None) {
-        quit(cx);
+    if !open_window(cx, id, false, token, false, None) {
+        not_viewed(cx, handed.as_ref());
         return;
     }
     app.reveal_names(pane, name.into_iter().collect());
@@ -562,7 +595,7 @@ fn open_viewer(cx: &mut App, files: Vec<PathBuf>) {
         .map(|(_, handle)| *handle);
     if let Some(window) = window {
         let _ = window.update(cx, |shell, window, cx| {
-            shell.view_files(files, cx);
+            shell.view_files(files, piped, handed, cx);
             shell.viewer_focus(window, cx);
         });
     }
@@ -795,6 +828,36 @@ pub(crate) fn others(cx: &App, id: WindowId) -> Vec<WindowHandle<Shell>> {
         .collect()
 }
 
+/// The windows up other than `id` but viewers' (ADR-151): what Quit closes,
+/// their launches waiting on them.
+pub(crate) fn others_but_viewers(cx: &App, id: WindowId) -> Vec<WindowHandle<Shell>> {
+    let state = cx.global::<Finishing>();
+    let ws = state.app.workspace.read();
+    state
+        .windows
+        .iter()
+        .filter(|(other, _)| *other != id)
+        .filter(|(other, _)| {
+            ws.window(*other)
+                .is_none_or(|w| w.kind() != WindowKind::Viewer)
+        })
+        .map(|(_, handle)| *handle)
+        .collect()
+}
+
+/// Whether a viewer's window is up other than `id`: Quit leaves it, and the
+/// program ends with it (ADR-151, 4).
+pub(crate) fn viewers_besides(cx: &App, id: WindowId) -> bool {
+    let state = cx.global::<Finishing>();
+    let ws = state.app.workspace.read();
+    state.windows.iter().any(|(other, _)| {
+        *other != id
+            && ws
+                .window(*other)
+                .is_some_and(|w| w.kind() == WindowKind::Viewer)
+    })
+}
+
 /// Wake-up, not polling: the core signals, the window's shell applies what
 /// it sent and gpui draws (or, with no window up, this module takes it
 /// in). Applying is done here, not left to the draw that `notify` asks
@@ -857,11 +920,16 @@ fn woken(cx: &mut App) -> bool {
         *queued = waiting;
         read
     };
+    let viewings = std::mem::take(&mut *state.takers.viewings.lock());
     for opening in openings {
         reopen(cx, Some(opening), false);
     }
     for asking in choosings {
         open_chooser(cx, asking);
+    }
+    for viewed in viewings {
+        let viewing = viewed.viewing().clone();
+        view_files(cx, viewing, Some(viewed));
     }
     let state = cx.global::<Finishing>();
     if state.windows.is_empty() {
@@ -1447,7 +1515,7 @@ fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
                 act(&state.app, &state.work.borrow(), &asked);
             }
             Asked::StopAll => {
-                if let Some(window) = active_handle(cx) {
+                if let Some(window) = ordinary_handle(cx).or_else(|| active_handle(cx)) {
                     let _ = window.update(cx, Shell::stop_and_quit);
                 }
                 return;
@@ -1645,7 +1713,7 @@ pub(crate) fn ran(cx: &mut App, plan: PlanId, window: WindowId) {
 /// of, and their tabs are remembered (`closed`).
 fn end(cx: &mut App) {
     let closed =
-        active_handle(cx).is_some_and(|window| window.update(cx, Shell::stop_and_quit).is_ok());
+        active_handle(cx).is_some_and(|window| window.update(cx, Shell::stop_and_end).is_ok());
     if !closed {
         quit(cx);
     }
@@ -1821,12 +1889,13 @@ fn take_over(
 /// The bus's side of taking launches and requests over (`take_over_by`):
 /// the system's (`Bus`), or a test's stand-in.
 trait Handing: Send + 'static {
-    /// Take later launches and other programs' dialogs over
-    /// (`handover::take_over_choosing`).
+    /// Take later launches, other programs' dialogs and the files later
+    /// launches view over (`handover::take_over_all`).
     fn take(
         &self,
         taken: impl Fn(Opening) + Send + Sync + 'static,
         chose: impl Fn(skwir_platform::chooser::Choosing) + Send + Sync + 'static,
+        viewed: impl Fn(Viewed) + Send + Sync + 'static,
     ) -> Result<TakingOver, NotTaken>;
 
     /// Pass what this program was started for on to the Skwir that holds
@@ -1854,8 +1923,9 @@ impl Handing for Bus {
         &self,
         taken: impl Fn(Opening) + Send + Sync + 'static,
         chose: impl Fn(skwir_platform::chooser::Choosing) + Send + Sync + 'static,
+        viewed: impl Fn(Viewed) + Send + Sync + 'static,
     ) -> Result<TakingOver, NotTaken> {
-        skwir_platform::handover::take_over_choosing(taken, chose)
+        skwir_platform::handover::take_over_all(taken, chose, viewed)
     }
 
     fn pass_on(
@@ -1914,6 +1984,7 @@ fn take_over_by(
     let round = state.round.fetch_add(1, Ordering::AcqRel) + 1;
     let (openings, wake) = (Arc::clone(&state.openings), app.waker_handle());
     let (choosings, wake_chose) = (Arc::clone(&state.choosings), wake.clone());
+    let (viewings, wake_viewed) = (Arc::clone(&state.viewings), wake.clone());
     let reads = Arc::clone(app);
     let (taking, rounds) = (Arc::clone(&state.taking), Arc::clone(&state.round));
     let (handed_away, wake_handed) = (Arc::clone(&state.handed_away), wake.clone());
@@ -1949,6 +2020,10 @@ fn take_over_by(
                     choosings.lock().push(asking.clone());
                     let wake = wake_chose.clone();
                     asking.read_then(Arc::clone(&reads), move || wake());
+                },
+                move |viewed| {
+                    viewings.lock().push(viewed);
+                    wake_viewed();
                 },
             );
             if matches!(taken, Err(NotTaken::Elsewhere)) {
@@ -2010,19 +2085,20 @@ fn take_over_by(
 /// goes on, taking later launches over as it did (ADR-122, 5).
 fn end_unless_handed(cx: &mut App) {
     let state = cx.global::<Finishing>();
-    let (openings, choosings) = (
-        Arc::clone(&state.takers.openings),
-        Arc::clone(&state.takers.choosings),
-    );
-    let goes_on = state.takers.taking.lock().as_ref().is_some_and(|taking| {
-        !taking.close_unless(|| !openings.lock().is_empty() || !choosings.lock().is_empty())
-    });
+    let takers = state.takers.clone();
+    let goes_on = state
+        .takers
+        .taking
+        .lock()
+        .as_ref()
+        .is_some_and(|taking| !taking.close_unless(|| takers.asked()));
     if !goes_on {
         stop_taking_over(&state.takers);
     }
-    let handed = openings.lock().pop();
-    let chose = std::mem::take(&mut *choosings.lock());
-    if handed.is_none() && chose.is_empty() {
+    let handed = takers.openings.lock().pop();
+    let chose = std::mem::take(&mut *takers.choosings.lock());
+    let viewings = std::mem::take(&mut *takers.viewings.lock());
+    if handed.is_none() && chose.is_empty() && viewings.is_empty() {
         quit(cx);
         return;
     }
@@ -2033,6 +2109,10 @@ fn end_unless_handed(cx: &mut App) {
     // the program goes on.
     for asking in chose {
         open_chooser(cx, asking);
+    }
+    for viewed in viewings {
+        let viewing = viewed.viewing().clone();
+        view_files(cx, viewing, Some(viewed));
     }
     if !goes_on {
         // Stopped before this one was seen (no gate to ask yet, or a
@@ -2721,7 +2801,7 @@ fn open_window(
                 // A viewer's draws its preview alone from its first frame
                 // (ADR-151, 3); its files follow (`open_viewer`).
                 if kind == WindowKind::Viewer {
-                    shell.view_files(Vec::new(), cx);
+                    shell.view_files(Vec::new(), None, None, cx);
                 }
                 shell
             })
@@ -3096,6 +3176,7 @@ mod tests {
             &self,
             _: impl Fn(skwir_platform::handover::Opening) + Send + Sync + 'static,
             _: impl Fn(skwir_platform::chooser::Choosing) + Send + Sync + 'static,
+            _: impl Fn(skwir_platform::handover::Viewed) + Send + Sync + 'static,
         ) -> Result<skwir_platform::handover::TakingOver, skwir_platform::handover::NotTaken>
         {
             Err(skwir_platform::handover::NotTaken::Elsewhere)

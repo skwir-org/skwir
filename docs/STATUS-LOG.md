@@ -24354,3 +24354,84 @@ evening, a program of its own that starts only what viewing needs.
   (its captions at the header's end) are linted only, clippy `-D
   warnings` for each. skwir-ui's 851 tests, rustfmt and clippy `-D
   warnings` on Linux.
+
+## 2026-11-26, night: a viewer in the Skwir running (ADR-151 amended)
+
+The user asked whether a viewer could have both: the running Skwir's
+process where one runs (less memory, a faster start), a program of its
+own that starts only what viewing needs where none does. They proposed
+two more: a viewer's program taking later viewers, and becoming the file
+manager as skwir starts. Those two were set aside (ADR-151, Rejected:
+the terminal each belongs to, its environment, a second start path), and
+the user agreed, with the details: a viewer's Quit closes it alone, the
+user's Quit leaves viewers, macOS stays a program of its own.
+
+- **Built.** `skw` and `skwir view` hand their files to the Skwir of
+  their instance (ADR-122) and wait until its window closes
+  (`handover::view_elsewhere`); where none takes them within two
+  seconds, with `--new-instance`, and on macOS, a program of its own as
+  before.
+  - Linux: `Finishing.View`, then `Viewed`, answered once the window
+    closes; the launch followed by its bus name, its going closing the
+    window. Serving stopped (the program ending, the bus started again)
+    answers each `Viewed` waiting: the connection stays for what waits
+    on it, and the launch would otherwise wait for good (found by the
+    test, which hung).
+  - Windows: the pipe's message has a kind (`VERSION` 3, `OPEN` or
+    `VIEW`); a viewing's connection stays on a thread of its own until
+    `CLOSED`, the launch's end looked at four times a second (a
+    synchronous pipe's read would hold the write).
+  - The window: `Viewer` holds the launch and the file standard input
+    gave, removed as the window closes (`viewer_let_go`); `viewer_sync`
+    closes it once the launch went. Viewings wait in `Takers` as
+    launches do; `open_viewer` leaves the user's windows asleep only
+    where none of theirs is up, as a dialog's does.
+  - Quit: in a viewer, it closes that viewer; elsewhere,
+    `close_every_window` leaves viewers' windows, Stop and quit stopping
+    what runs at once (`Executor::cancel_all`, new: `wind_down`'s
+    cancelling without closing the lane); a signal closes all
+    (`Shell::stop_and_end`).
+- **Checked on a headless sway** (Intel GPU, a private bus, keys
+  through wayvnc), the debug build:
+  - `skwir view notes.txt` with skwir running opened a second window of
+    skwir's process; the launch waited (58 MiB RSS, the debug binary's
+    pages).
+  - The launch hung up (SIGHUP, a terminal closing): status 129, its
+    window closed, skwir's stayed. (SIGINT was ignored there: the test
+    starts the launch as a background job, which shells start so.)
+  - Escape in a viewer, Ctrl+Q in another: that viewer closed, its
+    launch ended with 0, skwir's window stayed.
+  - Ctrl+Q in skwir's window with a viewer up: skwir's window closed,
+    the viewer stayed and its launch waited; Escape there, and the
+    program ended, both with 0.
+  - With no skwir running, the launch was its own viewer (first frame
+    518 ms, debug); with `--new-instance` beside a running skwir, too.
+  - `skwir view -` from a file: `stdin.txt` shown by skwir, its file and
+    folder gone once closed.
+  - No file named, no portal on the bus: the dialog did not open, said
+    so in skwir's log, and the launch ended with 0.
+  - SIGTERM to skwir with a viewer up: every window closed, the launch
+    told closed (0).
+  - The first key of each wayvnc connection is lost (a keymap race, as
+    wtype's): each starts with a pause.
+- **Measured** (`dist` at this change, headless sway on the Intel GPU,
+  a text file, medians of three idle starts, own share of PSS): skwir
+  82.6 MiB (binary 44.2, anonymous 33.8); a viewer's own program 90.4
+  (binary 58.0, anonymous 27.7), more than skwir, its start reading code
+  ADR-128's order lays out for skwir's (the build before this change
+  read 81.6 and 90.9); a viewer handed to skwir 28.8 more (binary 22.6,
+  anonymous 5.8, the waiting launch's 5.5 of it). From the launch to the
+  window's first frame, five runs: handed 22 to 38 ms, its own program
+  63 to 130.
+- **Tests:** the handover's on a bus of their own (a viewing handed
+  whole and waited on, a launch meanwhile, the launch gone told to its
+  window, the Skwir ending told to the launch; a viewing let go closed),
+  25 runs in a row without a failure; the pipe's message with kinds, and
+  a viewing through the pipe under Wine (13 of 13); the executor's
+  `cancel_all` taking the next plan; `skw --new-instance`. clippy `-D
+  warnings` on Linux (core, platform, UI, binary, their tests), Windows
+  (the same, all targets) and macOS (platform and UI: the binary's
+  `ring` does not build with this shell's macOS compiler); rustfmt.
+  skwir-platform, skwir-ui and the binary's 1724 tests: 1723 passed, and
+  `remote_configs::a_remote_left_half_made_is_said_so_and_removed` failed
+  after 81 s under the run's load, then passed alone in 1.9 s.

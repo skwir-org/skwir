@@ -1,9 +1,11 @@
 //! A window viewing files (`skwir view`, ADR-151): peek's card, the file's
 //! bar and its preview, filling a window of its own (`preview::render_viewed`),
-//! in a program that started only what viewing needs. Its pane, never
-//! drawn, shows the file's folder, the cursor on the file: what the preview
-//! shows is the pane's, as everywhere. Steps go through that folder, or
-//! through the files given (`Viewer::files`).
+//! in the Skwir running, which its launch handed them to and waits on
+//! (`handover::view_elsewhere`), else in a program that started only what
+//! viewing needs. Its pane, never drawn, shows the file's folder, the
+//! cursor on the file: what the preview shows is the pane's, as everywhere.
+//! Steps go through that folder, or through the files given
+//! (`Viewer::files`).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -23,14 +25,10 @@ pub const SIZE_KEY: &str = "ui.viewer_size";
 const WIDTH: f32 = 960.;
 const HEIGHT: f32 = 720.;
 
-/// What a viewer's program was asked to view (`skwir view`): the files, each
-/// a whole path, and the file standing for standard input, the program's
-/// own to remove as it ends (`lib::view`).
-#[derive(Clone, Debug, Default)]
-pub struct Viewing {
-    pub files: Vec<PathBuf>,
-    pub piped: Option<PathBuf>,
-}
+/// What a launch asks to view (`skwir view`): the files, each a whole path,
+/// the file standing for standard input, removed once the window closes,
+/// and the desktop's token for the window.
+pub use skwir_platform::handover::Viewing;
 
 /// The files a viewer's window views.
 pub(crate) struct Viewer {
@@ -39,6 +37,11 @@ pub(crate) struct Viewer {
     files: Vec<PathBuf>,
     /// The one of `files` shown.
     at: usize,
+    /// What standard input gave, removed as the window goes.
+    piped: Option<PathBuf>,
+    /// The launch that handed them over and waits for the window to close
+    /// (ADR-151, 1); none in a viewer's own program.
+    handed: Option<skwir_platform::handover::Viewed>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -93,11 +96,46 @@ pub(crate) fn title(shell: &Shell) -> Words {
 impl Shell {
     /// This window views `files` (ADR-151): its preview drawn in peek's card,
     /// which takes the keyboard. Its pane was opened on the first one's
-    /// folder (`finishing::open_viewer`).
-    pub(crate) fn view_files(&mut self, files: Vec<PathBuf>, cx: &mut Context<Self>) {
-        self.viewer = Some(Viewer { files, at: 0 });
+    /// folder (`finishing::open_viewer`). `piped` goes with the window;
+    /// `handed`, the launch waiting for it, is told it closed, and closes
+    /// it by going.
+    pub(crate) fn view_files(
+        &mut self,
+        files: Vec<PathBuf>,
+        piped: Option<PathBuf>,
+        handed: Option<skwir_platform::handover::Viewed>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(handed) = &handed {
+            // Its launch gone (its terminal's Ctrl+C): the window goes at
+            // its next wake (`viewer_sync`).
+            let wake = self.waker();
+            handed.when_gone(move || wake());
+        }
+        self.viewer = Some(Viewer {
+            files,
+            at: 0,
+            piped,
+            handed,
+        });
         self.preview.peek = true;
         self.preview.peek_focus = Some(cx.focus_handle());
+    }
+
+    /// The window goes once the launch that handed its files over went:
+    /// whether it went.
+    pub(crate) fn viewer_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let gone = self
+            .viewer
+            .as_ref()
+            .and_then(|viewer| viewer.handed.as_ref())
+            .is_some_and(skwir_platform::handover::Viewed::is_gone);
+        if gone {
+            tracing::info!("the launch viewing these files went");
+            self.leave(window, cx);
+            window.remove_window();
+        }
+        gone
     }
 
     /// The viewer's card takes the keyboard as the window opens: whether
@@ -178,10 +216,17 @@ impl Shell {
     }
 
     /// The viewer's window goes (`leave`): its size kept for the next
-    /// (`SIZE_KEY`), its window out of the core.
+    /// (`SIZE_KEY`), what standard input gave removed, the launch waiting
+    /// told, its window out of the core.
     pub(crate) fn viewer_let_go(&mut self, window: &mut Window) {
-        if self.viewer.take().is_none() {
+        let Some(viewer) = self.viewer.take() else {
             return;
+        };
+        if let Some(piped) = &viewer.piped {
+            let_go_of_piped(piped);
+        }
+        if let Some(handed) = &viewer.handed {
+            handed.close();
         }
         if !window.is_fullscreen() && !window.is_maximized() {
             let size = window.bounds().size;
@@ -206,10 +251,13 @@ impl Shell {
 }
 
 /// Remove the file standing for standard input (`Viewing::piped`), and the
-/// folder of this program's that holds it, as the program ends.
+/// folder of its launch's that holds it, as its window closes (and, in a
+/// viewer's own program, as it ends, however it does).
 pub(crate) fn let_go_of_piped(piped: &Path) {
-    if let Err(error) = std::fs::remove_file(piped) {
-        tracing::debug!("what standard input gave stays: {error}");
+    match std::fs::remove_file(piped) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => tracing::debug!("what standard input gave stays: {error}"),
     }
     if let Some(folder) = piped.parent() {
         let _ = std::fs::remove_dir(folder);

@@ -3395,10 +3395,26 @@ impl Shell {
 
     /// Stop what runs and quit: the window closes at once, and the program
     /// ends once its plans took back what they were in the middle of
-    /// (`lib.rs`, `wind_down`).
+    /// (`lib.rs`, `wind_down`). Viewers' windows stay (ADR-151, 4): what
+    /// runs is stopped now, and the program ends with the last of them.
     pub(crate) fn stop_and_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.viewer.is_some() || crate::finishing::viewers_besides(cx, self.window_id) {
+            self.app.executor.cancel_all();
+            for task in self.app.tasks.running() {
+                self.app.tasks.cancel(task.id);
+            }
+            self.close_every_window(window, cx);
+            return;
+        }
         crate::finishing::stopping(cx);
         self.close_every_window(window, cx);
+    }
+
+    /// A signal ended the program (`finishing::end`): what runs stops, and
+    /// every window goes, viewers' too.
+    pub(crate) fn stop_and_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::finishing::stopping(cx);
+        self.close_windows(true, window, cx);
     }
 
     /// The window is about to close (its close button, Quit): what it asks
@@ -3467,11 +3483,25 @@ impl Shell {
     }
 
     /// Quit's windows: every one goes, this one first, none forgotten by
-    /// what is remembered for the next start (`finishing::closed`).
+    /// what is remembered for the next start (`finishing::closed`), but
+    /// viewers' windows, which their launches wait on (ADR-151, 4).
     pub(crate) fn close_every_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let others = crate::finishing::others(cx, self.window_id);
-        self.leave(window, cx);
-        window.remove_window();
+        self.close_windows(false, window, cx);
+    }
+
+    /// Every window goes, this one first, viewers' too where `viewers`.
+    fn close_windows(&mut self, viewers: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let others = if viewers {
+            crate::finishing::others(cx, self.window_id)
+        } else {
+            crate::finishing::others_but_viewers(cx, self.window_id)
+        };
+        // A viewer's own Quit closes it alone (`run_ui`): one here was
+        // asked from elsewhere, and stays unless all go.
+        if viewers || self.viewer.is_none() {
+            self.leave(window, cx);
+            window.remove_window();
+        }
         for other in others {
             cx.defer(move |cx| {
                 let _ = other.update(cx, |shell, window, cx| {
@@ -4357,6 +4387,12 @@ impl Shell {
                 }
             }
             "viewer_reveal" => self.viewer_reveal(cx),
+            // A viewer's Quit closes it, whichever program it is in: the
+            // user's windows stay (ADR-151, 4).
+            "quit" if self.viewer.is_some() => {
+                self.close_window(window, cx);
+                window.remove_window();
+            }
             "quit" => self.quit(window, cx),
             "close_window" => {
                 self.close_window(window, cx);
@@ -4497,9 +4533,9 @@ impl Shell {
             return;
         }
         // Another program's dialog the program gave up goes, its window
-        // with it.
+        // with it; so does a viewer whose launch went (ADR-151, 1).
         self.chooser_sync(window, cx);
-        if self.left {
+        if self.left || self.viewer_sync(window, cx) {
             return;
         }
         let t0 = Instant::now();

@@ -72,14 +72,29 @@ fn main() -> anyhow::Result<()> {
     // standard output is the protocol, or the JSON a script reads.
     let program = std::env::args_os().next().unwrap_or_default();
     let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    // `skwir view` and `skw` (ADR-151): a program of its own, which hands
-    // nothing over and takes nothing over, started with what viewing needs.
+    // `skwir view` and `skw` (ADR-151): handed to the Skwir running, this
+    // launch waiting until that window closes; else a program of its own,
+    // which takes nothing over, started with what viewing needs.
     if let Some(asked) = skwir::view::asked(&program, &args) {
         let cwd = std::env::current_dir().unwrap_or_default();
-        let viewing = match skwir::view::read(asked, &cwd) {
+        let (asked, apart) = skwir::view::apart(asked);
+        if apart {
+            skwir_platform::handover::keep_apart();
+        }
+        let mut viewing = match skwir::view::read(&asked, &cwd) {
             Ok(viewing) => viewing,
             Err(code) => std::process::exit(code),
         };
+        viewing.token = skwir_platform::handover::launch_token();
+        match skwir_platform::handover::view_elsewhere(&viewing) {
+            skwir_platform::handover::ViewedElsewhere::NotTaken => {}
+            skwir_platform::handover::ViewedElsewhere::Closed => return Ok(()),
+            skwir_platform::handover::ViewedElsewhere::Ended => {
+                skwir::view::let_go_of_piped(&viewing);
+                eprintln!("skwir view: the Skwir showing it ended");
+                std::process::exit(1);
+            }
+        }
         return view(started, viewing);
     }
     if let Some(code) = skwir::cli::run(&args) {
@@ -238,10 +253,11 @@ fn log() {
         .init();
 }
 
-/// A viewer's program (`skwir view`, ADR-151, 1): no handover either way,
-/// the plugins that serve a viewer alone, none from outside, and not what
-/// the file manager starts (the login shell's variables, the collation's
-/// table for typing names). Ends once its window closes.
+/// A viewer's program (`skwir view`, ADR-151, 1), where no Skwir running
+/// took the files over: no handover either way, the plugins that serve a
+/// viewer alone, none from outside, and not what the file manager starts
+/// (the login shell's variables, the collation's table for typing names).
+/// Ends once its window closes.
 fn view(started: Instant, viewing: skwir_ui::viewer::Viewing) -> anyhow::Result<()> {
     skwir_platform::handover::keep_apart();
     let restricted = gpu::restrict_vulkan_drivers();
