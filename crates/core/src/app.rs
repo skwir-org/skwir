@@ -5292,6 +5292,10 @@ mod builtin {
                 Ok(Outcome::Done)
             },
         )
+        // A viewer's own steps through its folder, on the whole screen, in
+        // a slideshow, from one track to the next move what its pane,
+        // never drawn, shows (ADR-151, 4): no key of a pane's reaches it.
+        .in_viewer()
         .shows();
 
         let sort = c.register::<SortArgs, _>(

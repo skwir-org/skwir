@@ -35,7 +35,8 @@ fn none() -> serde_json::Value {
 /// Beyond what its topics offer (the preview, the player, the window's own
 /// parts), a viewer offers what acts on the file shown without changing
 /// it: opening it elsewhere and Open With's rows and picker, Print… and its
-/// Save as PDF; and of the shell's, the window's buttons, Quit, Properties,
+/// Save as PDF; the cursor its steps move (`select`); and of the shell's,
+/// the window's buttons, Quit, Properties,
 /// a document's links, the answers to its questions, F1's list. A new
 /// command offered there beyond its topic is listed here, and so is one
 /// that changes files.
@@ -48,6 +49,8 @@ fn a_viewer_offers_beyond_its_topics_only_what_says_so() {
         "open_with.menu",
         "print.print",
         "print.save_pdf",
+        // The cursor its steps move, in its pane never drawn.
+        "select",
         "ui.close_window",
         "ui.copy_text",
         "ui.maximize_window",

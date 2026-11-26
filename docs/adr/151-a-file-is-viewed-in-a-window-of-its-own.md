@@ -256,10 +256,15 @@ it says is drawn over its card (3).
      the user's own on the folder, the file selected; Skwir started on
      its own, in a process group of its own, as the program it is, never
      the `skw` link (amended 2026-11-26, from a review: no row ran it).
-   - Nothing that changes files, nor tabs, the split, the terminal, the
-     selection, going places or the palette's other commands, nor a
-     plugin from outside's command, which the host cannot tell is fit
-     for it. It views.
+   - Nothing that changes files, nor tabs, the split, the terminal,
+     selecting by hand (Select all, a pane's cursor keys), going places
+     or the palette's other commands, nor a plugin from outside's
+     command, which the host cannot tell is fit for it. It views. Its own
+     steps move its pane's cursor (`select`, offered there): through the
+     folder, on the whole screen, in a slideshow, to the next track; each
+     step says so (`Declared::leads_to`), so none is offered where that
+     move is not (amended 2026-11-26, from a review: the steps were
+     refused once the selection was no longer offered).
 6. **No file named.**
    - The system's dialog opens (gpui's `prompt_for_paths`): the portal
      on Linux, which may be Skwir's own (ADR-141), the system's panel on

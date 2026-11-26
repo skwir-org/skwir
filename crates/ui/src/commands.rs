@@ -1585,10 +1585,11 @@ fn dialogs_by(name: &str) -> Option<fn(&App, &serde_json::Value) -> InDialogs> {
 /// What a shell's command runs in turn with its arguments
 /// (`Declared::leads_to`): a picker its source and each choice's command,
 /// a prompt the command its answer goes to, an item of the preview's
-/// menu the command it runs with what is shown. A window answering
-/// another program's dialog offers them only where it offers what they
-/// lead to (ADR-144, 1): Open With's picker is about files, wherever it is
-/// drawn.
+/// menu the command it runs with what is shown, a step to another file
+/// the cursor moved. A window answering another program's dialog, or a
+/// viewer's, offers them only where it offers what they lead to (ADR-144,
+/// 1; ADR-151, 5): Open With's picker is about files, wherever it is
+/// drawn, and a step that would move no cursor is no step.
 fn leads_to_of(name: &str) -> Option<LeadsTo> {
     /// `args[command]` with `args[args]`, as a prompt and the preview's
     /// items name what they run.
@@ -1622,6 +1623,12 @@ fn leads_to_of(name: &str) -> Option<LeadsTo> {
             source.into_iter().chain(choices).collect()
         },
         "ui.ask" | "ui.preview_invoke" => named,
+        // A step to another file of the pane, the preview following it:
+        // the cursor moved (`select`), wherever it is asked (a viewer's,
+        // the whole screen's, a slideshow's, the player's next track).
+        "ui.viewer_step" | "ui.fullscreen_step" | "ui.media_step" | "ui.slideshow" => {
+            |_| vec![Invocation::new("select")]
+        }
         _ => return None,
     })
 }
@@ -4306,22 +4313,50 @@ mod tests {
                 .iter()
                 .any(|item| &*item.command.name == "ui.viewer_reveal")
         );
-        let viewer = |context: &str| {
+        // The keys of the places a viewer's card holds: its own, the
+        // whole screen's, a slideshow's, a picture's, what plays and its
+        // volume. Each runs there, and so does what it runs in turn (its
+        // steps move the pane's cursor, `select`).
+        let places = [
+            crate::keymap::VIEWER,
+            crate::keymap::FULLSCREEN,
+            crate::keymap::SLIDESHOW,
+            crate::keymap::IMAGE,
+            crate::keymap::MEDIA,
+            crate::keymap::VOLUME,
+        ];
+        let held = |context: &str| {
             context
                 .split(|c: char| !c.is_alphanumeric() && c != '_')
-                .any(|token| token == crate::keymap::VIEWER)
+                .any(|token| places.contains(&token))
         };
         let mut bound = 0;
         for key in crate::keymap::bindings(&app, &[]) {
             let Some((command, args)) = &key.command else {
                 continue;
             };
-            if viewer(&key.context) {
+            if held(&key.context) {
                 bound += 1;
-                assert!(offered(command, args), "{} {command}", key.keys);
+                assert!(
+                    offered(command, args),
+                    "{} {command} in {}",
+                    key.keys,
+                    key.context
+                );
             }
         }
         assert!(bound > 0, "a viewer binds keys of its own");
+        // Its steps through its folder, given one file, on the whole
+        // screen, in a slideshow and to the next track, move the cursor.
+        assert!(offered("select", &serde_json::json!({})));
+        for step in [
+            "ui.viewer_step",
+            "ui.fullscreen_step",
+            "ui.media_step",
+            "ui.slideshow",
+        ] {
+            assert!(offered(step, &serde_json::json!({})), "{step}");
+        }
         let none = serde_json::json!({});
         for name in [
             "ui.close_window",
