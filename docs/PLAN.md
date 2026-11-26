@@ -1464,6 +1464,9 @@ first frame 26 ms from the launch against 85). Left:
   `SetConsoleCtrlHandler(None, TRUE)` in `attach_console`); each handed
   viewer's thread looks four times a second whether its launch is there
   (overlapped I/O would wait instead); macOS compiled only;
+- Show in Skwir from a viewer's own program, with no Skwir running,
+  starts one carrying the terminal's environment (`PATH`, `LANG`): it is
+  detached and reaped, the environment kept;
 - in a 300 px viewer More's menu runs off the window's edge; opening a
   viewer wakes the folders of windows asleep (`resume_shown`, VW-21),
   and the active window may be recorded wrongly (VW-23);
