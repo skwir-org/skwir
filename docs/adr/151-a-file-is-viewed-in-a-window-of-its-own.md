@@ -322,11 +322,13 @@ view" and declares `application/octet-stream` alone (8).
    - A desktop entry of its own, "skwir view", runs `skwir view %F`: the
      brand as the window writes it, and the command it runs.
    - It declares one type, `application/octet-stream`: it never takes a
-     type another application declares. A desktop that offers what
-     declares that type for every file offers it so; GIO (2.90) offers
-     it only for a file of no known type, which leaves it to `skw` and
-     to Skwir's own Open With, where every file's lineage ends with that
-     type.
+     type another application declares. KDE (KService 6.32) offers it
+     for every file, every type descending from that one, and opens a
+     file with it only where nothing declares the file's type or a
+     nearer parent (checked with `kde-open`, 2026-11-26). GIO (2.90)
+     offers it only for a file of no known type, which leaves it, on
+     GNOME, to `skw` and to Skwir's own Open With, where every file's
+     lineage ends with that type.
    - It is translated as the program's entry is, and kept out of the
      launcher's list (`NoDisplay`): it opens what it is given.
 

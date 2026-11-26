@@ -1428,16 +1428,6 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**Wine leaves `schtasks /Query` running** (found 2026-11-26): the
-remote plugin asks it on a refresh's thread
-(`login::Manager::installed_of`); under Wine it never returns, and a
-test process that ends meanwhile leaves it, which keeps the shared test
-prefix's wineserver and services alive (six runs' leftovers, one of
-them two days old). Windows ends it with Skwir (`KILL_ON_JOB_CLOSE`);
-Wine does not. Left: `tools/cross/test-windows.sh` ending the prefix's
-programs when it is the last run using it (a shared lock held while
-testing, taken alone at the end), or the tests not asking it under Wine.
-
 **A file's preview from a terminal** (ADR-151, built 2026-11-25:
 `skwir view`, `skw`; amended 2026-11-26: a Skwir running shows the files
 a launch hands it in two steps, the launch waiting in its terminal;
@@ -1451,10 +1441,6 @@ first frame 26 ms from the launch against 85). Left:
   built by 0.7.1's release; the RPM owns no `skw` link
   (cargo-generate-rpm has no symlink asset: an upstream pull request
   would let it);
-- the viewer's entry declares `application/octet-stream` alone (the
-  user's choice, ADR-151 8): GIO 2.90 offers it only for files of no
-  known type (checked); what KDE's Open With offers with it is not
-  checked;
 - Windows: the handover tried under Wine (the pipe), its window
   compiled only; a release build's terminal does not wait for `skw`
   (the window subsystem), and a later Ctrl+C in that console ends the
@@ -1674,9 +1660,8 @@ quarantined as Homebrew downloads it, its caveats saying Open Anyway and
 quarantine and the Caskroom checked, uninstall), on the tap's local
 branch `cask/skwir`. On the tap's main since 0.7.1 (2026-11-26), its
 job passed on GitHub's macOS runner, the app's seal checked by codesign.
-Left: Homebrew warns that the `url` stanza's `verified:` is deprecated
-(`cask.py` writes it; style and audit pass); the app never started on a
-Mac (the job installs and checks it, starts nothing).
+Left: the app never started on a Mac (the job installs and checks it,
+starts nothing).
 
 **Names in both forms** (the user's choice with skwird, 2026-11-24;
 built that evening, ADR-150 17). A name term is matched composed and

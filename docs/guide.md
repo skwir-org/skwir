@@ -889,8 +889,9 @@ terminal waits until it closes (`Ctrl+C` there closes it). With none
 open, with `skw --new-instance`, and always on macOS, it is a program of
 its own that starts only what showing a file needs and ends with its
 window; the terminal waits for it all the same. It is in Skwir's own Open
-With for every file, as **skwir view**. Other file managers offer it for
-files of no known type; where one lets you type a command, `skwir view`
+With for every file, as **skwir view**, and so is KDE's, after the
+applications of the file's type. GNOME's offers it only for files of no
+known type; where a file manager lets you type a command, `skwir view`
 opens any file.
 
 ## Properties

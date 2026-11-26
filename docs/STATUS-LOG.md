@@ -24598,3 +24598,42 @@ once they published it, Homebrew's cask, the AUR and this record.
   meanwhile leaves it. Windows kills it with its parent (each program
   Skwir starts is in a `KILL_ON_JOB_CLOSE` job); Wine does not. Stopped;
   the harness's fix is in What is left.
+
+## 2026-11-26, evening: what 0.7.1's release left
+
+On the user's ask, the plan's three points left by the release that
+need no window on their display (their `just idle-pss`, read again
+without the load, stays theirs).
+
+- **What Wine leaves in the tests' prefix:** `tools/cross/test-windows.sh`
+  holds the prefix shared while it tests (`flock -s -o`, so its programs
+  do not hold it), and the run that ends with no other holding it takes
+  it alone and ends what is left there (`wineserver -k`, then `-w`); a
+  run starting meanwhile waits. `flock` comes with the Windows shell
+  (util-linux). `SKWIR_WINE_CRATES` runs the crates it names alone from
+  the one build, where `-p` builds each crate's stack again. Checked:
+  a failed run's status kept (2 for a refused argument; the EXIT trap,
+  bash and dash); the remote plugin's 131 tests under Wine with another
+  run holding the prefix and a Wine program running, which stayed
+  running after the first run's end; a Wine program left running
+  outside any run (`setsid`), ended by the next run to end, its
+  wineserver with it. The old script with the remote plugin's tests
+  alone left nothing this time: the six runs' leftovers came from whole
+  suites.
+- **Homebrew's `verified:`:** deprecated in Homebrew's cask DSL
+  (`cask/dsl.rb`: `odeprecated` "the `verified` parameter in the `url`
+  stanza", "the default URL verification behaviour"), no longer passed
+  on. `cask.py` writes the `url` without it (its test refuses it). The
+  tap's cask written again by `just cask v0.7.1` (its 1d81438 on
+  `cask/skwir`): its job passed without the warning, skwird's too. The
+  tap's main keeps 1c9d690's cask until it is fast-forwarded.
+- **KDE's Open With and the viewer's entry:** with KService 6.32 and
+  kde-cli-tools 6.8.3 (`kde-open`, which asks KDE's trader for the
+  preferred application and runs it), private folders, stub programs
+  recording that they started: a PNG went to a stub declaring
+  `application/octet-stream` (GHex, whose ID sorts first), then, without
+  it, to skwir view, then, with an application declaring `image/png`,
+  to that one; Markdown always to the one declaring `text/plain`; a file
+  of no known type to the octet-stream ones. KDE offers the viewer for
+  every file, after what the file's type and its parents declare;
+  ADR-151 (8) and the guide say so.
