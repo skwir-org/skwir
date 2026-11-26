@@ -64,6 +64,7 @@ fn index(engines: Engines) -> Index {
         app: Weak::new(),
         kept: kept::Kept::new(Weak::new(), engines.clone()),
         engines,
+        presence: Arc::new(program::Presence::never()),
         secrets: Mutex::default(),
         hello: HELLO,
         release_within: RELEASE_WITHIN,
@@ -357,6 +358,99 @@ fn no_engine_is_no_index() {
             .open(Path::new("/fixture"), &cancel)
             .is_none()
     );
+}
+
+/// [`index`], whether skwird is here looked at as `here` says.
+fn index_looking(engines: Engines, here: bool) -> Index {
+    Index {
+        presence: Arc::new(program::Presence::new(Some(Arc::new(move || here)), None)),
+        ..index(engines)
+    }
+}
+
+/// skwird is said missing, by the index a walked search's footer and the
+/// Index page ask, once a search found neither an engine nor skwird; never
+/// before, nor where skwird is found or an engine answers. What it says
+/// leads to the website's download page, at skwird.
+#[test]
+fn skwird_is_said_missing_once_a_search_finds_neither_it_nor_an_engine() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let root = PathBuf::from("/fixture/root");
+    let missing = index_looking(Engines::At(tmp.path().join("no socket")), false);
+    assert!(missing.absent().is_none(), "not looked at yet");
+    assert!(missing.open(&root, &cancel).is_none());
+    let absent = missing.absent().expect("said missing");
+    assert!(
+        absent
+            .why
+            .english()
+            .starts_with("skwird is not installed, so searches go through the folders one by one."),
+        "{}",
+        absent.why.english()
+    );
+    assert!(
+        absent
+            .why
+            .english()
+            .ends_with("from the download page of skwir.org.")
+    );
+    assert_eq!(absent.label.english(), "Get skwird");
+    assert_eq!(absent.url, "https://skwir.org/download#skwird");
+    // Installed, no engine running yet: nothing said.
+    let installed = index_looking(Engines::At(tmp.path().join("no socket")), true);
+    assert!(installed.open(&root, &cancel).is_none());
+    assert!(installed.absent().is_none());
+    // An engine answering: nothing said, whatever a look found before.
+    let fake = engine(tmp.path(), &root, false);
+    let answering = index_looking(Engines::At(fake.socket.clone()), false);
+    answering.presence.look();
+    assert!(answering.absent().is_some());
+    assert!(answering.open(&root, &cancel).is_some());
+    assert!(answering.absent().is_none(), "an engine answered");
+}
+
+/// The app's names indexes say skwird is missing once a window was
+/// looked at and it was not found, until the plugin is turned off; a
+/// headless test's app, which asks the machine nothing, never says it.
+#[test]
+fn a_look_at_the_window_says_whether_skwird_is_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(skwir_core::app::AppConfig::ephemeral(
+        tmp.path().join("run"),
+    ))
+    .unwrap();
+    let plugin = Arc::new(SkwirdPlugin {
+        looks: Some(Arc::new(|| false)),
+        ..SkwirdPlugin::at(tmp.path().join("no socket"))
+    });
+    app.plugins.add(
+        Arc::clone(&plugin) as Arc<dyn skwir_core::plugin::Plugin>,
+        &app,
+    );
+    assert!(app.names.absent().is_empty(), "not looked at yet");
+    app.plugins.looked_at(&app);
+    until(|| !app.names.absent().is_empty());
+    assert!(app.plugins.set_enabled(ID, false, &app));
+    assert!(app.names.absent().is_empty(), "turned off");
+
+    let headless = App::new(skwir_core::app::AppConfig::ephemeral(
+        tmp.path().join("other"),
+    ))
+    .unwrap();
+    assert!(!headless.index_services());
+    let plugin = Arc::new(SkwirdPlugin {
+        looks: Some(Arc::new(|| false)),
+        ..SkwirdPlugin::default()
+    });
+    headless.plugins.add(
+        Arc::clone(&plugin) as Arc<dyn skwir_core::plugin::Plugin>,
+        &headless,
+    );
+    // The look the window's would start, made here.
+    let presence = plugin.presence.lock().clone().expect("registered");
+    presence.look();
+    assert!(headless.names.absent().is_empty());
 }
 
 /// An engine that says hello and then nothing holds the search until it is

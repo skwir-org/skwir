@@ -63,7 +63,7 @@ them by topic.
 | [047](047-previews-from-outside-are-files-skwir-shows.md) | A preview from outside is a file Skwir shows | built; amended 2026-11-18: protocol 2 (ADR-139) |
 | [048](048-archives-are-extracted-by-libarchive-in-its-sandbox.md) | Archives extracted by libarchive, sandboxed, as a step | built |
 | [049](049-a-file-and-its-names.md) | A file and its names are two identities | built |
-| [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | plocate's answer dated (2026-10-20); skwird's client copied (2026-11-23); coverage and the provider not built; amended by 089 and 150 |
+| [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | plocate's answer dated (2026-10-20); skwird's client copied (2026-11-23); coverage and the provider not built; amended by 089 and 150, and 2026-11-26: packages may carry skwird beside Skwir's program, found after `PATH`, the AppImage none; Settings › Index and a walked search's footer say where it is missing |
 | [051](051-text-is-read-where-it-is-shown.md) | Text is read where it is shown; colors hold it back 100 ms at most, and its rows are counted in that time where they can be, the gutter never narrowing (amended 2026-11-09, 2026-11-10) | built |
 | [052](052-portable-appimage.md) | A portable AppImage built in a distribution root, and its tree as a tarball | built and tried on x86-64 Linux; amended 2026-11-22 (ADR-148): libheif and libde265 built for the HEIF helper |
 | [053](053-local-releases-minimal-ci.md) | Local Linux releases; minimal routine GitHub CI; the full gate runs the Windows tests under Wine (2026-11-24) | implemented; upload tested with a fake GitHub CLI |

@@ -14,7 +14,10 @@
 //! again once the exclusions change. Where none runs, the first search
 //! starts one unless the Index page's switch says not (`skwird.start`).
 //! What the user keeps live is `kept`'s (ADR-150, 6); the removable drives
-//! skwird indexes, `volumes`' (ADR-150, 18).
+//! skwird indexes, `volumes`' (ADR-150, 18). Where skwird is, on `PATH` or
+//! beside Skwir's program, is `program`'s (ADR-050, amended 2026-11-26),
+//! and so is whether it is missing, which a walked search's footer and the
+//! Index page say (`NameIndex::absent`).
 
 mod alarm;
 mod kept;
@@ -33,8 +36,8 @@ use skwir_core::coverage::{Coverage, Hole, Proof, Why};
 use skwir_core::entry::EntryKind;
 use skwir_core::exclusions::{BUILTIN, Catalog, Role, Rule};
 use skwir_core::names::{
-    Answer, Change, Child, Extension, Journal, Largest, Mark, NameIndex, Noted, Opened, Query,
-    Session, Since, Summed, Totals,
+    Absent, Answer, Change, Child, Extension, Journal, Largest, Mark, NameIndex, Noted, Opened,
+    Query, Session, Since, Summed, Totals,
 };
 use skwir_core::permissions::{Capabilities, Capability};
 use skwir_core::plugin::{Category, Plugin, Requirement};
@@ -70,6 +73,26 @@ const RELEASE_WITHIN: Duration = Duration::from_secs(8);
 /// not gone) is not waited for past it, its whole `SILENCE`.
 const HELLO: Duration = Duration::from_secs(5);
 
+/// What a walked search's footer and the Index page say while skwird is
+/// missing (`NameIndex::absent`), with a button to the website's page that
+/// says how to install it: its download page's skwird section.
+fn absent() -> Absent {
+    let site = env!("CARGO_PKG_HOMEPAGE").trim_end_matches('/');
+    let host = site.split_once("://").map_or(site, |(_, host)| host);
+    Absent {
+        why: skwir_core::words!(
+            skwird_absent = "skwird is not installed, so searches go through the folders one by one. skwird answers name searches across whole disks at once, from an index it keeps current; get it from the download page of { $site }.",
+            site = host,
+            note = "Where skwird, a program the user installs apart, is missing: on the Index page of the settings, and in the tooltip of a search's footer that went through the folders. skwird is a program's name, as written; site: Skwir's website, as written (skwir.org)."
+        ),
+        label: skwir_core::words!(
+            skwird_absent_get = "Get skwird",
+            note = "The button beside the words saying skwird is not installed, on the Index page of the settings: opens the website's page saying how to install it. skwird is a program's name, as written."
+        ),
+        url: format!("{site}/download#skwird"),
+    }
+}
+
 /// What answered, said where the answer is (`RestsOn::by`).
 pub fn by() -> Words {
     skwir_core::words!(
@@ -90,6 +113,11 @@ pub struct SkwirdPlugin {
     /// (`volumes::table`): a test's, whose changes the test tells, the
     /// system's not followed (`volumes::register`).
     mounted: Option<volumes::Mounted>,
+    /// How whether skwird is here is looked at, in place of the machine's
+    /// (`program::found`): a test's.
+    looks: Option<program::Look>,
+    /// Whether skwird is missing, while the plugin is on.
+    presence: Mutex<Option<Arc<program::Presence>>>,
 }
 
 impl SkwirdPlugin {
@@ -99,6 +127,8 @@ impl SkwirdPlugin {
             socket: Some(socket),
             volumes: Mutex::default(),
             mounted: None,
+            looks: None,
+            presence: Mutex::default(),
         }
     }
 }
@@ -148,7 +178,18 @@ impl Plugin for SkwirdPlugin {
             None if app.index_services() => Engines::Machine,
             None => Engines::None,
         };
+        // Said missing only where the machine's engines are asked (or a
+        // test looks in their place): never of a test's engine, nor in a
+        // headless test's app, which asks the machine nothing.
+        let look = match (&engines, &self.looks) {
+            (Engines::None, _) | (Engines::At(_), None) => None,
+            (_, Some(look)) => Some(Arc::clone(look)),
+            (Engines::Machine, None) => Some(Arc::new(program::found) as program::Look),
+        };
+        let presence = Arc::new(program::Presence::new(look, Some(app.waker_handle())));
+        *self.presence.lock() = Some(Arc::clone(&presence));
         let kept = kept::Kept::new(app.weak(), engines.clone());
+        *kept.presence.lock() = Some(Arc::clone(&presence));
         kept::register(&kept, app);
         let volumes = volumes::register(app, &engines, self.mounted.clone());
         if let Some(before) = self.volumes.lock().replace(volumes) {
@@ -161,6 +202,7 @@ impl Plugin for SkwirdPlugin {
                 engines,
                 secrets: Mutex::default(),
                 kept,
+                presence,
                 hello: HELLO,
                 release_within: RELEASE_WITHIN,
             }),
@@ -169,10 +211,21 @@ impl Plugin for SkwirdPlugin {
 
     /// A drive mounted before Skwir started is offered at the first look,
     /// one found unlooked at, at a look of the user's own (`volumes`).
-    fn on_looked_at(&self, _app: &App) {
+    /// Whether skwird is here is looked at again then too: it may have been
+    /// installed or removed meanwhile, which no watch tells.
+    fn on_looked_at(&self, app: &App) {
         let volumes = self.volumes.lock().clone();
         if let Some(volumes) = volumes {
             volumes.looked_at();
+        }
+        let presence = self.presence.lock().clone();
+        if let Some(presence) = presence {
+            app.scheduler.spawn(
+                skwir_core::scheduler::Priority::Background,
+                "skwird.look",
+                app.lifetime().child(),
+                move || presence.look(),
+            );
         }
     }
 
@@ -182,6 +235,7 @@ impl Plugin for SkwirdPlugin {
         if let Some(volumes) = volumes {
             volumes.stop();
         }
+        self.presence.lock().take();
     }
 }
 
@@ -206,6 +260,9 @@ struct Index {
     secrets: Mutex<Option<Secrets>>,
     /// What the user keeps live, sent at each connection.
     kept: Arc<kept::Kept>,
+    /// Whether skwird is missing: looked at again as a search finds no
+    /// engine, cleared as one answers.
+    presence: Arc<program::Presence>,
     /// How long a connect waits for a hello: `HELLO`, or a test's.
     hello: Duration,
     /// How long a release waits, all of it: `RELEASE_WITHIN`, or a test's.
@@ -343,9 +400,14 @@ impl NameIndex for Index {
         if cancel.is_cancelled() {
             return None;
         }
-        let (mut client, stop) = connect(&find, cancel, self.hello)
-            .map_err(|e| said("connect", &e))
-            .ok()?;
+        let connected = connect(&find, cancel, self.hello).map_err(|e| said("connect", &e));
+        // No engine: maybe because skwird is not installed, which the
+        // search's footer says once it walked.
+        if connected.is_err() && !cancel.is_cancelled() {
+            self.presence.look();
+        }
+        let (mut client, stop) = connected.ok()?;
+        self.presence.answered();
         self.keep_secrets_out(&mut client);
         // What the user keeps live, sent as differences (a user's engine).
         self.kept.reconcile(&mut client);
@@ -413,6 +475,12 @@ impl NameIndex for Index {
 
     /// A session on an engine already running, nothing started nor sent
     /// but what is asked: what follows `root`'s journal (ADR-150, D5).
+    /// skwird missing at the last look (`program::Presence`): said from
+    /// memory, as the window draws.
+    fn absent(&self) -> Option<Absent> {
+        self.presence.missing().then(absent)
+    }
+
     fn follow(&self, root: &Path, cancel: &CancelToken) -> Option<Opened> {
         let find = find(&self.engines, false)?;
         if cancel.is_cancelled() {

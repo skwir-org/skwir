@@ -356,6 +356,24 @@ pub struct Opened {
     pub session: Box<dyn Session>,
 }
 
+/// Why an index answers no search here ([`NameIndex::absent`]): its
+/// program is not installed. Said where a search walked instead (its
+/// footer's tooltip) and on the settings' Index page, beside a button
+/// opening the page it is got from: the index's words, the shell naming
+/// no index.
+#[derive(Clone, Debug)]
+pub struct Absent {
+    /// Why, in whole sentences: what is missing, what searches do without
+    /// it, what it would do, and where it is got.
+    pub why: Words,
+    /// The words of the Index page's button ("Get skwird").
+    pub label: Words,
+    /// The web page the button opens, where it is got
+    /// (`https://skwir.org/download#skwird`): opened by the desktop as the
+    /// user asks, never fetched.
+    pub url: String,
+}
+
 /// A names index.
 pub trait NameIndex: Send + Sync {
     fn id(&self) -> &'static str;
@@ -413,6 +431,16 @@ pub trait NameIndex: Send + Sync {
     /// included), since an Eject waits for it before its last let-go of the
     /// volume. The default holds nothing.
     fn release(&self, _point: &Path, _cancel: &CancelToken) {}
+
+    /// Why it answers no search here, where that is what it last found
+    /// (its program not installed), with what the Index page offers for
+    /// it ([`Absent`]). Asked as the window draws (a search's footer, the
+    /// Index page): from memory, never looked up where it is asked; the
+    /// index looks again off the window's thread and wakes it when the
+    /// answer changes. `None` (the default) where it may answer.
+    fn absent(&self) -> Option<Absent> {
+        None
+    }
 }
 
 /// An index opened for a search: which, how far it covers, its session.
@@ -499,6 +527,13 @@ impl NameIndexes {
         covered
     }
 
+    /// Why each index that answers no search here does not
+    /// ([`NameIndex::absent`]), in registration order: from memory, as the
+    /// window draws.
+    pub fn absent(&self) -> Vec<Absent> {
+        self.list.all().iter().filter_map(|i| i.absent()).collect()
+    }
+
     /// Every index let go of `point` before its volume is unmounted
     /// ([`NameIndex::release`]): returned once none holds anything there.
     /// Blocking, on a worker.
@@ -583,6 +618,63 @@ mod tests {
         fn release(&self, point: &Path, _: &CancelToken) {
             self.1.lock().push((self.0, point.to_path_buf()));
         }
+    }
+
+    /// An index whose program is missing, saying so.
+    struct Missing(&'static str);
+
+    impl NameIndex for Missing {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn by(&self) -> Words {
+            Words::as_written(self.0)
+        }
+        fn syncs(&self) -> bool {
+            true
+        }
+        fn open(&self, _: &Path, _: &CancelToken) -> Option<Opened> {
+            None
+        }
+        fn absent(&self) -> Option<Absent> {
+            Some(Absent {
+                why: Words::as_written(format!("{} is not installed", self.0)),
+                label: Words::as_written(format!("Get {}", self.0)),
+                url: "https://example.org/download".to_owned(),
+            })
+        }
+    }
+
+    /// An index says why it answers nowhere only where it says so: by
+    /// default none does. What those that do say is listed in their
+    /// order, and withdrawn with their owner.
+    #[test]
+    fn only_an_index_that_says_it_is_absent_is() {
+        let indexes = NameIndexes::default();
+        assert!(indexes.absent().is_empty(), "no index");
+        indexes.register("a", Arc::new(Fixed("answers", Coverage::as_of(None))));
+        assert!(
+            indexes.absent().is_empty(),
+            "an index of none's default is not absent"
+        );
+        indexes.register("b", Arc::new(Missing("first")));
+        indexes.register("c", Arc::new(Missing("second")));
+        let said = |indexes: &NameIndexes| -> Vec<String> {
+            indexes
+                .absent()
+                .iter()
+                .map(|absent| absent.why.english())
+                .collect()
+        };
+        assert_eq!(
+            said(&indexes),
+            ["first is not installed", "second is not installed"]
+        );
+        let absent = indexes.absent().remove(0);
+        assert_eq!(absent.label.english(), "Get first");
+        assert_eq!(absent.url, "https://example.org/download");
+        indexes.unregister_owner("b");
+        assert_eq!(said(&indexes), ["second is not installed"]);
     }
 
     /// Before a volume is unmounted, every index is asked to let go of it,

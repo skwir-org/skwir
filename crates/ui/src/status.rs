@@ -362,6 +362,21 @@ pub(crate) fn render(
         ),
         None => items,
     };
+    // A search that walked, where an index answers nowhere (its program
+    // not installed), says so in the index's words (`NameIndex::absent`),
+    // asked from memory: nothing is looked up here. Nothing where none is
+    // absent, so the footer never makes room for it.
+    let absent = (is_query && complete && error.is_none() && rests_on.is_none())
+        .then(|| shell.app.names.absent().into_iter().next())
+        .flatten();
+    let no_index = absent.as_ref().map(|_| {
+        words!(
+            status_no_index = "no index",
+            note = "In a search's footer, after its count, when the search went through the \
+                    folders one by one because the index that would answer it is not installed \
+                    (skwird). Its tooltip says why; a click opens Settings at Index."
+        )
+    });
     // An index's answer says how far it is proven (ADR-050, ADR-150): as
     // of when, what was made, renamed or removed since not in it.
     let as_of = rests_on.and_then(|r| rests_on_said(&r, &skwir_core::locale::now()));
@@ -399,6 +414,7 @@ pub(crate) fn render(
         as_of
             .iter()
             .map(|(text, _)| text)
+            .chain(no_index.as_ref())
             .chain(left_out.as_ref())
             .chain(folded.as_ref())
             .fold(items.clone(), |said, text| and_said(said, text.clone()))
@@ -438,6 +454,31 @@ pub(crate) fn render(
                 .flex_none()
                 .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
                 .child(text.say()),
+        );
+    }
+    if let (Some(absent), Some(text)) = (absent, no_index) {
+        let tip: gpui::SharedString = absent.why.say().into();
+        let said = text.say();
+        bar = bar.child(
+            div()
+                .id("listing-no-index")
+                .role(gpui::Role::Button)
+                .when(shell.a11y, |d| d.aria_label(absent.why.say_plain()))
+                .flex_none()
+                .px_2()
+                .rounded_md()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.hover))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.run(
+                        "ui.settings",
+                        serde_json::json!({ "page": skwir_core::settings::page::INDEX }),
+                        window,
+                        cx,
+                    );
+                }))
+                .child(said),
         );
     }
     if let Some(text) = left_out {

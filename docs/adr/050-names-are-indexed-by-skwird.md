@@ -9,7 +9,9 @@ for the session). Amended by ADR-089 (2026-10-26): content stays out of
 skwird; its journal feeds Skwir's derived indexes. Point 7 amended
 2026-11-23: the client is a copy, published nowhere; and by ADR-150 the
 same day: the provider is a plugin of its own, `skwird`, behind a seam
-core owns, which plocate's answer joins.
+core owns, which plocate's answer joins. Point 2 amended 2026-11-26:
+packages may carry skwird beside Skwir's program, found after `PATH`,
+and Skwir says where it is missing.
 
 ## Context
 
@@ -152,3 +154,70 @@ and Skwir still takes no git dependency. So:
   its lockfile holds; their tests passed (the protocol's transcripts, the
   fake engine); they compiled for Windows (`x86_64-pc-windows-gnu`) and
   macOS (`aarch64-apple-darwin`).
+
+### 2026-11-26: packages may carry skwird, and Skwir says when it is missing
+
+Point 2 let packages recommend skwird, and Skwir's ignored it: most
+people never had it, every search walked, and nothing said why. So:
+
+- **Packages may carry skwird beside Skwir's own program**, the release
+  `tools/package/skwird.lock` names: Windows' installer and zip
+  (`skwird.exe`, and `skwirdw.exe`, which its logon task runs), the
+  Mac's app (in `Contents/MacOS`), and the Linux tarball (in its `bin`).
+  The `.deb` and the `.rpm` recommend skwird's own package, and the AUR's
+  lists it among its optional dependencies.
+- **The AppImage carries none.** Its files are a FUSE mount that ends
+  with Skwir, while an engine started on demand outlives its last client
+  by a minute (point 2): its program would go from under it.
+- **Found after `PATH`**, in one place (the plugin's `program::find`,
+  which starting an engine and the Plugins page's requirement both ask):
+  on `PATH` first, with Homebrew's folders on macOS, so that an installed
+  package takes over and a machine keeps one engine and one index (an
+  engine meeting an index format it does not read rebuilds it whole);
+  else beside the program that runs, its links followed
+  (`folders::program`), as Skwir's helpers are found. Only there: the
+  packages that keep helpers in `lib/skwir` or `libexec/skwir` carry no
+  skwird. On Windows the file is `skwird.exe`.
+- **Started as from `PATH`.** A carried copy is started on demand, by a
+  search or a drive's index, exactly as an installed one, and Skwir
+  registers it to start neither at login nor at boot. A user who runs its
+  `logon add` or `service add` registers that copy, and takes it back
+  with that copy before removing Skwir (the guide says how). Windows'
+  installer, per user, runs `skwird logon remove` as it uninstalls; the
+  zip and the Mac's app have no uninstaller (ADR-075, amended). skwird's
+  system service is never to be registered from the carried copy: it
+  sits in a folder the user's own programs can change, under a service
+  that runs as the system.
+- **Said where it is missing**, through core's seam, the shell naming no
+  index (`names::Absent`, `NameIndex::absent`): where no skwird is found
+  and no system service serves (its socket), Settings › Index shows
+  the index's words above its settings. Searches go through the folders
+  one by one, and skwird answers name searches across whole disks at once
+  from an index it keeps current. Beside the words, Get skwird opens the
+  website's download page at skwird's section
+  (`https://skwir.org/download#skwird`). A search that walked says
+  `no index` in its footer, with those words as its tooltip; a click
+  opens Settings › Index. A note, never a question or a toast. Kept
+  live no longer promises that the next search starts an engine.
+- **From memory.** Whether skwird is missing is looked at off the
+  window's thread, as a window comes to the front (`Plugin::on_looked_at`)
+  and as a search finds no engine; an engine answering clears it. The
+  window asks it as it draws, and is woken only when the answer changes.
+  Until a first look, nothing is said.
+- **Checked:** the lookup's tests (a fake program folder with an
+  executable `skwird` found, one on `PATH` taken over it, one without its
+  execute bit none; on Windows `skwird.exe` alone, compiled only), core's
+  (no index absent by default, those that are in their order, withdrawn
+  with their owner) and the plugin's (said missing once a search finds
+  neither skwird nor an engine, never before, nor where skwird is found or
+  an engine answers; the app's indexes after a look, gone with the plugin,
+  never in a headless test's app). In a window on a headless sway, `PATH`
+  without skwird: the Index page's words and button, Get skwird handing
+  `https://skwir.org/download#skwird` to a stand-in `xdg-open`, a search's
+  `no index`, its tooltip and its click to Settings › Index. With a
+  stand-in `skwird` beside the program, then on `PATH` alone: no words on
+  the Index page, none in a search's footer, and a refreshed search
+  starting that copy (`skwird serve`). A stand-in put on `PATH` while
+  Skwir ran: the next search said nothing more. Not checked: Windows and
+  macOS packages carrying it (other tracks), a real engine started from a
+  carried copy.

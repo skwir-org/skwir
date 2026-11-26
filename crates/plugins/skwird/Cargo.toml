@@ -5,6 +5,8 @@ version.workspace = true
 publish.workspace = true
 edition.workspace = true
 license.workspace = true
+# Its site's address, which the note that skwird is missing links to.
+homepage.workspace = true
 rust-version.workspace = true
 
 [dependencies]

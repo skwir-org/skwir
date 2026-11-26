@@ -382,6 +382,9 @@ pub(crate) struct Kept {
     /// by two at once, would lose one's edit.
     pub(crate) keeping: Mutex<()>,
     pub(crate) refreshing: Mutex<Refreshing>,
+    /// Whether skwird is missing (`program::Presence`), given at
+    /// registration: no search starts an engine then, whatever the switch.
+    pub(crate) presence: Mutex<Option<Arc<crate::program::Presence>>>,
 }
 
 impl Kept {
@@ -408,6 +411,7 @@ impl Kept {
             edits: Mutex::default(),
             keeping: Mutex::default(),
             refreshing: Mutex::default(),
+            presence: Mutex::default(),
         })
     }
 
@@ -629,6 +633,13 @@ impl Kept {
         self.refresh();
     }
 
+    /// Whether the next search starts an engine: the switch says so, and
+    /// skwird was not missing at the last look.
+    fn starts(&self, app: &App) -> bool {
+        let missing = self.presence.lock().as_ref().is_some_and(|p| p.missing());
+        app.settings.get::<bool>(START).unwrap_or(true) && !missing
+    }
+
     /// The list as the Index page draws it (`RecordSource`): from memory.
     fn list(self: &Arc<Self>, app: &App) -> serde_json::Value {
         let chosen = Chosen::of(app);
@@ -691,7 +702,7 @@ impl Kept {
                     ).to_data(),
                 },
             ],
-            "note": note(&said, app.settings.get::<bool>(START).unwrap_or(true)).to_data(),
+            "note": note(&said, self.starts(app)).to_data(),
             // The system service hears every folder: the list does nothing
             // there (ADR-150, 6), as its note says.
             "dimmed": said.scope == Some(protocol::Scope::System),
@@ -891,12 +902,12 @@ pub(crate) fn register(kept: &Arc<Kept>, app: &App) {
             START,
             skwir_core::words!(
                 skwird_start = "Start skwird where none runs",
-                note = "A setting's title on the Index page: whether a search starts skwird's engine. skwird is a program's name, as written."
+                note = "A setting's title on the Index page: whether a search, or indexing a drive's names, starts skwird's engine. skwird is a program's name, as written."
             ),
             (
                 skwir_core::words!(
-                    skwird_start_description = "The first search starts an engine of skwird's, which ends a minute after the last one.",
-                    note = "What the setting starting skwird's engine says."
+                    skwird_start_description = "A search, or indexing a drive, starts an engine of skwird's, which ends a minute after its last client.",
+                    note = "What the setting starting skwird's engine says: a client is a program asking the engine (Skwir, another)."
                 ),
                 skwir_core::words!(
                     skwird_start_description_more = "A first start reads your whole home: seconds, and memory while it builds. Off, only an engine already running is asked.",

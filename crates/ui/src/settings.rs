@@ -3503,6 +3503,9 @@ pub(crate) fn page_title_of(spec: &SettingSpec, plugins: &[PluginInfo]) -> Strin
 
 pub enum SettingsEvent {
     Close,
+    /// A web page a page's button opens (the Index page's Get skwird), as
+    /// About's Website does: by the desktop, the dialog staying open.
+    OpenAddress(String),
     /// A menu the dialog asks the window to open over it (a Exclusions page
     /// row's): the shared context menu, which the shell draws
     /// (`Shell::open_settings_menu`).
@@ -5407,6 +5410,7 @@ impl crate::shell::Shell {
             window,
             move |this, _, event: &SettingsEvent, window, cx| match event {
                 SettingsEvent::Menu(asked) => this.open_settings_menu(asked, window, cx),
+                SettingsEvent::OpenAddress(url) => this.open_address(url, cx),
                 SettingsEvent::Close => {
                     this.close_settings_menu();
                     this.settings = None;

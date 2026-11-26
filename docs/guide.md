@@ -576,12 +576,35 @@ it, **+ Filter** adds one, and the text can be typed as is:
   own, as the timeline under them), and says why when it has nothing to
   offer.
 - A search asks the indexes of names that run to go faster, and always
-  checks the files themselves: skwird, Skwir's own, installed apart
+  checks the files themselves: skwird, Skwir's own
   ([skwir-org/skwird](https://github.com/skwir-org/skwird)), and
   plocate's database. Each answers only as far as it can prove, which the
   footer says, and where none answers, the search walks the folders. The
   desktop's index (Baloo) tells which files hold a tag, which a search
   then checks.
+  - skwird comes with Skwir for Windows and macOS and in the Linux
+    tarball, beside Skwir's own program. The `.deb` and `.rpm` packages
+    recommend skwird's own, and the AUR lists it as optional; the
+    AppImage has none. A skwird installed on its own (on the `PATH`) is
+    used rather than the one beside Skwir.
+  - Skwir starts the skwird beside it for searches and a drive's index
+    only, and never has it start at login or at boot. If you did that
+    yourself (`skwird logon add`, `skwird service add`), take it back
+    with the same copy before you remove Skwir, or the system keeps
+    trying to start a program that is gone. On Windows, removing the
+    installed Skwir takes back the logon task by itself; with the zip,
+    run `skwird.exe logon remove` from its folder before deleting it. On
+    macOS, before moving the app to the Trash, run
+    `/Applications/skwir.app/Contents/MacOS/skwird logon remove`, and
+    `sudo /Applications/skwir.app/Contents/MacOS/skwird service remove`
+    for the system service (the app's own path if it is elsewhere). Do not
+    register skwird's system service from the copy beside Skwir: it sits
+    in a folder your own programs can change, under a service that runs
+    as the system.
+  - Where skwird is missing, Settings › Index says so, with a button to
+    the [download page](https://skwir.org/download#skwird), and a search
+    that walked says `no index` in its footer; a click there opens
+    Settings › Index.
   - Below a folder skwird keeps live, the answer comes at once and up to
     date. Elsewhere in your home, skwird checks what changed first,
     about half a second.
@@ -590,12 +613,12 @@ it, **+ Filter** adds one, and the text can be typed as is:
     since is not found. Search a folder to walk it.
   - Settings › Index chooses the folders skwird keeps live (your own
     folders and bookmarks, and those you add, or a folder's Keep Live for
-    Searches), whether a search starts skwird where it is not running,
-    and the removable drives it indexes (skwird 0.2.0 or later). Skwir
-    asks once as a drive is plugged in while skwird runs, and a drive's
-    menu in the sidebar has Index Its Names. A drive's index stays on
-    this computer, never on the drive, and Eject lets skwird go of it
-    first.
+    Searches), whether a search, or indexing a drive's names, starts
+    skwird where it is not running, and the removable drives it indexes
+    (skwird 0.2.0 or later). Skwir asks once as a drive is plugged in
+    while skwird runs, and a drive's menu in the sidebar has Index Its
+    Names. A drive's index stays on this computer, never on the drive,
+    and Eject lets skwird go of it first.
 - A word is found however its accents are written: `café` typed finds a
   name written with `e` and a combining accent, as macOS's programs
   often write names, and the other way round (from skwird's index with
@@ -1312,9 +1335,12 @@ Settings › General › Updates turns that off.
 | Plugins from outside Skwir | `~/.local/share/skwir/plugins/` |
 
 Skwir keeps no database and runs no daemon of its own. skwird, its index
-of names, is installed apart and keeps its indexes in its own cache
-(`~/.cache/skwird` on Linux); one a search started ends a minute after
-the last search ([Searching](#searching)).
+of names, is a program of its own (installed apart, or beside Skwir's
+program in the Windows and macOS packages and the tarball) and keeps its
+indexes in its own cache
+(`~/.cache/skwird` on Linux); one Skwir started, for a search or a
+drive's index, ends a minute after its last client
+([Searching](#searching)).
 
 If Skwir stops during a copy (a crash, a power cut), what it had copied
 waits in a hidden folder named `.skwir-copy-…` in the destination, never

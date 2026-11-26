@@ -1908,6 +1908,53 @@ impl SettingsView {
         count
     }
 
+    /// What the Index page says first of each index that answers no search
+    /// here (`NameIndex::absent`: its program not installed), in its words,
+    /// beside its button (the page it is got from): asked from memory,
+    /// nothing looked up as the page draws; gone once the index finds it
+    /// again, at a look at the window or a search. A note, never asked.
+    fn index_absent(&mut self, items: &mut Vec<AnyElement>, theme: &Theme, cx: &mut Context<Self>) {
+        for (n, absent) in self.app.names.absent().into_iter().enumerate() {
+            let focus = self.handle(&format!("index-absent:{n}"), cx);
+            self.stop(&focus, Some(items.len()), None);
+            let url: SharedString = absent.url.into();
+            items.push(
+                card_row(
+                    theme,
+                    Edge {
+                        first: true,
+                        last: true,
+                    },
+                )
+                .mt_4()
+                .child(crate::elements::beside::beside(
+                    controls::noted("info", theme.accent, 13., absent.why.say())
+                        .text_body()
+                        .text_color(theme.text),
+                    div().child(
+                        controls::button(
+                            format!("index-absent-{n}"),
+                            absent.label.say(),
+                            Some("external"),
+                            ButtonStyle::Plain,
+                            &focus,
+                            theme,
+                        )
+                        .tooltip({
+                            let url = url.clone();
+                            move |_, cx| crate::toolbar::tooltip(url.clone(), cx)
+                        })
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SettingsEvent::OpenAddress(url.to_string()));
+                        })),
+                    ),
+                    TEXTS_SHARE,
+                ))
+                .into_any_element(),
+            );
+        }
+    }
+
     /// The fold at a page's end: More settings while it shows only its
     /// essentials, Fewer settings once unfolded.
     fn fold_row(
@@ -2685,6 +2732,7 @@ impl Render for SettingsView {
                 }
                 // What the indexes leave out is the Exclusions page's.
                 Page::Index => {
+                    self.index_absent(&mut items, &theme, cx);
                     self.index_exclusions(&mut items, &theme, cx);
                     self.page_rows(&Page::Index, &mut items, &theme, window, cx);
                 }

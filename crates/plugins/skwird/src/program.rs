@@ -19,6 +19,10 @@
 //! A carried copy is started on demand exactly as one on `PATH` is.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use skwir_core::location::Waker;
 
 /// skwird's name, as `PATH` is searched for it.
 const NAME: &str = "skwird";
@@ -51,6 +55,69 @@ fn beside(bin: &Path) -> Option<PathBuf> {
 /// Reads the disk: call off the window's thread.
 pub(crate) fn found() -> bool {
     find().is_some() || skwird_client::system_socket().exists()
+}
+
+/// How whether skwird is here is looked at: [`found`], or a test's.
+pub(crate) type Look = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Whether skwird was missing at the last look ([`found`]): known from
+/// memory where the window asks it (`NameIndex::absent`: a walked search's
+/// footer, the Index page), looked at again off the window's thread as a
+/// window comes to the front (`Plugin::on_looked_at`) and as a search
+/// finds no engine, the windows woken once it changes. Not missing until
+/// looked at.
+pub(crate) struct Presence {
+    /// How it is looked at; none where skwird is never said missing: a
+    /// test's engine, and a headless test's app, which asks the machine
+    /// nothing (`App::index_services`).
+    look: Option<Look>,
+    missing: AtomicBool,
+    /// What wakes the windows once it changes.
+    wake: Option<Waker>,
+}
+
+impl Presence {
+    pub(crate) fn new(look: Option<Look>, wake: Option<Waker>) -> Presence {
+        Presence {
+            look,
+            missing: AtomicBool::new(false),
+            wake,
+        }
+    }
+
+    /// One that never says skwird is missing: a test's index.
+    #[cfg(test)]
+    pub(crate) fn never() -> Presence {
+        Presence::new(None, None)
+    }
+
+    /// Look again. Reads the disk: call off the window's thread.
+    pub(crate) fn look(&self) {
+        if let Some(look) = &self.look {
+            self.set(look());
+        }
+    }
+
+    /// An engine answered: skwird is here, whatever a look would find.
+    pub(crate) fn answered(&self) {
+        if self.look.is_some() {
+            self.set(true);
+        }
+    }
+
+    fn set(&self, found: bool) {
+        let was_missing = self.missing.swap(!found, Ordering::Relaxed);
+        if was_missing == found
+            && let Some(wake) = &self.wake
+        {
+            wake();
+        }
+    }
+
+    /// Whether skwird was missing at the last look: from memory.
+    pub(crate) fn missing(&self) -> bool {
+        self.missing.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
@@ -99,6 +166,48 @@ mod tests {
         program(&path.join(FILE));
         path_of(&[&empty, &path]);
         assert_eq!(find_from(Some(&bin)), Some(path.join(FILE)), "PATH first");
+    }
+
+    /// skwird is said missing only once a look found it so, and no longer
+    /// once one finds it or an engine answers, the windows woken at each
+    /// change and only then; never where nothing looks.
+    #[test]
+    fn skwird_is_missing_only_as_last_looked_at() {
+        use std::sync::atomic::AtomicUsize;
+        let here = Arc::new(AtomicBool::new(false));
+        let woken = Arc::new(AtomicUsize::new(0));
+        let presence = Presence::new(
+            Some({
+                let here = Arc::clone(&here);
+                Arc::new(move || here.load(Ordering::Relaxed))
+            }),
+            Some({
+                let woken = Arc::clone(&woken);
+                Arc::new(move || {
+                    woken.fetch_add(1, Ordering::Relaxed);
+                })
+            }),
+        );
+        let woken = || woken.load(Ordering::Relaxed);
+        assert!(!presence.missing(), "not looked at yet");
+        presence.look();
+        assert!(presence.missing());
+        assert_eq!(woken(), 1);
+        presence.look();
+        assert_eq!(woken(), 1, "no change, no wake");
+        presence.answered();
+        assert!(!presence.missing(), "an engine answered");
+        assert_eq!(woken(), 2);
+        presence.look();
+        assert!(presence.missing());
+        here.store(true, Ordering::Relaxed);
+        presence.look();
+        assert!(!presence.missing(), "installed since");
+        assert_eq!(woken(), 4);
+        let never = Presence::never();
+        never.look();
+        never.answered();
+        assert!(!never.missing());
     }
 
     /// A file named skwird beside Skwir's program that cannot run there is
