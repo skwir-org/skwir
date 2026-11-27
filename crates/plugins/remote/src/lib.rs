@@ -2841,16 +2841,35 @@ impl Remotes {
 
     /// What [`Remotes::disconnect`] does before letting go: the mount's
     /// name and the letting go, which says so once done.
+    ///
+    /// The mount is the one the sidebar shows, from memory
+    /// (`State::mounted`, its connector and whether it ejects found as the
+    /// table was read): on the window's thread, where Eject is pressed,
+    /// nothing is read (fstab, a bridge's folders). One the last read did
+    /// not see yet (mounted a moment ago by another program) is read from
+    /// the table where the caller may wait (an agent's call, a script's, a
+    /// form's thread).
     fn begin_disconnect(
         &self,
         app: &App,
         point: &Path,
         force: bool,
     ) -> anyhow::Result<(Words, impl FnOnce() -> anyhow::Result<()> + Send + 'static)> {
-        let mounted = self
-            .mounted()
-            .into_iter()
-            .find(|m| m.remote.point == point)
+        let known = {
+            let state = self.state.lock();
+            state
+                .mounted
+                .iter()
+                .find(|m| m.remote.point == point)
+                .cloned()
+        };
+        let mounted = known
+            .or_else(|| {
+                if skwir_core::scheduler::on_window_thread() {
+                    return None;
+                }
+                self.mounted().into_iter().find(|m| m.remote.point == point)
+            })
             .ok_or_else(|| {
                 anyhow::anyhow!(words!(
                     remote_not_mounted_there = "no remote folder is mounted there"

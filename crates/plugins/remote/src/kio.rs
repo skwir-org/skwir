@@ -188,6 +188,37 @@ impl Kio {
     }
 }
 
+/// kio-fuse's answer `local`, a path of its mount, as the mount table
+/// names it: kio-fuse names its mount from the runtime folder as it was
+/// given it (`$XDG_RUNTIME_DIR`, never resolved), the table with its links
+/// resolved. The folder holding its `kio-fuse-…` folder is named so
+/// (`reach::as_listed`), the rest as written, never read: kio-fuse's own
+/// folders are the server's, and the table may not list its mount yet. As
+/// given where no part is kio-fuse's. A stat each part of the runtime
+/// folder: on the connecting thread.
+#[cfg(target_os = "linux")]
+fn listed_answer(local: &Path) -> PathBuf {
+    let mut parts = local.components();
+    let mut above = PathBuf::new();
+    while let Some(part) = parts.next() {
+        if part
+            .as_os_str()
+            .as_encoded_bytes()
+            .starts_with(b"kio-fuse-")
+        {
+            let mut listed = skwir_core::fs::reach::as_listed(&above);
+            listed.push(part);
+            let rest = parts.as_path();
+            if !rest.as_os_str().is_empty() {
+                listed.push(rest);
+            }
+            return listed;
+        }
+        above.push(part);
+    }
+    local.to_path_buf()
+}
+
 /// What kio-fuse said on failing to mount, without the address it repeats
 /// in its own escaping (`KIOFuse failed to mount smb://nas/x: Permission
 /// denied`): the system's words for its error, which hold no colon.
@@ -353,7 +384,9 @@ impl Connector for Kio {
                 }
             };
             // kio-fuse just started lists its bridge a moment after it
-            // answers (`connector::appears`).
+            // answers (`connector::appears`). Looked for as the table names
+            // it (`listed_answer`).
+            let local = listed_answer(&local);
             let remote = crate::connector::appears(cancel, || {
                 skwir_core::fs::reach::of(&local).filter(|remote| remote.fstype == BRIDGE)
             });
@@ -552,6 +585,43 @@ mod tests {
                 ),
             ],
             "not a local folder, the trash, nor a hidden place"
+        );
+    }
+
+    /// kio-fuse's answer is looked for as the table names it: the runtime
+    /// folder it was given, reached through a link, where the link leads;
+    /// its own folders, the server's, never read.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kio_fuse_s_answer_is_named_as_the_table_names_it() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let run = root.join("run").join("user").join("1000");
+        std::fs::create_dir_all(&run).unwrap();
+        symlink(root.join("run"), root.join("var-run")).unwrap();
+        // Read, it would lead elsewhere.
+        symlink(root.join("elsewhere"), run.join("kio-fuse-AbC123")).unwrap();
+        let answer = root
+            .join("var-run")
+            .join("user")
+            .join("1000")
+            .join("kio-fuse-AbC123")
+            .join("smb")
+            .join("nas")
+            .join("share");
+        assert_eq!(
+            listed_answer(&answer),
+            run.join("kio-fuse-AbC123")
+                .join("smb")
+                .join("nas")
+                .join("share")
+        );
+        let elsewhere = root.join("var-run").join("share");
+        assert_eq!(
+            listed_answer(&elsewhere),
+            elsewhere,
+            "no folder of kio-fuse's"
         );
     }
 
