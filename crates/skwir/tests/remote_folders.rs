@@ -3756,18 +3756,52 @@ fn takes_by_gio(name: &str, mounts: &[(PathBuf, ByGio)]) {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// The longest a test's runtime folder may be: GVfs's ssh listens on its
+/// control socket at `gvfsd-sftp/<40 hex>.<16 random>` below it, 69 bytes
+/// more, and a socket's path holds 107 (108 with its end).
+const RUNTIME_LONGEST: usize = 107 - 69;
+
+/// A runtime folder of a test's own, the user's alone, short as a real one
+/// is (`/run/user/1000`): a private bus's socket, GVfs's and KIO's, their
+/// FUSE mounts, nothing that needs the home's file system. Made in `/tmp`
+/// itself, never `$TMPDIR`, whose length is the caller's: `nix develop`
+/// names one there of its own, nested in a dev shell's
+/// (`/tmp/nix-shell.…/nix-shell.…`, 38 bytes), which took GVfs's ssh
+/// control socket past a socket's length; ssh then ends once logged in,
+/// and GVfs says only "Connection failed".
+fn short_runtime(prefix: &str) -> tempfile::TempDir {
+    let held = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in("/tmp")
+        .unwrap();
+    std::fs::set_permissions(
+        held.path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
+    let length = held.path().as_os_str().len();
+    assert!(
+        length <= RUNTIME_LONGEST,
+        "{} is too long for the sockets made in it: {length} bytes, of at most {RUNTIME_LONGEST}",
+        held.path().display()
+    );
+    held
+}
+
 /// A GVfs of the test's own: a session bus of its own, from which GVfs's
 /// daemon starts, its FUSE bridge in a runtime folder of the test's, its
-/// ssh's home the test's. `SKWIR_TEST_GVFS` names GVfs's package (its
-/// `libexec`, `share` and `lib/gio/modules`); without it the test is
-/// skipped, and the session's GVfs is never asked.
+/// ssh given no agent of the user's. Its ssh takes its home from the user
+/// database, never `$HOME`: it reads the user's `~/.ssh/config`, and
+/// `NoHostAuthenticationForLocalhost`, which GVfs gives it, keeps it from
+/// their known hosts for the test's server. `SKWIR_TEST_GVFS` names
+/// GVfs's package (its `libexec`, `share` and `lib/gio/modules`); without
+/// it the test is skipped, and the session's GVfs is never asked.
 struct PrivateGvfs {
     bus: Child,
     env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
     runtime: PathBuf,
-    /// Short, as a real one is (`/run/user/1000`): ssh's control socket
-    /// GVfs makes in it must fit a socket's path (108 bytes). Sockets and
-    /// a mount point only, nothing that needs the home's file system.
+    /// [`short_runtime`]: ssh's control socket GVfs makes in it must fit
+    /// a socket's path.
     _runtime: tempfile::TempDir,
 }
 
@@ -3776,13 +3810,8 @@ impl PrivateGvfs {
         use std::io::BufRead;
         let home = base.join("home");
         std::fs::create_dir_all(&home).unwrap();
-        let held = tempfile::Builder::new().prefix("g").tempdir().unwrap();
+        let held = short_runtime("g");
         let runtime = held.path().to_path_buf();
-        std::fs::set_permissions(
-            &runtime,
-            std::os::unix::fs::PermissionsExt::from_mode(0o700),
-        )
-        .unwrap();
         let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
             ("HOME".into(), home.into()),
             ("XDG_RUNTIME_DIR".into(), runtime.clone().into()),
@@ -3822,6 +3851,9 @@ impl PrivateGvfs {
             .arg(format!("--config-file={}", config.display()))
             .args(["--nofork", "--print-address=1"])
             .envs(env.iter().map(|(k, v)| (k, v)))
+            // No agent of the user's: GVfs's ssh would offer the test's
+            // server their keys before its password.
+            .env_remove("SSH_AUTH_SOCK")
             .stdout(Stdio::piped())
             .stderr(std::fs::File::create(base.join("bus.log")).unwrap())
             .spawn()
@@ -3870,10 +3902,20 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     let served_root = base.join("served");
     std::fs::create_dir_all(&served_root).unwrap();
     std::fs::write(served_root.join("through gvfs.txt"), "hi").unwrap();
+    // Its password alone logs in: rclone takes the user's own
+    // `authorized_keys` unless told none, and GVfs's ssh offers the keys
+    // of the user's home (the user database's) before it.
     let served = Served::start(
         "sftp",
         &served_root,
-        &["--user", "tester", "--pass", "a test password"],
+        &[
+            "--user",
+            "tester",
+            "--pass",
+            "a test password",
+            "--authorized-keys",
+            "",
+        ],
     );
     let private = PrivateGvfs::start(&package, &base);
     let gvfs = skwir_plugin_remote::gvfs::Gvfs {
@@ -4091,7 +4133,7 @@ struct PrivateKio {
     bus: Child,
     env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
     runtime: PathBuf,
-    /// Short, as a real one is: KIO's sockets live in it (108 bytes).
+    /// [`short_runtime`]: KIO's sockets live in it.
     _runtime: tempfile::TempDir,
 }
 
@@ -4107,13 +4149,8 @@ impl PrivateKio {
         use std::io::BufRead;
         let home = base.join("home");
         std::fs::create_dir_all(&home).unwrap();
-        let held = tempfile::Builder::new().prefix("k").tempdir().unwrap();
+        let held = short_runtime("k");
         let runtime = held.path().to_path_buf();
-        std::fs::set_permissions(
-            &runtime,
-            std::os::unix::fs::PermissionsExt::from_mode(0o700),
-        )
-        .unwrap();
         let joined =
             |below: &str| std::env::join_paths(packages.iter().map(|p| p.join(below))).unwrap();
         let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
