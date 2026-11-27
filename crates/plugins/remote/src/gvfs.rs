@@ -746,13 +746,20 @@ fn answer(
                     .unwrap_or_default());
             }
             match default {
+                // GVfs's own offer is safe to give back: for a proxy, the
+                // proxy's user it holds already (WebDAV's `proxy_auth`, kept
+                // apart from the server's), never the server's login.
                 Some(offered) => Ok(offered.clone()),
-                None if asks(message) == Some(Asks::Other) => Err(words!(
-                    remote_gvfs_proxy_user =
-                        "GVfs asks for the proxy's user name, which Skwir cannot ask for",
-                    note = "Why GVfs did not connect: a proxy between Skwir and the server wants \
-                            a user name of its own. Another tool is tried after."
+                // A question known not to be the server's (a proxy's, a
+                // code, a passphrase) that wants a user GVfs offers none
+                // for: ended, nothing asked.
+                None if asks(message).is_some() => Err(words!(
+                    remote_gvfs_proxy_user = "GVfs asks for a user name that is not the server's (a proxy's), which Skwir cannot ask for",
+                    note = "Why GVfs did not connect: something between Skwir and the server (a \
+                            proxy) wants a user name of its own. Another tool is tried after."
                 )),
+                // None of its words: possibly the server's, in a language
+                // whose catalog was not found.
                 None => Ok(String::new()),
             }
         }
@@ -1058,13 +1065,32 @@ mod tests {
         let english_user = "Authentication Required\nEnter user and password for “example.com”:";
         assert_eq!(user(english_user, None).as_deref(), Ok("me"));
         assert_eq!(user(&with_user, Some("someone")).as_deref(), Ok("me"));
-        for proxy in [english_proxy.to_owned(), said(FRENCH[7].1, &[])] {
+        // Not the server's, a user asked with it: ended unasked, unless GVfs
+        // offers its own; a proxy's, a code's, a passphrase's alike, in
+        // English and French.
+        for not_the_server_s in [
+            english_proxy.to_owned(),
+            said(FRENCH[7].1, &[]),
+            "Enter verification code for me on example.com".to_owned(),
+            said(FRENCH[8].1, &["me", "example.com"]),
+            said(FRENCH[9].1, &["example.com"]),
+            english_passphrase.to_owned(),
+            said(FRENCH[0].1, &["me", "example.com"]),
+        ] {
             assert_eq!(
-                user(&proxy, None),
-                Err("GVfs asks for the proxy's user name, which Skwir cannot ask for".to_owned()),
-                "never the server's login, nor none"
+                user(&not_the_server_s, None),
+                Err(
+                    "GVfs asks for a user name that is not the server's (a proxy's), which \
+                     Skwir cannot ask for"
+                        .to_owned()
+                ),
+                "never the server's login, nor none: {not_the_server_s:?}"
             );
-            assert_eq!(user(&proxy, Some("proxied")).as_deref(), Ok("proxied"));
+            assert_eq!(
+                user(&not_the_server_s, Some("proxied")).as_deref(),
+                Ok("proxied"),
+                "GVfs's own offer: {not_the_server_s:?}"
+            );
         }
         assert_eq!(user(never_seen, None).as_deref(), Ok(""));
         assert_eq!(user(never_seen, Some("offered")).as_deref(), Ok("offered"));
