@@ -656,11 +656,9 @@ fn mount(
             match said_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Some(text)) => {
                     if let Some(asked) = prompts.feed(&text) {
-                        let Some(answer) = answer(top, &asked, &wording, ask, cancel) else {
-                            break Err(anyhow::anyhow!(words!(
-                                remote_gvfs_you_cancelled = "you cancelled",
-                                note = "Why a connection was not made: the user cancelled a question it asked."
-                            )));
+                        let answer = match answer(top, &asked, &wording, ask, cancel) {
+                            Ok(answer) => answer,
+                            Err(why) => break Err(anyhow::anyhow!(why)),
                         };
                         if let Some(stdin) = stdin.as_mut() {
                             // Written without a trace: it may be a password.
@@ -712,36 +710,57 @@ impl Wording<'_> {
     }
 }
 
-/// What to answer `asked`, GVfs's words read as `wording` has them:
-/// `None` to cancel.
+/// Why a connection was not made: the user cancelled what it asked.
+fn you_cancelled() -> Words {
+    words!(
+        remote_gvfs_you_cancelled = "you cancelled",
+        note = "Why a connection was not made: the user cancelled a question it asked."
+    )
+}
+
+/// What to answer `asked`, GVfs's words read as `wording` has them; else
+/// why the mount ends (the user cancelled, a question Skwir cannot ask).
 fn answer(
     top: &Address,
     asked: &Asked,
     wording: &Wording,
     ask: &Arc<dyn Ask>,
     cancel: &CancelToken,
-) -> Option<String> {
+) -> Result<String, Words> {
     // GVfs's words alone tell what it asks, in English or its daemon's
     // language: never what else it asks with it (a proxy's password comes
     // with a user too).
-    let server = |message: &str| wording.questions().of(message) == Some(Asks::Password);
+    let asks = |message: &str| wording.questions().of(message);
+    let server = |message: &str| asks(message) == Some(Asks::Password);
     match asked {
-        // The server's login for the server's question alone: for any
-        // other (a proxy's), the user GVfs offers, if any.
-        Asked::User { message, default } => Some(
-            server(message)
-                .then(|| top.user.clone())
-                .flatten()
-                .or_else(|| default.clone())
-                .unwrap_or_default(),
-        ),
-        Asked::Domain { message, default } => Some(
-            server(message)
-                .then(|| top.domain.clone())
-                .flatten()
-                .or_else(|| default.clone())
-                .unwrap_or_default(),
-        ),
+        // The server's login for the server's question alone; for any
+        // other, the user GVfs offers. A proxy's that GVfs offers none
+        // for ends the mount unasked, so that the next tool is tried:
+        // Skwir asks no user name, and an empty one fails.
+        Asked::User { message, default } => {
+            if server(message) {
+                return Ok(top
+                    .user
+                    .clone()
+                    .or_else(|| default.clone())
+                    .unwrap_or_default());
+            }
+            match default {
+                Some(offered) => Ok(offered.clone()),
+                None if asks(message) == Some(Asks::Other) => Err(words!(
+                    remote_gvfs_proxy_user =
+                        "GVfs asks for the proxy's user name, which Skwir cannot ask for",
+                    note = "Why GVfs did not connect: a proxy between Skwir and the server wants \
+                            a user name of its own. Another tool is tried after."
+                )),
+                None => Ok(String::new()),
+            }
+        }
+        Asked::Domain { message, default } => Ok(server(message)
+            .then(|| top.domain.clone())
+            .flatten()
+            .or_else(|| default.clone())
+            .unwrap_or_default()),
         Asked::Password { message, user } => {
             let connect = crate::connector::connect_button();
             // A server's password may be kept (ADR-082); a key's
@@ -755,7 +774,9 @@ fn answer(
                 } else {
                     Words::as_written(message.clone())
                 };
-                ask.password(&title, &connect, cancel).map(|p| p.text)
+                ask.password(&title, &connect, cancel)
+                    .map(|p| p.text)
+                    .ok_or_else(you_cancelled)
             } else {
                 // Its words, which say what is asked; Skwir's own where it
                 // said none.
@@ -765,12 +786,13 @@ fn answer(
                     Words::as_written(message.clone())
                 };
                 ask.secret(&title, &connect, cancel)
+                    .ok_or_else(you_cancelled)
             }
         }
         Asked::Choice { message, choices } => {
             // GVfs asks to go on where it cannot vouch for the server: its
             // first choice goes on, the last cancels.
-            let (go_on, _) = choices.first()?;
+            let (go_on, _) = choices.first().ok_or_else(you_cancelled)?;
             let title = words!(
                 remote_gvfs_connect_to = "Connect to { $host }?",
                 host = top.host.as_str(),
@@ -779,6 +801,7 @@ fn answer(
             );
             ask.confirm(&title, &Words::as_written(message.clone()), cancel)
                 .then(|| go_on.to_string())
+                .ok_or_else(you_cancelled)
         }
     }
 }
@@ -967,7 +990,7 @@ mod tests {
                 user,
             };
             let answered = answer(&top, &asked, &wording, &ask, &CancelToken::new());
-            assert_eq!(answered.as_deref(), Some("typed"));
+            assert_eq!(answered.ok().as_deref(), Some("typed"));
             window.0.lock().unwrap().pop().expect("asked")
         };
         let english_passphrase =
@@ -1023,23 +1046,28 @@ mod tests {
         );
         assert!(!asked_with_user.contains("Saisissez"), "{asked_with_user}");
         // The user it asks with them: the server's login for the server's
-        // question alone, else GVfs's own offer, if any.
+        // question alone, else GVfs's own offer; a proxy's GVfs offers none
+        // for ends the mount, unasked, so that the next tool is tried.
         let user = |message: &str, default: Option<&str>| {
             let asked = Asked::User {
                 message: message.to_owned(),
                 default: default.map(ToOwned::to_owned),
             };
-            answer(&top, &asked, &wording, &ask, &CancelToken::new()).expect("answered")
+            answer(&top, &asked, &wording, &ask, &CancelToken::new()).map_err(|why| why.english())
         };
         let english_user = "Authentication Required\nEnter user and password for “example.com”:";
-        assert_eq!(user(english_user, None), "me");
-        assert_eq!(user(&with_user, Some("someone")), "me");
+        assert_eq!(user(english_user, None).as_deref(), Ok("me"));
+        assert_eq!(user(&with_user, Some("someone")).as_deref(), Ok("me"));
         for proxy in [english_proxy.to_owned(), said(FRENCH[7].1, &[])] {
-            assert_eq!(user(&proxy, None), "", "never the server's login");
-            assert_eq!(user(&proxy, Some("proxied")), "proxied");
+            assert_eq!(
+                user(&proxy, None),
+                Err("GVfs asks for the proxy's user name, which Skwir cannot ask for".to_owned()),
+                "never the server's login, nor none"
+            );
+            assert_eq!(user(&proxy, Some("proxied")).as_deref(), Ok("proxied"));
         }
-        assert_eq!(user(never_seen, None), "");
-        assert_eq!(user(never_seen, Some("offered")), "offered");
+        assert_eq!(user(never_seen, None).as_deref(), Ok(""));
+        assert_eq!(user(never_seen, Some("offered")).as_deref(), Ok("offered"));
         assert!(window.0.lock().unwrap().is_empty(), "nothing else asked");
     }
 

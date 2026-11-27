@@ -939,7 +939,9 @@ ADR-077 (which revises ADR-021).
   password may be kept, and only its user is the address's; a key's
   passphrase, a proxy's password, a verification code, and a question
   none of its words name are asked each time, never kept, a user asked
-  with them answered with GVfs's own offer alone.
+  with them answered with GVfs's own offer alone; a proxy's user GVfs
+  offers none for ends the mount unasked, the next tool tried (Skwir asks
+  no user name).
   rclone takes a server's password obscured, in its environment alone
   (`RCLONE_SMB_PASS`…), after listing the server's top tells whether it
   needs one. ssh asks through `SSH_ASKPASS` = the `skwir` executable, which
