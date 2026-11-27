@@ -245,8 +245,9 @@ written on Linux and never run.
   entry above asked of it. Its zip's `THIRD-PARTY-NOTICES.txt` (the
   crates built into its programs, Rust's standard library and MinGW-w64's
   runtime) is carried in `licenses\skwird` as it is, no longer made by
-  `notices.py`. The installer runs `skwirdw.exe` twice, each answer
-  ignored: from 0.3.0 the `schtasks.exe` it starts opens no console, and
+  `notices.py`. The installer runs `skwirdw.exe` in three actions, two as
+  skwir is removed and one as it upgrades another, each answer ignored:
+  from 0.3.0 the `schtasks.exe` it starts opens no console, and
   outside `serve` it makes no folder of skwird's, so the actions are
   unseen and leave nothing for a user who never ran skwird.
   - **`stop`, as skwir is removed, by its user or by an upgrade, at once
@@ -270,9 +271,10 @@ written on Linux and never run.
     folder deleted by hand), nothing is run, which Windows Installer could
     take for a program that cannot be started (error 1721) and fail the
     upgrade. wixl 0.106 has no `FileSearch` and no action of type 34 (a
-    program in a folder): `windows.sh` adds the search's rows (`DrLocator`,
-    `Signature`, `AppSearch`) with msitools' `msibuild`, and the action is
-    of type 50, the program the property names. An upgrade from a package
+    program in a folder): `windows/msi.sh`, which `windows.sh` makes the
+    installer with, adds the search's rows (`DrLocator`, `Signature`,
+    `AppSearch`) with msitools' `msibuild`, and the action is of type 50,
+    the program the property names. An upgrade from a package
     that carried skwird 0.2.0 (skwir 0.7.0 and 0.7.1) runs none: 0.2.0 has
     no `stop` (it answers its usage, exit 1) and, whatever it is asked,
     first makes skwird's state folder and its `engine.log` (tried under
@@ -291,11 +293,16 @@ written on Linux and never run.
     only for a `RegistrySearch`): wixl 0.106 misplaces what is placed
     relative to another action. After another custom action, it moved
     `RemoveExistingProducts` into the script behind it.
-  - The zip: before replacing its folder with a newer one, its user runs
-    its `skwird.exe stop` alone, keeping a logon task, which names the same
-    folder, as an upgrade of the installed copy keeps it; before deleting
-    the folder, `skwird.exe logon remove --if-mine`, then `skwird.exe stop`
-    (review PK-2).
+  - The zip unpacks into a folder named by its version
+    (`skwir-<version>-windows-x86_64`), so a newer one goes beside the
+    older, and a logon task added from the older names a program its
+    deletion takes away. Before deleting a zip's folder, an update's
+    included, its user runs its `skwird.exe logon remove --if-mine`, then
+    `skwird.exe stop`, and, for the task, `skwird.exe logon add` from the
+    newer folder (it replaces the user's one task). A zip whose skwird is
+    0.2.0 knows neither command: its `skwird.exe logon remove`, then
+    `skwirdw.exe` ended in Task Manager (or a sign-out), before its folder
+    goes (reviews PK-2, Q2-3).
   - Under Wine (`windows-check.sh`, on packages staged from the 0.7.1
     programs): the actions' types (82, at once; 1106, deferred, as the
     user), commands, conditions and steps; four removals, each running
@@ -318,14 +325,24 @@ written on Linux and never run.
     condition and step, its `Upgrade` row and its search's rows, and
     installs, logged: with no `skwirdw.exe` where it installs, none found;
     with one there before it (no skwir installed), found and not run,
-    nothing being upgraded. Once, outside the check, upgrades between
-    small packages made from `skwir.wxs` (skwirdw.exe alone, the newer
-    given `windows.sh`'s rows), traced: from 0.7.5, its engine running,
-    the newer's action ran before `InstallValidate` and ended it, also
-    from a 0.7.5 whose own sequence stops nothing; from 0.7.1, the file
-    found and not run; from 0.7.5 with its `skwirdw.exe` deleted, none
-    found, none run, the upgrade done. Not tried: an upgrade on Windows
-    (whether Windows Installer asks about files in use, and what it does
-    where a program cannot be started) and anything else there; under
-    Wine, `RemoveExistingProducts` removes the older as a plain removal,
-    with no `UPGRADINGPRODUCTCODE`, so its logon task is taken back there.
+    nothing being upgraded. And it tries upgrades (review Q2-2), between
+    small installers it makes from `skwir.wxs` by `windows/msi.sh`, which
+    `windows.sh` makes the real one with (skwird's two programs, the Start
+    menu entry and the search; the older ones without `SkwirdStop`'s and
+    `SkwirdLogonRemove`'s rows, as 0.7.0's and 0.7.1's had no stop, so
+    that what ends an engine is the newer's action), logged and traced:
+    from a skwir after 0.7.1 whose engine runs, the newer's action runs
+    before `InstallValidate` (the log's order) and the engine ends; from
+    0.7.1, its `skwirdw.exe` is found and not run; from a copy whose
+    `skwirdw.exe` was deleted, none is found or run, and the upgrade is
+    done. Their versions are made up and below 128: under Wine, 200.0.0
+    was not after 0.7.1. The prefix is marked while a run is on and made
+    anew where a mark is found (review Q2-1): a run that failed or was
+    killed between an install and its removal left skwir installed there,
+    and the next run's search found its `skwirdw.exe`, failing every run
+    after it. Not tried: an upgrade on Windows (whether Windows Installer
+    asks about files in use, and what it does where a program cannot be
+    started) and anything else there; under Wine, `RemoveExistingProducts`
+    removes the older as a plain removal, with no `UPGRADINGPRODUCTCODE`,
+    so what the older's own sequence does then (its logon task kept) is
+    Windows' alone.

@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- skwir's Windows installer (ADR-074), made on Linux by msitools' wixl,
      which reads WiX 3's format, from the folder tools/package/windows.sh
-     stages: `wixl -a x64 -D Version=… -D Dist=<folder> -D Icon=<.ico> -D Win64=yes
-     skwir.wxs files.wxs`, then, by msitools' msibuild, the rows of a
-     search wixl has no element for (INSTALLED_SKWIRDW, below).
+     stages, by tools/package/windows/msi.sh: `wixl -a x64 -D Version=…
+     -D Dist=<folder> -D Icon=<.ico> -D Win64=yes skwir.wxs files.wxs`, then,
+     by msitools' msibuild, the rows of a search wixl has no element for
+     (INSTALLED_SKWIRDW, below).
      files.wxs, made there by wixl-heat, holds every file of the folder
      (the programs, PDFium, the licences, the type database), so nothing
      here lists them again, but skwirdw.exe, named here for the actions
@@ -82,7 +83,7 @@
             of the older copy's skwirdw.exe, at once before this package's
             InstallValidate. INSTALLED_SKWIRDW is that program, found in the
             folder this package installs into (AppSearch: wixl 0.106 has no
-            FileSearch, so windows.sh adds its rows), and none is run where
+            FileSearch, so msi.sh adds its rows), and none is run where
             none is there (a skwir without skwird, a folder deleted by
             hand), which Windows Installer would take for a program that
             cannot be started (error 1721). Not for skwird 0.2.0 (skwir

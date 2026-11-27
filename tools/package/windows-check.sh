@@ -15,18 +15,23 @@
 # with the logon task the installed copy registered, taken back. As it
 # installs, its search for the skwirdw.exe an upgrade stops first finds
 # none where none is, and one put there before, which it does not run,
-# nothing being upgraded.
+# nothing being upgraded. Then upgrades, between small installers made
+# from skwir.wxs as windows.sh makes the real one (windows/msi.sh): from a
+# skwir after 0.7.1 whose engine runs, the newer stopping it before its
+# InstallValidate; from 0.7.1, and from a copy whose skwirdw.exe was
+# deleted, nothing run.
 #
 # Wine is not Windows. It cannot draw skwir's window (its DirectWrite has
 # no font sets; Direct Manipulation and DirectComposition are missing), so
 # the window is for people to try (docs/HELP-WANTED.md). Wine's
 # RemoveExistingProducts removes the older package as a plain removal (no
-# UPGRADINGPRODUCTCODE), so an upgrade is not tried: it is for people on
-# Windows. Its prefix is this script's own.
+# UPGRADINGPRODUCTCODE), so what the older's own sequence does as it is
+# upgraded (its logon task kept) is for people on Windows. Its prefix is
+# this script's own, made anew where a run did not finish.
 #
 #     tools/package/windows-check.sh [version]
 set -eu
-if ! command -v wine >/dev/null; then
+if ! command -v wine >/dev/null || ! command -v wixl >/dev/null || ! command -v wrestool >/dev/null; then
     exec nix develop "$(cd "$(dirname "$0")/../.." && pwd)#windows" --command "$0" "$@"
 fi
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -57,9 +62,22 @@ trap 'wineserver -k 2>/dev/null || true' EXIT
 # first: its server holds the prefix's lock, and a new one would exit
 # saying nothing (status 2). The server ends a minute after its last
 # program, should this run be killed too, never kept for good.
+#
+# The prefix is marked while a run is on, the mark taken away once the
+# last installer is removed: a run that failed or was killed between an
+# install and its removal leaves skwir installed there and its files where
+# the next run's search must find none. A prefix found marked is made
+# anew.
 mkdir -p "$WINEPREFIX"
 wineserver -k 2>/dev/null || true
 wineserver -w
+unfinished="$WINEPREFIX.running"
+if [ -e "$unfinished" ]; then
+    echo "a run left the prefix unfinished: made anew"
+    rm -rf "${WINEPREFIX:?}" "${WINEPREFIX:?}-xdg"
+    mkdir -p "$WINEPREFIX" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"
+fi
+: >"$unfinished"
 wineserver -p60
 wineboot -u >/dev/null 2>&1 || true
 
@@ -220,7 +238,7 @@ done
 # older package whole, its engine stopped by its own action, before the
 # newer's files are put in place. As it upgrades a skwir after 0.7.1, the
 # older copy's skwirdw.exe run with `stop` at once, before this package's
-# InstallValidate, found by AppSearch (windows.sh adds the search) in the
+# InstallValidate, found by AppSearch (windows/msi.sh adds the search) in the
 # folder the installer puts skwir in.
 python3 - "$made/$name.msi" "$version" <<'EOF'
 import subprocess, sys
@@ -423,6 +441,120 @@ if has_task; then
     exit 1
 fi
 echo "ok: removed, nothing of it left, the logon task the installed copy registered taken back"
+
+# 5. Upgrades (SkwirdStopOlder), between small installers made here from
+# skwir.wxs by windows/msi.sh, as windows.sh makes the real one: skwird's
+# two programs, the Start menu entry and the search. The older ones run
+# nothing of skwird's as they are removed (SkwirdStop's and
+# SkwirdLogonRemove's rows left out; 0.7.0's and 0.7.1's had no stop), so
+# what ends an engine there is the newer's action. Their versions are made
+# up, but 0.7.1, the last whose skwird has no `stop`, and below 128:
+# under Wine, 200.0.0 was not after 0.7.1 (its first number read as a
+# signed byte, it seems).
+small="$scratch/small"
+mkdir -p "$small/folder"
+cp "$scratch/skwird/skwird.exe" "$scratch/skwird/skwirdw.exe" "$small/folder/"
+wrestool -x -t 14 "$unpacked/$name/skwir.exe" >"$small/skwir.ico"
+cat >"$small/files.wxs" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="SkwirdConsole" Guid="*" Win64="$(var.Win64)">
+        <File Id="skwird.exe" Source="$(var.Dist)/skwird.exe" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+    <ComponentGroup Id="Files"><ComponentRef Id="SkwirdConsole" /></ComponentGroup>
+  </Fragment>
+</Wix>
+EOF
+grep -v -e '<Custom Action="SkwirdStop" ' -e '<Custom Action="SkwirdLogonRemove" ' \
+    tools/package/windows/skwir.wxs >"$small/older.wxs"
+if [ "$(grep -c '<Custom Action="Skwird' tools/package/windows/skwir.wxs)" -ne 3 ] ||
+    [ "$(grep -c '<Custom Action="Skwird' "$small/older.wxs")" -ne 1 ]; then
+    echo "skwir.wxs's rows for skwird's actions are not those the older installers leave out" >&2
+    exit 1
+fi
+for older in 99.0.0 0.7.1; do
+    tools/package/windows/msi.sh "$older" "$small/folder" "$small/skwir.ico" "$small/files.wxs" \
+        "$small/$older.msi" "$small/older.wxs"
+done
+tools/package/windows/msi.sh 99.0.1 "$small/folder" "$small/skwir.ico" "$small/files.wxs" "$small/99.0.1.msi"
+# The older installer $1, installed; then the newer, 99.0.1, over it,
+# logged and traced.
+installs_older() {
+    wine msiexec /i "$small/$1.msi" /qn
+    [ -f "$installed/skwirdw.exe" ] || { echo "the small installer $1 put nothing in $installed" >&2; exit 1; }
+}
+upgraded() {
+    log="$scratch/upgraded.log"
+    trace="$scratch/upgraded.trace"
+    WINEDEBUG=trace+process wine msiexec /i "$small/99.0.1.msi" /qn /l*v "$(winepath -w "$log")" 2>"$trace"
+    has WIX_UPGRADE_DETECTED || { echo "upgrading, the older installer was not found" >&2; exit 1; }
+    [ -f "$installed/skwirdw.exe" ] || { echo "upgraded, and no skwirdw.exe in $installed" >&2; exit 1; }
+}
+# Whether the upgrade found property $1; the line its log first names
+# action $1 on, as Wine's log says it in any language (`…: Action.`).
+has() { grep -a -q -F "Property(S): $1 = " "$scratch/upgraded.log"; }
+step() { grep -a -n -F ": $1." "$scratch/upgraded.log" | head -1 | cut -d: -f1; }
+# Whether the upgrade ran a skwirdw.exe with `stop`.
+ran_stop() { grep -a CreateProcessInternalW "$trace" | grep -a -F skwirdw.exe | grep -a -q -F ' stop"'; }
+# The newer removed, nothing of it left.
+removes_newer() {
+    wine msiexec /x "$small/99.0.1.msi" /qn
+    left="$(find "$installed" -type f 2>/dev/null | wc -l)"
+    [ "$left" -eq 0 ] && [ ! -e "$shortcut" ] || { echo "the newer removed, $left files and the entry left" >&2; exit 1; }
+}
+
+# From a skwir after 0.7.1 whose engine runs: the newer runs the older
+# copy's skwirdw.exe stop before its own InstallValidate, and the engine
+# ends.
+installs_older 99.0.0
+serves "$installed"
+upgraded
+if ! has OLDER_SKWIRD_STOPS || ! has INSTALLED_SKWIRDW; then
+    echo "upgrading a skwir after 0.7.1, its skwirdw.exe or its version was not found" >&2
+    exit 1
+fi
+stopped="$(step SkwirdStopOlder)" validated="$(step InstallValidate)"
+[ -n "$stopped" ] && [ -n "$validated" ] && [ "$stopped" -lt "$validated" ] \
+    || { echo "upgrading, SkwirdStopOlder did not run before InstallValidate (log lines ${stopped:-none}, ${validated:-none})" >&2; exit 1; }
+ran_stop || { echo "upgrading, the older copy's skwirdw.exe stop did not run" >&2; exit 1; }
+ended || { echo "upgraded, and the older copy's engine still runs" >&2; exit 1; }
+! answers "$scratch/skwird" || { echo "upgraded, and an engine still answers" >&2; exit 1; }
+echo "ok: upgrading a skwir after 0.7.1, the older copy's skwirdw.exe stop ran before InstallValidate, its engine ended"
+removes_newer
+
+# From 0.7.1: its skwirdw.exe found, and not run.
+installs_older 0.7.1
+upgraded
+if ! has INSTALLED_SKWIRDW || has OLDER_SKWIRD_STOPS; then
+    echo "upgrading 0.7.1, its skwirdw.exe not found or its version taken for one after it" >&2
+    exit 1
+fi
+if [ -n "$(step SkwirdStopOlder)" ] || ran_stop; then
+    echo "upgrading 0.7.1, whose skwird has no stop, its skwirdw.exe was run" >&2
+    exit 1
+fi
+echo "ok: upgrading 0.7.1, its skwirdw.exe found and not run"
+removes_newer
+
+# From a skwir after 0.7.1 whose skwirdw.exe was deleted by hand: none
+# found, none run, the upgrade done.
+installs_older 99.0.0
+rm -f "$installed/skwirdw.exe"
+upgraded
+if ! has OLDER_SKWIRD_STOPS || has INSTALLED_SKWIRDW; then
+    echo "upgrading, a skwirdw.exe deleted was found, or the older's version was not" >&2
+    exit 1
+fi
+if [ -n "$(step SkwirdStopOlder)" ] || ran_stop; then
+    echo "upgrading a copy whose skwirdw.exe was deleted, a skwirdw.exe was run" >&2
+    exit 1
+fi
+echo "ok: upgrading a copy whose skwirdw.exe was deleted, none found, none run, the upgrade done"
+removes_newer
+rm -f "$unfinished"
 echo "$name: passed under Wine"
 # What passed, where a release collects it (SKWIR_PACKAGE_OUT, as try.sh).
 if [ -n "${SKWIR_PACKAGE_OUT:-}" ]; then

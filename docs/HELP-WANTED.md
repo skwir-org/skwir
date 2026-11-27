@@ -77,8 +77,9 @@ DjVu, 3D models and archives and plays audio and video; the Poppler and
 MuPDF readers are not in it yet. It has never run anywhere: everything below is
 new. Intel Macs have no build yet. It carries skwird, the index that
 answers name searches (`skwir.app/Contents/MacOS/skwird`), which a
-search starts on its own. The app has no uninstaller: before moving it
-to the Trash, run `skwir.app/Contents/MacOS/skwird logon remove --if-mine`
+search starts on its own. Before moving the app to the Trash, or
+`brew uninstall --cask skwir` where Homebrew installed it, run
+`skwir.app/Contents/MacOS/skwird logon remove --if-mine`
 (it takes back a LaunchAgent that copy's `skwird logon add` made, and
 leaves one of a skwird installed on its own), then
 `skwir.app/Contents/MacOS/skwird stop` (it stops that copy's engine), and,
@@ -177,13 +178,17 @@ answers name searches (`skwird.exe` beside `skwir.exe`), which a search
 starts on its own. Removing the installer's copy stops the engine it ran
 and takes back the logon task it registered (`skwird logon add`), and
 leaves those of a skwird installed on its own; updating it stops that
-engine and keeps the task. With the zip, run its `skwird.exe stop`
-before replacing its folder with a newer one, and its
-`skwird.exe logon remove --if-mine`, then `skwird.exe stop`, before
-deleting it. Do not register
-skwird's system service (`skwird service add`) from either: they sit in
-your own folder, which a program of yours could change under a service
-running as the system.
+engine and keeps the task, but an update from a skwir whose skwird has
+no `stop` stops nothing: where that engine still runs, Windows replaces
+its files only at the next restart. The zip unpacks into a folder named
+by its version: before deleting one, a newer one unpacked beside it
+included, run its `skwird.exe logon remove --if-mine`, then
+`skwird.exe stop`, and `skwird.exe logon add` from the newer folder to
+keep the task; a zip whose skwird has no `stop` knows neither command
+(run its `skwird.exe logon remove`, then end `skwirdw.exe` in Task
+Manager). Do not register skwird's system service (`skwird service add`)
+from either: they sit in your own folder, which a program of yours could
+change under a service running as the system.
 
 1. **It opens** (try). The window draws, a folder lists, the drives are in
    the sidebar, scrolling stays smooth, and idle CPU returns to about 0%

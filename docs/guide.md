@@ -597,15 +597,19 @@ it, **+ Filter** adds one, and the text can be typed as is:
     installed Skwir does it by itself: it stops the engine its skwird
     runs and takes back the logon task its skwird registered, leaving
     those of a skwird installed on its own. Updating it stops that
-    engine too and keeps the task, but an update from 0.7.0 or 0.7.1
-    stops nothing: their skwird has no `stop`, and where its engine
-    still runs (a search in the last minute, or the logon task),
-    Windows replaces its files only at the next restart. With the zip,
-    before replacing its folder with a newer one, run from it
-    `skwird.exe stop`; before deleting it,
-    `skwird.exe logon remove --if-mine`, then `skwird.exe stop`. On
-    macOS, before moving the app to the Trash or running
-    `brew uninstall --cask skwir`, run
+    engine too and keeps the task, but an update from a Skwir whose
+    skwird has no `stop` (its `skwird.exe stop` answers with its usage)
+    stops nothing: where that engine still runs (a search in the last
+    minute, or the logon task), Windows replaces its files only at the
+    next restart. The zip unpacks into a folder named by its version, so
+    a newer one goes beside the older: before deleting a zip's folder, an
+    update's included, run from it `skwird.exe logon remove --if-mine`,
+    then `skwird.exe stop`, and, for skwird to start at logon again,
+    `skwird.exe logon add` from the newer folder. A zip whose skwird has
+    no `stop` knows neither command: run its `skwird.exe logon remove`,
+    then end `skwirdw.exe` in Task Manager (or sign out and back in)
+    before deleting its folder. On macOS, before moving the app to the Trash
+    or running `brew uninstall --cask skwir`, run
     `/Applications/skwir.app/Contents/MacOS/skwird logon remove --if-mine`,
     then `/Applications/skwir.app/Contents/MacOS/skwird stop`, and
     `sudo /Applications/skwir.app/Contents/MacOS/skwird service remove`
