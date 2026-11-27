@@ -3905,6 +3905,71 @@ impl Drop for PrivateGvfs {
     }
 }
 
+/// The session's GVfs bridge is found where the session's runtime folder
+/// is reached through a link (`/var/run/user/…`, a sandbox's): gvfsd mounts
+/// it at `$XDG_RUNTIME_DIR/gvfs` as written, which the mount table lists
+/// resolved. Here the test's private GVfs stands for the session's, its
+/// runtime folder named to the process through a link.
+#[test]
+fn gvfs_s_bridge_is_found_through_a_runtime_folder_reached_by_a_link() {
+    let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
+        eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
+        return;
+    };
+    let base = fixture("gvfs-linked-runtime");
+    let private = PrivateGvfs::start(&package, &base);
+    // Its daemon started, which mounts its bridge as it starts.
+    let started = Command::new("dbus-send")
+        .args([
+            "--session",
+            "--print-reply",
+            "--dest=org.gtk.vfs.Daemon",
+            "/org/gtk/vfs/Daemon",
+            "org.freedesktop.DBus.Peer.Ping",
+        ])
+        .envs(private.env.iter().map(|(k, v)| (k, v)))
+        .stdout(Stdio::null())
+        .status()
+        .expect("run dbus-send");
+    assert!(started.success(), "GVfs's daemon started on the test's bus");
+    let link = base.join("runtime link");
+    std::os::unix::fs::symlink(&private.runtime, &link).unwrap();
+    // SAFETY: nextest runs each test in a process of its own, and nothing
+    // in it has read the session's runtime folder yet, nor reads the
+    // environment on another thread.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("XDG_RUNTIME_DIR", &link);
+    }
+    let session = skwir_plugin_remote::gvfs::Gvfs {
+        env: private.env.clone(),
+        runtime: None,
+        ..Default::default()
+    };
+    let deadline = Instant::now() + skwir_plugin_remote::connector::APPEARS_WITHIN;
+    let bridge = loop {
+        skwir_core::fs::reach::changed();
+        if let Some(bridge) = session.bridge() {
+            break bridge;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the bridge at {} found through {}",
+            private.runtime.join("gvfs").display(),
+            link.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(
+        bridge,
+        private.runtime.join("gvfs"),
+        "as the table lists it"
+    );
+    assert_eq!(session.unavailable(), None, "its bridge is there");
+    drop(private);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// GVfs whose daemon runs without its FUSE bridge (`GVFS_DISABLE_FUSE`,
 /// as where gvfsd-fuse is not installed) never shows a folder: available
 /// while its daemon is to be started or has just started, its bridge to
@@ -3969,11 +4034,13 @@ fn gvfs_without_its_bridge_is_unusable_once_its_daemon_has_run() {
 }
 
 /// A key's passphrase GVfs asks for is asked as one and never kept
-/// (ADR-082), whatever language its daemon speaks (`gvfs_catalog`): its
-/// ssh, whose home is the test's (`nss_wrapper`, the user database's home
-/// being what ssh reads), offers a key of the test's that has one, and the
-/// server takes that key alone. `SKWIR_TEST_SAMBA` names `nss_wrapper`
-/// (`just remote-check`); without it the test is skipped.
+/// (ADR-082), whatever language its daemon speaks (`gvfs_catalog`): here
+/// French, whose words hold no "passphrase", given to the daemon by the
+/// test whatever the runner's language. Its ssh, whose home is the test's
+/// (`nss_wrapper`, the user database's home being what ssh reads), offers
+/// a key of the test's that has one, and the server takes that key alone.
+/// `SKWIR_TEST_SAMBA` names `nss_wrapper` (`just remote-check`); without
+/// it the test is skipped.
 #[test]
 fn gvfs_asks_a_key_s_passphrase_as_one_never_kept() {
     let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
@@ -4045,6 +4112,12 @@ fn gvfs_asks_a_key_s_passphrase_as_one_never_kept() {
             ),
             ("NSS_WRAPPER_PASSWD", base.join("passwd").into()),
             ("NSS_WRAPPER_GROUP", base.join("group").into()),
+            // French, as gettext chooses it (set to nothing is not set);
+            // the locale's archive as the test was given it.
+            ("LANG", "fr_FR.UTF-8".into()),
+            ("LANGUAGE", "fr".into()),
+            ("LC_ALL", "".into()),
+            ("LC_MESSAGES", "".into()),
         ],
     );
     let gvfs = skwir_plugin_remote::gvfs::Gvfs {
@@ -4074,6 +4147,12 @@ fn gvfs_asks_a_key_s_passphrase_as_one_never_kept() {
         !asked.is_empty() && asked.iter().all(|q| q.starts_with("secret: ")),
         "the key's passphrase was asked as one, never as a server's password: {asked:?}"
     );
+    if !asked.iter().any(|q| q.contains("phrase de passe")) {
+        eprintln!(
+            "French not checked: GVfs's daemon asked in English (no fr_FR.UTF-8 locale here?): \
+             {asked:?}"
+        );
+    }
     assert_eq!(names_in(&connected.point), ["by a key.txt"]);
     assert_eq!(keyed.served(), None, "nothing kept");
     let remote = skwir_core::fs::reach::of(&connected.point).unwrap();

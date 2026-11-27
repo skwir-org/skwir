@@ -10,8 +10,9 @@
 //! (`/proc/<pid>/environ`, the daemon found on its bus), the catalogs those
 //! of its program's `share` and of its data folders; where the daemon is
 //! not read, Skwir's own environment and a test's (`Gvfs::env`) stand for
-//! its. A question none of its words name (a code, a proxy's password, a
-//! newer GVfs's) is neither: asked, and not kept.
+//! its. Its words alone decide: a question none of them name (a newer
+//! GVfs's, one in a language whose catalog is not found) is asked each
+//! time, never kept, whatever else it asks with it.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -23,7 +24,10 @@ use std::path::{Path, PathBuf};
 pub(crate) enum Asks {
     /// A key's passphrase (SFTP's), asked each time.
     Passphrase,
-    /// A server's password, which may be kept.
+    /// What is not the server's: a proxy's password, a verification code.
+    /// Asked each time, never answered with the server's login.
+    Other,
+    /// A server's password, which may be kept, its user the address's.
     Password,
 }
 
@@ -39,14 +43,24 @@ const PASSPHRASES: [&str; 2] = [
 /// address's user and without (`gvfsbackendsftp.c`, `gvfsbackendftp.c`,
 /// `gvfsafpserver.c`); WebDAV's for its realm and SMB's for its server
 /// (`gvfsbackenddav.c`, `gvfsbackendsmbbrowse.c`); SMB's for a share, with
-/// a user and without (`gvfsbackendsmb.c`). Not WebDAV's for a proxy, whose
-/// password is not the server's, nor SFTP's for a verification code.
+/// a user and without (`gvfsbackendsmb.c`). Not WebDAV's for a proxy, nor
+/// SFTP's for a verification code ([`OTHERS`]).
 const PASSWORDS: [&str; 5] = [
     "Authentication Required\nEnter password for “%s” on “%s”:",
     "Authentication Required\nEnter user and password for “%s”:",
     "Authentication Required\nEnter password for “%s”:",
     "Authentication Required\nEnter password for share “%s” on “%s”:",
     "Authentication Required\nEnter user and password for share “%s” on “%s”:",
+];
+
+/// Its questions for what is not the server's: WebDAV's for its proxy's
+/// password, asked with a user of the proxy's (`gvfsbackenddav.c`), and
+/// SFTP's for a verification code, with the address's user and without
+/// (`gvfsbackendsftp.c`).
+const OTHERS: [&str; 3] = [
+    "Authentication Required\nEnter proxy password:",
+    "Enter verification code for %s on %s",
+    "Enter verification code for %s",
 ];
 
 /// GVfs's gettext domain: its catalogs' name.
@@ -58,6 +72,7 @@ const LARGEST: u64 = 4 << 20;
 /// GVfs's questions in English and in the languages of the catalogs read.
 pub(crate) struct Questions {
     passphrases: Vec<Pattern>,
+    others: Vec<Pattern>,
     passwords: Vec<Pattern>,
 }
 
@@ -83,6 +98,7 @@ impl Questions {
         };
         Questions {
             passphrases: patterns(&PASSPHRASES),
+            others: patterns(&OTHERS),
             passwords: patterns(&PASSWORDS),
         }
     }
@@ -109,14 +125,18 @@ impl Questions {
     /// What `message`, a question of GVfs's as `gio mount` said it, asks
     /// for: `None` where it is none of its questions.
     pub fn of(&self, message: &str) -> Option<Asks> {
-        // A passphrase first: should both match, nothing is kept.
-        if self.passphrases.iter().any(|p| p.matches(message)) {
-            return Some(Asks::Passphrase);
+        // What is not the server's first: should a server's match too,
+        // nothing is kept.
+        let matched = |patterns: &[Pattern]| patterns.iter().any(|p| p.matches(message));
+        if matched(&self.passphrases) {
+            Some(Asks::Passphrase)
+        } else if matched(&self.others) {
+            Some(Asks::Other)
+        } else if matched(&self.passwords) {
+            Some(Asks::Password)
+        } else {
+            None
         }
-        self.passwords
-            .iter()
-            .any(|p| p.matches(message))
-            .then_some(Asks::Password)
     }
 }
 
@@ -477,14 +497,18 @@ fn daemon(_env: &[(OsString, OsString)]) -> Option<(Vec<(OsString, OsString)>, O
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(target_os = "linux")]
     use std::fmt::Write as _;
 
     use super::*;
 
     /// GVfs's French words for its questions, as its catalog (1.60.3,
     /// 1.62.0) has them, no-break spaces inside the quotes and before the
-    /// colon; and one of its Japanese, whose names are reordered.
-    pub(crate) const FRENCH: [(&str, &str); 9] = [
+    /// colon; and one of its Japanese, whose names are reordered. For the
+    /// tests that make catalogs with msgfmt, GNU gettext's: Linux's alone,
+    /// where GVfs runs.
+    #[cfg(target_os = "linux")]
+    pub(crate) const FRENCH: [(&str, &str); 10] = [
         (
             PASSPHRASES[0],
             "Authentification requise\nSaisissez la phrase de passe de la clé SSH de \
@@ -520,21 +544,24 @@ pub(crate) mod tests {
              partager «\u{a0}%s\u{a0}» sur «\u{a0}%s\u{a0}»\u{a0}:",
         ),
         (
-            "Authentication Required\nEnter proxy password:",
+            OTHERS[0],
             "Authentification requise\nSaisissez le mot de passe du serveur mandataire\u{a0}:",
         ),
         (
-            "Enter verification code for %s on %s",
+            OTHERS[1],
             "Saisissez le code de vérification pour %s sur %s",
         ),
+        (OTHERS[2], "Saisissez le code de vérification pour %s"),
     ];
 
+    #[cfg(target_os = "linux")]
     const JAPANESE: (&str, &str) = (
         PASSPHRASES[0],
         "認証が必要です\n“%2$s” 上の “%1$s” 用のセキュアキーのパスフレーズを入力してください:",
     );
 
     /// `text` as a `.po` file quotes it.
+    #[cfg(target_os = "linux")]
     fn quoted(text: &str) -> String {
         let mut quoted = String::from("\"");
         for c in text.chars() {
@@ -551,6 +578,7 @@ pub(crate) mod tests {
 
     /// The catalog msgfmt (GNU gettext's, in the dev shell) makes of
     /// `messages`, written `endianness` first, at `mo`.
+    #[cfg(target_os = "linux")]
     pub(crate) fn msgfmt(messages: &[(&str, &str)], endianness: &str, mo: &Path) {
         let mut po =
             String::from("msgid \"\"\nmsgstr \"Content-Type: text/plain; charset=UTF-8\\n\"\n\n");
@@ -635,10 +663,19 @@ pub(crate) mod tests {
                 "Authentication Required\nEnter password for “a ” on “b” on “c”:",
                 Some(Asks::Password),
             ),
-            // Neither: asked, and not kept.
-            ("Authentication Required\nEnter proxy password:", None),
-            ("Enter verification code for me on example.com", None),
+            // Not the server's: asked each time, never with its login.
+            (
+                "Authentication Required\nEnter proxy password:",
+                Some(Asks::Other),
+            ),
+            (
+                "Enter verification code for me on example.com",
+                Some(Asks::Other),
+            ),
+            ("Enter verification code for example.com", Some(Asks::Other)),
+            // None of its words: asked each time, never kept.
             ("Enter passphrase for key '/home/u/.ssh/id_ed25519':", None),
+            ("Authentication Required\nEnter proxy password: now", None),
             (
                 "Authentication Required\nEnter password for “me” on “example.com”: now",
                 None,
@@ -650,6 +687,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn gvfs_s_questions_are_told_apart_in_its_catalog_s_language() {
         let folder = tempfile::tempdir().unwrap();
@@ -677,8 +715,9 @@ pub(crate) mod tests {
                 (FRENCH[4].1, &["Partage WebDAV"][..], Some(Asks::Password)),
                 (FRENCH[5].1, &["photos", "nas"][..], Some(Asks::Password)),
                 (FRENCH[6].1, &["photos", "nas"][..], Some(Asks::Password)),
-                (FRENCH[7].1, &[][..], None),
-                (FRENCH[8].1, &["me", "example.com"][..], None),
+                (FRENCH[7].1, &[][..], Some(Asks::Other)),
+                (FRENCH[8].1, &["me", "example.com"][..], Some(Asks::Other)),
+                (FRENCH[9].1, &["example.com"][..], Some(Asks::Other)),
             ];
             for (translation, names, asks) in cases {
                 let message = said(translation, names);
@@ -690,10 +729,12 @@ pub(crate) mod tests {
                 Some(Asks::Password)
             );
         }
-        // Without its catalog, French is none of its questions: asked, and
-        // not kept.
-        let passphrase = said(FRENCH[0].1, &["me", "example.com"]);
-        assert_eq!(Questions::english().of(&passphrase), None);
+        // Without its catalog, French is none of its questions: asked each
+        // time, and not kept.
+        for (_, translation) in &FRENCH {
+            let message = said(translation, &["me", "example.com"]);
+            assert_eq!(Questions::english().of(&message), None, "{message:?}");
+        }
         // A translation whose names are reordered (`%2$s`, `%1$s`).
         let mo = folder.path().join("ja.mo");
         msgfmt(&[JAPANESE], "little", &mo);
@@ -780,6 +821,7 @@ pub(crate) mod tests {
         assert_eq!(normalised("8859-1"), "iso88591");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn gvfs_s_catalogs_are_found_in_the_language_chosen() {
         let share = tempfile::tempdir().unwrap();
@@ -812,8 +854,9 @@ pub(crate) mod tests {
     }
 
     /// Every language GVfs ships tells its questions apart: each passphrase
-    /// as one, each password as one, none taken for the other. With
-    /// `SKWIR_TEST_GVFS` naming its package (`just remote-check`).
+    /// as one, each proxy's password and verification code as not the
+    /// server's, each server's password as one, none taken for another.
+    /// With `SKWIR_TEST_GVFS` naming its package (`just remote-check`).
     #[test]
     fn every_language_of_gvfs_tells_its_questions_apart() {
         let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
@@ -833,6 +876,7 @@ pub(crate) mod tests {
             let questions = Questions::in_catalogs(std::slice::from_ref(&catalog));
             for (messages, asks) in [
                 (&PASSPHRASES[..], Asks::Passphrase),
+                (&OTHERS[..], Asks::Other),
                 (&PASSWORDS[..], Asks::Password),
             ] {
                 for message in messages {

@@ -934,9 +934,12 @@ ADR-077 (which revises ADR-021).
   whole text, in English or as GVfs's catalog for that language has it
   (`gvfs_catalog`: gettext's choice from the daemon's environment, its
   `gvfs.mo` under its program's `share` or its data folders, read in
-  `/proc`; Skwir's own where the daemon is not read), or by a user asked
-  with it, which GVfs asks with a server's password alone. One none of
-  its words name (a code, a proxy's password) is asked, never kept.
+  `/proc`; Skwir's own where the daemon is not read), never by what it
+  asks beside (a proxy's password comes with a user too). Only a server's
+  password may be kept, and only its user is the address's; a key's
+  passphrase, a proxy's password, a verification code, and a question
+  none of its words name are asked each time, never kept, a user asked
+  with them answered with GVfs's own offer alone.
   rclone takes a server's password obscured, in its environment alone
   (`RCLONE_SMB_PASS`…), after listing the server's top tells whether it
   needs one. ssh asks through `SSH_ASKPASS` = the `skwir` executable, which
