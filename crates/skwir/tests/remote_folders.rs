@@ -3905,6 +3905,69 @@ impl Drop for PrivateGvfs {
     }
 }
 
+/// GVfs whose daemon runs without its FUSE bridge (`GVFS_DISABLE_FUSE`,
+/// as where gvfsd-fuse is not installed) never shows a folder: available
+/// while its daemon is to be started or has just started, its bridge to
+/// come, as it mounts it as it starts; unusable once its daemon has run as
+/// long as a connection waits for the bridge, so that the next tool is
+/// tried and no password asked.
+#[test]
+fn gvfs_without_its_bridge_is_unusable_once_its_daemon_has_run() {
+    let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
+        eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
+        return;
+    };
+    let base = fixture("gvfs-no-bridge");
+    let private = PrivateGvfs::start_with(&package, &base, &[("GVFS_DISABLE_FUSE", "1".into())]);
+    let gvfs = skwir_plugin_remote::gvfs::Gvfs {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+        ..Default::default()
+    };
+    assert_eq!(gvfs.unavailable(), None, "GVfs is there to be started");
+    // Its daemon started, as any program of the session using GIO starts
+    // it: answered once it holds its name.
+    let started = Command::new("dbus-send")
+        .args([
+            "--session",
+            "--print-reply",
+            "--dest=org.gtk.vfs.Daemon",
+            "/org/gtk/vfs/Daemon",
+            "org.freedesktop.DBus.Peer.Ping",
+        ])
+        .envs(private.env.iter().map(|(k, v)| (k, v)))
+        .stdout(Stdio::null())
+        .status()
+        .expect("run dbus-send");
+    assert!(started.success(), "GVfs's daemon started on the test's bus");
+    let since = Instant::now();
+    assert_eq!(gvfs.bridge(), None, "no bridge: GVFS_DISABLE_FUSE");
+    assert_eq!(
+        gvfs.unavailable(),
+        None,
+        "just started: its bridge may still come"
+    );
+    let deadline = since + skwir_plugin_remote::connector::APPEARS_WITHIN + Duration::from_secs(20);
+    let why = loop {
+        if let Some(why) = gvfs.unavailable() {
+            break why;
+        }
+        assert!(Instant::now() < deadline, "GVfs said unusable once settled");
+        std::thread::sleep(Duration::from_millis(250));
+    };
+    assert_eq!(
+        why.english(),
+        "GVfs runs without its FUSE bridge (gvfsd-fuse)"
+    );
+    assert!(
+        since.elapsed() + Duration::from_secs(1) >= skwir_plugin_remote::connector::APPEARS_WITHIN,
+        "not before its daemon has run as long as a connection waits: {:?}",
+        since.elapsed()
+    );
+    drop(private);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A key's passphrase GVfs asks for is asked as one and never kept
 /// (ADR-082), whatever language its daemon speaks (`gvfs_catalog`): its
 /// ssh, whose home is the test's (`nss_wrapper`, the user database's home

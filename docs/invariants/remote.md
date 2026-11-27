@@ -741,7 +741,11 @@ ADR-077 (which revises ADR-021).
   its own); a mount of another bridge is neither recognised nor
   connected through. It is there where its daemon runs or the session
   bus would start it (`org.gtk.vfs.Daemon`): `gio mount` starts it, which
-  mounts the bridge, waited for as above. A mount made again at once
+  mounts the bridge, waited for as above. A daemon that has run as long
+  as a connection waits for its bridge (`connector::APPEARS_WITHIN`)
+  without one (gvfs-fuse not installed, `GVFS_DISABLE_FUSE`, no
+  `/dev/fuse`) makes GVfs unusable (`Gvfs::unavailable`): the next tool
+  is tried, and nothing is asked. A mount made again at once
   under the name of one just let go of (a server ejected and connected
   to again) answers an I/O error for what was reached in the one gone,
   up to about a second and a half, while a stat may still be answered

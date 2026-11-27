@@ -77,17 +77,45 @@ impl Gvfs {
         bridge_in(self.runtime.clone())
     }
 
-    /// Whether GVfs's daemon runs on the session's bus (the test's), or
-    /// would be started there when asked.
-    fn can_start(&self) -> bool {
+    /// GVfs's daemon on the session's bus (the test's), as the bus says
+    /// it: on a connection of its own, which waits 5 s at most.
+    fn daemon(&self) -> Daemon {
         #[cfg(target_os = "linux")]
         {
-            crate::bus::can_start(DAEMON, &self.env)
+            let asked = || -> anyhow::Result<Daemon> {
+                let bus = crate::bus::connect(&self.env, Duration::from_secs(5))?;
+                let proxy = zbus::blocking::fdo::DBusProxy::new(&bus)?;
+                let name = zbus::names::BusName::try_from(DAEMON)?;
+                if proxy.name_has_owner(name.clone())? {
+                    // Its start not known (another user's, another pid
+                    // namespace's): as one just started, its bridge may come.
+                    let settled = proxy
+                        .get_connection_unix_process_id(name)
+                        .ok()
+                        .and_then(running_for)
+                        .is_some_and(|ran| ran >= crate::connector::APPEARS_WITHIN);
+                    return Ok(if settled {
+                        Daemon::Settled
+                    } else {
+                        Daemon::Starting
+                    });
+                }
+                let activatable = proxy
+                    .list_activatable_names()?
+                    .iter()
+                    .any(|n| n.as_str() == DAEMON);
+                Ok(if activatable {
+                    Daemon::Startable
+                } else {
+                    Daemon::Absent
+                })
+            };
+            asked().unwrap_or(Daemon::Absent)
         }
         #[cfg(not(target_os = "linux"))]
         {
             let _ = &self.env;
-            false
+            Daemon::Absent
         }
     }
 
@@ -152,11 +180,24 @@ impl Connector for Gvfs {
             return Some(crate::connector::not_installed("gio (GLib)"));
         }
         // Its daemon need not run yet (a desktop other than GNOME's): `gio
-        // mount` starts it, and it starts its bridge.
-        if self.bridge().is_none() && !self.can_start() {
-            return Some(crate::connector::not_installed("GVfs"));
+        // mount` starts it, and it starts its bridge. One that has run a
+        // while without its bridge (gvfsd-fuse not installed, as Debian
+        // packages it apart; `GVFS_DISABLE_FUSE`; no `/dev/fuse`) will
+        // never show a folder: unusable, so that the next tool is tried and
+        // no password is asked for a mount Skwir cannot open.
+        if self.bridge().is_some() {
+            return None;
         }
-        None
+        match self.daemon() {
+            Daemon::Starting | Daemon::Startable => None,
+            Daemon::Settled => Some(words!(
+                remote_gvfs_without_bridge = "GVfs runs without its FUSE bridge (gvfsd-fuse)",
+                note = "Why GVfs cannot open a server here: its daemon runs, but not the \
+                        bridge its folders are read through (not installed, or turned off). \
+                        Said in the list of why each tool cannot open an address."
+            )),
+            Daemon::Absent => Some(crate::connector::not_installed("GVfs")),
+        }
     }
 
     fn connect(
@@ -292,6 +333,62 @@ impl Connector for Gvfs {
     fn bus_env(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
         self.env.clone()
     }
+}
+
+/// GVfs's daemon on the session's bus, as [`Gvfs::daemon`] finds it.
+// Elsewhere than on Linux, GVfs is never found: `Absent` alone.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Daemon {
+    /// It runs, and has run as long as a connection waits for its bridge
+    /// ([`crate::connector::APPEARS_WITHIN`]), which it mounts as it starts.
+    Settled,
+    /// It runs, just started or since a time not known: its bridge may
+    /// still come.
+    Starting,
+    /// It does not run, and the bus would start it when asked (`gio
+    /// mount` does), and it its bridge.
+    Startable,
+    /// Neither: GVfs is not installed, or the bus did not answer.
+    Absent,
+}
+
+/// How long process `pid` has run: its start (`/proc/<pid>/stat`'s 22nd
+/// field, in clock ticks after boot) before the time since boot
+/// (`/proc/uptime`, the same clock). `None` where either is not read, or
+/// the process is no GVfs daemon (a number another process took since).
+#[cfg(target_os = "linux")]
+fn running_for(pid: u32) -> Option<Duration> {
+    let program = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    if !program.file_name()?.to_string_lossy().contains("gvfsd") {
+        return None;
+    }
+    running_since_boot(pid)
+}
+
+/// How long process `pid` has run ([`running_for`]), whatever it is.
+#[cfg(target_os = "linux")]
+fn running_since_boot(pid: u32) -> Option<Duration> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Read after its name, which may hold spaces and parentheses: the
+    // third field (its state) first.
+    let ticks: u64 = stat[stat.rfind(')')? + 1..]
+        .split_whitespace()
+        .nth(22 - 3)?
+        .parse()
+        .ok()?;
+    let hz = rustix::param::clock_ticks_per_second().max(1);
+    let started =
+        Duration::from_secs(ticks / hz) + Duration::from_nanos((ticks % hz) * 1_000_000_000 / hz);
+    let uptime: f64 = std::fs::read_to_string("/proc/uptime")
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Duration::try_from_secs_f64(uptime)
+        .ok()?
+        .checked_sub(started)
 }
 
 /// The program GVfs runs for a mount of `scheme` (`gvfsd-mtp`): its
@@ -878,6 +975,17 @@ mod tests {
         let with_user = asked("Some question of a newer GVfs", true);
         assert!(with_user.starts_with("password: "), "{with_user}");
         assert!(!with_user.contains("newer GVfs"), "{with_user}");
+    }
+
+    /// How long a process has run, read in `/proc`: this test's, just
+    /// started; never taken for a GVfs daemon's.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_process_s_time_running_is_read_and_its_program_checked() {
+        let ran = running_since_boot(std::process::id()).expect("read in /proc");
+        assert!(ran < Duration::from_secs(600), "{ran:?}");
+        assert!(running_since_boot(1).expect("pid 1's") >= ran);
+        assert_eq!(running_for(std::process::id()), None, "no GVfs daemon");
     }
 
     #[test]

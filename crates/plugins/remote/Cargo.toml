@@ -28,8 +28,9 @@ tracing.workspace = true
 # kio-fuse is there, and kio-fuse's calls (the zbus the platform links).
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
-# The error GVfs's bridge answers a moment for a mount made again at once.
-rustix.workspace = true
+# The error GVfs's bridge answers a moment for a mount made again at once;
+# the clock's ticks, which say how long GVfs's daemon has run.
+rustix = { workspace = true, features = ["param"] }
 
 [dev-dependencies]
 dirs.workspace = true
