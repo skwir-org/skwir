@@ -4101,7 +4101,7 @@ impl Executor {
     }
 
     fn run_job(&self, job: Job) {
-        let _ended = Ended(self, job.seq);
+        let ended = Ended(self, job.seq);
         let _asking = crate::app::asking_in(job.asking);
         // What it touches, which its entry keeps, bounded as when measured.
         let touched = job.footprint.clone().unwrap_or_default();
@@ -4163,6 +4163,9 @@ impl Executor {
                 self.stop_chain(&chain, why);
             }
         }
+        // Ended before it is answered: one who waited for its result and
+        // then asks what is under way (Disconnect, Eject) finds it gone.
+        drop(ended);
         if let Some(reply) = job.reply {
             let _ = reply.send(result);
         }
@@ -6534,6 +6537,26 @@ mod tests {
         while executor.busy_or_waiting() {
             assert!(Instant::now() < deadline, "it ends");
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A plan run to its end blocking is answered once it no longer runs:
+    /// what is asked next (Disconnect, Eject) finds it gone, however busy
+    /// the machine (a test disconnecting a mount right after a move there
+    /// was refused under the release's load, 2026-11-27).
+    #[test]
+    fn a_blocking_run_is_answered_once_it_runs_no_more() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        for n in 0..50 {
+            let path = format!("/disk/notes/{n}.txt");
+            let rename = Gate::new(&path, false, true, &log);
+            executor.execute_blocking(&rename.plan(), &CancelToken::new());
+            assert!(
+                executor.under_way_in(Path::new("/disk")).is_empty(),
+                "run {n}"
+            );
+            assert!(!executor.runs_in(Path::new("/disk")), "run {n}");
         }
     }
 
