@@ -939,7 +939,10 @@ ADR-077 (which revises ADR-021).
   the user's known hosts (try SFTP's questions there and remove the line
   after, or check through WebDAV and rclone); and never the session's GVfs: a GVfs of the test's own runs
   on a bus whose configuration lists GVfs's services alone, its runtime
-  folder short enough for ssh's control socket
+  folder made in `/tmp` itself, never `$TMPDIR` (`nix develop` nests one
+  of its own there), short enough for ssh's control socket
+  `<runtime>/gvfsd-sftp/<40 hex>.<16>` (`short_runtime`), its ssh offered
+  no agent and its server none of the user's keys
   (`crates/skwir/tests/remote_folders.rs`, `just remote-check`). A KIO
   of the test's own likewise (`PrivateKio`), Qt drawing nothing; what
   its bus started runs apart from it once the bus's helper ends, and is
