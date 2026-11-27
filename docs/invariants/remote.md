@@ -918,9 +918,16 @@ ADR-077 (which revises ADR-021).
   A connection's password question is answered from the keyring first:
   Skwir's own, then one GVfs kept (libsecret's network schema, read
   only, never changed), the window asked once one is refused. A server's
-  password is `Ask::password`: GVfs's Password question, ssh's prompts
+  password is `Ask::password`: GVfs's question for one, ssh's prompts
   that name the login (`me@host's password:`); a key's passphrase, a
   code, rclone's configuration's are `Ask::secret`, asked each time.
+  GVfs words its questions in its daemon's language: each is told by its
+  whole text, in English or as GVfs's catalog for that language has it
+  (`gvfs_catalog`: gettext's choice from the daemon's environment, its
+  `gvfs.mo` under its program's `share` or its data folders, read in
+  `/proc`; Skwir's own where the daemon is not read), or by a user asked
+  with it, which GVfs asks with a server's password alone. One none of
+  its words name (a code, a proxy's password) is asked, never kept.
   rclone takes a server's password obscured, in its environment alone
   (`RCLONE_SMB_PASS`…), after listing the server's top tells whether it
   needs one. ssh asks through `SSH_ASKPASS` = the `skwir` executable, which
@@ -929,8 +936,8 @@ ADR-077 (which revises ADR-021).
   guesses, made the pipe's first, its one access entry the user's, local
   clients alone, opened by the askpass as a client the server can know
   but never act as; `gio mount`'s questions are read from its
-  output (English, `LC_MESSAGES=C`) and answered on its input; a password
-  is `App::ask_secret`, a server Skwir cannot vouch for `App::ask_as`
+  output (its prompts in English, `LC_MESSAGES=C`) and answered on its
+  input; a password is `App::ask_secret`, a server Skwir cannot vouch for `App::ask_as`
   with `Asker::Connection`. KIO's are KDE's own (its password dialog,
   KWallet), which Skwir never sees: kio-fuse asks nothing, so where it
   fails `kioclient --interactive ls` lets KDE ask, then kio-fuse is asked

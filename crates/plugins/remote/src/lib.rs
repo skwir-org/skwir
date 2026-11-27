@@ -24,6 +24,7 @@ mod following;
 pub mod fstab;
 pub mod gio_copy;
 pub mod gvfs;
+mod gvfs_catalog;
 #[cfg(target_os = "linux")]
 pub mod gvfs_devices;
 mod gvfs_spec;

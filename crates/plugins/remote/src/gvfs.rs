@@ -17,6 +17,7 @@ use skwir_core::words::Words;
 use crate::address::{Address, Scheme};
 use crate::connector::{Ask, Connected, Connector, Offered, Recognised};
 use crate::gio_copy::GioCopy;
+use crate::gvfs_catalog::{Asks, Questions};
 use crate::gvfs_spec::Spec;
 
 /// The FUSE bridge's type in the mount table.
@@ -28,7 +29,7 @@ const PATIENCE: Duration = Duration::from_secs(60);
 
 /// GVfs's daemon on the session bus, which starts the bridge.
 #[cfg(target_os = "linux")]
-const DAEMON: &str = "org.gtk.vfs.Daemon";
+pub(crate) const DAEMON: &str = "org.gtk.vfs.Daemon";
 
 /// How long a mount just made may be waited for while the bridge answers
 /// an I/O error for it: made again at once under the name of one just let
@@ -167,7 +168,7 @@ impl Connector for Gvfs {
         let top = address.top();
         let gio = skwir_core::os_path::find_program("gio")
             .ok_or_else(|| anyhow::anyhow!(crate::connector::not_installed("gio (GLib)")))?;
-        mount(self.gio(&gio), &top, ask, cancel)?;
+        mount(self.gio(&gio), &top, &self.env, ask, cancel)?;
         // A daemon `gio` just started mounts its bridge as it starts, and
         // the bridge lists the mount once told of it, on its own loop,
         // after `gio` returned: each waited for (`connector::appears`).
@@ -346,8 +347,8 @@ pub(crate) fn bridge_in(runtime: Option<PathBuf>) -> Option<PathBuf> {
         .then_some(own)
 }
 
-/// `gio`'s own words in English, which its questions are read in; what
-/// GVfs's daemon says stays in the user's language.
+/// `gio`'s own words in English, which its prompts are read in; what
+/// GVfs's daemon says stays in its language (`gvfs_catalog` reads it).
 pub(crate) fn english(command: &mut Command) {
     command
         .env_remove("LC_ALL")
@@ -381,9 +382,11 @@ pub enum Asked {
         message: String,
         default: Option<String>,
     },
-    Password {
-        message: String,
-    },
+    /// `Password: `: `message` what GVfs said for it, before it or before
+    /// the `User` or `Domain` prompts of the same question; `user` whether
+    /// a user was asked there, which GVfs asks with a server's password
+    /// alone, never with a key's passphrase.
+    Password { message: String, user: bool },
     /// A question and its choices, numbered as `gio` reads them back.
     Choice {
         message: String,
@@ -396,6 +399,11 @@ pub enum Asked {
 #[derive(Default)]
 pub struct Prompts {
     said: String,
+    /// The question of GVfs's that `User` or `Domain` prompts began, which
+    /// a `Password` prompt ends: what GVfs said, and whether a user was
+    /// asked. `gio mount` says what GVfs asks once, then prompts for a
+    /// user, a domain and a password in turn, as GVfs wants them.
+    asking: Option<(String, bool)>,
 }
 
 impl Prompts {
@@ -428,10 +436,26 @@ impl Prompts {
             }
         }
         let message = message.join("\n");
+        // A prompt after words of its own begins a question; one with none
+        // goes on with the question before.
+        let asking = self.asking.take();
+        let (question, user) = match asking {
+            Some((said, user)) if message.is_empty() => (said, user),
+            _ => (message.clone(), false),
+        };
         Some(match word.as_str() {
-            "User" => Asked::User { message, default },
-            "Domain" => Asked::Domain { message, default },
-            "Password" => Asked::Password { message },
+            "User" | "Domain" => {
+                self.asking = Some((question, user || word == "User"));
+                if word == "User" {
+                    Asked::User { message, default }
+                } else {
+                    Asked::Domain { message, default }
+                }
+            }
+            "Password" => Asked::Password {
+                message: question,
+                user,
+            },
             _ => Asked::Choice { message, choices },
         })
     }
@@ -440,10 +464,11 @@ impl Prompts {
 /// Mount `top` with `gio mount`, answering what it asks: the address's
 /// user and domain, the window's password, the window's choice to go on
 /// where GVfs cannot vouch for the server (the first choice; Cancel
-/// otherwise).
+/// otherwise). `env` names the bus of the daemon that asks (a test's).
 fn mount(
     mut command: Command,
     top: &Address,
+    env: &[(std::ffi::OsString, std::ffi::OsString)],
     ask: &Arc<dyn Ask>,
     cancel: &CancelToken,
 ) -> anyhow::Result<()> {
@@ -482,6 +507,10 @@ fn mount(
         })?;
     let mut stdin = child.stdin.take();
     let mut prompts = Prompts::default();
+    let wording = Wording {
+        env,
+        read: std::cell::OnceCell::new(),
+    };
     let mut since = Instant::now();
     let mut ended = false;
     let outcome = loop {
@@ -517,7 +546,7 @@ fn mount(
             match said_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Some(text)) => {
                     if let Some(asked) = prompts.feed(&text) {
-                        let Some(answer) = answer(top, &asked, ask, cancel) else {
+                        let Some(answer) = answer(top, &asked, &wording, ask, cancel) else {
                             break Err(anyhow::anyhow!(words!(
                                 remote_gvfs_you_cancelled = "you cancelled",
                                 note = "Why a connection was not made: the user cancelled a question it asked."
@@ -559,10 +588,26 @@ fn mount(
     }
 }
 
-/// What to answer `asked`: `None` to cancel.
+/// GVfs's questions as its daemon words them (`gvfs_catalog`), read the
+/// first time a mount asks for a password, kept for its others.
+struct Wording<'a> {
+    /// The variables naming the daemon's bus (a test's).
+    env: &'a [(std::ffi::OsString, std::ffi::OsString)],
+    read: std::cell::OnceCell<Questions>,
+}
+
+impl Wording<'_> {
+    fn questions(&self) -> &Questions {
+        self.read.get_or_init(|| Questions::of_daemon(self.env))
+    }
+}
+
+/// What to answer `asked`, GVfs's words read as `wording` has them:
+/// `None` to cancel.
 fn answer(
     top: &Address,
     asked: &Asked,
+    wording: &Wording,
     ask: &Arc<dyn Ask>,
     cancel: &CancelToken,
 ) -> Option<String> {
@@ -579,20 +624,29 @@ fn answer(
                 .or_else(|| default.clone())
                 .unwrap_or_default(),
         ),
-        Asked::Password { message } => {
-            // What GVfs asked, as it said it; else Skwir's own question.
-            let title = if message.is_empty() {
+        Asked::Password { message, user } => {
+            // What GVfs asked, as it said it; else, and where its words ask
+            // for a user too (answered from the address), Skwir's own
+            // question.
+            let title = if message.is_empty() || *user {
                 crate::connector::password_for(top.label())
             } else {
                 Words::as_written(message.clone())
             };
             let connect = crate::connector::connect_button();
-            // A key's passphrase is asked each time; a server's password
-            // may be kept (ADR-082). GVfs's own words, read in English.
-            if message.to_lowercase().contains("passphrase") {
-                ask.secret(&title, &connect, cancel)
+            // A server's password may be kept; a key's passphrase is asked
+            // each time (ADR-082), and so is what none of GVfs's words name
+            // (a code, a proxy's password). Told by a user asked with it,
+            // which GVfs asks with a server's password alone, else by GVfs's
+            // words, in English or its daemon's language.
+            let asks = if *user {
+                Some(Asks::Password)
             } else {
-                ask.password(&title, &connect, cancel).map(|p| p.text)
+                wording.questions().of(message)
+            };
+            match asks {
+                Some(Asks::Password) => ask.password(&title, &connect, cancel).map(|p| p.text),
+                Some(Asks::Passphrase) | None => ask.secret(&title, &connect, cancel),
             }
         }
         Asked::Choice { message, choices } => {
@@ -651,8 +705,10 @@ mod tests {
         assert_eq!(
             prompts.feed("Password: "),
             Some(Asked::Password {
-                message: String::new()
-            })
+                message: "Enter password for ssh as me on example.com".into(),
+                user: true,
+            }),
+            "the question the user's prompt began"
         );
         let question = "The identity of the remote computer (example.com) is unknown.\n\
             This happens when you log in to a computer the first time.\n\n\
@@ -674,6 +730,154 @@ mod tests {
             None,
             "not a question"
         );
+    }
+
+    /// A password's question goes on through the prompts before it, which
+    /// GVfs's words began; a prompt after words of its own begins another.
+    #[test]
+    fn a_password_is_asked_with_the_words_its_question_began_with() {
+        let mut prompts = Prompts::default();
+        // SMB's, its user in the address: a domain asked, then a password.
+        let smb = "Authentication Required\nEnter password for share “photos” on “nas”:";
+        assert_eq!(
+            prompts.feed(&format!("{smb}\nDomain [WORKGROUP]: ")),
+            Some(Asked::Domain {
+                message: smb.into(),
+                default: Some("WORKGROUP".into()),
+            })
+        );
+        assert_eq!(
+            prompts.feed("Password: "),
+            Some(Asked::Password {
+                message: smb.into(),
+                user: false,
+            })
+        );
+        // A user, then a domain, then the password: one question.
+        let both = "Authentication Required\nEnter user and password for share “photos” on “nas”:";
+        prompts.feed(&format!("{both}\nUser: "));
+        prompts.feed("Domain: ");
+        assert_eq!(
+            prompts.feed("Password: "),
+            Some(Asked::Password {
+                message: both.into(),
+                user: true,
+            })
+        );
+        let passphrase = "Authentication Required\nEnter passphrase for secure key for “nas”:";
+        assert_eq!(
+            prompts.feed(&format!("{passphrase}\nPassword: ")),
+            Some(Asked::Password {
+                message: passphrase.into(),
+                user: false,
+            })
+        );
+        // No words, none before: nothing said of what it is.
+        assert_eq!(
+            prompts.feed("Password: "),
+            Some(Asked::Password {
+                message: String::new(),
+                user: false,
+            })
+        );
+    }
+
+    /// What a test's window is asked, and how: `secret` asked each time,
+    /// `password` a server's, which may be kept.
+    #[derive(Default)]
+    struct Window(std::sync::Mutex<Vec<String>>);
+
+    impl Ask for Window {
+        fn secret(&self, title: &Words, _: &Words, _: &CancelToken) -> Option<String> {
+            let asked = format!("secret: {}", title.english());
+            self.0.lock().unwrap().push(asked);
+            Some("typed".into())
+        }
+
+        fn confirm(&self, _: &Words, _: &Words, _: &CancelToken) -> bool {
+            false
+        }
+
+        fn password(
+            &self,
+            title: &Words,
+            _: &Words,
+            _: &CancelToken,
+        ) -> Option<crate::connector::Password> {
+            let asked = format!("password: {}", title.english());
+            self.0.lock().unwrap().push(asked);
+            Some(crate::connector::Password {
+                text: "typed".into(),
+                remember: true,
+            })
+        }
+    }
+
+    /// A key's passphrase is asked as one, never kept (ADR-082), in GVfs's
+    /// English and in its daemon's language alike; a server's password may
+    /// be kept; what GVfs's words name neither is asked, not kept.
+    #[test]
+    fn a_key_s_passphrase_is_never_asked_as_a_password_in_any_language() {
+        use crate::gvfs_catalog::Catalog;
+        use crate::gvfs_catalog::tests::{FRENCH, msgfmt, said};
+        let folder = tempfile::tempdir().unwrap();
+        let mo = folder.path().join("fr.mo");
+        msgfmt(&FRENCH, "little", &mo);
+        let wording = Wording {
+            env: &[],
+            read: std::cell::OnceCell::from(Questions::in_catalogs(&[Catalog::read(&mo).unwrap()])),
+        };
+        let top = Address::parse("sftp://me@example.com/").unwrap();
+        let window = Arc::new(Window::default());
+        let ask: Arc<dyn Ask> = window.clone();
+        let asked = |message: &str, user: bool| {
+            let asked = Asked::Password {
+                message: message.to_owned(),
+                user,
+            };
+            let answered = answer(&top, &asked, &wording, &ask, &CancelToken::new());
+            assert_eq!(answered.as_deref(), Some("typed"));
+            window.0.lock().unwrap().pop().expect("asked")
+        };
+        let english_passphrase =
+            "Authentication Required\nEnter passphrase for secure key for “me” on “example.com”:";
+        let english_password = "Authentication Required\nEnter password for “me” on “example.com”:";
+        for passphrase in [
+            english_passphrase.to_owned(),
+            said(FRENCH[0].1, &["me", "example.com"]),
+            said(FRENCH[1].1, &["example.com"]),
+        ] {
+            assert_eq!(
+                asked(&passphrase, false),
+                format!("secret: {passphrase}"),
+                "asked each time, in GVfs's words"
+            );
+        }
+        for password in [
+            english_password.to_owned(),
+            said(FRENCH[2].1, &["me", "example.com"]),
+            said(FRENCH[5].1, &["photos", "example.com"]),
+        ] {
+            assert_eq!(asked(&password, false), format!("password: {password}"));
+        }
+        // Neither: a code, a proxy's password, words never seen.
+        for neither in [
+            said(FRENCH[8].1, &["me", "example.com"]),
+            "Enter verification code for me on example.com".to_owned(),
+            said(FRENCH[7].1, &[]),
+            "Some question of a newer GVfs".to_owned(),
+            String::new(),
+        ] {
+            assert!(
+                asked(&neither, false).starts_with("secret: "),
+                "{neither:?}"
+            );
+        }
+        // A user asked with it: a server's password, whatever its words,
+        // asked in Skwir's (the user was answered from the address).
+        let with_user = asked("Some question of a newer GVfs", true);
+        assert!(with_user.starts_with("password: "), "{with_user}");
+        assert!(!with_user.contains("newer GVfs"), "{with_user}");
     }
 
     #[test]

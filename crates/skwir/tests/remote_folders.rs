@@ -3813,6 +3813,16 @@ struct PrivateGvfs {
 
 impl PrivateGvfs {
     fn start(package: &Path, base: &Path) -> PrivateGvfs {
+        PrivateGvfs::start_with(package, base, &[])
+    }
+
+    /// As [`PrivateGvfs::start`], its bus and daemon given `daemon_env`
+    /// beside (a home of the test's, by `nss_wrapper`).
+    fn start_with(
+        package: &Path,
+        base: &Path,
+        daemon_env: &[(&str, std::ffi::OsString)],
+    ) -> PrivateGvfs {
         use std::io::BufRead;
         let home = base.join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -3857,6 +3867,7 @@ impl PrivateGvfs {
             .arg(format!("--config-file={}", config.display()))
             .args(["--nofork", "--print-address=1"])
             .envs(env.iter().map(|(k, v)| (k, v)))
+            .envs(daemon_env.iter().map(|(k, v)| (k, v)))
             // No agent of the user's: GVfs's ssh would offer the test's
             // server their keys before its password.
             .env_remove("SSH_AUTH_SOCK")
@@ -3892,6 +3903,123 @@ impl Drop for PrivateGvfs {
             .stderr(Stdio::null())
             .status();
     }
+}
+
+/// A key's passphrase GVfs asks for is asked as one and never kept
+/// (ADR-082), whatever language its daemon speaks (`gvfs_catalog`): its
+/// ssh, whose home is the test's (`nss_wrapper`, the user database's home
+/// being what ssh reads), offers a key of the test's that has one, and the
+/// server takes that key alone. `SKWIR_TEST_SAMBA` names `nss_wrapper`
+/// (`just remote-check`); without it the test is skipped.
+#[test]
+fn gvfs_asks_a_key_s_passphrase_as_one_never_kept() {
+    let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
+        eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
+        return;
+    };
+    let Some(nss_wrapper) = std::env::var_os("SKWIR_TEST_SAMBA")
+        .and_then(|packages| std::env::split_paths(&packages).nth(2))
+    else {
+        eprintln!("skipped: SKWIR_TEST_SAMBA names no nss_wrapper");
+        return;
+    };
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("gvfs-key");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    std::fs::write(served_root.join("by a key.txt"), "hi").unwrap();
+    // The test's home, as the user database says it to GVfs's ssh.
+    let home = base.join("keyhome");
+    let ssh = home.join(".ssh");
+    std::fs::create_dir_all(&ssh).unwrap();
+    let passphrase = "a test passphrase";
+    let made = Command::new("ssh-keygen")
+        .args([
+            "-q",
+            "-t",
+            "ed25519",
+            "-C",
+            "skwir test",
+            "-N",
+            passphrase,
+            "-f",
+        ])
+        .arg(ssh.join("id_ed25519"))
+        .status()
+        .expect("run ssh-keygen");
+    assert!(made.success(), "a key with a passphrase");
+    let (uid, gid) = {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(&base).unwrap();
+        (meta.uid(), meta.gid())
+    };
+    std::fs::write(
+        base.join("passwd"),
+        format!("tester:x:{uid}:{gid}:tester:{}:/bin/sh\n", home.display()),
+    )
+    .unwrap();
+    std::fs::write(base.join("group"), format!("tester:x:{gid}:\n")).unwrap();
+    let served = Served::start(
+        "sftp",
+        &served_root,
+        &[
+            "--user",
+            "tester",
+            "--authorized-keys",
+            &ssh.join("id_ed25519.pub").display().to_string(),
+        ],
+    );
+    let private = PrivateGvfs::start_with(
+        &package,
+        &base,
+        &[
+            (
+                "LD_PRELOAD",
+                nss_wrapper.join("lib/libnss_wrapper.so").into(),
+            ),
+            ("NSS_WRAPPER_PASSWD", base.join("passwd").into()),
+            ("NSS_WRAPPER_GROUP", base.join("group").into()),
+        ],
+    );
+    let gvfs = skwir_plugin_remote::gvfs::Gvfs {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+        ..Default::default()
+    };
+    let answers = Arc::new(Answers {
+        password: passphrase.to_owned(),
+        remember: true,
+        ..Answers::default()
+    });
+    let address = Address::parse(&format!("sftp://tester@127.0.0.1:{}/", served.port)).unwrap();
+    let keyring = Arc::new(TestKeyring::default());
+    let keyed = Arc::new(Keyed::new(
+        answers.clone(),
+        keyring.clone(),
+        address.top(),
+        CancelToken::new(),
+    ));
+    let ask: Arc<dyn Ask> = keyed.clone();
+    let connected = gvfs
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect with the key");
+    let asked = answers.asked.lock().unwrap().clone();
+    assert!(
+        !asked.is_empty() && asked.iter().all(|q| q.starts_with("secret: ")),
+        "the key's passphrase was asked as one, never as a server's password: {asked:?}"
+    );
+    assert_eq!(names_in(&connected.point), ["by a key.txt"]);
+    assert_eq!(keyed.served(), None, "nothing kept");
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    let recognised = gvfs.recognises(&remote).expect("GVfs's");
+    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    drop(private);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
 }
 
 #[test]
