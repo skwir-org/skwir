@@ -446,6 +446,9 @@ remote_fstab_linux_only = 仅在 Linux 上读取 fstab
 remote_fstab_no_entry = /etc/fstab 中没有指向它且您可以挂载的条目
 
 # draft
+remote_fstab_not_mounted = 系统尚未挂载 { $folder }：可能仍在尝试
+
+# draft
 remote_gvfs_camera_label = { $device }（相机）
 
 # draft
@@ -476,7 +479,13 @@ remote_gvfs_no_folder = GVfs 已挂载 { $address }，但其文件夹不存在
 remote_gvfs_other_label = { $host } ({ $kind })
 
 # draft
+remote_gvfs_proxy_user = GVfs 要求提供一个不属于服务器的用户名（例如代理服务器的），而 Skwir 无法询问
+
+# draft
 remote_gvfs_server_silent = { $host } 在 { $seconds } 秒内没有响应
+
+# draft
+remote_gvfs_without_bridge = GVfs 正在运行，但没有其 FUSE 桥接（gvfsd-fuse）
 
 # draft
 remote_gvfs_you_cancelled = 您已取消

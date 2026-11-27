@@ -376,6 +376,9 @@ remote_fstab_linux_only = fstab is read on Linux only
 
 remote_fstab_no_entry = no entry of /etc/fstab that you may mount names it
 
+# Why a network folder of the system's table (fstab) did not open: its mount command ended, but nothing is mounted at the folder yet (an NFS mount the system goes on trying in the background). folder: where it mounts, a path.
+remote_fstab_not_mounted = the system has not mounted { $folder }: it may still be trying
+
 # What a camera GVfs reads is called: device is its name or where it is plugged in.
 remote_gvfs_camera_label = { $device } (camera)
 
@@ -407,11 +410,17 @@ remote_gvfs_no_folder = GVfs mounted { $address } but its folder is not there
 # What a mount of GVfs no address names is called: host is its server, kind GVfs's name for its protocol (as written).
 remote_gvfs_other_label = { $host } ({ $kind })
 
+# Why GVfs did not connect: something between Skwir and the server (a proxy) wants a user name of its own. Another tool is tried after.
+remote_gvfs_proxy_user = GVfs asks for a user name that is not the server's (a proxy's), which Skwir cannot ask for
+
 # host: the server's name or address, which GVfs was asked to open.
 remote_gvfs_server_silent = { $host } did not answer within { $seconds ->
         [one] { $seconds } second
        *[other] { $seconds } seconds
     }
+
+# Why GVfs cannot open a server here: its daemon runs, but not the bridge its folders are read through (not installed, or turned off). Said in the list of why each tool cannot open an address.
+remote_gvfs_without_bridge = GVfs runs without its FUSE bridge (gvfsd-fuse)
 
 # Why a connection was not made: the user cancelled a question it asked.
 remote_gvfs_you_cancelled = you cancelled

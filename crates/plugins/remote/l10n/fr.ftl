@@ -463,6 +463,9 @@ remote_fstab_linux_only = fstab n’est lu que sous Linux
 remote_fstab_no_entry = aucune entrée de /etc/fstab que vous pouvez monter ne le nomme
 
 # draft
+remote_fstab_not_mounted = le système n’a pas monté { $folder } : il essaie peut-être encore
+
+# draft
 remote_gvfs_camera_label = { $device } (appareil photo)
 
 # draft
@@ -496,10 +499,16 @@ remote_gvfs_no_folder = GVfs a monté { $address }, mais son dossier n’est pas
 remote_gvfs_other_label = { $host } ({ $kind })
 
 # draft
+remote_gvfs_proxy_user = GVfs demande un nom d’utilisateur qui n’est pas celui du serveur (celui d’un proxy), que Skwir ne peut pas demander
+
+# draft
 remote_gvfs_server_silent = { $host } n’a pas répondu en { $seconds ->
         [one] { $seconds } seconde
        *[other] { $seconds } secondes
     }
+
+# draft
+remote_gvfs_without_bridge = GVfs tourne sans son pont FUSE (gvfsd-fuse)
 
 # draft
 remote_gvfs_you_cancelled = vous avez annulé
