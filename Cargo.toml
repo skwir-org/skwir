@@ -66,7 +66,7 @@ default-members = [
 exclude = ["spikes", "vendor/zed", "vendor/skwird-protocol", "vendor/skwird-client"]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.7.2"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.97"

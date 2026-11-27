@@ -1,10 +1,55 @@
 # Changes
 
-## Unreleased
+## 0.7.2 (2026-11-27)
 
+Skwir 0.7.2 brings skwird 0.3.0, and opens servers and devices once they
+are mounted, however slowly their tool lists them.
+
+[Installation instructions](README.md#installing)
+
+- **skwird 0.3.0 comes with Skwir**: removing Skwir on Windows stops the
+  engine its copy of skwird runs and takes back only the logon task that
+  copy registered, leaving a skwird installed on its own alone; updating
+  stops the older copy's engine first (from 0.7.2 on). The Linux tarball
+  carries skwird's own Linux build, and Skwir's Fedora repository now
+  lists skwird, as its Debian and Ubuntu ones do.
+- **A server or a device opens once it is mounted**: Skwir waits for the
+  folder a tool says it mounted, where it said it was not there (a watch
+  over MTP, until a refresh: GVfs lists a mount a moment after saying so).
+- **A key's passphrase is asked as one, in every language**: GVfs's
+  questions are read in its daemon's language, so a passphrase, or a
+  code, is never offered to be remembered as a server's password.
+- **Where GVfs runs without its FUSE bridge** (gvfs-fuse not installed),
+  a server opens with another tool at once, rather than asking a password
+  and failing.
 - **The viewer's Open With entry** says what kind of program it is and
-  what it does in French, Italian and Simplified Chinese, drafts like the
-  rest of those languages.
+  what it does in French, Italian and Simplified Chinese.
+
+**Windows and macOS builds to try** come with this release too, made on
+Linux and never run there: please [try them and tell us what
+happens](docs/HELP-WANTED.md). Homebrew installs the Mac's: `brew install
+skwir-org/tap/skwir`.
+
+### All changes
+
+- **Mount points as the system lists them**: Skwir's runtime folder is
+  named with its links resolved, so on macOS (where `$TMPDIR` is under
+  `/private/var`) an sshfs or rclone mount is found where it was made.
+- **An fstab entry** is waited for once `mount` ends, and one still being
+  tried (NFS's `bg`) says so rather than showing its empty folder.
+- **Servers' configurations** read again when their folder is replaced
+  whole, not only when it first appears.
+- **GVfs never gives a proxy the server's login**: a WebDAV proxy's
+  password is asked each time, and a proxy that asks a user name Skwir
+  cannot give ends the attempt, so another tool is tried.
+- **Ejecting a server** reads nothing on the window's thread.
+- **Windows' zip**: replacing its folder needs only `skwird.exe stop`;
+  deleting it, `logon remove --if-mine` first. The same steps come before
+  `brew uninstall --cask skwir` on a Mac.
+- **Checks**: `just remote-check` runs every part and names each that
+  failed; the Windows tests under Wine end what Wine leaves behind; the
+  repositories read rpm 6's signatures.
+- **Dependencies** updated within their ranges.
 
 ## 0.7.1 (2026-11-26)
 

@@ -66,7 +66,7 @@ Anyway"), or run `xattr -dr com.apple.quarantine skwir.app`. Every
 build to 0.7.0 failed macOS's check of its signature in the GStreamer
 framework it carries (`codesign --verify --deep --strict`), so macOS
 could say the app is damaged, with no Open Anyway: the `xattr` command
-was then the way to try it. 0.7.1 seals that framework once, and a Mac
+was then the way to try it. The app now seals that framework once, and a Mac
 has checked it: Homebrew's cask job installs the app on GitHub's macOS
 runner and `codesign --verify --deep --strict` accepts it. So Homebrew
 installs it too (`brew install skwir-org/tap/skwir`, after `brew trust
