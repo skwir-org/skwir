@@ -139,6 +139,11 @@ struct Mounted {
     remote: Arc<Remote>,
     connector: Option<Arc<dyn Connector>>,
     recognised: Recognised,
+    /// Whether the user may let go of it ([`can_disconnect`]), found as it
+    /// was recognised, on the thread reading the table: what the sidebar
+    /// offers is read from memory (`Remotes::publish`, under the state's
+    /// lock, at times on the window's thread).
+    ejects: bool,
 }
 
 #[derive(Default)]
@@ -416,6 +421,7 @@ fn same_mounts(before: &[Mounted], now: &[Mounted]) -> bool {
         && before.iter().zip(now).all(|(a, b)| {
             a.remote == b.remote
                 && a.recognised == b.recognised
+                && a.ejects == b.ejects
                 && a.connector.as_ref().map(|c| c.id()) == b.connector.as_ref().map(|c| c.id())
         })
 }
@@ -881,6 +887,7 @@ impl Remotes {
                 });
                 Some(match known {
                     Some((connector, recognised)) => Mounted {
+                        ejects: can_disconnect(connector.as_ref(), &remote, &recognised),
                         remote,
                         connector: Some(connector),
                         recognised,
@@ -900,6 +907,7 @@ impl Remotes {
                         },
                         remote,
                         connector: None,
+                        ejects: false,
                     },
                 })
             })
@@ -1762,10 +1770,7 @@ impl Remotes {
                 ),
             };
             place.key = Some(format!("remote:{key}"));
-            if m.connector
-                .as_ref()
-                .is_some_and(|c| can_disconnect(c.as_ref(), &m.remote, &m.recognised))
-            {
+            if m.ejects {
                 place.eject = Some(
                     Invocation::new("remote.disconnect")
                         .with("path", PathArg::from(point.as_path())),
@@ -2035,7 +2040,9 @@ fn own_items(server: &Server, unfinished: &[String]) -> Vec<skwir_core::registry
 }
 
 /// Whether the user may let go of a mount: Skwir's, GVfs's, one fstab lets
-/// them mount; never kio-fuse's, which lets go of no server.
+/// them mount; never kio-fuse's, which lets go of no server. Reads fstab
+/// (`fstab::user_mountable`): as the mount is recognised, never under the
+/// state's lock.
 fn can_disconnect(connector: &dyn Connector, remote: &Remote, recognised: &Recognised) -> bool {
     match connector.id() {
         "fstab" => fstab::user_mountable(&remote.point),
@@ -3837,6 +3844,7 @@ mod tests {
                 ours: true,
                 device: None,
             },
+            ejects: true,
         }
     }
 

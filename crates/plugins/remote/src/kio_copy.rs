@@ -111,7 +111,11 @@ impl KioCopy {
         &self,
         path: &'a Path,
     ) -> Option<(PathBuf, &'a str, &'a str, Vec<&'a std::ffi::OsStr>)> {
-        let runtime = self.runtime.clone().or_else(skwir_core::xdg::runtime_dir)?;
+        // As the mount table names it: the path is one of kio-fuse's mount.
+        let runtime = self
+            .runtime
+            .clone()
+            .or_else(skwir_core::folders::session_runtime)?;
         let rest = path.strip_prefix(&runtime).ok()?;
         let mut parts = rest.components().map(std::path::Component::as_os_str);
         let root = parts.next()?;

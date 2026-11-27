@@ -69,7 +69,8 @@ pub struct Kio {
     /// private session bus, never the user's.
     pub env: Vec<(OsString, OsString)>,
     /// The runtime folder kio-fuse mounts in, when not the user's (a
-    /// test's).
+    /// test's), named as the mount table names it (a folder of its own in
+    /// `/tmp`).
     pub runtime: Option<PathBuf>,
     /// Its copies in batches (ADR-078).
     pub kio_copy: std::sync::OnceLock<Arc<crate::kio_copy::KioCopy>>,
@@ -103,9 +104,13 @@ impl Kio {
     }
 
     /// The runtime folder whose `kio-fuse-…` folder is this session's
-    /// kio-fuse.
+    /// kio-fuse, as the mount table names it, which lists its mount so
+    /// (`folders::session_runtime`: read once, then from memory, as a
+    /// mount is recognised under the plugin's lock).
     fn runtime(&self) -> Option<PathBuf> {
-        self.runtime.clone().or_else(skwir_core::xdg::runtime_dir)
+        self.runtime
+            .clone()
+            .or_else(skwir_core::folders::session_runtime)
     }
 
     /// Ask kio-fuse to mount `url`, and say where it is. Waits for the

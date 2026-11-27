@@ -852,10 +852,15 @@ ADR-077 (which revises ADR-021).
   made with `folders::private` as all there is, rclone's remote
   control's sockets beside it (`rc`), named by `connector::point_name` so
   its address reads back from it: nothing else
-  is kept. It outlives Skwir, as GVfs's do. The runtime folder is named
-  with its links resolved, once: the mount table lists a point so
-  (macOS's `$TMPDIR`, `/var/folders/…`, is `/private/var/folders/…`
-  there), and a point named otherwise is never found where it was made.
+  is kept. It outlives Skwir, as GVfs's do. A path compared with the
+  mount table's points is named as the table names it
+  (`fs::reach::as_listed`: its links resolved, the point's own too,
+  nothing read through a mount or on a remote): the runtime folders,
+  read once (`folders::runtime`; `folders::session_runtime`, where GVfs
+  and kio-fuse mount their bridges), and fstab's points, read with its
+  entries on a worker, never under the plugin's lock. macOS's `$TMPDIR`,
+  `/var/folders/…`, is `/private/var/folders/…` there, and a point named
+  otherwise is never found where it was made.
 - A tool that daemonizes is run until it has mounted
   (`process::run_leaving`): cancelled, it and what it started are stopped;
   mounted, nothing it left running is touched.

@@ -241,6 +241,89 @@ pub fn volume_of(path: &Path) -> Option<PathBuf> {
     }
 }
 
+/// How many links [`as_listed`] follows at most, as Linux does
+/// (`MAXSYMLINKS`): a loop of links ends there.
+const MAX_LINKS: usize = 40;
+
+/// `path` (an absolute one) as the mount table names what is mounted
+/// there: each link on its way resolved, its last part's too, and `..`
+/// taken back where it is met, after the links before it, as the kernel
+/// resolves a mount's point and lists it. macOS's `/var` is
+/// `/private/var` there; Fedora's atomic desktops link `/mnt` to
+/// `/var/mnt`; a mount made at a link is made where the link leads. What
+/// finds a mount by its point's text ([`of`], [`is_point`], a remote's
+/// `point`) is asked with the path so named.
+///
+/// Each part is read as itself (`symlink_metadata`, a link's own text),
+/// never through it, and nothing on a remote is read: a part this table
+/// in memory says is on one, or is where one is mounted, ends the
+/// reading, as does a part not there (a folder not made yet); the rest is
+/// named as written. A server that stopped answering never holds it, nor
+/// does a mount there: a stat a part, of this machine's folders, on the
+/// caller's thread (a worker's, or a folder known to be in memory, the
+/// session's runtime folder).
+pub fn as_listed(path: &Path) -> PathBuf {
+    let mut at = PathBuf::new();
+    let mut ahead: Vec<Option<OsString>> = Vec::new();
+    take_ahead(&mut at, &mut ahead, path);
+    let mut links = 0;
+    let mut reading = true;
+    while let Some(part) = ahead.pop() {
+        let Some(name) = part else {
+            at.pop();
+            continue;
+        };
+        let next = at.join(&name);
+        reading = reading && of(&next).is_none();
+        if reading {
+            match std::fs::symlink_metadata(&next) {
+                Ok(meta) if meta.file_type().is_symlink() && links < MAX_LINKS => {
+                    if let Ok(target) = std::fs::read_link(&next) {
+                        links += 1;
+                        take_ahead(&mut at, &mut ahead, &crate::os_path::plain(target));
+                        continue;
+                    }
+                }
+                Ok(_) => {}
+                // Not there: nor is anything below it.
+                Err(_) => reading = false,
+            }
+        }
+        at = next;
+    }
+    at
+}
+
+/// Put `path`'s parts ahead, its first on top (`None` for `..`): a path
+/// from a root goes from there, another from where the way is (`at`). A
+/// root without a drive (Windows' `\dir`) is the drive's of where the way
+/// is.
+fn take_ahead(at: &mut PathBuf, ahead: &mut Vec<Option<OsString>>, path: &Path) {
+    use std::path::Component;
+    let mut root = PathBuf::new();
+    let mut parts = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::Prefix(_) => root.push(part),
+            Component::RootDir => {
+                if root.as_os_str().is_empty()
+                    && let Some(drive @ Component::Prefix(_)) = at.components().next()
+                {
+                    root.push(drive);
+                }
+                root.push(part);
+            }
+            Component::CurDir => {}
+            Component::ParentDir => parts.push(None),
+            Component::Normal(name) => parts.push(Some(name.to_owned())),
+        }
+    }
+    if !root.as_os_str().is_empty() {
+        *at = root;
+    }
+    ahead.extend(parts.into_iter().rev());
+}
+
 /// The folders a test says remotes are mounted at, and their types
 /// ([`pretend_remote`]).
 #[cfg(test)]
@@ -2419,5 +2502,87 @@ mod tests {
         if (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) >= (6, 8) {
             assert!(imp::unique(Path::new("/")).is_some(), "Linux 6.8 says it");
         }
+    }
+
+    /// A path is named as the table names a mount there: a link at the
+    /// point itself or above it resolved, `..` after a link taken back
+    /// from where it led, a folder not there yet named as written past its
+    /// first missing part, a loop of links ended.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_is_named_as_the_table_names_a_mount_there() {
+        use super::as_listed;
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::os_path::canonical(dir.path()).unwrap();
+        let srv = root.join("srv").join("nas");
+        let var_mnt = root.join("var").join("mnt");
+        std::fs::create_dir_all(&srv).unwrap();
+        std::fs::create_dir_all(&var_mnt).unwrap();
+        // The point itself a link: mounted where it leads.
+        symlink(&srv, var_mnt.join("nas")).unwrap();
+        // A link above, relative, as Fedora's `/mnt -> var/mnt`.
+        symlink("var/mnt", root.join("mnt")).unwrap();
+        assert_eq!(as_listed(&root.join("mnt").join("nas")), srv);
+        assert_eq!(as_listed(&var_mnt.join("nas")), srv, "the point a link");
+        assert_eq!(
+            as_listed(&root.join("mnt").join("photos")),
+            var_mnt.join("photos"),
+            "a link above"
+        );
+        assert_eq!(
+            as_listed(&root.join("mnt").join("..").join("srv")),
+            root.join("var").join("srv"),
+            "`..` from where the link led"
+        );
+        assert_eq!(
+            as_listed(&root.join("mnt").join("gone").join("a").join("b")),
+            var_mnt.join("gone").join("a").join("b"),
+            "a folder not there yet: named as written past it"
+        );
+        assert_eq!(as_listed(&srv), srv, "no link: itself");
+        symlink("loop-b", root.join("loop-a")).unwrap();
+        symlink("loop-a", root.join("loop-b")).unwrap();
+        let _ = as_listed(&root.join("loop-a").join("x"));
+    }
+
+    /// Nothing on a remote is read: a link there, or one where a remote
+    /// is mounted, is named as written; a link above it on this machine is
+    /// resolved.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn nothing_on_a_remote_is_read() {
+        use super::{as_listed, pretend_remote};
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::os_path::canonical(dir.path()).unwrap();
+        let elsewhere = root.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        // On disk a link: read, it would lead elsewhere.
+        let served = root.join("served");
+        symlink(&elsewhere, &served).unwrap();
+        symlink(&elsewhere, elsewhere.join("inner")).unwrap();
+        symlink(&served, root.join("to-served")).unwrap();
+        assert_eq!(
+            as_listed(&served.join("inner")),
+            elsewhere,
+            "read: resolved"
+        );
+        pretend_remote(&served);
+        assert_eq!(
+            as_listed(&served),
+            served,
+            "where a remote is mounted: not read"
+        );
+        assert_eq!(
+            as_listed(&served.join("inner").join("x")),
+            served.join("inner").join("x"),
+            "on a remote: not read"
+        );
+        assert_eq!(
+            as_listed(&root.join("to-served").join("inner")),
+            served.join("inner"),
+            "a link above it, on this machine, resolved"
+        );
     }
 }

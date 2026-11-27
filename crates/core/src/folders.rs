@@ -106,13 +106,11 @@ pub fn program_of(program: &Path) -> Option<PathBuf> {
 /// reachable by them. Every part of skwir names it through here, so all
 /// agree on one folder.
 ///
-/// The folder it is in is named with its links resolved, on every
-/// system, once: what skwir makes there is named as
-/// the system names it where it lists it, a mount's point in the mount
-/// table above all, which the kernel keeps resolved. macOS's `$TMPDIR`
-/// (`/var/folders/…`) is listed as `/private/var/folders/…`, `/var`
-/// being a link: a mount made at a point named otherwise is never found
-/// at its point (`fs::reach::of`), nor known for skwir's. Not `skwir`
+/// The folder it is in is named as the mount table names what is in it,
+/// once ([`session_runtime`], the temporary folder likewise): a mount's
+/// point made there is found where it was made (`fs::reach::of`), and
+/// known for skwir's. macOS's `$TMPDIR` (`/var/folders/…`) is
+/// `/private/var/folders/…` there, `/var` being a link. Not `skwir`
 /// itself: a link in its place is refused, never followed ([`private`]).
 pub fn runtime() -> Option<PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -120,23 +118,39 @@ pub fn runtime() -> Option<PathBuf> {
         .get_or_init(|| {
             #[cfg(unix)]
             {
-                Some(runtime_of(crate::xdg::runtime_dir()))
+                Some(runtime_of(session_runtime()))
             }
             #[cfg(not(unix))]
             {
-                crate::xdg::runtime_dir().map(|dir| resolved(dir).join("skwir"))
+                session_runtime().map(|dir| dir.join("skwir"))
             }
         })
         .clone()
 }
 
-/// [`runtime`] on Unix, the session's runtime folder being `session`.
+/// The session's runtime folder (`$XDG_RUNTIME_DIR`, `xdg::runtime_dir`)
+/// as the mount table names what is mounted in it: its links resolved
+/// (`fs::reach::as_listed`), read once. skwir's mounts are made there
+/// ([`runtime`]), GVfs and kio-fuse mount their bridges there, and each
+/// is found by its point's text, which the kernel keeps resolved: a
+/// runtime folder reached through a link (`/var/run/user/…`, a sandbox's)
+/// would find none of them otherwise. A few stats of the session's own
+/// folder, a `tmpfs`, the first time it is asked.
+pub fn session_runtime() -> Option<PathBuf> {
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| crate::xdg::runtime_dir().map(|dir| crate::fs::reach::as_listed(&dir)))
+        .clone()
+}
+
+/// [`runtime`] on Unix, the session's runtime folder being `session`,
+/// named as the mount table names it already.
 #[cfg(unix)]
 fn runtime_of(session: Option<PathBuf>) -> PathBuf {
     if let Some(dir) = session {
-        return resolved(dir).join("skwir");
+        return dir.join("skwir");
     }
-    let temporary = resolved(std::env::temp_dir());
+    let temporary = crate::fs::reach::as_listed(&std::env::temp_dir());
     #[cfg(target_os = "macos")]
     {
         temporary.join("skwir")
@@ -145,14 +159,6 @@ fn runtime_of(session: Option<PathBuf>) -> PathBuf {
     {
         temporary.join(format!("skwir-{}", rustix::process::getuid().as_raw()))
     }
-}
-
-/// `folder` with its links resolved (`os_path::canonical`), as the system
-/// lists what is in it; as given where it cannot be (not there). A few
-/// calls on the session's own folder (a `tmpfs`, macOS's temporary folder
-/// on the system's disk), once: [`runtime`] keeps what it found.
-fn resolved(folder: PathBuf) -> PathBuf {
-    crate::os_path::canonical(&folder).unwrap_or(folder)
 }
 
 /// `folder` made the user's alone: made where it is missing, with any
@@ -218,32 +224,18 @@ mod tests {
     }
 
     /// The session's runtime folder holds skwir's; where it has none, the
-    /// user's own in the temporary folder, named for the user on Linux.
-    /// Either is named with its links resolved, as the system lists what is
-    /// in it (macOS's `$TMPDIR`, `/var/folders/…`, is `/private/var/…` in
-    /// its mount table); one not there as given.
+    /// user's own in the temporary folder, named for the user on Linux, as
+    /// the mount table names it (macOS's `$TMPDIR`, `/var/folders/…`, is
+    /// `/private/var/…` in its mount table). skwir's own folder a link:
+    /// not followed, refused.
     #[test]
     fn the_runtime_folder_is_the_session_s_else_the_user_s_own() {
         let root = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(root.path()).unwrap();
-        let session = root.join("user").join("1234");
-        assert_eq!(
-            runtime_of(Some(session.clone())),
-            session.join("skwir"),
-            "not there: as given"
-        );
-        std::fs::create_dir_all(&session).unwrap();
-        let linked = root.join("run");
-        std::os::unix::fs::symlink(root.join("user"), &linked).unwrap();
-        assert_eq!(
-            runtime_of(Some(linked.join("1234"))),
-            session.join("skwir"),
-            "reached through a link: the folder it leads to"
-        );
-        // skwir's own folder a link: not followed, `private` refuses it.
-        std::os::unix::fs::symlink(&root, session.join("skwir")).unwrap();
+        let session = std::fs::canonicalize(root.path()).unwrap();
         assert_eq!(runtime_of(Some(session.clone())), session.join("skwir"));
-        assert!(private(&runtime_of(Some(session))).is_err());
+        std::os::unix::fs::symlink(session.join("elsewhere"), session.join("skwir")).unwrap();
+        assert_eq!(runtime_of(Some(session.clone())), session.join("skwir"));
+        assert!(private(&session.join("skwir")).is_err());
         let fallback = runtime_of(None);
         assert_eq!(
             fallback.parent(),

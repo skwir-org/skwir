@@ -133,13 +133,12 @@ impl Connector for Fstab {
         _ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Connected> {
-        let entry = entries(&read_fstab())
+        let (entry, point) = mountable()
             .into_iter()
-            .find(|e| {
-                e.users
-                    && e.address
-                        .as_ref()
-                        .is_some_and(|mounted| mounted.below(address).is_some())
+            .find(|(e, _)| {
+                e.address
+                    .as_ref()
+                    .is_some_and(|mounted| mounted.below(address).is_some())
             })
             .ok_or_else(|| {
                 anyhow::anyhow!(words!(
@@ -161,8 +160,7 @@ impl Connector for Fstab {
         // entry's daemon answers before the kernel lists it. Waited for as
         // every connector waits (`connector::appears`): the point handed back
         // with nothing mounted there would show the empty folder below it
-        // as the server's.
-        let point = listed_as(&entry.point);
+        // as the server's. Looked for where the table lists it (`mountable`).
         let mounted = crate::connector::appears(cancel, || {
             skwir_core::fs::reach::of(&point).filter(|remote| remote.point == point)
         });
@@ -277,62 +275,70 @@ impl std::fmt::Display for Busy {
 impl std::error::Error for Busy {}
 
 /// Whether fstab lets the user mount and let go of what is at `point`, a
-/// point as the mount table lists it: an entry naming it so, else one
-/// leading there ([`listed_as`], read only where none names it so).
+/// point as the mount table lists it ([`mountable`]). Reads fstab and
+/// what its points lead through: on the thread that reads the table
+/// (`Remotes::mounted_with`), never while the plugin's state is locked.
 pub fn user_mountable(point: &Path) -> bool {
-    let entries = entries(&read_fstab());
-    let mut users = entries.iter().filter(|e| e.users);
-    users.clone().any(|e| e.point == point) || users.any(|e| listed_as(&e.point) == point)
+    mountable().iter().any(|(_, listed)| listed == point)
 }
 
-/// Where the mount table lists a mount made at `point`, as fstab names it:
-/// the folders above it with their links resolved, as `mount` resolves
-/// them (Fedora's atomic desktops link `/mnt` to `/var/mnt`). Neither the
-/// point itself, which a mount may hold, nor folders above it on a remote
-/// (asked of the table in memory) are read: a server that stopped
-/// answering would hold the read. As written where they are not resolved.
-fn listed_as(point: &Path) -> PathBuf {
-    point
-        .parent()
-        .zip(point.file_name())
-        .filter(|(above, _)| skwir_core::fs::reach::of(above).is_none())
-        .and_then(|(above, name)| {
-            skwir_core::os_path::canonical(above)
-                .ok()
-                .map(|above| above.join(name))
+/// The network entries of fstab the user may mount (`user`, `users`),
+/// each with where the mount table lists a mount made at its point: the
+/// point named as the table names it, read as the entries are
+/// (`reach::as_listed`: `mount` and the kernel mount where a link leads,
+/// the point's own too, and Fedora's atomic desktops link `/mnt` to
+/// `/var/mnt`), never through a mount there or on a remote. I/O: fstab,
+/// and a stat each part of each point, on a worker.
+fn mountable() -> Vec<(Entry, PathBuf)> {
+    mountable_of(&read_fstab())
+}
+
+/// [`mountable`], fstab's text being `fstab`.
+fn mountable_of(fstab: &str) -> Vec<(Entry, PathBuf)> {
+    entries(fstab)
+        .into_iter()
+        .filter(|e| e.users)
+        .map(|e| {
+            let listed = skwir_core::fs::reach::as_listed(&e.point);
+            (e, listed)
         })
-        .unwrap_or_else(|| point.to_path_buf())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A point is where the table lists it: the folders above it with their
-    /// links resolved, as `mount` resolves them; the point itself, which a
-    /// mount may hold, as named.
+    /// What the user may mount is looked for where the table lists it:
+    /// a point that is a link, or below one, where it leads, as `mount`
+    /// mounts it; what the user may not mount is not offered.
     #[cfg(unix)]
     #[test]
-    fn a_point_is_where_the_table_lists_it() {
+    fn a_point_is_looked_for_where_the_table_lists_it() {
         let dir = tempfile::tempdir().unwrap();
         let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let srv = root.join("srv").join("nas");
         let var_mnt = root.join("var").join("mnt");
-        std::fs::create_dir_all(var_mnt.join("nas")).unwrap();
+        std::fs::create_dir_all(&srv).unwrap();
+        std::fs::create_dir_all(var_mnt.join("photos")).unwrap();
+        std::os::unix::fs::symlink(&srv, root.join("nas")).unwrap();
         std::os::unix::fs::symlink(&var_mnt, root.join("mnt")).unwrap();
-        assert_eq!(
-            listed_as(&root.join("mnt").join("nas")),
-            var_mnt.join("nas")
+        let fstab = format!(
+            "nas:/export {root}/nas nfs user,noauto 0 0\n\
+             nas:/photos {root}/mnt/photos nfs users,noauto 0 0\n\
+             nas:/admin {root}/mnt/admin nfs noauto 0 0\n",
+            root = root.display()
         );
-        std::os::unix::fs::symlink(root.join("elsewhere"), var_mnt.join("linked")).unwrap();
+        let found = mountable_of(&fstab);
         assert_eq!(
-            listed_as(&root.join("mnt").join("linked")),
-            var_mnt.join("linked"),
-            "the point itself is not read"
-        );
-        assert_eq!(
-            listed_as(&root.join("gone").join("nas")),
-            root.join("gone").join("nas"),
-            "as written where it cannot be resolved"
+            found
+                .iter()
+                .map(|(e, listed)| (e.point.clone(), listed.clone()))
+                .collect::<Vec<_>>(),
+            [
+                (root.join("nas"), srv),
+                (root.join("mnt").join("photos"), var_mnt.join("photos"))
+            ]
         );
     }
 
