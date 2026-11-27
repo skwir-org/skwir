@@ -22,11 +22,14 @@ workers, check performance or build packages.
    another version there, or at "Skwir 0.2" or "Version 0.2" naming
    another, and at a `Cargo.lock` or a `.SRCINFO` of another version.
    A release that brings a new skwird pins it in `tools/package/skwird.lock`:
-   its release's tag, each file's SHA-256 as that release's `SHA256SUMS`
-   says, and its source archive's as GitHub serves it. Skwir's packages
-   carry or build that release, and the repositories list its `.deb` and
-   `.rpm` (below). Its `.rpm` line ends with `unsigned` unless the
-   repositories' key signed it: Fedora's repository then lists no skwird.
+   its release's tag, and each file's SHA-256 as that release's
+   `SHA256SUMS` says (checked against GitHub's digests, `gh release view
+   <tag> -R skwir-org/skwird --json assets`). Skwir's Windows, macOS and
+   tarball packages carry its archive for their system, its notices
+   included, and the repositories list its `.deb` and `.rpm` (below). Its
+   `.rpm` line ends with `unsigned` unless the repositories' key signed it
+   (`rpmkeys --checksig` with `tools/package/repository/skwir.asc` alone):
+   Fedora's repository then lists no skwird.
 2. Date that version's `CHANGELOG.md` heading, for example
    `## 0.1.0 (2026-10-11)`. AppStream must have the same date. The section
    supplies the GitHub release notes, so it must be the first: an

@@ -79,8 +79,9 @@ done
 # before it unpacks it): skwird.exe and skwirdw.exe, the twin with no
 # console that its logon task runs, beside skwir.exe, where skwir looks
 # for it after PATH; its licences and its crates' notices in
-# licenses\skwird. The installer takes its logon task back before it
-# removes it (skwir.wxs).
+# licenses\skwird, as its zip holds them (LICENSE-MIT, LICENSE-APACHE,
+# THIRD-PARTY-NOTICES.txt). The installer stops its engine and takes back
+# its logon task before it removes it (skwir.wxs).
 python3 tools/package/skwird.py windows "$folder" --downloads "$out/work/skwird"
 tools/package/pdfium.sh win-x64 "$out/work/pdfium"
 cp "$out/work/pdfium/pdfium.dll" "$folder/"
@@ -119,9 +120,9 @@ EOF
 cp tools/package/channel/windows-installer "$folder/share/skwir/channel"
 # The installer: every file of the folder (wixl-heat), under skwir.wxs's
 # folder, shortcut and upgrade, with the icon skwir.exe carries (its
-# group icon, resource type 14). skwird.exe is skwir.wxs's own, named
-# there for the action that runs it as skwir is removed.
-find "$folder" -type f | LC_ALL=C sort | grep -vxF "$folder/skwird.exe" | wixl-heat -p "$folder/" --directory-ref INSTALLDIR \
+# group icon, resource type 14). skwirdw.exe is skwir.wxs's own, named
+# there for the actions that run it as skwir is removed or upgraded.
+find "$folder" -type f | LC_ALL=C sort | grep -vxF "$folder/skwirdw.exe" | wixl-heat -p "$folder/" --directory-ref INSTALLDIR \
     --component-group Files --var var.Dist --win64 > "$out/work/files.wxs"
 wrestool -x -t 14 "$folder/skwir.exe" > "$out/work/skwir.ico"
 wixl -a x64 -D "Version=$version" -D "Dist=$folder" -D "Icon=$out/work/skwir.ico" -D Win64=yes \

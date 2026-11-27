@@ -359,7 +359,7 @@ for distribution in debian ubuntu fedora; do
     esac
 done
 
-# skwird's `.rpm` as unsigned as 0.2.0's, and marked so in its lock:
+# skwird's `.rpm` unsigned, as 0.2.0's was, and marked so in its lock:
 # Fedora's repository lists no skwird, said as the indexes are made.
 signed_by old "$released" none:marked
 make 2 old || fail "repository.py refused skwird's .rpm marked unsigned: $(tail -1 "$work/made")"

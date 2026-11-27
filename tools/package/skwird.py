@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""skwird as skwir's packages carry it (ADR-050, amended 2026-11-26): the
-release of skwir-org/skwird that tools/package/skwird.lock pins, each file
-checked against its sum before anything is read of it.
+"""skwird as skwir's packages carry it (ADR-050, amended 2026-11-26 and
+2026-11-27): the release of skwir-org/skwird that tools/package/skwird.lock
+pins, each archive checked against its sum before anything is read of it.
 
     tools/package/skwird.py windows <out>   # Windows' zip: skwird.exe, skwirdw.exe
     tools/package/skwird.py macos <out>     # macOS's archive: skwird, arm64, signed ad hoc
-    tools/package/skwird.py source <out>    # the source archive: <out>/skwird-<version>, said
-    tools/package/skwird.py fetch <windows|macos|source> <downloads>   # fetched and checked alone
+    tools/package/skwird.py linux <out>     # Linux's plain build: skwird, x86-64, glibc 2.35 or later
+    tools/package/skwird.py fetch <windows|macos|linux> <downloads>   # fetched and checked alone
 
-What is carried goes in <out> (the programs) and <out>/licenses/skwird
-(skwird's licences, LICENSE-MIT and LICENSE-APACHE, and the notices of
-the crates its program links for that system: tools/package/notices,
-`<system>/skwird` for Windows and macOS, `skwird` for Linux's tarball,
-made from skwird's own Cargo.lock by notices.py). A package puts the
-programs beside skwir's own program, where skwir looks for them after
-PATH. The source is the tarball's, built in its root
-(tools/package/appimage/skwird.sh): the AppImage carries no skwird.
+What is carried goes in <out> (the programs) and <out>/licenses/skwird:
+skwird's licences (LICENSE-MIT, LICENSE-APACHE) and its notices
+(THIRD-PARTY-NOTICES.txt: the crates built into its program for that
+system, Rust's standard library, on Windows MinGW-w64's runtime), as its
+archive holds them, byte for byte. A package puts the programs beside
+skwir's own program, where skwir looks for them after PATH: Windows' zip
+and installer, macOS's app and Linux's tarball (the AppImage carries
+none, ADR-052). Nothing else of an archive is carried (Linux's systemd
+units and INSTALL.txt are for a skwird set up by hand).
 
 The archives are kept in <out>/.downloads, or the folder --downloads
 names, and fetched again only when missing or no longer matching their
@@ -26,7 +27,6 @@ fetched first by `fetch`. What <out> held of an earlier run is made again.
 import argparse
 import hashlib
 import http.client
-import os
 import pathlib
 import shutil
 import stat
@@ -39,13 +39,16 @@ import zipfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 LOCK = HERE / "skwird.lock"
-NOTICES = HERE / "notices"
 REPOSITORY = "skwir-org/skwird"
-LICENCES = ("LICENSE-MIT", "LICENSE-APACHE")
-# What each system's archive gives (beside the licences), and the notices
-# of the crates its programs link.
-PROGRAMS = {"windows": ("skwird.exe", "skwirdw.exe"), "macos": ("skwird",)}
-NOTICE = {"windows": "windows/skwird", "macos": "macos/skwird", "source": "skwird"}
+# What every archive gives beside its programs, carried in licenses/skwird.
+LICENCES = ("LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES.txt")
+# Each system's archive: what its name says of the system, its kind of
+# archive, and the programs it gives.
+ARCHIVES = {
+    "windows": ("windows-x86_64", ".zip", ("skwird.exe", "skwirdw.exe")),
+    "macos": ("macos-arm64", ".tar.gz", ("skwird",)),
+    "linux": ("linux-x86_64", ".tar.gz", ("skwird",)),
+}
 ATTEMPTS = 3
 
 
@@ -54,11 +57,11 @@ class Refused(Exception):
 
 
 class Lock:
-    """What skwird.lock pins: the release's tag, each of its files' sums,
-    and its source archive's name and sum, as GitHub serves it."""
+    """What skwird.lock pins: the release's tag and each of its files'
+    sums."""
 
     def __init__(self, path=LOCK):
-        self.tag, self.files, self.source = None, {}, None
+        self.tag, self.files = None, {}
         # The packages marked `unsigned`: an `.rpm` the repositories' key did
         # not sign, which Fedora's repository does not list (repository.py).
         self.unsigned = set()
@@ -68,38 +71,30 @@ class Lock:
             words = line.split()
             if words[0] == "release" and len(words) == 2:
                 self.tag = words[1]
-            elif words[0] == "source" and len(words) == 3:
-                self.source = (words[1], words[2])
             elif len(words) == 2 or (len(words) == 3 and words[2] == "unsigned"):
                 self.files[words[0]] = words[1]
                 if len(words) == 3:
                     self.unsigned.add(words[0])
             else:
                 raise Refused(f"{path}: a line not understood: {line}")
-        for name, sum_ in [*self.files.items(), *([self.source] if self.source else [])]:
+        for name, sum_ in self.files.items():
             if len(sum_) != 64 or any(c not in "0123456789abcdef" for c in sum_):
                 raise Refused(f"{path}: {name}'s sum is not a SHA-256")
-        if not self.tag or not self.tag.startswith("v") or not self.source:
-            raise Refused(f"{path}: no release tag or no source archive")
+        if not self.tag or not self.tag.startswith("v"):
+            raise Refused(f"{path}: no release tag")
         self.version = self.tag[1:]
 
     def archive(self, kind):
-        """The archive of `kind` (windows, macos or source): the name it is
-        kept under, where it is published and its sum."""
-        if kind == "source":
-            name, sum_ = self.source
-            return (f"skwird-{name}", f"https://github.com/{REPOSITORY}/archive/refs/tags/{name}", sum_)
-        name = {"windows": f"skwird-{self.version}-windows-x86_64.zip",
-                "macos": f"skwird-{self.version}-macos-arm64.tar.gz"}[kind]
+        """The archive of `kind` (windows, macos or linux): its name, where
+        it is published and its sum."""
+        name = self.top(kind) + ARCHIVES[kind][1]
         if name not in self.files:
             raise Refused(f"skwird.lock pins no {name}")
         return name, f"https://github.com/{REPOSITORY}/releases/download/{self.tag}/{name}", self.files[name]
 
     def top(self, kind):
         """The one folder an archive of `kind` holds."""
-        return {"windows": f"skwird-{self.version}-windows-x86_64",
-                "macos": f"skwird-{self.version}-macos-arm64",
-                "source": f"skwird-{self.version}"}[kind]
+        return f"skwird-{self.version}-{ARCHIVES[kind][0]}"
 
 
 def sha256(path):
@@ -170,15 +165,10 @@ def unpacked_zip(archive, top):
     return out
 
 
-def unpacked_tar(archive, top, into=None):
+def unpacked_tar(archive, top):
     """Each file a gzipped tar holds below its folder: path -> (bytes,
-    executable), or, with `into`, the whole tree written there: its
-    folders and files (their modes executable or not, their dates the
-    archive's, so that a build of a tree unpacked anew finds its crates
-    unchanged). Nothing else is taken: a link, symbolic or hard, is
-    refused, as a device or a pipe is. skwird's tree and its archives hold
-    none, and a tree holding no link is one no later member can be
-    written out of through an earlier one."""
+    executable). Nothing else is taken: a link, symbolic or hard, is
+    refused, as a device or a pipe is; skwird's archives hold none."""
     out = {}
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar:
@@ -186,40 +176,17 @@ def unpacked_tar(archive, top, into=None):
             if member.issym() or member.islnk():
                 raise Refused(f"{member.name}: a link, which skwird's archives hold none of")
             if member.isdir():
-                if into is not None:
-                    (into / path).mkdir(parents=True, exist_ok=True)
                 continue
             if not member.isfile():
                 raise Refused(f"{member.name}: not a file or a folder")
-            data = tar.extractfile(member).read()
-            executable = bool(member.mode & 0o111)
-            if into is None:
-                out[path] = (data, executable)
-            else:
-                (into / path).parent.mkdir(parents=True, exist_ok=True)
-                (into / path).write_bytes(data)
-                (into / path).chmod(0o755 if executable else 0o644)
-                os.utime(into / path, (member.mtime, member.mtime))
+            out[path] = (tar.extractfile(member).read(), bool(member.mode & 0o111))
     return out
 
 
 def taken(files, name, kind):
-    if name not in files:
+    if pathlib.PurePosixPath(name) not in files:
         raise Refused(f"skwird's {kind} archive holds no {name}")
-    return files[name]
-
-
-def licences(out, kind, licence_texts):
-    """skwird's licences and its crates' notices for `kind`, in
-    <out>/licenses/skwird."""
-    folder = pathlib.Path(out) / "licenses/skwird"
-    folder.mkdir(parents=True, exist_ok=True)
-    for name, text in licence_texts.items():
-        (folder / name).write_bytes(text)
-    notices = NOTICES / NOTICE[kind] / "THIRD-PARTY-NOTICES"
-    if not notices.is_file():
-        raise Refused(f"no notices of skwird's crates in {notices}: run `just notices`")
-    shutil.copyfile(notices, folder / "THIRD-PARTY-NOTICES")
+    return files[pathlib.PurePosixPath(name)]
 
 
 def clear(out, names):
@@ -232,71 +199,46 @@ def clear(out, names):
 
 
 def carry(kind, out, downloads=None, lock=None, opener=urllib.request.urlopen):
-    """skwird's programs for `kind` (windows, macos) in `out`, its licences
-    in <out>/licenses/skwird."""
+    """skwird's programs for `kind` (windows, macos, linux) in `out`, its
+    licences and notices in <out>/licenses/skwird."""
     lock = lock or Lock()
     out = pathlib.Path(out)
     archive = fetched(lock, kind, downloads or out / ".downloads", opener)
-    top = lock.top(kind)
-    clear(out, [*PROGRAMS[kind], "licenses/skwird"])
-    out.mkdir(parents=True, exist_ok=True)
+    top, programs = lock.top(kind), ARCHIVES[kind][2]
+    clear(out, [*programs, "licenses/skwird"])
     if kind == "windows":
-        files = unpacked_zip(archive, top)
-        for program in PROGRAMS[kind]:
-            (out / program).write_bytes(taken(files, pathlib.PurePosixPath(program), kind))
-            (out / program).chmod(0o755)
-        texts = {name: taken(files, pathlib.PurePosixPath(name), kind) for name in LICENCES}
+        # A zip keeps no mode Windows reads: each file is taken as it is.
+        files = {path: (data, True) for path, data in unpacked_zip(archive, top).items()}
     else:
         files = unpacked_tar(archive, top)
-        for program in PROGRAMS[kind]:
-            data, executable = taken(files, pathlib.PurePosixPath(program), kind)
-            if not executable:
-                raise Refused(f"skwird's {kind} archive holds {program} not executable")
-            (out / program).write_bytes(data)
-            (out / program).chmod(0o755)
-        texts = {name: taken(files, pathlib.PurePosixPath(name), kind)[0] for name in LICENCES}
-    licences(out, kind, texts)
-    return out
-
-
-def source(out, downloads=None, lock=None, opener=urllib.request.urlopen, notices=True):
-    """skwird's source tree, <out>/skwird-<version>, unpacked anew; with
-    `notices`, its licences and its crates' notices for Linux in
-    <out>/licenses/skwird, for the program built from it."""
-    lock = lock or Lock()
-    out = pathlib.Path(out)
-    archive = fetched(lock, "source", downloads or out / ".downloads", opener)
-    top = lock.top("source")
-    clear(out, [top, "licenses/skwird"])
-    tree = out / top
-    tree.mkdir(parents=True)
-    unpacked_tar(archive, top, into=tree)
+    licences = out / "licenses/skwird"
+    licences.mkdir(parents=True, exist_ok=True)
+    for program in programs:
+        data, executable = taken(files, program, kind)
+        if not executable:
+            raise Refused(f"skwird's {kind} archive holds {program} not executable")
+        (out / program).write_bytes(data)
+        (out / program).chmod(0o755)
     for name in LICENCES:
-        if not (tree / name).is_file():
-            raise Refused(f"skwird's source holds no {name}")
-    if notices:
-        licences(out, "source", {name: (tree / name).read_bytes() for name in LICENCES})
-    return tree
+        (licences / name).write_bytes(taken(files, name, kind)[0])
+    return out
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("what", choices=["windows", "macos", "source", "fetch"])
+    parser.add_argument("what", choices=[*ARCHIVES, "fetch"])
     parser.add_argument("args", nargs="+")
     parser.add_argument("--downloads", type=pathlib.Path)
     args = parser.parse_args()
     try:
         if args.what == "fetch":
-            if len(args.args) != 2 or args.args[0] not in ("windows", "macos", "source"):
-                parser.error("fetch <windows|macos|source> <downloads>")
+            if len(args.args) != 2 or args.args[0] not in ARCHIVES:
+                parser.error(f"fetch <{'|'.join(ARCHIVES)}> <downloads>")
             print(fetched(Lock(), args.args[0], pathlib.Path(args.args[1])))
             return
         if len(args.args) != 1:
             parser.error(f"{args.what} <out>")
-        if args.what == "source":
-            print(source(pathlib.Path(args.args[0]), args.downloads))
-        else:
-            carry(args.what, pathlib.Path(args.args[0]), args.downloads)
+        carry(args.what, pathlib.Path(args.args[0]), args.downloads)
     except Refused as refused:
         print(f"skwird.py: {refused}", file=sys.stderr)
         sys.exit(1)

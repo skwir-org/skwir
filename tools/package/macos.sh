@@ -85,9 +85,10 @@ done
 # sum before it unpacks it), beside skwir in Contents/MacOS, where skwir
 # looks for it after PATH: signed ad hoc in its archive, signed again
 # with the bundle below, as the other programs are. Its licences and its
-# crates' notices in Resources/licenses/skwird. A disk image has no
-# uninstaller: a LaunchAgent `skwird logon add` made from this copy is
-# its user's to take back (`skwird logon remove`) before the app goes.
+# notices in Resources/licenses/skwird, as its archive holds them. A disk
+# image has no uninstaller: before the app goes, its user takes back a
+# LaunchAgent this copy registered (`skwird logon remove --if-mine`) and
+# stops its engine (`skwird stop`), as docs/guide.md says.
 python3 tools/package/skwird.py macos "$out/work/skwird"
 cp "$out/work/skwird/skwird" "$app/Contents/MacOS/"
 cp -R "$out/work/skwird/licenses/skwird" "$app/Contents/Resources/licenses/"

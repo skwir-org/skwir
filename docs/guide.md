@@ -594,17 +594,21 @@ it, **+ Filter** adds one, and the text can be typed as is:
     yourself (`skwird logon add`, `skwird service add`), take it back
     with the same copy before you remove Skwir, or the system keeps
     trying to start a program that is gone. On Windows, removing the
-    installed Skwir takes back skwird's logon task by itself, even one a
-    skwird installed on its own registered: run that skwird's
-    `skwird logon add` again after. With the zip, run
-    `skwird.exe logon remove` from its folder before deleting it. On
+    installed Skwir does it by itself: it stops the engine its skwird
+    runs, also as Skwir is updated, and takes back the logon task its
+    skwird registered, leaving those of a skwird installed on its own.
+    With the zip, before deleting or replacing its folder, run from it
+    `skwird.exe logon remove --if-mine`, then `skwird.exe stop`. On
     macOS, before moving the app to the Trash, run
-    `/Applications/skwir.app/Contents/MacOS/skwird logon remove`, and
+    `/Applications/skwir.app/Contents/MacOS/skwird logon remove --if-mine`,
+    then `/Applications/skwir.app/Contents/MacOS/skwird stop`, and
     `sudo /Applications/skwir.app/Contents/MacOS/skwird service remove`
-    for the system service (the app's own path if it is elsewhere). Do not
-    register skwird's system service from the copy beside Skwir: it sits
-    in a folder your own programs can change, under a service that runs
-    as the system.
+    for the system service (the app's own path if it is elsewhere).
+    `--if-mine` takes back only what that copy registered, its engine
+    stopped first, and `stop` stops only that copy's engine: a skwird
+    installed on its own keeps its own. Do not register skwird's system
+    service from the copy beside Skwir: it sits in a folder your own
+    programs can change, under a service that runs as the system.
   - Where skwird is missing, Settings › Index says so, with a button to
     the [download page](https://skwir.org/download#skwird), and a search
     by name that walked the folders of this computer for want of it says

@@ -11,7 +11,8 @@ platform's parts compiled for Windows and macOS), amended as built
 signed, and dnf checks it; amended 2026-11-24, on the user's agreement
 to a Homebrew cask: a Mac app whose cask is installed never checks;
 amended 2026-11-26, on the user's choice that Skwir's packages bring
-skwird: the repositories list skwird's packages. Amends ADR-020 (a second plugin makes requests, and HTTP
+skwird: the repositories list skwird's packages; 2026-11-27, Fedora's
+too, skwird 0.3.0's `.rpm` signed by their key. Amends ADR-020 (a second plugin makes requests, and HTTP
 moves to `skwir-platform`) and ADR-040 (signed repositories for the
 `.deb` and the `.rpm`).
 
@@ -660,3 +661,20 @@ starts none; its engine starts at Skwir's first search.
 - **Not tried:** the site's two redirect lines on Cloudflare (the site
   deploys them), a real release's bundle, and an upgrade of skwird
   through the repositories.
+
+### 2026-11-27: Fedora's repository lists skwird
+
+skwird 0.3.0's release signs its `.rpm` with the repositories' key
+(`rpmkeys --checksig` in a database holding `skwir.asc` alone: its EdDSA
+signature by `F6EB0DC17B1A3E878C482DB30CF3A0EA48004329`, OK), so
+`tools/package/skwird.lock` pins it unmarked and Fedora's repository lists
+it beside Debian's and Ubuntu's; the mark stays for a release that is not
+signed. `repository.py` reads rpm 6's words for a signature too (`…
+signature, key fingerprint: …`, where rpm 4 says `… Signature, key ID …`),
+which it took for none, and refuses a package rpm's exit says failed,
+whatever it says after a digest (`BAD (Expected …)`), which it let pass.
+`just repository-check` passed on the 0.7.1 bundle with skwird 0.3.0's
+packages: Debian and Ubuntu offered their own skwird alone and installed
+it through the redirect, Fedora under `gpgcheck=1`; the three refusals
+held. With the flake's rpm 4.20.1 and rpm 6.1.0, `repository.py` takes
+skwird 0.3.0's `.rpm` with `skwir.asc` and refuses 0.2.0's.

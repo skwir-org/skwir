@@ -5,8 +5,8 @@
      skwir.wxs files.wxs`.
      files.wxs, made there by wixl-heat, holds every file of the folder
      (the programs, PDFium, the licences, the type database), so nothing
-     here lists them again, but skwird.exe, named here for the action that
-     runs it. Per user, in %LocalAppData%\Programs\skwir, no
+     here lists them again, but skwirdw.exe, named here for the actions
+     that run it. Per user, in %LocalAppData%\Programs\skwir, no
      administrator asked; a Start menu entry. Unsigned. -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="skwir" Manufacturer="skwir" Language="1033"
@@ -25,9 +25,10 @@
         <Directory Id="LocalPrograms" Name="Programs">
           <Directory Id="INSTALLDIR" Name="skwir">
             <!-- skwird, carried beside skwir (ADR-050, amended
-                 2026-11-26), the program the action below runs. -->
+                 2026-11-26): skwirdw.exe, skwird with no console window,
+                 the program the actions below run. -->
             <Component Id="Skwird" Guid="*" Win64="$(var.Win64)">
-              <File Id="skwird.exe" Source="$(var.Dist)/skwird.exe" KeyPath="yes" />
+              <File Id="skwirdw.exe" Source="$(var.Dist)/skwirdw.exe" KeyPath="yes" />
             </Component>
           </Directory>
         </Directory>
@@ -52,31 +53,49 @@
       <ComponentRef Id="Skwird" />
       <ComponentGroupRef Id="Files" />
     </Feature>
-    <!-- skwird registers the task that starts it at its user's logon
-         (`skwird logon add`) with the path of the program it runs, the
-         skwirdw.exe beside it: the carried copy's, once its user asked
-         that copy. Removed with skwir, that task would start nothing at
-         each logon, so the carried skwird takes it back first, while its
-         files are there (`skwird logon remove`), as its user, its answer
-         ignored: where none was registered, it fails and nothing is lost.
-         skwird 0.2.0 takes back the user's one task whichever copy
-         registered it, a skwird installed on its own included, and leaves
-         its engine running (ADR-074). skwird.exe, not skwirdw.exe: from
-         skwirdw, which has no console, the schtasks.exe skwird starts
-         opens a console window of its own all the same, and skwirdw makes
-         skwird's state folder and log first.
-         Not when an upgrade removes the older skwir: the newer puts
-         skwird where the task names it. A per-user install is never
-         elevated, so it cannot take back a system service; skwird's
-         `service add`, an administrator's, is not for a copy in the user's
-         own folder (ADR-074, amended 2026-11-26). The first step of the
-         removal's script: wixl 0.106 places an action Before="RemoveFiles"
-         ahead of InstallInitialize, outside the script, where a deferred
-         action fails the removal (windows-check.sh reads its place). -->
-    <CustomAction Id="SkwirdLogonRemove" FileKey="skwird.exe" ExeCommand="logon remove"
+    <!-- skwird's files go only once its engine ended: a program that runs
+         holds its file, which Windows replaces or removes no sooner than
+         the next restart. So two actions run skwirdw.exe, skwird with no
+         console window (from skwird 0.3.0 the schtasks.exe it starts opens
+         none either, and outside `serve` it makes no folder of skwird's),
+         as the user whose engine and task they are, each answer ignored
+         (where one fails, nothing is lost that the removal could keep):
+         1. SkwirdStop, as this skwir is removed, by its user or by an
+            upgrade to a newer: `stop`, the user's engine stopped where it
+            runs this copy (one a search started, or the logon task), its
+            end waited for, 10 s at most; another copy's is left. At once,
+            before InstallValidate, so that Windows Installer finds none of
+            skwird's files in use. An upgrade runs the older package's
+            sequence as it removes it (RemoveExistingProducts, after the
+            newer's own InstallValidate), so each package stops its own
+            copy's engine; one that carried skwird 0.2.0, which has no
+            `stop`, stops nothing, and an engine of its copy still running
+            holds its files until the next restart.
+         2. SkwirdLogonRemove, as skwir is removed by its user alone, in
+            the removal's script before the files go: the task that starts
+            skwird at its user's logon (`skwird logon add`) names the
+            program it runs, which would be gone; `logon remove`, its flag
+            if-mine given, takes it back only where it runs this copy. One
+            that runs another copy (a skwird installed on its own) is left.
+            Not as an upgrade removes this skwir: the newer puts skwird
+            where the task names it.
+         A per-user install is never elevated, so it cannot take back a
+         system service; skwird's `service add`, an administrator's, is
+         not for a copy in the user's own folder (ADR-074, amended
+         2026-11-26 and 2026-11-27). Each is placed by its number among
+         Windows Installer's own (MigrateFeatureStates 1200, InstallValidate
+         1400, InstallInitialize 1500, ProcessComponents 1600): wixl 0.106
+         misplaces what is placed relative to another action. Before
+         RemoveFiles, it went ahead of InstallInitialize, outside the
+         script, where a deferred action fails the removal; after another
+         custom action, it moved RemoveExistingProducts into the script
+         behind it (windows-check.sh reads every place). -->
+    <CustomAction Id="SkwirdStop" FileKey="skwirdw.exe" ExeCommand="stop" Execute="immediate" Return="ignore" />
+    <CustomAction Id="SkwirdLogonRemove" FileKey="skwirdw.exe" ExeCommand="logon remove --if-mine"
                   Execute="deferred" Impersonate="yes" Return="ignore" />
     <InstallExecuteSequence>
-      <Custom Action="SkwirdLogonRemove" After="InstallInitialize">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="SkwirdStop" Sequence="1300">REMOVE="ALL"</Custom>
+      <Custom Action="SkwirdLogonRemove" Sequence="1501">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
   </Product>
 </Wix>

@@ -8,13 +8,18 @@
 # decoders: Wine has no Direct3D or Media Foundation decoders); skwird,
 # carried beside skwir, its release's own programs, starting; then the
 # installer, per user, quietly: the programs where it puts them, its Start
-# menu entry, and nothing of them left once it is removed, the logon task
-# skwird registered from the copy it installed taken back first.
+# menu entry, and nothing of them left once it is removed, four times:
+# with nothing of skwird's registered or running, its actions making no
+# folder of skwird's; with the installed copy's engine running, stopped
+# first; with another copy of skwird's logon task and engine, both left;
+# with the logon task the installed copy registered, taken back.
 #
 # Wine is not Windows. It cannot draw skwir's window (its DirectWrite has
 # no font sets; Direct Manipulation and DirectComposition are missing), so
-# the window is for people to try (docs/HELP-WANTED.md). Its prefix is this
-# script's own.
+# the window is for people to try (docs/HELP-WANTED.md). Wine's
+# RemoveExistingProducts removes the older package as a plain removal (no
+# UPGRADINGPRODUCTCODE), so an upgrade is not tried: it is for people on
+# Windows. Its prefix is this script's own.
 #
 #     tools/package/windows-check.sh [version]
 set -eu
@@ -39,7 +44,15 @@ export WINEPREFIX="$HOME/.cache/skwir-tests/wine/package-prefix"
 # The dev shell's, for Linux: a Windows program must not see them.
 unset SKWIR_PDFIUM_LIBRARY XDG_DATA_DIRS DISPLAY WAYLAND_DISPLAY
 trap 'wineserver -k 2>/dev/null || true' EXIT
-wineboot -i >/dev/null 2>&1 || true
+# One wineserver for the whole run, ended with it, and the prefix made or
+# brought up to date under it: its services, Wine's task service among
+# them, started once. Not `wineboot -i`, which in a prefix already made
+# starts a second service manager beside the first, under which the task
+# service stops and starts by turns, so that a logon task is registered or
+# taken back at one call and not at the next.
+mkdir -p "$WINEPREFIX"
+wineserver -p
+wineboot -u >/dev/null 2>&1 || true
 
 # Where a program is in the folder: beside skwir, but the media helper
 # among GStreamer's libraries (as windows.sh puts it).
@@ -81,9 +94,9 @@ folder = into / name
 # The media helper among GStreamer's libraries; the others beside skwir.
 at = lambda p: f"gstreamer/bin/{p}.exe" if p == "skwir-media-worker" else f"{p}.exe"
 wanted = [at(p) for p in programs] + [
-    # skwird (tools/package/skwird.py): its programs, its licences, its crates' notices.
+    # skwird (tools/package/skwird.py): its programs, its licences, its notices.
     "skwird.exe", "skwirdw.exe", "licenses/skwird/LICENSE-MIT", "licenses/skwird/LICENSE-APACHE",
-    "licenses/skwird/THIRD-PARTY-NOTICES",
+    "licenses/skwird/THIRD-PARTY-NOTICES.txt",
     "pdfium.dll", "share/mime/globs2", "share/mime/magic", "share/mime/COPYING",
     "licenses/LICENSE", "licenses/THIRD-PARTY-NOTICES", "licenses/mingw-w64/COPYING",
     "licenses/pdfium/LICENSE", "licenses/libarchive/COPYING", "licenses/libarchive/VERSIONS",
@@ -106,14 +119,14 @@ assert top == beside | {"skwird.exe", "skwirdw.exe", "pdfium.dll", "share", "lic
 print(f"ok: the zip holds {len(names)} files in {name}/")
 EOF
 answer "$unpacked/$name"
-# skwird's programs and licences are its release's, byte for byte, the zip
-# its sum pinned (tools/package/skwird.lock).
+# skwird's programs, licences and notices are its release's, byte for
+# byte, the zip its sum pinned (tools/package/skwird.lock).
 python3 tools/package/skwird.py windows "$scratch/skwird"
 for file in skwird.exe skwirdw.exe licenses/skwird/LICENSE-MIT licenses/skwird/LICENSE-APACHE \
-    licenses/skwird/THIRD-PARTY-NOTICES; do
+    licenses/skwird/THIRD-PARTY-NOTICES.txt; do
     cmp -s "$scratch/skwird/$file" "$unpacked/$name/$file" || { echo "$file is not skwird's release's" >&2; exit 1; }
 done
-echo "ok: skwird.exe and skwirdw.exe are skwird $(sed -n 's/^release v//p' tools/package/skwird.lock)'s, its licences beside"
+echo "ok: skwird.exe and skwirdw.exe are skwird $(sed -n 's/^release v//p' tools/package/skwird.lock)'s, its licences and notices beside"
 # Nothing names a folder of the machine that built it (windows.sh's
 # remapping).
 for program in $programs; do
@@ -189,10 +202,14 @@ for codecs in h264-aac vp9-opus; do
     echo "ok: the media helper plays $codecs: $(echo "$said" | tail -n 1)"
 done
 
-# The installer's action taking skwird's logon task back as skwir is
-# removed (skwir.wxs): skwird.exe, run with `logon remove`, its answer
-# ignored, deferred, as the user, in the removal's script but not an
-# upgrade's, before the files go.
+# The installer's actions as skwir is removed (skwir.wxs): skwirdw.exe run
+# with `stop` at once, before InstallValidate, as skwir is removed by its
+# user or an upgrade; then with `logon remove --if-mine`, deferred, as the
+# user, in the removal's script before the files go, but not as an upgrade
+# removes it; each answer ignored. And RemoveExistingProducts where
+# MajorUpgrade puts it, before the script, so that an upgrade removes the
+# older package whole, its engine stopped by its own action, before the
+# newer's files are put in place.
 python3 - "$made/$name.msi" <<'EOF'
 import subprocess, sys
 msi = sys.argv[1]
@@ -201,25 +218,104 @@ def table(name):
     return [row.split("\t") for row in rows.splitlines()[3:]]
 actions = {row[0]: row for row in table("CustomAction")}
 # 18: a program the package installs (its File key); 64: its answer
-# ignored; 1024: deferred; not 2048, so as the user.
-assert actions["SkwirdLogonRemove"][1:4] == ["1106", "skwird.exe", "logon remove"], actions
+# ignored; 1024: deferred, and not 2048, so as the user; neither: at once.
+assert actions["SkwirdStop"][1:4] == ["82", "skwirdw.exe", "stop"], actions
+assert actions["SkwirdLogonRemove"][1:4] == ["1106", "skwirdw.exe", "logon remove --if-mine"], actions
 files = {row[0]: row for row in table("File")}
-assert files["skwird.exe"][2] == "skwird.exe", files["skwird.exe"]
+assert files["skwirdw.exe"][2] == "skwirdw.exe", files["skwirdw.exe"]
 steps = {row[0]: (row[1], int(row[2])) for row in table("InstallExecuteSequence")}
-condition, at = steps["SkwirdLogonRemove"]
-assert condition == 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE', condition
-assert steps["InstallInitialize"][1] < at < steps["RemoveFiles"][1], (at, steps)
-print(f"ok: the installer runs skwird.exe logon remove as it removes skwir, step {at} of its script")
+assert steps["SkwirdLogonRemove"][0] == 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE', steps["SkwirdLogonRemove"]
+assert steps["SkwirdStop"][0] == 'REMOVE="ALL"', steps["SkwirdStop"]
+at = [steps[a][1] for a in ("CostFinalize", "SkwirdStop", "InstallValidate", "RemoveExistingProducts",
+                            "InstallInitialize", "SkwirdLogonRemove", "ProcessComponents", "RemoveFiles")]
+assert at == sorted(at) and len(set(at)) == len(at), steps
+print(f"ok: as it removes skwir, the installer runs skwirdw.exe stop before InstallValidate (step {at[1]}), then"
+      f" logon remove --if-mine in its script (step {at[5]}); an upgrade removes the older first (step {at[3]})")
 EOF
 
-# The installer, per user, then removed.
+# The installer, per user, then removed, four times.
 user="$(wine cmd /c 'echo %USERNAME%' 2>/dev/null | tr -d '\r')"
 home="$WINEPREFIX/drive_c/users/$user"
 installed="$home/AppData/Local/Programs/skwir"
 shortcut="$home/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/skwir.lnk"
-wine msiexec /i "$made/$name.msi" /qn
-[ -f "$installed/skwir.exe" ] && [ -f "$installed/licenses/THIRD-PARTY-NOTICES" ] \
-    && [ -f "$installed/share/mime/globs2" ] || { echo "the installer put nothing in $installed" >&2; exit 1; }
+# skwird's own folder, the user's (its state, cache and log), and where
+# Wine keeps a logon task (system32\tasks, its actions left out: Wine
+# never runs it).
+skwirds="$home/AppData/Local/skwird"
+tasks="$WINEPREFIX/drive_c/windows/system32/tasks"
+installs() {
+    wine msiexec /i "$made/$name.msi" /qn
+    [ -f "$installed/skwir.exe" ] && [ -f "$installed/licenses/THIRD-PARTY-NOTICES" ] \
+        && [ -f "$installed/share/mime/globs2" ] || { echo "the installer put nothing in $installed" >&2; exit 1; }
+}
+# Removed, the programs it starts traced (Wine's process channel):
+# skwirdw.exe run with each action's command, and what skwird asked of
+# schtasks.
+removes() {
+    trace="$scratch/removed.trace"
+    WINEDEBUG=trace+process wine msiexec /x "$made/$name.msi" /qn 2>"$trace"
+    left="$(find "$installed" -type f 2>/dev/null | wc -l)"
+    [ "$left" -eq 0 ] && [ ! -e "$shortcut" ] || { echo "removed, $left files and the entry left" >&2; exit 1; }
+    for command in stop 'logon remove --if-mine'; do
+        started "skwirdw.exe $command\"" || { echo "removed, and skwirdw.exe $command did not run" >&2; exit 1; }
+    done
+}
+started() { grep -a "CreateProcessInternalW" "$trace" | grep -a -q -F "$1"; }
+has_task() { ls "$tasks"/skwird-S-1-* >/dev/null 2>&1; }
+# skwird's logon task registered from the copy in $1, as its user would,
+# or taken back by it ($2: add or remove), asked until it is there or
+# gone: in a new prefix, the first call starts Wine's task service, and
+# may be early for it.
+logon() {
+    for _ in 1 2 3 4 5; do
+        said="$(wine "$1/skwird.exe" logon "$2" 2>&1)" || true
+        case "$2" in
+        add) if has_task; then return 0; fi ;;
+        remove) if ! has_task; then return 0; fi ;;
+        esac
+        sleep 2
+    done
+    echo "skwird.exe logon $2 failed under Wine: $said" >&2
+    exit 1
+}
+# What skwird asks schtasks to take a task back with.
+deletes='/Delete /TN skwird-S-1-'
+# The user's engine, run from the copy in $1 as its logon task runs it,
+# on a folder of the check's own (never the prefix's home, whose folders
+# Wine links to this machine's user's), until it answers; its process
+# in $engine.
+fixture="$scratch/indexed d'été"
+mkdir -p "$fixture"
+: > "$fixture/café note.txt"
+serves() {
+    wine "$1/skwirdw.exe" serve --root "$(winepath -w "$fixture")" --idle 600 >/dev/null 2>&1 </dev/null &
+    engine=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if answers "$1"; then return 0; fi
+        sleep 1
+    done
+    echo "no engine of skwird's answers, started from $1" >&2
+    exit 1
+}
+# Whether the user's engine answers, asked by the copy in $1, which starts
+# none.
+answers() { SKWIRD_NO_START=1 wine "$1/skwird.exe" status </dev/null >/dev/null 2>&1; }
+runs() { kill -0 "$engine" 2>/dev/null; }
+# Whether its process ended, 5 s at most after its engine said it had.
+ended() {
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if ! runs; then return 0; fi
+        sleep 0.5
+    done
+    return 1
+}
+
+# 1. Nothing of skwird's registered or running, and no folder of its own
+# yet: the installer's actions, run unseen, leave none (skwirdw.exe makes
+# its folder only to serve).
+logon "$scratch/skwird" remove
+rm -rf "${skwirds:?}"
+installs
 echo "ok: installed in %LocalAppData%\\Programs\\skwir, $(find "$installed" -type f | wc -l) files"
 # How the copy came (ADR-142): the installer's word, not the zip's.
 [ "$(cat "$installed/share/skwir/channel")" = windows-installer ] \
@@ -228,26 +324,51 @@ echo "ok: the installed copy's channel says windows-installer"
 [ -f "$shortcut" ] || { echo "no Start menu entry: $shortcut" >&2; exit 1; }
 echo "ok: a Start menu entry"
 answer "$installed"
-# skwird's logon task, registered from the installed copy, as its user
-# would (Wine keeps a task in system32\tasks, its actions left out: Wine
-# never runs it). Wine's task service may not answer the first time it
-# starts in a prefix.
-tasks="$WINEPREFIX/drive_c/windows/system32/tasks"
-for attempt in 1 2 3; do
-    said="$(wine "$installed/skwird.exe" logon add 2>&1)" && break
-    [ "$attempt" -lt 3 ] || { echo "skwird.exe logon add failed under Wine: $said" >&2; exit 1; }
-    sleep 2
-done
-ls "$tasks"/skwird-S-1-* >/dev/null 2>&1 || { echo "no logon task of skwird's in $tasks" >&2; exit 1; }
-echo "ok: skwird.exe logon add, from the installed copy, registered its task"
-wine msiexec /x "$made/$name.msi" /qn
-left="$(find "$installed" -type f 2>/dev/null | wc -l)"
-[ "$left" -eq 0 ] && [ ! -e "$shortcut" ] || { echo "removed, $left files and the entry left" >&2; exit 1; }
-if ls "$tasks"/skwird-S-1-* >/dev/null 2>&1; then
+removes
+[ ! -e "$skwirds" ] || { echo "removed, and skwird's actions made its folder: $skwirds" >&2; exit 1; }
+echo "ok: removed, nothing of it left; skwirdw.exe ran stop and logon remove --if-mine, and made no folder of skwird's"
+
+# 2. The engine of the installed copy, which a search would have started:
+# stopped before its files go.
+installs
+serves "$installed"
+removes
+ended || { echo "removed, and the installed copy's engine still runs" >&2; exit 1; }
+! answers "$scratch/skwird" || { echo "removed, and an engine still answers" >&2; exit 1; }
+echo "ok: removed, nothing of it left, the engine the installed copy ran stopped first"
+
+# 3. The logon task and the engine of another copy of skwird (one
+# installed on its own, its programs in a folder of their own): removing
+# skwir leaves both, and skwird asks for no task to be deleted.
+another="$scratch/another skwird"
+mkdir -p "$another"
+cp "$scratch/skwird/skwird.exe" "$scratch/skwird/skwirdw.exe" "$another/"
+installs
+logon "$another" add
+serves "$another"
+removes
+! started "$deletes" || { echo "removed, and skwird asked for the task another copy registered to be deleted" >&2; exit 1; }
+has_task || { echo "removed, and the logon task another copy of skwird registered was taken back" >&2; exit 1; }
+if ! runs || ! answers "$another"; then
+    echo "removed, and another copy's engine was stopped" >&2
+    exit 1
+fi
+echo "ok: removed, the logon task and the engine of another copy of skwird left"
+wine "$another/skwird.exe" stop >/dev/null 2>&1 || { echo "another copy's skwird.exe stop failed" >&2; exit 1; }
+ended || { echo "another copy's skwird.exe stop left its engine running" >&2; exit 1; }
+logon "$another" remove
+
+# 4. The logon task the installed copy registered: skwird asks for it to
+# be deleted, and it is gone.
+installs
+logon "$installed" add
+removes
+started "$deletes" || { echo "removed, and skwird did not ask for its logon task to be deleted" >&2; exit 1; }
+if has_task; then
     echo "removed, skwird's logon task left: it would start nothing at each logon" >&2
     exit 1
 fi
-echo "ok: removed, nothing of it left, skwird's logon task taken back"
+echo "ok: removed, nothing of it left, the logon task the installed copy registered taken back"
 echo "$name: passed under Wine"
 # What passed, where a release collects it (SKWIR_PACKAGE_OUT, as try.sh).
 if [ -n "${SKWIR_PACKAGE_OUT:-}" ]; then

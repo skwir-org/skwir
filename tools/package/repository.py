@@ -292,24 +292,39 @@ def unfit(signing, coming, secret, now):
 
 def unsigned(rpms, public):
     """The `.rpm` files of `rpms` that the key of `public` did not sign, as
-    rpm reads them with that key alone, each with why: the key ID that
-    signed it, none, or a digest that fails."""
+    rpm reads them with that key alone, each with why (`refusal`)."""
     refused = {}
     with tempfile.TemporaryDirectory(prefix="skwir-rpmkeys-") as keyring:
         run("rpmkeys", "--dbpath", keyring, "--import", public)
         for rpm in rpms:
-            said = run("rpmkeys", "--dbpath", keyring, "--checksig", "--verbose", rpm, capture_output=True,
-                       text=True, check=False, env={**os.environ, "LC_ALL": "C"}).stdout
-            # Each signature and digest, then its state: all OK, one a signature.
-            states = re.findall(r"^\s+(.*): (\w+)$", said, re.M)
-            signed = [re.search(r"Signature, key ID ([0-9a-f]+)$", what) for what, _ in states]
-            if other := next((m[1] for m, (_, state) in zip(signed, states) if m and state != "OK"), None):
-                refused[rpm] = f"signed by key ID {other}"
-            elif not any(signed):
-                refused[rpm] = "unsigned"
-            elif any(state != "OK" for _, state in states):
-                refused[rpm] = "a digest fails"
+            read = run("rpmkeys", "--dbpath", keyring, "--checksig", "--verbose", rpm, capture_output=True,
+                       text=True, check=False, env={**os.environ, "LC_ALL": "C"})
+            if why := refusal(read.stdout, read.returncode):
+                refused[rpm] = why
     return refused
+
+
+def refusal(said, code):
+    """Why rpm's reading of a package, with the key that signs alone
+    imported (`rpmkeys --checksig --verbose`: what it `said`, its exit
+    `code`), refuses it, or None where that key signed it and each digest
+    holds: the key that signed it, none, or a digest that fails. Each line
+    is a signature or a digest, then its state. rpm 4 names a signature
+    `… Signature, key ID <id>`; rpm 6 `… signature, key ID <id>` where it
+    lacks the key, `… signature, key fingerprint: <fingerprint>` where it
+    has it, and each kind of signature it did not find, NOTFOUND. A state
+    that says more (`BAD (Expected …)`) is no word of its own: rpm's exit
+    code tells it."""
+    states = [(what, state) for what, state in re.findall(r"^\s+(.*): (\S+)(?: .*)?$", said, re.M)
+              if state != "NOTFOUND"]
+    signed = [re.search(r"signature, key (?:ID|fingerprint:) ([0-9a-fA-F]+)$", what, re.I) for what, _ in states]
+    if other := next((m[1].lower() for m, (_, state) in zip(signed, states) if m and state != "OK"), None):
+        return f"signed by key ID {other}"
+    if not any(signed):
+        return "unsigned"
+    if code != 0 or any(state != "OK" for _, state in states):
+        return "a digest fails"
+    return None
 
 
 def key_of(public):

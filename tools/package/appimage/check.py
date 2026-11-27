@@ -560,14 +560,17 @@ def check_fonts(app):
     print("ok: skwir's own fonts and their licences", flush=True)
 
 
-def check_skwird(app, work, carried):
+def check_skwird(app, work, carried, archives=None):
     """skwird, skwir's index of names (ADR-050): the tarball carries it
     beside skwir, where skwir looks for it after PATH, with its licences
-    and its crates' notices; the AppImage carries none of it, its mount
-    ending with skwir while skwird outlives its last client (ADR-052,
-    amended 2026-11-26). The tarball's starts its engine on a home of its
-    own, which indexes a folder whose names are not ASCII and finds a name
-    in it, as skwir asks it."""
+    and its notices; the AppImage carries none of it, its mount ending
+    with skwir while skwird outlives its last client (ADR-052, amended
+    2026-11-26). The tarball's are its release's plain build for Linux,
+    byte for byte, where `archives` holds that release's archive
+    (tools/package/skwird.py, which checks it against skwird.lock). The
+    tarball's starts its engine on a home of its own, which indexes a
+    folder whose names are not ASCII and finds a name in it, as skwir asks
+    it."""
     named = sorted(str(p.relative_to(app)) for p in app.rglob("skwird*"))
     if not carried:
         assert not named, ("the AppImage carries skwird", named)
@@ -575,9 +578,18 @@ def check_skwird(app, work, carried):
         return
     program = app / "usr/bin/skwird"
     assert program.is_file() and os.access(program, os.X_OK), "the tarball carries no usr/bin/skwird"
-    for licence in ("LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES"):
-        assert (app / "usr/share/licenses/skwird" / licence).is_file(), (licence, "is not carried")
+    texts = ("LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES.txt")
+    licences = app / "usr/share/licenses/skwird"
+    assert sorted(p.name for p in licences.iterdir()) == sorted(texts), sorted(licences.iterdir())
     assert named == ["usr/bin/skwird", "usr/share/licenses/skwird"], named
+    if archives:
+        sys.path.insert(0, str(ROOT / "tools/package"))
+        import skwird
+        release = skwird.carry("linux", work / "skwird's release", downloads=archives)
+        for carried_as, released_as in [(program, release / "skwird"),
+                                        *((licences / text, release / "licenses/skwird" / text) for text in texts)]:
+            assert carried_as.read_bytes() == released_as.read_bytes(), (carried_as, "is not skwird's release's")
+        print("ok: the tarball's skwird, its licences and notices are its release's, byte for byte", flush=True)
     lock = (ROOT / "tools/package/skwird.lock").read_text()
     version = re.search(r"^release v(.*)$", lock, re.M).group(1)
     home = work / "skwird's home"
@@ -662,6 +674,9 @@ def main():
     parser.add_argument("artifact", type=pathlib.Path)
     # Made where the AppImage is built (build.sh); elsewhere, not checked.
     parser.add_argument("--film", type=pathlib.Path)
+    # Where skwird's archives are kept (appimage.sh's downloads, /inputs in
+    # its roots): the tarball's skwird compared with its release's.
+    parser.add_argument("--skwird-archives", type=pathlib.Path)
     args = parser.parse_args()
     artifact = args.artifact.resolve()
     base = pathlib.Path.home() / ".cache/skwir-tests"
@@ -680,7 +695,7 @@ def main():
         check_helpers(app, said.removeprefix("skwir "))
         check_fonts(app)
         check_channel(app, "appimage" if artifact.name.endswith(".AppImage") else "tarball")
-        check_skwird(app, work, carried=not artifact.name.endswith(".AppImage"))
+        check_skwird(app, work, carried=not artifact.name.endswith(".AppImage"), archives=args.skwird_archives)
         for engine in ("pdfium", "poppler", "mupdf"):
             worker = "skwir-pdf-worker" if engine == "pdfium" else f"skwir-{engine}-worker"
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,

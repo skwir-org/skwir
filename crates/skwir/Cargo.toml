@@ -336,9 +336,10 @@ post_uninstall_script = "if [ -L /usr/bin/skw ] && [ ! -e /usr/bin/skw ] && [ \"
 vulkan-loader = "*"
 fontconfig = "*"
 
-# skwird as Debian's recommends say. skwir's Fedora repository lists it
-# once a release of it signed by the repositories' key is pinned
-# (ADR-142, tools/package/skwird.lock); until then dnf installs skwir alone.
+# skwird as Debian's recommends say: skwir's Fedora repository lists the
+# release tools/package/skwird.lock pins, its .rpm signed by the
+# repositories' key (ADR-142); where no repository has it, dnf installs
+# skwir alone.
 [package.metadata.generate-rpm.recommends]
 skwird = "*"
 skwir-media = "*"

@@ -1,16 +1,16 @@
-# skwird as skwir's packages bring it (ADR-050, amended 2026-11-26): one
-# release of skwir-org/skwird, each file's SHA-256 as the release's
-# SHA256SUMS says, and its source archive's as GitHub serves it (the sum
-# the AUR's skwird checks too). skwir's apt and dnf repositories list the
-# .deb and .rpm; the Windows and macOS packages carry its programs; the
-# Linux tarball builds it from the source. To update: a newer release's
-# tag and sums here, with a skwir release. An .rpm the repositories' key
-# did not sign ends with `unsigned`: Fedora's repository lists no skwird
-# then (dnf checks each package), until a release of it signed is pinned.
-release v0.2.0
-skwird_0.2.0-1_amd64.deb 699ab0e55ce0f49f05e6d17a5d7680265d8eb2234d7ab1b8b7edf5a384587bfa
-skwird_0.2.0-1ubuntu24.04_amd64.deb ef52b882703794cb61291dc3fc7302b46df010c0a2f57e2f91d62e926911b651
-skwird-0.2.0-1.x86_64.rpm 3c6da254c1ef73bedacaa8d5a9ec730cc30e93d816af5c10e6cdaec5dea716e5 unsigned
-skwird-0.2.0-windows-x86_64.zip 3960813f63c3837f9f4f901be7db4bb160ab4022395d74c9c594fa79d2eb0103
-skwird-0.2.0-macos-arm64.tar.gz e36ac35b5268af49a1f4cd2315967fe60d6cf5dafbdeb1c7b81f4baaac6d7b6e
-source v0.2.0.tar.gz 78a33d216159469757505f186a4c9e68532662183723bbd331b22f2f145f2b0c
+# skwird as skwir's packages bring it (ADR-050, amended 2026-11-26 and
+# 2026-11-27): one release of skwir-org/skwird, each file's SHA-256 as the
+# release's SHA256SUMS says. skwir's apt and dnf repositories list the .deb
+# and .rpm; the Windows and macOS packages and the Linux tarball carry its
+# programs, its licences and its notices from its archive for that system
+# (tools/package/skwird.py). To update: a newer release's tag and sums
+# here, with a skwir release. An .rpm the repositories' key did not sign
+# ends with `unsigned`: Fedora's repository then lists no skwird (dnf
+# checks each package), until a release of it signed is pinned.
+release v0.3.0
+skwird_0.3.0-1_amd64.deb ecfedfbb1a742fd490bd8ffa0c089eba03043cd6edea5e7ea952b80d206b55c0
+skwird_0.3.0-1ubuntu24.04_amd64.deb ef4a69b26f348f8da8d4262c0976cfaec40465b3fd09a8e2d5f226c17c1296e4
+skwird-0.3.0-1.x86_64.rpm 7bedb8956656e9df1d35f086f59a511599948495dad59058457731bd56937a7c
+skwird-0.3.0-linux-x86_64.tar.gz 7442a9e140f9ad59f079d27ca0d24d1beb0537832f0fded55b382a800f8e5256
+skwird-0.3.0-windows-x86_64.zip c1bc25354e50dcc2db5d565c6530c61ef0546fcf51474e3dff98c45564e31d88
+skwird-0.3.0-macos-arm64.tar.gz 4191850a61e888ec183192214c92d1042db22b6bcadf0f699624af966dc313c0

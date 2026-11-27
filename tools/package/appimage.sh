@@ -22,9 +22,9 @@ mkdir -p "$cache" "$out" "$dist"
 exec 9>"$cache/build.lock"
 flock -n 9 || { echo 'An AppImage build is already running' >&2; exit 1; }
 python3 "$tree/tools/package/appimage/fetch.py" "$cache/downloads"
-# skwird's source, which the tarball's skwird is built from in the root
-# (tools/package/appimage/skwird.sh), checked against skwird.lock.
-python3 "$tree/tools/package/skwird.py" fetch source "$cache/downloads" >/dev/null
+# skwird's plain build for Linux, which the tarball carries (build.sh),
+# checked against skwird.lock.
+python3 "$tree/tools/package/skwird.py" fetch linux "$cache/downloads" >/dev/null
 if [ ! -d "$root" ]; then
     mkdir -p "$root"
     tar --no-same-owner -xzf "$cache/downloads/ubuntu-base.tar.gz" -C "$root" --exclude='./dev/*'
@@ -80,7 +80,8 @@ version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$tree/Cargo.toml" | head -1)"
 image="skwir-$version-x86_64.AppImage"
 tarball="skwir-$version-linux-x86_64.tar.gz"
 enter "$test_root" python3 tools/package/appimage/check.py "/out/$image" --film /out/check-film.mkv
-enter "$test_root" python3 tools/package/appimage/check.py "/out/$tarball" --film /out/check-film.mkv
+enter "$test_root" python3 tools/package/appimage/check.py "/out/$tarball" --film /out/check-film.mkv \
+    --skwird-archives /inputs
 # Only verified candidates replace the previous distributables.
 install -m755 "$out/$image" "$dist/$image.part"
 install -m644 "$out/$tarball" "$dist/$tarball.part"

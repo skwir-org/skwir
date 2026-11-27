@@ -11,7 +11,9 @@ skwird; its journal feeds Skwir's derived indexes. Point 7 amended
 same day: the provider is a plugin of its own, `skwird`, behind a seam
 core owns, which plocate's answer joins. Point 2 amended 2026-11-26:
 packages may carry skwird beside Skwir's program, found after `PATH`,
-and Skwir says where it is missing.
+and Skwir says where it is missing; and 2026-11-27: they carry skwird
+0.3.0, its release's programs, licences and notices for each system, and
+take back only what their own copy registered or runs.
 
 ## Context
 
@@ -233,3 +235,40 @@ people never had it, every search walked, and nothing said why. So:
   Skwir ran: the next search said nothing more. Not checked: Windows and
   macOS packages carrying it (other tracks), a real engine started from a
   carried copy.
+
+### 2026-11-27: skwird 0.3.0, carried as its release gives it
+
+skwird 0.3.0 answers what carrying it left open (above, and
+`docs/PLAN.md`):
+
+- **Each system's archive, nothing built here.** The lock
+  (`tools/package/skwird.lock`) pins skwird 0.3.0's files by the sums of
+  its release's `SHA256SUMS` (GitHub's digests agree), its new plain
+  Linux build among them, which the Linux tarball now carries as
+  Windows' and macOS's packages carry theirs (ADR-052, amended); the
+  source archive, which only that build read, is no longer pinned. Each
+  archive's `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt`
+  (its program's crates, Rust's standard library, on Windows MinGW-w64's
+  runtime) are carried beside the program as they are, in
+  `licenses/skwird`; `notices.py` no longer makes skwird's from its
+  `Cargo.lock`.
+- **Only this copy's.** `skwird stop` stops the user's engine where it
+  runs this copy (a program in the same folder), its end waited for, 10 s
+  at most; `skwird logon remove --if-mine` (Windows, macOS) takes back the
+  logon task or LaunchAgent where it runs this copy, its engine stopped
+  first. Another copy's (a skwird installed on its own, or Homebrew's) is
+  left, and named. Windows' installer runs `stop` as Skwir is removed or
+  upgraded, before Windows Installer looks for files in use, and `logon
+  remove --if-mine` as its user removes it (ADR-074, amended); the guide
+  gives the same two steps, `logon remove --if-mine` first, for the zip
+  and the Mac's app, which have no uninstaller. Skwir carrying skwird
+  0.2.0 (0.7.0, 0.7.1) stops nothing as it is upgraded.
+- **The repositories list Fedora's too.** skwird 0.3.0's `.rpm` is signed
+  by the repositories' key (`rpmkeys --checksig` with
+  `tools/package/repository/skwir.asc` alone: its EdDSA signature, key
+  `F6EB0DC17B1A3E878C482DB30CF3A0EA48004329`, OK), so it is no longer
+  marked `unsigned`, and Fedora's repository lists it beside Debian's and
+  Ubuntu's (ADR-142, amended 2026-11-26).
+- **Checked:** see ADR-052, ADR-074 and ADR-075 (amended 2026-11-27) and
+  `repository-check.sh`: Debian, Ubuntu and Fedora roots install skwird
+  0.3.0 through the redirect to its release, Fedora under `gpgcheck=1`.

@@ -30,11 +30,10 @@ tools/package/macos/programs, built for Apple silicon (macos/skwir,
 ADR-075).
 
 skwird, skwir's index of names (ADR-050), is another project's program,
-which Windows' and macOS's packages and Linux's tarball carry (amended
-2026-11-26): its notices are made from its own Cargo.lock, at the release
-tools/package/skwird.lock pins, its source fetched and checked by
-tools/package/skwird.py, for each system that carries it (skwird for the
-tarball, windows/skwird, macos/skwird).
+which Windows' and macOS's packages and Linux's tarball carry: its
+notices are its release's own, in each archive tools/package/skwird.lock
+pins, which tools/package/skwird.py carries beside it as they are
+(amended 2026-11-27). None is made here.
 """
 
 import functools
@@ -45,11 +44,6 @@ import subprocess
 import sys
 import textwrap
 
-# skwird.py, beside this file, found wherever this file is loaded from (a
-# test loads it by its path).
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import skwird  # noqa: E402
-
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "tools/package/about.toml"
 OUT = ROOT / "tools/package/notices"
@@ -59,13 +53,6 @@ NAME = "THIRD-PARTY-NOTICES"
 # tools/package/macos.sh).
 WINDOWS = "x86_64-pc-windows-gnu"
 MACOS = "aarch64-apple-darwin"
-# skwird's notices, for each system whose package carries it: Linux's
-# tarball (about.toml's targets), Windows' and macOS's packages.
-SKWIRD = {
-    pathlib.Path("skwird") / NAME: ("skwird for Linux", None),
-    pathlib.Path("windows/skwird") / NAME: ("skwird for Windows", WINDOWS),
-    pathlib.Path("macos/skwird") / NAME: ("skwird for macOS", MACOS),
-}
 
 
 def lines(name):
@@ -126,40 +113,20 @@ def manifest(program):
 
 
 @functools.cache
-def skwird_manifest():
-    """skwird's program's crate, in its source at the release pinned
-    (tools/package/skwird.py), unpacked in target/notices, its crates
-    fetched; cargo runs from skwir's root, so its Rust is skwir's."""
-    try:
-        tree = skwird.source(ROOT / "target/notices/skwird", notices=False)
-    except skwird.Refused as refused:
-        sys.exit(f"skwird's source: {refused}")
-    subprocess.run(["cargo", "fetch", "--locked", "--quiet", "--manifest-path", str(tree / "Cargo.toml")],
-                   cwd=ROOT, check=True)
-    return tree / "crates/skwird/Cargo.toml"
-
-
 def licences(program, target=None):
     """cargo-about's reading of what `program` links, built for `target`
     (about.toml's where `None`): (id, name, text) -> the crates that use
     it, as `name version`."""
-    return licences_of(manifest(program), target)
-
-
-@functools.cache
-def licences_of(crate, target=None):
-    """cargo-about's reading of what the program of the crate whose
-    manifest is `crate` links, built for `target`."""
     run = subprocess.run(
         [
             "cargo", "about", "generate", "--offline", "--fail",
-            "--format", "json", "-c", str(CONFIG), "-m", str(crate),
+            "--format", "json", "-c", str(CONFIG), "-m", str(manifest(program)),
             *(["--target", target] if target else []),
         ],
         cwd=ROOT, capture_output=True, text=True,
     )
     if run.returncode != 0:
-        sys.exit(f"cargo about for {crate}:\n{run.stderr}")
+        sys.exit(f"cargo about for {program}:\n{run.stderr}")
     found = {}
     for licence in json.loads(run.stdout)["licenses"]:
         # A crate's licence file may end its lines as Windows does.
@@ -224,15 +191,13 @@ def katex_fonts():
 
 
 @functools.cache
-def own(workspace=None):
-    """The names of skwir's own crates (or, with `workspace`, a manifest,
-    those of its workspace): its workspace's members, told by what they
-    are, never by how a name starts (skwird's client and protocol, copied
-    in vendor/, start as skwir's do and are another project's, under
-    their own licence)."""
+def own():
+    """The names of skwir's own crates: its workspace's members, told by
+    what they are, never by how a name starts (skwird's client and
+    protocol, copied in vendor/, start as skwir's do and are another
+    project's, under their own licence)."""
     run = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--no-deps",
-         *(["--manifest-path", str(workspace)] if workspace else [])],
+        ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--no-deps"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     )
     return {package["name"] for package in json.loads(run.stdout)["packages"]}
@@ -243,37 +208,17 @@ def notices(package, programs, target):
     for program in programs:
         for key, crates in licences(program, target).items():
             merged.setdefault(key, set()).update(crates)
-    out = listed(package, merged, own(), (
-        f"The programs of this package ({', '.join(programs)}) are built from "
-        "skwir's own code, under the package's licence, and the crates below, "
-        "each under the licence it is listed with, whose text follows."))
-    if "skwir" in programs:
-        out += carried()
-    if "skwir-math-worker" in programs:
-        out += katex_fonts()
-    return "\n".join(out) + "\n"
-
-
-def skwird_notices(package, target):
-    """The notices of skwird's program, built for `target`: the crates of
-    skwird's own Cargo.lock it links, its own crates left out."""
-    crate = skwird_manifest()
-    out = listed(package, licences_of(crate, target), own(crate.parents[2] / "Cargo.toml"), (
-        f"skwird {skwird.Lock().version}, carried beside skwir, is built from "
-        "skwird's own code, under its licence (MIT OR Apache-2.0: LICENSE-MIT "
-        "and LICENSE-APACHE beside this file), and the crates below, each under "
-        "the licence it is listed with, whose text follows."))
-    return "\n".join(out) + "\n"
-
-
-def listed(package, merged, own_names, said):
-    """The notices' lines: who they are for, then each licence and the
-    crates under it, but those of the project itself."""
-    ours = {c for crates in merged.values() for c in crates if c.split()[0] in own_names}
+    ours = {c for crates in merged.values() for c in crates if c.split()[0] in own()}
     out = [
         f"Third-party software in {package}",
         "",
-        *textwrap.wrap(said, 72, break_on_hyphens=False),
+        *textwrap.wrap(
+            f"The programs of this package ({', '.join(programs)}) are built from "
+            "skwir's own code, under the package's licence, and the crates below, "
+            "each under the licence it is listed with, whose text follows.",
+            72,
+            break_on_hyphens=False,
+        ),
         "",
     ]
     rule = "-" * 72
@@ -282,7 +227,11 @@ def listed(package, merged, own_names, said):
         if not used:
             continue
         out += [rule, f"{name} ({ident})", "", "Used by: " + ", ".join(used), "", text, ""]
-    return out
+    if "skwir" in programs:
+        out += carried()
+    if "skwir-math-worker" in programs:
+        out += katex_fonts()
+    return "\n".join(out) + "\n"
 
 
 def main():
@@ -294,7 +243,6 @@ def main():
     subprocess.run(["cargo", "fetch", "--locked", "--quiet"], cwd=ROOT, check=True)
     wanted = files()
     made = {path: notices(*wanted[path]) for path in wanted}
-    made |= {path: skwird_notices(*SKWIRD[path]) for path in SKWIRD}
     kept = {p.relative_to(OUT) for p in OUT.rglob(NAME)}
     if check:
         stale = [p for p, text in made.items()
@@ -308,8 +256,7 @@ def main():
     for path, text in made.items():
         (OUT / path).parent.mkdir(parents=True, exist_ok=True)
         (OUT / path).write_bytes(text.encode())
-        print(f"{(OUT / path).relative_to(ROOT)}: "
-              + (f"{len(wanted[path][1])} programs" if path in wanted else "skwird"))
+        print(f"{(OUT / path).relative_to(ROOT)}: {len(wanted[path][1])} programs")
     # A package no longer made, or no longer Arch's own.
     for path in kept - made.keys():
         (OUT / path).unlink()

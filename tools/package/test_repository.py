@@ -216,6 +216,60 @@ class Skwird(unittest.TestCase):
             self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
 
 
+# rpm's readings of a package (`rpmkeys --checksig --verbose`), the key
+# that signs imported or not: rpm 4.20 (the flake's), then rpm 6.1.
+SIGNED_4 = """skwird-0.3.0-1.x86_64.rpm:
+    Header V4 EdDSA/SHA512 Signature, key ID 48004329: OK
+    Header SHA256 digest: OK
+    Header SHA1 digest: OK
+    Payload SHA256 digest: OK
+"""
+UNSIGNED_4 = """skwird-0.2.0-1.x86_64.rpm:
+    Header SHA256 digest: OK
+    Header SHA1 digest: OK
+    Payload SHA256 digest: OK
+"""
+SIGNED_6 = """skwird-0.3.0-1.x86_64.rpm:
+    Header OpenPGP V4 EdDSA/SHA512 signature, key fingerprint: f6eb0dc17b1a3e878c482db30cf3a0ea48004329: OK
+    Header SHA256 digest: OK
+    Payload SHA256 digest: OK
+"""
+UNSIGNED_6 = """skwird-0.2.0-1.x86_64.rpm:
+    Header OpenPGP DSA signature: NOTFOUND
+    Header OpenPGP RSA signature: NOTFOUND
+    Header OpenPGP signature: NOTFOUND
+    Header SHA256 digest: OK
+    Payload SHA256 digest: OK
+    Legacy OpenPGP DSA signature: NOTFOUND
+    Legacy OpenPGP RSA signature: NOTFOUND
+"""
+
+
+class Signatures(unittest.TestCase):
+    """What rpm says of a package, read as dnf would take it: signed by the
+    key that signs, or why not, whichever rpm read it."""
+
+    def test_signed_by_the_key_is_taken_as_rpm_4_and_6_say_it(self):
+        for said in (SIGNED_4, SIGNED_6):
+            self.assertIsNone(repository.refusal(said, 0), said)
+
+    def test_no_signature_is_refused_as_rpm_4_and_6_say_it(self):
+        for said, code in ((UNSIGNED_4, 0), (UNSIGNED_6, 1)):
+            self.assertEqual(repository.refusal(said, code), "unsigned", said)
+
+    def test_another_key_is_named_as_rpm_4_and_6_say_it(self):
+        other_4 = SIGNED_4.replace("48004329: OK", "48004329: NOKEY")
+        other_6 = SIGNED_6.replace("key fingerprint: f6eb0dc17b1a3e878c482db30cf3a0ea48004329: OK",
+                                   "key ID 0cf3a0ea48004329: NOKEY")
+        self.assertEqual(repository.refusal(other_4, 1), "signed by key ID 48004329")
+        self.assertEqual(repository.refusal(other_6, 1), "signed by key ID 0cf3a0ea48004329")
+
+    def test_a_digest_that_fails_is_refused_whatever_rpm_says_after_it(self):
+        bad = SIGNED_4.replace("Payload SHA256 digest: OK", "Payload SHA256 digest: BAD (Expected 1a != 2b)")
+        self.assertEqual(repository.refusal(bad, 1), "a digest fails")
+        self.assertEqual(repository.refusal(SIGNED_6, 1), "a digest fails")
+
+
 def deb(path, version, body=b""):
     """A `.deb` as nfpm makes one: its version in its control, `body` its
     data."""

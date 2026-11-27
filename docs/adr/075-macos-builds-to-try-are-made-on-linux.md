@@ -160,3 +160,20 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   alone, naming no folder of the machine that built it, its licences its
   release's; the seals of both bundles whole (229 entries, 106 programs
   and libraries signed). Never run.
+- 2026-11-27: the bundle carries skwird 0.3.0's macOS archive, and its
+  notices are the archive's own (`THIRD-PARTY-NOTICES.txt`: the crates
+  built into its program and Rust's standard library), carried as they
+  are beside its licences, no longer made by `notices.py` from its
+  `Cargo.lock`. skwird 0.3.0 can take back only what this copy
+  registered, and stop only this copy's engine: before the app goes, its
+  user runs `/Applications/skwir.app/Contents/MacOS/skwird logon remove
+  --if-mine`, which takes back the LaunchAgent where it runs this copy,
+  its engine stopped first (one that runs another copy, a skwird
+  Homebrew installed, is left and named), then `.../skwird stop`, which
+  stops an engine a search started from this copy, waiting 10 s at most
+  for it to end, and leaves another copy's running. The LaunchDaemon
+  stays `sudo .../skwird service remove`, as before. Looked over
+  (`macos-check.sh`, on a bundle staged from the 0.7.1 programs): skwird
+  0.3.0 arm64, for macOS 11 or later, the system's libraries alone,
+  signed again with the bundle, its licences and notices its release's
+  byte for byte; both bundles' seals whole. Never run.

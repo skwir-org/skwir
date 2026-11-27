@@ -61,7 +61,7 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
                "Resources/licenses/fonts/Inter/LICENSE.txt",
                "Resources/licenses/fonts/JetBrainsMono/OFL.txt",
                "Resources/licenses/skwird/LICENSE-MIT", "Resources/licenses/skwird/LICENSE-APACHE",
-               "Resources/licenses/skwird/THIRD-PARTY-NOTICES",
+               "Resources/licenses/skwird/THIRD-PARTY-NOTICES.txt",
                "Resources/licenses/libarchive/COPYING", "Resources/licenses/libarchive/VERSIONS",
                "Resources/licenses/zstd/LICENSE", "_CodeSignature/CodeResources",
                "Frameworks/GStreamer.framework/Versions/1.0/lib/libgstreamer-1.0.0.dylib",
@@ -148,7 +148,7 @@ done
 # program, for Apple silicon and macOS 11 or later (skwird's own floor,
 # below skwir's), linked to the system's libraries alone, signed again
 # with the bundle (the seal below) and so no longer bearing its archive's
-# signature; its licences are its release's.
+# signature; its licences and notices are its release's.
 python3 tools/package/skwird.py macos "$scratch/skwird"
 binary="$app/MacOS/skwird"
 file -b "$binary" | grep -q '^Mach-O 64-bit arm64 executable' || { echo "skwird: not an arm64 program" >&2; exit 1; }
@@ -167,7 +167,7 @@ if strings "$binary" | grep -qE "$HOME|/nix/store/[a-z0-9]{32}-"; then
     echo "skwird names a folder of the machine that built it" >&2
     exit 1
 fi
-for licence in LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES; do
+for licence in LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.txt; do
     cmp -s "$scratch/skwird/licenses/skwird/$licence" "$app/Resources/licenses/skwird/$licence" \
         || { echo "Resources/licenses/skwird/$licence is not skwird's" >&2; exit 1; }
 done
@@ -175,7 +175,7 @@ if cmp -s "$scratch/skwird/skwird" "$binary"; then
     echo "skwird bears its archive's signature: the bundle's signing left it" >&2
     exit 1
 fi
-echo "ok: skwird $(sed -n 's/^release v//p' tools/package/skwird.lock): arm64, macOS $minos or later, the system's libraries alone, no build folder, signed again with the bundle, its licences beside"
+echo "ok: skwird $(sed -n 's/^release v//p' tools/package/skwird.lock): arm64, macOS $minos or later, the system's libraries alone, no build folder, signed again with the bundle, its licences and notices beside"
 # GStreamer in the bundle (tools/package/gstreamer.py, ADR-076), a
 # framework whose main binary is libgstreamer: each library, plugin and
 # the scanner Apple silicon's alone, and what each loads the system's or

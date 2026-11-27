@@ -77,11 +77,14 @@ DjVu, 3D models and archives and plays audio and video; the Poppler and
 MuPDF readers are not in it yet. It has never run anywhere: everything below is
 new. Intel Macs have no build yet. It carries skwird, the index that
 answers name searches (`skwir.app/Contents/MacOS/skwird`), which a
-search starts on its own. The app has no uninstaller: if you ran that
-copy's `skwird logon add` (or `sudo skwird service add`), run
-`skwir.app/Contents/MacOS/skwird logon remove` (or `sudo
-skwir.app/Contents/MacOS/skwird service remove`) before moving the app
-to the Trash, or macOS keeps trying to start a program that is gone.
+search starts on its own. The app has no uninstaller: before moving it
+to the Trash, run `skwir.app/Contents/MacOS/skwird logon remove --if-mine`
+(it takes back a LaunchAgent that copy's `skwird logon add` made, and
+leaves one of a skwird installed on its own), then
+`skwir.app/Contents/MacOS/skwird stop` (it stops that copy's engine), and,
+if you ran `sudo skwird service add` from it, `sudo
+skwir.app/Contents/MacOS/skwird service remove`; or macOS keeps trying to
+start a program that is gone.
 
 1. **It opens** (try). The window draws, a folder lists, the sidebar shows
    the home folder's places and the volumes under `/Volumes`, scrolling a
@@ -171,11 +174,11 @@ models and archives and plays audio and video; the Poppler and MuPDF
 readers are not in it yet. Wine started its programs and installed it, but cannot draw its
 window: everything below is new. Both carry skwird, the index that
 answers name searches (`skwird.exe` beside `skwir.exe`), which a search
-starts on its own. Removing the installer's copy takes back skwird's
-logon task (`skwird logon add`), whichever copy registered it, a skwird
-installed on its own included, whose own `skwird logon add` registers it
-again; with the zip, run `skwird logon remove` before deleting its
-folder. Do not register
+starts on its own. Removing the installer's copy stops the engine it ran
+and takes back the logon task it registered (`skwird logon add`), and
+leaves those of a skwird installed on its own; with the zip, run its
+`skwird.exe logon remove --if-mine`, then `skwird.exe stop`, before
+deleting or replacing its folder. Do not register
 skwird's system service (`skwird service add`) from either: they sit in
 your own folder, which a program of yours could change under a service
 running as the system.
@@ -230,8 +233,10 @@ running as the system.
    With skwird: remove or update the installed copy within a minute of a
    search, and after `skwird logon add` from it, and say whether Windows
    asks for a restart or leaves `skwird.exe` or `skwirdw.exe` in its
-   folder (an engine still running holds its program, and nothing ends it
-   first: ADR-074), and whether a console window flashes as it is removed.
+   folder (the installer stops this copy's engine first; one an older
+   skwir's copy ran, skwird 0.2.0, it cannot: ADR-074), whether the logon
+   task is still there after an update and gone after a removal, and
+   whether a window flashes as it is removed.
    The helpers that link libraries (Poppler, MuPDF) need those built for
    Windows. Signing needs a
    code-signing certificate: the project decides that with you.

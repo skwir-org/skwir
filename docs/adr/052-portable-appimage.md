@@ -11,7 +11,8 @@ Decision 2 amended 2026-11-22 (ADR-148): libheif and libde265 built
 too, for the HEIF helper.
 Decision 7 amended 2026-11-26 (ADR-050, the user's decision): the
 tarball carries skwird, built in the root from its release's source;
-the AppImage never does.
+the AppImage never does. Amended 2026-11-27: the tarball carries
+skwird's own plain Linux build, from its 0.3.0, built nowhere here.
 
 ## Context
 
@@ -151,6 +152,20 @@ filesystem, as `tools/package/try.sh` already does.
    into those the link shares. `check.py` refuses an AppImage holding
    any of it, and starts the tarball's on a home of its own, where it
    indexes a folder and finds a name.
+   **Amended 2026-11-27:** from skwird 0.3.0, skwird's release has a plain
+   Linux build (`skwird-<version>-linux-x86_64.tar.gz`, made in an Ubuntu
+   22.04 root as skwir is here: glibc 2.34 at most), and the tarball
+   carries that, as Windows' and macOS's packages carry their system's
+   archive: pinned by its sum in `tools/package/skwird.lock`, fetched by
+   `appimage.sh` beside the root's other downloads, checked again in the
+   root and unpacked there (`skwird.py linux`, every link refused), its
+   program, `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt`
+   taken as it holds them, nothing else of it (its systemd units and
+   `INSTALL.txt` are for a skwird set up by hand). Nothing of skwird is
+   built here any more: `skwird.sh`, its source archive in the lock and
+   the notices made from its `Cargo.lock` are gone. `check.py` compares
+   the tarball's skwird, licences and notices with its release's, byte
+   for byte (`--skwird-archives`, the root's inputs).
 
 ## Consequences
 
@@ -226,3 +241,15 @@ programs predate: the tarball's 285 ELFs (the AppImage's 284 and
 skwird), its skwird finding a name in a folder it indexed; the AppImage
 carrying none of skwird. Not built: the whole of `just package-appimage`
 with skwir's programs of now.
+
+skwird's plain build in the tarball, 2026-11-27: skwird 0.3.0's Linux
+archive (SHA-256 its release's SHA256SUMS', which GitHub's digests
+match) carried by `skwird.py linux` with the build root's Python 3.10,
+offline, from read-only inputs; its program needs glibc 2.34 at most and
+links libc, libm, libgcc_s and the loader. The 0.7.1 tarball, its skwird
+replaced as `build.sh` now places it and packed as `build.sh` packs,
+passed `check.py` in the runtime-only root: 285 ELFs at glibc 2.35 at
+most, skwird, its licences and notices its release's byte for byte, an
+engine started on a home of its own indexing a folder and finding a
+name, then the PDF, HEIF, media and window checks. Not built: the whole
+of `just package-appimage`.
