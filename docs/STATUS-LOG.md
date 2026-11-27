@@ -24661,3 +24661,81 @@ rule in `docs/invariants/remote.md`.
   1.60.3: not looked into.
 - **Not checked:** the user's watch; the race itself, which no test here
   makes happen (GVfs's own timing).
+
+## 2026-11-27, night: skwird 0.3.0, two reviews, 0.7.2
+
+On the user's answers before sleeping: skwird 0.3.0 adopted, a review of
+everything since v0.7.1 and its fixes, then 0.7.2, published but for the
+site.
+
+- **Dependencies** within their ranges (5bc8eed1): allocator-api2,
+  blake3, ferroni, rmcp; `just deny` clean, notices made again, 1,139
+  tests of the crates using them.
+- **skwird 0.3.0's client** copied (e230b716): identical to the tag,
+  only the two versions moving in Cargo.lock; `Client::stop` called
+  nowhere (an engine ends a minute after its last client; uninstallers
+  run `skwird stop`). The plugin's 50 tests, skwird_engine 7/7 against
+  an engine built from the tag.
+- **skwird 0.3.0 carried** (e2957ce0, c85a390d, 5413eedf; ADR-050, 052,
+  074, 075, 142 amended): the lock at v0.3.0, each sum its release's
+  SHA256SUMS, which GitHub's digests match; its `.rpm` signed by the
+  repositories' key (checked with `skwir.asc` alone, rpm 4.20 and 6.1),
+  so Fedora's repository lists it; the Linux tarball carries skwird's
+  plain Linux build (no build of skwird here any more, the source pin
+  gone); each archive's own THIRD-PARTY-NOTICES.txt carried. Windows'
+  installer: `skwirdw.exe stop` as skwir is removed (immediate, 1300),
+  `logon remove --if-mine` in the removal's script (1501), and, as a
+  later skwir upgrades one after 0.7.1, the installed copy's `stop`
+  before InstallValidate (`SkwirdStopOlder`, type 114 at 1301, on an
+  AppSearch for its skwirdw.exe and a detect-only Upgrade row; wixl 0.106
+  has no FileSearch, so tools/package/windows/msi.sh adds the search's
+  rows with msibuild). windows-check.sh, under Wine, 45 checks: four
+  removals (nothing registered, the copy's engine running, another
+  copy's task and engine left, the copy's task taken back), upgrades
+  between packages made from skwir.wxs (the newer's stop ending the
+  older's engine before InstallValidate, also where the older stops
+  nothing; nothing run from 0.7.1 or without skwirdw.exe), a prefix left
+  by a killed run made anew. repository.py reads rpm 6's signature words
+  and refuses a BAD digest followed by more words. The zip's and the
+  Mac's steps: before deleting a folder, `logon remove --if-mine` then
+  `stop`; `logon add` again from the new one.
+- **The GVfs SFTP test** (f38aac18): its private runtime folder was made
+  in `$TMPDIR`, which a nested `nix develop` makes long; GVfs 1.60.3's
+  ssh control socket below it passed a socket's 107 bytes, ssh ended
+  once logged in, and GVfs said only "connection failed". Made in /tmp
+  itself, length asserted; ssh given no agent, the server none of the
+  user's keys. `remote-check` runs every part and names each that failed
+  (aba2a06e): its stopping at the first failure had hidden a stale test
+  of Nearby (2448a550, a menu title read as words since ADR-139).
+  `just remote-check` green: 219 tests, NFS, AFP, AFC, Nearby, three
+  keyrings.
+- **A key's passphrase through GVfs** (60f97089, 7cb91429; ADR-082):
+  told by GVfs's words alone, in its daemon's language
+  (`gvfs_catalog`: its `.mo` catalogs, the daemon's environment and
+  install found through its bus and `/proc`), never by what it asks
+  beside. Only a recognised server password may be kept and answered
+  with the address's user; a passphrase, a proxy's password, a code, an
+  unknown question are asked each time, never kept; one not the server's
+  that asks a user GVfs offers none for ends the mount unasked, so the
+  next tool is tried (007f1eb9, 1fe0919a). All 82 languages of
+  GVfs 1.62.0 tell the kinds apart; a test asks a passphrase through a
+  real GVfs and ssh, in French whatever the runner speaks.
+- **GVfs without its FUSE bridge** (9115f5c8): unusable once its daemon
+  has run 10 s without one (its age from `/proc`), so the next tool is
+  tried and nothing is asked; tested under `GVFS_DISABLE_FUSE`.
+- **Mount points as the mount table names them** (3a9c8b45, b18c3bfe):
+  `fs::reach::as_listed` (links resolved, the point's own too, nothing
+  read through a mount or on a remote); both runtime folders through it,
+  read once (`folders::session_runtime`); fstab's points read with its
+  entries on a worker (`Mounted::ejects`, nothing resolved under the
+  plugin's lock) and its mount waited for; a cancel said as one by every
+  connector; servers' folders watched by identity (FileId and birth
+  time), so one replaced whole is read again. On macOS an sshfs or rclone
+  mount in `$TMPDIR` was never found (compiled only, never run there).
+- **Reviews:** first rev-pkg (7 low) and rev-rust (1 medium, 5 low);
+  second r2-pkg (1 medium, 5 low) and r2-remote (2 medium, 4 low: a
+  WebDAV proxy given the server's kept password, the catalog tests
+  failing under Wine); a third, r3, on the second's fixes (3 low: KIO's
+  answer compared unresolved, Eject reading fstab on the window thread,
+  fixed in 72325aeb; a proxy's password asked in a loop, already ended by
+  007f1eb9). Each fixed.
