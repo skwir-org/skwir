@@ -32,13 +32,13 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-26)
+## Current status (2026-11-27)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.7.1, released 2026-11-26 on GitHub, the AUR and Homebrew's
-  tap (its cask's job checked the app's seal on a Mac), the repositories
-  with the site's next push; skwird carried by its packages and
-  recommended by the others (STATUS-LOG, 2026-11-26: 0.7.1 released); 0.7.0
+  version 0.7.2, released 2026-11-27 on GitHub, the AUR, Homebrew's tap
+  and the repositories, carrying skwird 0.3.0 (STATUS-LOG, 2026-11-27:
+  0.7.2 released); 0.7.1 2026-11-26, its cask's job the first Mac to
+  check the app's seal; 0.7.0
   2026-11-25 with skwird 0.2.0; 0.6.1 2026-11-23 on GitHub, the AUR and the
   repositories, 0.6.0 2026-11-21 on GitHub and the AUR's three bases,
   0.5.1 2026-11-16, 0.5.0 2026-11-14, 0.4.0 2026-11-10, 0.3.1

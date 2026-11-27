@@ -24739,3 +24739,42 @@ site.
   answer compared unresolved, Eject reading fstab on the window thread,
   fixed in 72325aeb; a proxy's password asked in a loop, already ended by
   007f1eb9). Each fixed.
+
+## 2026-11-27: 0.7.2 released
+
+On the user's stop point ("publish all but the site"), then their
+answers in the morning: the site pushed by them, the AUR by the agent
+with their keys.
+
+- **The first `release-build`** (on a041c6f9) stopped in test-all:
+  remote_configs' `what_rclone_says_a_storage_can_do_shapes_its_mount`
+  moved a folder on a WebDAV mount, then its Disconnect was refused,
+  "move is under way there". Alone it passed 13 runs of 13. Cause:
+  `Executor::run_job` answered a blocking run before its `Ended` guard
+  took it out of those started. Fixed in f2113767 (ended before it is
+  answered; a test of 50 blocking runs asking at once what is under
+  way); the tag moved there.
+- **The second run** passed whole: release-check, the AppImage and the
+  tarball, Debian's, Ubuntu's, Fedora's (signed) and Arch's packages,
+  Windows' under Wine (its upgrade scenarios among its checks), the Mac's
+  looked over. `release-verify` agreed.
+- **Pushed** main (de340869..f2113767) and the tag over HTTPS with `gh`'s
+  credential (ssh waited on the user's validation overnight). One
+  draft, 44 assets; published 08:07:52 UTC, Latest.
+- **Homebrew's tap:** the 0.7.2 cask on `cask/skwir` (981fd40, the
+  published zip's SHA-256, GitHub's digest alike), its job green
+  (45963409317: style, audit, install, codesign's deep check, uninstall;
+  skwird's formula too), the tap's main fast-forwarded to it, above
+  skwird 0.3.0's formula the user had merged (274c049).
+- **The repositories:** `just repositories v0.7.2` into the site's
+  static folder: both apt suites and Fedora's list skwird 0.3.0 (its
+  `.rpm` signed). The site's session committed them with the 0.7.2
+  pages (c9a792a, 68eedfa, 1314f70, fe00e23); the user pushed the site.
+- **The AUR:** skwir 7ee49e2, skwir-bin 7a02da5 (its tarball's SHA-256
+  the bundle's and GitHub's), skwir-git 297db90.
+- **The night's research for the next arc**, full-text search, is in the
+  morning's decisions (not in the repository): the plan of ADR-089 to
+  095 checked against today's code, engines compared (byte trigrams,
+  Tantivy, SQLite FTS5; others ruled out), the system's indexes as
+  hints. Its measurements ran on a loaded machine: measure again before
+  recording any.
