@@ -10,13 +10,14 @@
 //! program, settles, then the servers are read again, which follows what
 //! they then name.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use parking_lot::Mutex;
+use skwir_core::entry::FileId;
 use skwir_core::fs::{Settled, reach, volume};
 use skwir_core::os_path;
 
@@ -35,7 +36,9 @@ pub struct Sources {
     watcher: Settled,
     /// What counts among the events: shared with the watcher's handler.
     followed: Arc<Mutex<Vec<Source>>>,
-    watched: HashSet<PathBuf>,
+    /// The folders watched, each with the folder it was when it was
+    /// watched: one removed and made again at its path is another.
+    watched: HashMap<PathBuf, Option<Identity>>,
     /// Whether a folder followed could not be watched: what it holds is
     /// read again as a window comes to the front (`Sources::misses`).
     misses: bool,
@@ -63,7 +66,7 @@ impl Sources {
         Some(Sources {
             watcher,
             followed,
-            watched: HashSet::new(),
+            watched: HashMap::new(),
             misses: false,
             at: 0,
             fixed: Vec::new(),
@@ -78,10 +81,14 @@ impl Sources {
     /// under a lock another thread waits on.
     ///
     /// Whether a folder is watched now that was not after the read before
-    /// (the way to a file grown, its folder made since): what changed there
-    /// between this read and its watch was told to no one, so the caller
-    /// reads the servers once more, the watch in place. Never after the
-    /// first read, which nothing was watched before.
+    /// (the way to a file grown, its folder made since), or is another
+    /// folder than the one watched at its path then (removed and made
+    /// again, replaced whole by a dotfile manager: `Identity`): what
+    /// changed there between this read and its watch was told to no one,
+    /// so the caller reads the servers once more, the watch in place.
+    /// Never after the first read, though every watch begins after it
+    /// there too: a second read of the servers at every start would cost
+    /// the start, for a folder made in the moment between the two.
     pub fn follow(&mut self, followed: Followed, at: u64) -> bool {
         if at < self.at {
             return false;
@@ -98,26 +105,34 @@ impl Sources {
         // What counts first: what is told from the folders watched next
         // is weighed by it.
         *self.followed.lock() = every;
-        for gone in self
+        let gone: Vec<PathBuf> = self
             .watched
-            .difference(&folders)
+            .keys()
+            .filter(|folder| !folders.contains(*folder))
             .cloned()
-            .collect::<Vec<_>>()
-        {
+            .collect();
+        for gone in gone {
             self.watcher.unwatch(&gone);
             self.watched.remove(&gone);
         }
         self.misses = unwatched;
-        let mut added = false;
+        let mut late = false;
         for folder in folders {
+            // Read before the watch: a folder replaced between the two
+            // counts as another next time, read once more, never as the
+            // one watched.
+            let identity = Identity::of(&folder);
             if self.watcher.watch(&folder) {
-                added |= self.watched.insert(folder);
+                late |= self
+                    .watched
+                    .insert(folder, identity)
+                    .is_none_or(|before| before != identity);
             } else {
                 self.misses = true;
                 self.watched.remove(&folder);
             }
         }
-        added && !first
+        late && !first
     }
 
     /// Whether a folder followed could not be watched (the system's
@@ -136,9 +151,32 @@ impl Sources {
     /// The folders watched now: what a test asks.
     #[cfg(all(test, unix))]
     fn watched(&self) -> Vec<PathBuf> {
-        let mut watched: Vec<PathBuf> = self.watched.iter().cloned().collect();
+        let mut watched: Vec<PathBuf> = self.watched.keys().cloned().collect();
         watched.sort();
         watched
+    }
+}
+
+/// Which folder is at a path: its file, and when it was made where the
+/// system keeps that (a file system may give a folder removed's number to
+/// the next one made, as ext4 does). A stat, of this machine's folders
+/// alone (what is on a remote is never watched). One that cannot be read
+/// is the one before at its path where that one could not be read either:
+/// what cannot be told apart never reads the servers again, which would
+/// then read them again at each read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Identity {
+    file: FileId,
+    made: Option<SystemTime>,
+}
+
+impl Identity {
+    fn of(folder: &Path) -> Option<Identity> {
+        let meta = std::fs::symlink_metadata(folder).ok()?;
+        Some(Identity {
+            file: skwir_core::fs::stat::identity(folder, &meta)?,
+            made: meta.created().ok(),
+        })
     }
 }
 
@@ -545,7 +583,8 @@ mod tests {
         assert_eq!(sources.watched(), std::slice::from_ref(&here));
     }
 
-    /// A folder watched only after a read (its file's folder made since)
+    /// A folder watched only after a read (its file's folder made since),
+    /// or another folder than the one watched at its path (replaced whole),
     /// is said so, that the servers be read once more with the watch in
     /// place; never at the first read, nor for folders watched already.
     #[cfg(unix)]
@@ -573,7 +612,24 @@ mod tests {
             "its folder made since is watched late"
         );
         assert_eq!(sources.watched(), std::slice::from_ref(&config));
-        assert!(!sources.follow(Followed::of(vec![Source::File(file)]), 4));
+        assert!(!sources.follow(Followed::of(vec![Source::File(file.clone())]), 4));
+        // Replaced whole, as a dotfile manager does: made beside, the one
+        // watched moved away (it is kept, so no number is given again),
+        // the new one moved into its place.
+        let beside = root.join("its configuration.new");
+        std::fs::create_dir(&beside).unwrap();
+        std::fs::write(beside.join("servers"), "[nas]\ntype = sftp\n").unwrap();
+        std::fs::rename(&config, root.join("its configuration.old")).unwrap();
+        std::fs::rename(&beside, &config).unwrap();
+        assert!(
+            sources.follow(Followed::of(vec![Source::File(file.clone())]), 5),
+            "another folder at its path is watched late"
+        );
+        assert_eq!(sources.watched(), std::slice::from_ref(&config));
+        assert!(
+            !sources.follow(Followed::of(vec![Source::File(file)]), 6),
+            "the one watched now"
+        );
     }
 
     /// A link to a path from the root without a drive (`\dir\file`)

@@ -105,31 +105,54 @@ pub fn program_of(program: &Path) -> Option<PathBuf> {
 /// made with the default mode is open to all, and a socket made there
 /// reachable by them. Every part of skwir names it through here, so all
 /// agree on one folder.
+///
+/// The folder it is in is named with its links resolved, on every
+/// system, once: what skwir makes there is named as
+/// the system names it where it lists it, a mount's point in the mount
+/// table above all, which the kernel keeps resolved. macOS's `$TMPDIR`
+/// (`/var/folders/…`) is listed as `/private/var/folders/…`, `/var`
+/// being a link: a mount made at a point named otherwise is never found
+/// at its point (`fs::reach::of`), nor known for skwir's. Not `skwir`
+/// itself: a link in its place is refused, never followed ([`private`]).
 pub fn runtime() -> Option<PathBuf> {
-    #[cfg(unix)]
-    {
-        Some(runtime_of(crate::xdg::runtime_dir()))
-    }
-    #[cfg(not(unix))]
-    {
-        crate::xdg::runtime_dir().map(|dir| dir.join("skwir"))
-    }
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            #[cfg(unix)]
+            {
+                Some(runtime_of(crate::xdg::runtime_dir()))
+            }
+            #[cfg(not(unix))]
+            {
+                crate::xdg::runtime_dir().map(|dir| resolved(dir).join("skwir"))
+            }
+        })
+        .clone()
 }
 
 /// [`runtime`] on Unix, the session's runtime folder being `session`.
 #[cfg(unix)]
 fn runtime_of(session: Option<PathBuf>) -> PathBuf {
     if let Some(dir) = session {
-        return dir.join("skwir");
+        return resolved(dir).join("skwir");
     }
+    let temporary = resolved(std::env::temp_dir());
     #[cfg(target_os = "macos")]
     {
-        std::env::temp_dir().join("skwir")
+        temporary.join("skwir")
     }
     #[cfg(not(target_os = "macos"))]
     {
-        std::env::temp_dir().join(format!("skwir-{}", rustix::process::getuid().as_raw()))
+        temporary.join(format!("skwir-{}", rustix::process::getuid().as_raw()))
     }
+}
+
+/// `folder` with its links resolved (`os_path::canonical`), as the system
+/// lists what is in it; as given where it cannot be (not there). A few
+/// calls on the session's own folder (a `tmpfs`, macOS's temporary folder
+/// on the system's disk), once: [`runtime`] keeps what it found.
+fn resolved(folder: PathBuf) -> PathBuf {
+    crate::os_path::canonical(&folder).unwrap_or(folder)
 }
 
 /// `folder` made the user's alone: made where it is missing, with any
@@ -196,15 +219,40 @@ mod tests {
 
     /// The session's runtime folder holds skwir's; where it has none, the
     /// user's own in the temporary folder, named for the user on Linux.
+    /// Either is named with its links resolved, as the system lists what is
+    /// in it (macOS's `$TMPDIR`, `/var/folders/…`, is `/private/var/…` in
+    /// its mount table); one not there as given.
     #[test]
     fn the_runtime_folder_is_the_session_s_else_the_user_s_own() {
-        let session = std::path::Path::new("/run/user/1234");
+        let root = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root.path()).unwrap();
+        let session = root.join("user").join("1234");
         assert_eq!(
-            runtime_of(Some(session.to_path_buf())),
-            session.join("skwir")
+            runtime_of(Some(session.clone())),
+            session.join("skwir"),
+            "not there: as given"
         );
+        std::fs::create_dir_all(&session).unwrap();
+        let linked = root.join("run");
+        std::os::unix::fs::symlink(root.join("user"), &linked).unwrap();
+        assert_eq!(
+            runtime_of(Some(linked.join("1234"))),
+            session.join("skwir"),
+            "reached through a link: the folder it leads to"
+        );
+        // skwir's own folder a link: not followed, `private` refuses it.
+        std::os::unix::fs::symlink(&root, session.join("skwir")).unwrap();
+        assert_eq!(runtime_of(Some(session.clone())), session.join("skwir"));
+        assert!(private(&runtime_of(Some(session))).is_err());
         let fallback = runtime_of(None);
-        assert_eq!(fallback.parent(), Some(std::env::temp_dir().as_path()));
+        assert_eq!(
+            fallback.parent(),
+            Some(
+                std::fs::canonicalize(std::env::temp_dir())
+                    .unwrap()
+                    .as_path()
+            )
+        );
         #[cfg(not(target_os = "macos"))]
         assert_eq!(
             fallback.file_name().and_then(|n| n.to_str()),

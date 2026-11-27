@@ -351,8 +351,14 @@ impl Connector for Kio {
             // answers (`connector::appears`).
             let remote = crate::connector::appears(cancel, || {
                 skwir_core::fs::reach::of(&local).filter(|remote| remote.fstype == BRIDGE)
-            })
-            .ok_or_else(|| {
+            });
+            // Stopped while it was waited for: said as every connector says
+            // it.
+            anyhow::ensure!(
+                remote.is_some() || !cancel.is_cancelled(),
+                crate::connector::cancelled()
+            );
+            let remote = remote.ok_or_else(|| {
                 anyhow::anyhow!(words!(
                     remote_kio_no_folder = "kio-fuse mounted it but its folder is not there"
                 ))

@@ -155,8 +155,32 @@ impl Connector for Fstab {
             "{}",
             finished.stderr.trim()
         );
+        // `mount` may end before its mount is there: an NFS entry with `bg`
+        // goes on trying in the background once its server did not answer
+        // at once, and ends saying it succeeded, nothing mounted; an sshfs
+        // entry's daemon answers before the kernel lists it. Waited for as
+        // every connector waits (`connector::appears`): the point handed back
+        // with nothing mounted there would show the empty folder below it
+        // as the server's.
+        let point = listed_as(&entry.point);
+        let mounted = crate::connector::appears(cancel, || {
+            skwir_core::fs::reach::of(&point).filter(|remote| remote.point == point)
+        });
+        anyhow::ensure!(
+            mounted.is_some() || !cancel.is_cancelled(),
+            crate::connector::cancelled()
+        );
+        anyhow::ensure!(
+            mounted.is_some(),
+            words!(
+                remote_fstab_not_mounted =
+                    "the system has not mounted { $folder }: it may still be trying",
+                folder = entry.point.display().to_string(),
+                note = "Why a network folder of the system's table (fstab) did not open: its mount command ended, but nothing is mounted at the folder yet (an NFS mount the system goes on trying in the background). folder: where it mounts, a path."
+            )
+        );
         Ok(Connected {
-            point: entry.point,
+            point,
             address: entry.address.expect("filtered"),
         })
     }
@@ -252,16 +276,65 @@ impl std::fmt::Display for Busy {
 
 impl std::error::Error for Busy {}
 
-/// Whether fstab lets the user mount and let go of what is at `point`.
+/// Whether fstab lets the user mount and let go of what is at `point`, a
+/// point as the mount table lists it: an entry naming it so, else one
+/// leading there ([`listed_as`], read only where none names it so).
 pub fn user_mountable(point: &Path) -> bool {
-    entries(&read_fstab())
-        .iter()
-        .any(|e| e.users && e.point == point)
+    let entries = entries(&read_fstab());
+    let mut users = entries.iter().filter(|e| e.users);
+    users.clone().any(|e| e.point == point) || users.any(|e| listed_as(&e.point) == point)
+}
+
+/// Where the mount table lists a mount made at `point`, as fstab names it:
+/// the folders above it with their links resolved, as `mount` resolves
+/// them (Fedora's atomic desktops link `/mnt` to `/var/mnt`). Neither the
+/// point itself, which a mount may hold, nor folders above it on a remote
+/// (asked of the table in memory) are read: a server that stopped
+/// answering would hold the read. As written where they are not resolved.
+fn listed_as(point: &Path) -> PathBuf {
+    point
+        .parent()
+        .zip(point.file_name())
+        .filter(|(above, _)| skwir_core::fs::reach::of(above).is_none())
+        .and_then(|(above, name)| {
+            skwir_core::os_path::canonical(above)
+                .ok()
+                .map(|above| above.join(name))
+        })
+        .unwrap_or_else(|| point.to_path_buf())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A point is where the table lists it: the folders above it with their
+    /// links resolved, as `mount` resolves them; the point itself, which a
+    /// mount may hold, as named.
+    #[cfg(unix)]
+    #[test]
+    fn a_point_is_where_the_table_lists_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let var_mnt = root.join("var").join("mnt");
+        std::fs::create_dir_all(var_mnt.join("nas")).unwrap();
+        std::os::unix::fs::symlink(&var_mnt, root.join("mnt")).unwrap();
+        assert_eq!(
+            listed_as(&root.join("mnt").join("nas")),
+            var_mnt.join("nas")
+        );
+        std::os::unix::fs::symlink(root.join("elsewhere"), var_mnt.join("linked")).unwrap();
+        assert_eq!(
+            listed_as(&root.join("mnt").join("linked")),
+            var_mnt.join("linked"),
+            "the point itself is not read"
+        );
+        assert_eq!(
+            listed_as(&root.join("gone").join("nas")),
+            root.join("gone").join("nas"),
+            "as written where it cannot be resolved"
+        );
+    }
 
     #[test]
     fn fstabs_network_entries_are_read_with_what_the_user_may_do() {

@@ -730,8 +730,11 @@ ADR-077 (which revises ADR-021).
   after it answers, and GVfs's bridge lists a mount only once its own
   loop hears of it (gvfsd-fuse's `mount_added`), after `gio mount`
   returned, the later the busier the machine or the slower the device
-  (a watch over MTP said "its folder is not there", 2026-11-26). No
-  watch tells a folder a FUSE daemon adds.
+  (a watch over MTP said "its folder is not there", 2026-11-26), and
+  `mount` of an fstab entry may end with nothing mounted (an NFS entry
+  with `bg` goes on trying in the background: said so, never its empty
+  folder shown as the server's). No watch tells a folder a FUSE daemon
+  adds. Cancelled meanwhile, each says so as one (`connector::cancelled`).
 - GVfs is the session's: its bridge is `$XDG_RUNTIME_DIR/gvfs` alone
   (`Gvfs::bridge`), never another the mount table lists (another
   user's, or the user's own while a window runs with a runtime folder of
@@ -845,7 +848,10 @@ ADR-077 (which revises ADR-021).
   made with `folders::private` as all there is, rclone's remote
   control's sockets beside it (`rc`), named by `connector::point_name` so
   its address reads back from it: nothing else
-  is kept. It outlives Skwir, as GVfs's do.
+  is kept. It outlives Skwir, as GVfs's do. The runtime folder is named
+  with its links resolved, once: the mount table lists a point so
+  (macOS's `$TMPDIR`, `/var/folders/…`, is `/private/var/folders/…`
+  there), and a point named otherwise is never found where it was made.
 - A tool that daemonizes is run until it has mounted
   (`process::run_leaving`): cancelled, it and what it started are stopped;
   mounted, nothing it left running is touched.
@@ -941,9 +947,15 @@ ADR-077 (which revises ADR-021).
   on a bus whose configuration lists GVfs's services alone, its runtime
   folder made in `/tmp` itself, never `$TMPDIR` (`nix develop` nests one
   of its own there), short enough for ssh's control socket
-  `<runtime>/gvfsd-sftp/<40 hex>.<16>` (`short_runtime`), its ssh offered
-  no agent and its server none of the user's keys
-  (`crates/skwir/tests/remote_folders.rs`, `just remote-check`). A KIO
+  `<runtime>/gvfsd-sftp/<40 hex>.<16>` (`short_runtime`), its ssh given
+  no `SSH_AUTH_SOCK` and its server taking none of the user's keys
+  (`crates/skwir/tests/remote_folders.rs`, `just remote-check`). That ssh
+  still takes its home from the user database: it reads the user's
+  `~/.ssh/config`, which may name an agent of its own (`IdentityAgent`)
+  or send every host through another (a `ProxyJump` for `Host *` would
+  send the test's login through a real server), and offers the user's
+  default identity files, so many keys offered may end the login before
+  its password (Go's ssh server, rclone's, allows six tries). A KIO
   of the test's own likewise (`PrivateKio`), Qt drawing nothing; what
   its bus started runs apart from it once the bus's helper ends, and is
   known by the runtime folder it was given, never by name. A WebDAV

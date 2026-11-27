@@ -217,6 +217,8 @@ pub fn mount(
     });
     if mounted.is_none() {
         let _ = remove_point(point);
+        // Stopped while it was waited for: said as every connector says it.
+        anyhow::ensure!(!cancel.is_cancelled(), connector::cancelled());
         anyhow::bail!(words!(
             remote_mounter_nothing_mounted = "it said it mounted, but nothing is mounted there"
         ));
