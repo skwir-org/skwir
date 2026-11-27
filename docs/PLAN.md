@@ -1462,31 +1462,29 @@ first frame 26 ms from the launch against 85). Left:
   (its doc says it follows GIO).
 
 **skwird with Skwir's packages** (ADR-050, ADR-052, ADR-074, ADR-075,
-ADR-142, amended 2026-11-26): the `.deb` and `.rpm` recommend it, the
-repositories list its packages, the AUR suggests it; the Windows
-installer and zip, the Mac app and the Linux tarball carry it; Settings ›
-Index and a walked search's footer say when it is missing. Left:
-- Fedora's repository lists none until skwird's `.rpm` is signed by the
-  repositories' key (skwird's release, the user's passphrase);
-- skwird 0.2.0's `logon remove` takes back the logon task whichever copy
-  registered it, and leaves its engine running, which holds its files at
-  a removal or an upgrade; nothing tried on Windows or a Mac (Full Disk
-  Access granted to skwird's own copy does not carry over to the one
-  signed with the app);
-- a plain Linux build of skwird for the AppImage's users.
-
-skwird 0.3, built on its branch, not released (its session, 2026-11-26),
-answers each once skwir pins it (`tools/package/skwird.lock`): `skwird
-stop` (this copy's engine alone, 10 s at most; exit 1 before 0.3) and
-`logon remove --if-mine` (Windows, macOS: this copy's task only, its
-engine stopped first) for the MSI's uninstall and the Mac app's steps;
-`schtasks` started without a window, `skwirdw.exe` making no folder
-outside `serve`; its own THIRD-PARTY-NOTICES.txt in the Windows zip and
-the macOS archive, carried instead of the notices made from its lock; a
-plain Linux tarball (glibc 2.34, Ubuntu 22.04's root) that skwir's
-tarball can carry instead of building skwird; its `.rpm` signed at its
-release by the repositories' key, so Fedora's lists it. The client gains
-`Client::stop` (feature word `stop`).
+ADR-142, amended 2026-11-26 and 2026-11-27): the `.deb` and `.rpm`
+recommend it, the repositories list its packages (Fedora's too since
+skwird 0.3.0, its `.rpm` signed by their key), the AUR suggests it; the
+Windows installer and zip, the Mac app and the Linux tarball carry its
+0.3.0 as its release gives it (the tarball its plain Linux build, each
+archive's own notices); Windows' removal stops this copy's engine and
+takes back only the logon task this copy registered (`stop`, `logon
+remove --if-mine`); Settings › Index and a walked search's footer say
+when it is missing. Left:
+- nothing tried on Windows or a Mac: an upgrade on Windows (whether
+  Windows Installer still asks about files in use once the newer
+  package's `SkwirdStopOlder` stopped the older copy's engine; tried
+  under Wine between packages made for it, where it did), the
+  uninstall's two actions, whether a removal whose actions find no
+  `skwirdw.exe` (its folder deleted by hand) fails with error 1721, Full
+  Disk Access granted to skwird's own copy, which does not carry over to
+  the one signed with the app;
+- an update from skwir 0.7.0 or 0.7.1 stops nothing: their skwird 0.2
+  has no `stop`, and its engine holds its files until it ends;
+  `windows-check.sh` can try `SkwirdStopOlder` running only once the
+  package is later than the first release that has it (0.7.2);
+- `just package-appimage` not built whole since the tarball carries
+  skwird's plain build (checked on 0.7.1's tarball with it in place).
 
 **What a sandbox reaches on the session bus** (found 2026-11-26): calls
 reach any object served on the program's one connection by whatever name
