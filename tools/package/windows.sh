@@ -128,6 +128,16 @@ wrestool -x -t 14 "$folder/skwir.exe" > "$out/work/skwir.ico"
 wixl -a x64 -D "Version=$version" -D "Dist=$folder" -D "Icon=$out/work/skwir.ico" -D Win64=yes \
     -o "$out/$name.msi" \
     tools/package/windows/skwir.wxs "$out/work/files.wxs"
+# skwir.wxs's INSTALLED_SKWIRDW: the skwirdw.exe in the folder the package
+# installs into, where one is there, as WiX's DirectorySearch and
+# FileSearch, which wixl 0.106 lacks, would search for it (AppSearch,
+# DrLocator, Signature; windows-check.sh reads them).
+# shellcheck disable=SC2016 # SQL's backquotes, which name a table or a column
+msibuild "$out/$name.msi" \
+    -q 'CREATE TABLE `DrLocator` (`Signature_` CHAR(72) NOT NULL, `Parent` CHAR(72), `Path` CHAR(255), `Depth` SHORT PRIMARY KEY `Signature_`, `Parent`, `Path`)' \
+    -q "INSERT INTO \`DrLocator\` (\`Signature_\`, \`Path\`, \`Depth\`) VALUES ('InstalledSkwirdw', '[LocalAppDataFolder]Programs\\skwir', 0)" \
+    -q "INSERT INTO \`Signature\` (\`Signature\`, \`FileName\`) VALUES ('InstalledSkwirdw', 'skwirdw.exe')" \
+    -q "INSERT INTO \`AppSearch\` (\`Property\`, \`Signature_\`) VALUES ('INSTALLED_SKWIRDW', 'InstalledSkwirdw')"
 rm -rf "${out:?}/work"
 
 for artifact in "$name.zip" "$name.msi"; do

@@ -12,7 +12,11 @@ python3 tools/package/appimage/heif.py
 # made in an Ubuntu 22.04 root as skwir is made here, from its archive in
 # /inputs, which appimage.sh fetched and skwird.py checks against
 # tools/package/skwird.lock again: the program, its licences and its
-# notices as the archive holds them.
+# notices as the archive holds them. The folder holds nothing else, so it
+# is made anew: the root outlives each build, and what an earlier way of
+# carrying skwird left there (0.2.0's source and its build, 136 MB) would
+# stay for good.
+rm -rf /build/skwird
 python3 tools/package/skwird.py linux /build/skwird --downloads /inputs
 # A film for the bundle's check (check.py's check_film), made by the
 # GStreamer built here: twelve seconds of VP8 and Vorbis in Matroska.

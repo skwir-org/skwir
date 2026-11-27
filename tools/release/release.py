@@ -23,6 +23,9 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 CHECKS = ["lint-all", "deny", "notices-check", "test-all", "test-windows", "smoke", "a11y-check",
           "poppler-check", "mupdf-check", "djvu-check", "bench-check", "release-tools-check"]
+# What runs a part of a check, which the gate leaves out of its environment
+# (tools/cross/test-windows-each.sh).
+NARROWING = ("SKWIR_WINE_CRATES",)
 PACKAGES = [("appimage", ["package-appimage"]),
             *[(d, ["package-try", d]) for d in ("debian", "ubuntu", "fedora", "arch")],
             # Builds to try, made here as well (ADR-074, ADR-075).
@@ -478,8 +481,11 @@ def main():
     try:
         if args.command == "check":
             require(args.tag is None, "release-check takes no tag")
+            # The whole gate, whatever the shell running it narrowed: a
+            # SKWIR_WINE_CRATES left there would run only its crates under Wine.
+            gate = {k: v for k, v in os.environ.items() if k not in NARROWING}
             for recipe in CHECKS:
-                run("just", recipe)
+                run("just", recipe, env=gate)
             return
         require(args.tag, "This command needs a release tag")
         version, date, notes = metadata(args.tag)

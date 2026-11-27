@@ -176,9 +176,11 @@ window: everything below is new. Both carry skwird, the index that
 answers name searches (`skwird.exe` beside `skwir.exe`), which a search
 starts on its own. Removing the installer's copy stops the engine it ran
 and takes back the logon task it registered (`skwird logon add`), and
-leaves those of a skwird installed on its own; with the zip, run its
+leaves those of a skwird installed on its own; updating it stops that
+engine and keeps the task. With the zip, run its `skwird.exe stop`
+before replacing its folder with a newer one, and its
 `skwird.exe logon remove --if-mine`, then `skwird.exe stop`, before
-deleting or replacing its folder. Do not register
+deleting it. Do not register
 skwird's system service (`skwird service add`) from either: they sit in
 your own folder, which a program of yours could change under a service
 running as the system.
@@ -233,8 +235,9 @@ running as the system.
    With skwird: remove or update the installed copy within a minute of a
    search, and after `skwird logon add` from it, and say whether Windows
    asks for a restart or leaves `skwird.exe` or `skwirdw.exe` in its
-   folder (the installer stops this copy's engine first; one an older
-   skwir's copy ran, skwird 0.2.0, it cannot: ADR-074), whether the logon
+   folder (the installer stops this copy's engine first, and as it
+   updates, the older copy's; one an older skwir's copy ran, skwird
+   0.2.0, it cannot: ADR-074), whether the logon
    task is still there after an update and gone after a removal, and
    whether a window flashes as it is removed.
    The helpers that link libraries (Poppler, MuPDF) need those built for

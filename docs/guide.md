@@ -595,11 +595,17 @@ it, **+ Filter** adds one, and the text can be typed as is:
     with the same copy before you remove Skwir, or the system keeps
     trying to start a program that is gone. On Windows, removing the
     installed Skwir does it by itself: it stops the engine its skwird
-    runs, also as Skwir is updated, and takes back the logon task its
-    skwird registered, leaving those of a skwird installed on its own.
-    With the zip, before deleting or replacing its folder, run from it
+    runs and takes back the logon task its skwird registered, leaving
+    those of a skwird installed on its own. Updating it stops that
+    engine too and keeps the task, but an update from 0.7.0 or 0.7.1
+    stops nothing: their skwird has no `stop`, and where its engine
+    still runs (a search in the last minute, or the logon task),
+    Windows replaces its files only at the next restart. With the zip,
+    before replacing its folder with a newer one, run from it
+    `skwird.exe stop`; before deleting it,
     `skwird.exe logon remove --if-mine`, then `skwird.exe stop`. On
-    macOS, before moving the app to the Trash, run
+    macOS, before moving the app to the Trash or running
+    `brew uninstall --cask skwir`, run
     `/Applications/skwir.app/Contents/MacOS/skwird logon remove --if-mine`,
     then `/Applications/skwir.app/Contents/MacOS/skwird stop`, and
     `sudo /Applications/skwir.app/Contents/MacOS/skwird service remove`

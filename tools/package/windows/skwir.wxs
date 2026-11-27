@@ -2,7 +2,8 @@
 <!-- skwir's Windows installer (ADR-074), made on Linux by msitools' wixl,
      which reads WiX 3's format, from the folder tools/package/windows.sh
      stages: `wixl -a x64 -D Version=… -D Dist=<folder> -D Icon=<.ico> -D Win64=yes
-     skwir.wxs files.wxs`.
+     skwir.wxs files.wxs`, then, by msitools' msibuild, the rows of a
+     search wixl has no element for (INSTALLED_SKWIRDW, below).
      files.wxs, made there by wixl-heat, holds every file of the folder
      (the programs, PDFium, the licences, the type database), so nothing
      here lists them again, but skwirdw.exe, named here for the actions
@@ -14,6 +15,13 @@
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser"
              Description="skwir, a file manager" />
     <MajorUpgrade DowngradeErrorMessage="A newer skwir is already installed." />
+    <!-- An older skwir this one upgrades whose skwird has `stop`: any after
+         0.7.1, the last to carry skwird 0.2.0 (SkwirdStopOlder below).
+         Detected alone: MajorUpgrade's own row removes it. -->
+    <Upgrade Id="6f1c2b7e-3d9a-4c5e-9b8f-2a7d4e1c0b35">
+      <UpgradeVersion Minimum="0.7.1" IncludeMinimum="no" Maximum="$(var.Version)" IncludeMaximum="no"
+                      OnlyDetect="yes" Property="OLDER_SKWIRD_STOPS" />
+    </Upgrade>
     <Media Id="1" Cabinet="skwir.cab" EmbedCab="yes" />
     <!-- The icon skwir.exe carries (crates/skwir/build.rs), taken out of
          it, for its shortcut and the list of installed programs: an Icon
@@ -55,7 +63,7 @@
     </Feature>
     <!-- skwird's files go only once its engine ended: a program that runs
          holds its file, which Windows replaces or removes no sooner than
-         the next restart. So two actions run skwirdw.exe, skwird with no
+         the next restart. So three actions run skwirdw.exe, skwird with no
          console window (from skwird 0.3.0 the schtasks.exe it starts opens
          none either, and outside `serve` it makes no folder of skwird's),
          as the user whose engine and task they are, each answer ignored
@@ -64,14 +72,24 @@
             upgrade to a newer: `stop`, the user's engine stopped where it
             runs this copy (one a search started, or the logon task), its
             end waited for, 10 s at most; another copy's is left. At once,
-            before InstallValidate, so that Windows Installer finds none of
-            skwird's files in use. An upgrade runs the older package's
-            sequence as it removes it (RemoveExistingProducts, after the
-            newer's own InstallValidate), so each package stops its own
-            copy's engine; one that carried skwird 0.2.0, which has no
-            `stop`, stops nothing, and an engine of its copy still running
-            holds its files until the next restart.
-         2. SkwirdLogonRemove, as skwir is removed by its user alone, in
+            before InstallValidate: as its user removes skwir, Windows
+            Installer then finds none of skwird's files in use. An upgrade
+            runs the older package's sequence later, inside the newer's
+            RemoveExistingProducts, after the newer's own InstallValidate
+            looked for files in use, which 2 is for.
+         2. SkwirdStopOlder, as this skwir upgrades an older one whose
+            skwird has `stop` (OLDER_SKWIRD_STOPS, above), the same `stop`
+            of the older copy's skwirdw.exe, at once before this package's
+            InstallValidate. INSTALLED_SKWIRDW is that program, found in the
+            folder this package installs into (AppSearch: wixl 0.106 has no
+            FileSearch, so windows.sh adds its rows), and none is run where
+            none is there (a skwir without skwird, a folder deleted by
+            hand), which Windows Installer would take for a program that
+            cannot be started (error 1721). Not for skwird 0.2.0 (skwir
+            0.7.0 and 0.7.1), which has no `stop` and, whatever it is asked,
+            first makes skwird's state folder: an engine of that copy still
+            running holds its files until the next restart.
+         3. SkwirdLogonRemove, as skwir is removed by its user alone, in
             the removal's script before the files go: the task that starts
             skwird at its user's logon (`skwird logon add`) names the
             program it runs, which would be gone; `logon remove`, its flag
@@ -84,17 +102,22 @@
          not for a copy in the user's own folder (ADR-074, amended
          2026-11-26 and 2026-11-27). Each is placed by its number among
          Windows Installer's own (MigrateFeatureStates 1200, InstallValidate
-         1400, InstallInitialize 1500, ProcessComponents 1600): wixl 0.106
+         1400, InstallInitialize 1500, ProcessComponents 1600; AppSearch
+         50, which wixl schedules only for a RegistrySearch): wixl 0.106
          misplaces what is placed relative to another action. Before
          RemoveFiles, it went ahead of InstallInitialize, outside the
          script, where a deferred action fails the removal; after another
          custom action, it moved RemoveExistingProducts into the script
          behind it (windows-check.sh reads every place). -->
     <CustomAction Id="SkwirdStop" FileKey="skwirdw.exe" ExeCommand="stop" Execute="immediate" Return="ignore" />
+    <CustomAction Id="SkwirdStopOlder" Property="INSTALLED_SKWIRDW" ExeCommand="stop" Execute="immediate"
+                  Return="ignore" />
     <CustomAction Id="SkwirdLogonRemove" FileKey="skwirdw.exe" ExeCommand="logon remove --if-mine"
                   Execute="deferred" Impersonate="yes" Return="ignore" />
     <InstallExecuteSequence>
+      <AppSearch Sequence="50" />
       <Custom Action="SkwirdStop" Sequence="1300">REMOVE="ALL"</Custom>
+      <Custom Action="SkwirdStopOlder" Sequence="1301">OLDER_SKWIRD_STOPS AND INSTALLED_SKWIRDW</Custom>
       <Custom Action="SkwirdLogonRemove" Sequence="1501">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
   </Product>

@@ -43,12 +43,6 @@ unset DISPLAY WAYLAND_DISPLAY
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine
 # Tests that need what Wine lacks (its shell does not trash) skip, saying so.
 export SKWIR_TEST_UNDER_WINE=1
-# rclone's own Windows release, pinned, for its remote control and
-# configuration as Windows has them (ADR-086); without it they skip.
-if rclone="$(tools/test/rclone-windows.sh)"; then
-    SKWIR_TEST_RCLONE="$(winepath -w "$rclone" 2>/dev/null)"
-    export SKWIR_TEST_RCLONE
-fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target/cross}"
 # The type database a package carries, where it puts it, beside the
 # program (ADR-037): in `share` above the test programs. Made aside, then
@@ -82,7 +76,10 @@ export SKWIR_WINE_HARNESS=1
 # never returns (found 2026-11-26: six runs' leftovers, one two days old).
 # Each run holds the prefix shared while it tests, its programs not
 # holding it (`-o`); the run that ends with no other holding it takes it
-# alone and ends what is left there, while a run starting waits.
+# alone and ends what is left there, while a run starting waits. So every
+# use of Wine here holds it shared, from the first (winepath, which also
+# makes a new prefix: cut short, it would leave one half made for every
+# later run).
 lock="$scratch/prefix.lock"
 end_left_over() {
     flock -n -x -o "$lock" sh -c 'wineserver -k 2>/dev/null; wineserver -w' || true
@@ -90,6 +87,12 @@ end_left_over() {
 trap end_left_over EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# rclone's own Windows release, pinned, for its remote control and
+# configuration as Windows has them (ADR-086); without it they skip.
+if rclone="$(tools/test/rclone-windows.sh)"; then
+    SKWIR_TEST_RCLONE="$(flock -s -o "$lock" winepath -w "$rclone" 2>/dev/null)"
+    export SKWIR_TEST_RCLONE
+fi
 if [ "$#" -eq 0 ]; then
     flock -s -o "$lock" tools/cross/test-windows-each.sh
 else

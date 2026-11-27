@@ -5,7 +5,7 @@ pins, each archive checked against its sum before anything is read of it.
 
     tools/package/skwird.py windows <out>   # Windows' zip: skwird.exe, skwirdw.exe
     tools/package/skwird.py macos <out>     # macOS's archive: skwird, arm64, signed ad hoc
-    tools/package/skwird.py linux <out>     # Linux's plain build: skwird, x86-64, glibc 2.35 or later
+    tools/package/skwird.py linux <out>     # Linux's plain build: skwird, x86-64, glibc 2.34 or later
     tools/package/skwird.py fetch <windows|macos|linux> <downloads>   # fetched and checked alone
 
 What is carried goes in <out> (the programs) and <out>/licenses/skwird:

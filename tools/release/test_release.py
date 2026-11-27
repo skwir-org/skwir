@@ -25,6 +25,9 @@ with open('target/just-calls', 'a') as stream:
     stream.write(json.dumps(args) + '\n')
 if args == ['release-check']:
     sys.exit(1 if os.getenv('FAIL_CHECK') else 0)
+# Wine's gate narrowed to a few crates is no gate.
+if args == ['test-windows'] and 'SKWIR_WINE_CRATES' in os.environ:
+    sys.exit('test-windows: only ' + os.environ['SKWIR_WINE_CRATES'])
 if len(args) == 1 and args[0] in ['lint-all', 'deny', 'notices-check', 'test-all', 'test-windows',
                                  'smoke', 'a11y-check', 'poppler-check', 'mupdf-check', 'djvu-check',
                                  'bench-check', 'release-tools-check']:
@@ -570,6 +573,18 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
                          ["lint-all", "deny", "notices-check", "test-all", "test-windows", "smoke",
                           "a11y-check", "poppler-check", "mupdf-check", "djvu-check", "bench-check",
                           "release-tools-check"]])
+
+    def test_the_gate_runs_every_crate_under_wine_whatever_the_shell_narrowed(self):
+        (self.root / "target").mkdir()
+        narrowed = {**self.env, "SKWIR_WINE_CRATES": "skwir-plugin-remote"}
+        # The fake refuses a narrowed Wine gate...
+        refused = subprocess.run([str(self.bin / "just"), "test-windows"], cwd=self.root, env=narrowed,
+                                 capture_output=True, text=True)
+        self.assertNotEqual(refused.returncode, 0, refused.stderr)
+        (self.root / "target/just-calls").unlink()
+        # ...which release-check, run from that shell, never runs.
+        self.cli("check", tag=None, SKWIR_WINE_CRATES="skwir-plugin-remote")
+        self.assertIn(["test-windows"], self.calls("just"))
 
     def test_extra_missing_assets_and_source_changes_leave_no_bundle(self):
         for flag in ("EXTRA_ASSET", "MISSING_ASSET", "CHANGE_SOURCE"):

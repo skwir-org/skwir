@@ -12,7 +12,10 @@
 # with nothing of skwird's registered or running, its actions making no
 # folder of skwird's; with the installed copy's engine running, stopped
 # first; with another copy of skwird's logon task and engine, both left;
-# with the logon task the installed copy registered, taken back.
+# with the logon task the installed copy registered, taken back. As it
+# installs, its search for the skwirdw.exe an upgrade stops first finds
+# none where none is, and one put there before, which it does not run,
+# nothing being upgraded.
 #
 # Wine is not Windows. It cannot draw skwir's window (its DirectWrite has
 # no font sets; Direct Manipulation and DirectComposition are missing), so
@@ -49,9 +52,15 @@ trap 'wineserver -k 2>/dev/null || true' EXIT
 # them, started once. Not `wineboot -i`, which in a prefix already made
 # starts a second service manager beside the first, under which the task
 # service stops and starts by turns, so that a logon task is registered or
-# taken back at one call and not at the next.
+# taken back at one call and not at the next. What a run killed without
+# its trap left (systemd-oomd ends a scope so during heavy links) is ended
+# first: its server holds the prefix's lock, and a new one would exit
+# saying nothing (status 2). The server ends a minute after its last
+# program, should this run be killed too, never kept for good.
 mkdir -p "$WINEPREFIX"
-wineserver -p
+wineserver -k 2>/dev/null || true
+wineserver -w
+wineserver -p60
 wineboot -u >/dev/null 2>&1 || true
 
 # Where a program is in the folder: beside skwir, but the media helper
@@ -209,10 +218,13 @@ done
 # removes it; each answer ignored. And RemoveExistingProducts where
 # MajorUpgrade puts it, before the script, so that an upgrade removes the
 # older package whole, its engine stopped by its own action, before the
-# newer's files are put in place.
-python3 - "$made/$name.msi" <<'EOF'
+# newer's files are put in place. As it upgrades a skwir after 0.7.1, the
+# older copy's skwirdw.exe run with `stop` at once, before this package's
+# InstallValidate, found by AppSearch (windows.sh adds the search) in the
+# folder the installer puts skwir in.
+python3 - "$made/$name.msi" "$version" <<'EOF'
 import subprocess, sys
-msi = sys.argv[1]
+msi, version = sys.argv[1], sys.argv[2]
 def table(name):
     rows = subprocess.run(["msiinfo", "export", msi, name], check=True, capture_output=True, text=True).stdout
     return [row.split("\t") for row in rows.splitlines()[3:]]
@@ -226,11 +238,34 @@ assert files["skwirdw.exe"][2] == "skwirdw.exe", files["skwirdw.exe"]
 steps = {row[0]: (row[1], int(row[2])) for row in table("InstallExecuteSequence")}
 assert steps["SkwirdLogonRemove"][0] == 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE', steps["SkwirdLogonRemove"]
 assert steps["SkwirdStop"][0] == 'REMOVE="ALL"', steps["SkwirdStop"]
-at = [steps[a][1] for a in ("CostFinalize", "SkwirdStop", "InstallValidate", "RemoveExistingProducts",
-                            "InstallInitialize", "SkwirdLogonRemove", "ProcessComponents", "RemoveFiles")]
+# 50: the program a property names, here the one AppSearch found; 64: its
+# answer ignored; at once.
+assert actions["SkwirdStopOlder"][1:4] == ["114", "INSTALLED_SKWIRDW", "stop"], actions
+assert steps["SkwirdStopOlder"][0] == "OLDER_SKWIRD_STOPS AND INSTALLED_SKWIRDW", steps["SkwirdStopOlder"]
+# An older skwir after 0.7.1 and before this one, neither included, of the
+# code MajorUpgrade removes, detected alone (2).
+upgrades = {row[6]: row for row in table("Upgrade")}
+assert upgrades["OLDER_SKWIRD_STOPS"][:6] == [upgrades["WIX_UPGRADE_DETECTED"][0], "0.7.1", version, "", "2", ""], \
+    upgrades
+# skwirdw.exe in INSTALLDIR as the Directory table makes it (searched
+# before CostFinalize resolves INSTALLDIR itself), in that folder alone.
+folders = {row[0]: row for row in table("Directory")}
+def place(folder):
+    parent, name = folders[folder][1], folders[folder][2].split(":")[0].split("|")[-1]
+    return f"[{folder}]" if name == "." else place(parent) + name + "\\"
+assert [tuple(row) for row in table("AppSearch")] == [("INSTALLED_SKWIRDW", "InstalledSkwirdw")], table("AppSearch")
+searched = {row[0]: row for row in table("DrLocator")}
+assert searched["InstalledSkwirdw"][1:] == ["", place("INSTALLDIR").rstrip("\\"), "0"], searched
+signatures = {row[0]: row for row in table("Signature")}
+assert signatures["InstalledSkwirdw"][1] == "skwirdw.exe" and not any(signatures["InstalledSkwirdw"][2:]), signatures
+at = [steps[a][1] for a in ("FindRelatedProducts", "AppSearch", "CostFinalize", "SkwirdStop", "SkwirdStopOlder",
+                            "InstallValidate", "RemoveExistingProducts", "InstallInitialize", "SkwirdLogonRemove",
+                            "ProcessComponents", "RemoveFiles")]
 assert at == sorted(at) and len(set(at)) == len(at), steps
-print(f"ok: as it removes skwir, the installer runs skwirdw.exe stop before InstallValidate (step {at[1]}), then"
-      f" logon remove --if-mine in its script (step {at[5]}); an upgrade removes the older first (step {at[3]})")
+print(f"ok: as it removes skwir, the installer runs skwirdw.exe stop before InstallValidate (step {at[3]}), then"
+      f" logon remove --if-mine in its script (step {at[8]}); an upgrade removes the older first (step {at[6]})")
+print(f"ok: as it upgrades a skwir after 0.7.1, it first runs the skwirdw.exe found in {place('INSTALLDIR')}"
+      f" (step {at[1]}) with stop, before InstallValidate (step {at[4]})")
 EOF
 
 # The installer, per user, then removed, four times.
@@ -243,10 +278,21 @@ shortcut="$home/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/skwir.lnk"
 # never runs it).
 skwirds="$home/AppData/Local/skwird"
 tasks="$WINEPREFIX/drive_c/windows/system32/tasks"
+# Installed, logged (what it found) and the programs it starts traced:
+# nothing is upgraded here, so it runs none of skwird's.
 installs() {
-    wine msiexec /i "$made/$name.msi" /qn
+    log="$scratch/installed.log"
+    trace="$scratch/installed.trace"
+    WINEDEBUG=trace+process wine msiexec /i "$made/$name.msi" /qn /l*v "$(winepath -w "$log")" 2>"$trace"
     [ -f "$installed/skwir.exe" ] && [ -f "$installed/licenses/THIRD-PARTY-NOTICES" ] \
         && [ -f "$installed/share/mime/globs2" ] || { echo "the installer put nothing in $installed" >&2; exit 1; }
+    grep -a -q -F "Property(S): ProductCode = " "$log" || { echo "the install's log lists no property" >&2; exit 1; }
+    ! started skwirdw.exe || { echo "installed, upgrading nothing, and skwirdw.exe ran" >&2; exit 1; }
+}
+# Whether the install found a skwirdw.exe in the folder it puts skwir in.
+found() {
+    grep -a -F "Property(S): INSTALLED_SKWIRDW = " "$scratch/installed.log" |
+        grep -a -q -F '\Programs\skwir\skwirdw.exe'
 }
 # Removed, the programs it starts traced (Wine's process channel):
 # skwirdw.exe run with each action's command, and what skwird asked of
@@ -317,6 +363,8 @@ logon "$scratch/skwird" remove
 rm -rf "${skwirds:?}"
 installs
 echo "ok: installed in %LocalAppData%\\Programs\\skwir, $(find "$installed" -type f | wc -l) files"
+! found || { echo "installed, and a skwirdw.exe was found where none was" >&2; exit 1; }
+echo "ok: no skwirdw.exe found where none was before it installed, none run"
 # How the copy came (ADR-142): the installer's word, not the zip's.
 [ "$(cat "$installed/share/skwir/channel")" = windows-installer ] \
     || { echo "the installed copy's channel is not windows-installer" >&2; exit 1; }
@@ -328,9 +376,15 @@ removes
 [ ! -e "$skwirds" ] || { echo "removed, and skwird's actions made its folder: $skwirds" >&2; exit 1; }
 echo "ok: removed, nothing of it left; skwirdw.exe ran stop and logon remove --if-mine, and made no folder of skwird's"
 
-# 2. The engine of the installed copy, which a search would have started:
-# stopped before its files go.
+# 2. A skwirdw.exe already where skwir goes (left there, no skwir
+# installed): found, and not run, nothing being upgraded. Then the engine
+# of the installed copy, which a search would have started: stopped before
+# its files go.
+mkdir -p "$installed"
+cp "$scratch/skwird/skwirdw.exe" "$installed/"
 installs
+found || { echo "installed, and the skwirdw.exe already where it installs was not found" >&2; exit 1; }
+echo "ok: the skwirdw.exe already where it installs found, and not run, nothing being upgraded"
 serves "$installed"
 removes
 ended || { echo "removed, and the installed copy's engine still runs" >&2; exit 1; }

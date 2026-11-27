@@ -21,7 +21,9 @@
 # the tests that passed only when run again (FLAKY), which fail nothing.
 #
 # SKWIR_WINE_CRATES, a list of default members, runs those alone from the
-# same build: one crate under Wine without `-p`'s build of its own.
+# same build: one crate under Wine without `-p`'s build of its own. A run
+# it narrows says so as it starts and in its last line, which never says
+# every crate passed; `just release-check` runs without it.
 set -eu
 if [ -z "${SKWIR_WINE_HARNESS:-}" ]; then
     exec tools/cross/test-windows.sh
@@ -40,6 +42,7 @@ if [ -n "${SKWIR_WINE_CRATES:-}" ]; then
         esac
     done
     crates="$SKWIR_WINE_CRATES"
+    echo "== only the crates SKWIR_WINE_CRATES names: $crates"
 fi
 # What this run builds and says, apart from any other run's (agents, two
 # terminals) sharing the target folder.
@@ -82,4 +85,8 @@ if [ -n "$failed" ]; then
     echo "Failed under Wine:$failed" >&2
     exit 1
 fi
-echo "Every crate's tests passed under Wine."
+if [ -n "${SKWIR_WINE_CRATES:-}" ]; then
+    echo "Tests passed under Wine, of the crates SKWIR_WINE_CRATES names alone: $crates"
+else
+    echo "Every crate's tests passed under Wine."
+fi

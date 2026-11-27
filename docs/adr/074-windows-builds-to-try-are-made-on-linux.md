@@ -250,20 +250,34 @@ written on Linux and never run.
   outside `serve` it makes no folder of skwird's, so the actions are
   unseen and leave nothing for a user who never ran skwird.
   - **`stop`, as skwir is removed, by its user or by an upgrade, at once
-    before `InstallValidate`** (an immediate action): the user's engine
-    stopped where it runs this copy (a program in the same folder), its
-    end waited for, 10 s at most; another copy's is left. An upgrade must
-    stop it too: a running engine holds `skwirdw.exe` (or `skwird.exe`),
-    which Windows Installer would replace only at the next restart, and
-    before `InstallValidate` none of skwird's files is in use as Windows
-    Installer looks for them. An upgrade removes the older package by
-    running that package's own sequence (`RemoveExistingProducts`, after
-    the newer's `InstallValidate`), so each package stops its own copy's
-    engine. A package that carried skwird 0.2.0 (skwir 0.7.0 and 0.7.1)
-    stops nothing as it is upgraded: an engine of that copy still running
-    then holds its files until the next restart. The newer's own
-    `InstallValidate` comes before the older's stop: whether Windows
-    Installer then asks about files in use is not known here.
+    before `InstallValidate`** (an immediate action, `SkwirdStop`): the
+    user's engine stopped where it runs this copy (a program in the same
+    folder), its end waited for, 10 s at most; another copy's is left. An
+    upgrade must stop it too: a running engine holds `skwirdw.exe` (or
+    `skwird.exe`), which Windows Installer would replace only at the next
+    restart. As its user removes skwir, none of skwird's files is in use
+    when `InstallValidate` looks for them. An upgrade runs the older
+    package's sequence later, inside the newer's `RemoveExistingProducts`,
+    after the newer's own `InstallValidate` looked (review PK-1).
+  - **So the newer stops the older copy's engine first**
+    (`SkwirdStopOlder`, immediate, 1301, its answer ignored): the older
+    copy's `skwirdw.exe stop`, the program found where the installer puts
+    skwir (`INSTALLED_SKWIRDW`: an `AppSearch` for `skwirdw.exe` in
+    `[LocalAppDataFolder]Programs\skwir`, `INSTALLDIR` as the `Directory`
+    table makes it), as it upgrades a skwir after 0.7.1
+    (`OLDER_SKWIRD_STOPS`: an `Upgrade` row that detects alone, below this
+    version). Where no `skwirdw.exe` is there (a skwir without skwird, a
+    folder deleted by hand), nothing is run, which Windows Installer could
+    take for a program that cannot be started (error 1721) and fail the
+    upgrade. wixl 0.106 has no `FileSearch` and no action of type 34 (a
+    program in a folder): `windows.sh` adds the search's rows (`DrLocator`,
+    `Signature`, `AppSearch`) with msitools' `msibuild`, and the action is
+    of type 50, the program the property names. An upgrade from a package
+    that carried skwird 0.2.0 (skwir 0.7.0 and 0.7.1) runs none: 0.2.0 has
+    no `stop` (it answers its usage, exit 1) and, whatever it is asked,
+    first makes skwird's state folder and its `engine.log` (tried under
+    Wine), which would stay for a user who never ran skwird. An engine of
+    that copy still running then holds its files until the next restart.
   - **`logon remove --if-mine`, as skwir is removed by its user alone,
     deferred, in the script before the files go**: the logon task taken
     back only where it runs this copy, its engine stopped first; another
@@ -271,13 +285,17 @@ written on Linux and never run.
     upgrade removes the older skwir: the newer puts skwird where the task
     names it.
   - Each is placed by its number among Windows Installer's own
-    (`SkwirdStop` 1300, between `MigrateFeatureStates` and
-    `InstallValidate`; `SkwirdLogonRemove` 1501, after
-    `InstallInitialize`): wixl 0.106 misplaces what is placed relative to
-    another action. After another custom action, it moved
+    (`SkwirdStop` 1300 and `SkwirdStopOlder` 1301, between
+    `MigrateFeatureStates` and `InstallValidate`; `SkwirdLogonRemove`
+    1501, after `InstallInitialize`; `AppSearch` 50, which wixl schedules
+    only for a `RegistrySearch`): wixl 0.106 misplaces what is placed
+    relative to another action. After another custom action, it moved
     `RemoveExistingProducts` into the script behind it.
-  - The zip: before deleting or replacing its folder, its user runs its
-    `skwird.exe logon remove --if-mine`, then `skwird.exe stop`.
+  - The zip: before replacing its folder with a newer one, its user runs
+    its `skwird.exe stop` alone, keeping a logon task, which names the same
+    folder, as an upgrade of the installed copy keeps it; before deleting
+    the folder, `skwird.exe logon remove --if-mine`, then `skwird.exe stop`
+    (review PK-2).
   - Under Wine (`windows-check.sh`, on packages staged from the 0.7.1
     programs): the actions' types (82, at once; 1106, deferred, as the
     user), commands, conditions and steps; four removals, each running
@@ -287,12 +305,27 @@ written on Linux and never run.
     own), that engine stopped; with another copy's logon task and engine,
     both left, and no task asked to be deleted; with the installed copy's
     task, its deletion asked and the task gone. `windows-check.sh` now
-    readies its prefix with `wineboot -u` under one `wineserver -p`:
+    readies its prefix with `wineboot -u` under one `wineserver -p60`,
+    once what a run killed without its trap left is ended (`wineserver -k`,
+    then `-w`: a server kept for good, as `-p` alone kept it, held the
+    prefix's lock, and the next run's exited saying nothing, review PK-3):
     `wineboot -i` in a prefix already made started a second service
     manager, under which Wine's task service stopped and started by turns
     (`sc query Schedule`), so that a task was registered at one call and
     not at the next; in a prefix readied so, every call answered, and an
-    engine answered its pipe and `skwird stop`. Not tried: an upgrade (Wine's
-    `RemoveExistingProducts` removes the older as a plain removal, with no
-    `UPGRADINGPRODUCTCODE`, so its logon task would be taken back there),
-    and anything on Windows.
+    engine answered its pipe and `skwird stop`. It also reads
+    `SkwirdStopOlder`'s type (114: 50, and 64), property, command,
+    condition and step, its `Upgrade` row and its search's rows, and
+    installs, logged: with no `skwirdw.exe` where it installs, none found;
+    with one there before it (no skwir installed), found and not run,
+    nothing being upgraded. Once, outside the check, upgrades between
+    small packages made from `skwir.wxs` (skwirdw.exe alone, the newer
+    given `windows.sh`'s rows), traced: from 0.7.5, its engine running,
+    the newer's action ran before `InstallValidate` and ended it, also
+    from a 0.7.5 whose own sequence stops nothing; from 0.7.1, the file
+    found and not run; from 0.7.5 with its `skwirdw.exe` deleted, none
+    found, none run, the upgrade done. Not tried: an upgrade on Windows
+    (whether Windows Installer asks about files in use, and what it does
+    where a program cannot be started) and anything else there; under
+    Wine, `RemoveExistingProducts` removes the older as a plain removal,
+    with no `UPGRADINGPRODUCTCODE`, so its logon task is taken back there.
