@@ -2311,7 +2311,13 @@ fn nearby_lists_what_avahi_and_wsdd_find() {
     };
     let items = menu(vec![row(&names[0])]);
     assert_eq!(items.len(), 1, "{items:?}");
-    assert_eq!(items[0]["title"], "Add as Server…");
+    // A menu source's words come as data (`menu_answer`).
+    assert_eq!(
+        serde_json::from_value::<Words>(items[0]["title"].clone())
+            .unwrap()
+            .english(),
+        "Add as Server…"
+    );
     assert_eq!(items[0]["command"]["name"], "remote.add_server");
     assert_eq!(
         items[0]["command"]["args"],
