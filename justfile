@@ -170,27 +170,37 @@ remote-check:
     export SKWIR_TEST_KIO="$(out kio-fuse):$(out kio):$(out kio-extras)"
     # Samba run as the user, believing it is root (ADR-082's SMB tests).
     export SKWIR_TEST_SAMBA="$(out samba):$(out uid_wrapper):$(out nss_wrapper)"
-    cargo nextest run -p skwir -p skwir-plugin-remote --no-fail-fast \
+    # Every part runs, whichever failed before it, and the failing ones are
+    # named at the end: a part stopping the rest hid a stale test of Nearby
+    # for a week (2026-11-27).
+    failed=()
+    part() { local name=$1; shift; echo "== $name"; "$@" || failed+=("$name"); }
+    part "tests" cargo nextest run -p skwir -p skwir-plugin-remote --no-fail-fast \
         -E 'binary(remote_folders) | binary(remote_configs) | package(skwir-plugin-remote)'
     binary=$(cargo nextest list -p skwir -p skwir-plugin-remote -E 'binary(remote_folders)' \
         --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
-    tools/test/gvfs-nfs-afp.sh "$binary"
-    tools/test/gvfs-afc.sh "$binary"
+    part "NFS and AFP" tools/test/gvfs-nfs-afp.sh "$binary"
+    part "AFC" tools/test/gvfs-afc.sh "$binary"
     # Servers found nearby, on a network of the test's own (ADR-084).
-    tools/test/nearby.sh "$binary"
+    part "Nearby" tools/test/nearby.sh "$binary"
     # Servers' passwords in a keyring of the tests' own (ADR-082).
     keyring=$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#gnome-keyring)
-    PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
+    part "gnome-keyring" env PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(secret) | test(password) | test(passphrase)'
     # The same against KeePassXC's Secret Service, and a keyring locked
     # whose own prompt asks to unlock it, each on a display of its own.
-    tools/test/keepassxc-keyring.sh cargo nextest run \
+    part "KeePassXC" tools/test/keepassxc-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(secret) | test(password) | test(passphrase)'
-    tools/test/locked-keyring.sh cargo nextest run \
+    part "a locked keyring" tools/test/locked-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(locked_keyring)' -j 1
+    if [ "${#failed[@]}" -gt 0 ]; then
+        echo "remote-check failed: ${failed[*]}" >&2
+        exit 1
+    fi
+    echo "remote-check passed: every part"
 
 # A phone over MTP, then as a camera over gPhoto2, through a GVfs of the
 # test's own (tools/test/gvfs-mtp.sh): run on purpose alone, it writes to the
@@ -309,11 +319,11 @@ package-nix variant="default":
 package-nix-check *variants:
     tools/package/nix/check.sh {{variants}}
 
-# The notices of the crates each package's programs link, skwird's from its
-# own Cargo.lock at the release tools/package/skwird.lock pins, into
+# The notices of the crates each package's programs link, into
 # tools/package/notices, kept with the source for the packages to copy
 # (ADR-063): made again when a dependency, or what a package ships,
-# changes. cargo-about, every platform's crates read offline.
+# changes. cargo-about, every platform's crates read offline. skwird's are
+# its release's own, carried from its archives (tools/package/skwird.py).
 notices:
     tools/package/notices.py
 
