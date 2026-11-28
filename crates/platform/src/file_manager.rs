@@ -72,7 +72,17 @@ pub fn named(arg: &OsStr, cwd: &Path) -> (OsString, Option<OsString>) {
         | EntryKind::BlockDevice => true,
     });
     match (reveal, path.parent(), path.file_name()) {
-        (true, Some(folder), Some(name)) => (folder.as_os_str().to_owned(), Some(name.to_owned())),
+        (true, Some(folder), Some(name)) => {
+            // AppKit may deliver a different Unicode spelling than the
+            // directory keeps. Selection names must match its entries,
+            // not the URL's spelling. Ask for this entry, never resolve
+            // its links or scan the parent to find an equivalent name.
+            #[cfg(target_os = "macos")]
+            let name = skwir_core::fs::stat::stored_name(&path).unwrap_or_else(|| name.to_owned());
+            #[cfg(not(target_os = "macos"))]
+            let name = name.to_owned();
+            (folder.as_os_str().to_owned(), Some(name))
+        }
         _ => (arg.to_owned(), None),
     }
 }
@@ -787,6 +797,74 @@ mod tests {
             named(broken.as_os_str(), Path::new("")),
             (broken.into_os_string(), None)
         );
+    }
+
+    /// AppKit decomposes names in delivered URLs, while APFS keeps the
+    /// spelling used to create an entry. The selection must use the
+    /// listing's bytes in either direction, including each link's own
+    /// name rather than another name of its file or its target.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn opened_macos_names_select_the_entries_spelling_on_disk() {
+        let root = tempfile::tempdir().unwrap();
+        for (group, names) in [
+            (
+                "NFC",
+                [
+                    ("Café notes.txt", "Cafe\u{301} notes.txt"),
+                    ("Liñk.txt", "Lin\u{303}k.txt"),
+                    ("Hárd.txt", "Ha\u{301}rd.txt"),
+                ],
+            ),
+            (
+                "NFD",
+                [
+                    ("Cafe\u{301} notes.txt", "Café notes.txt"),
+                    ("Lin\u{303}k.txt", "Liñk.txt"),
+                    ("Ha\u{301}rd.txt", "Hárd.txt"),
+                ],
+            ),
+        ] {
+            let folder = root.path().join(group);
+            std::fs::create_dir(&folder).unwrap();
+            let file = folder.join(names[0].0);
+            std::fs::write(&file, b"example").unwrap();
+            std::os::unix::fs::symlink(&file, folder.join(names[1].0)).unwrap();
+            std::fs::hard_link(&file, folder.join(names[2].0)).unwrap();
+            // A filesystem may itself choose a spelling (HFS+ decomposes
+            // names). Read the actual listing, independently of named().
+            let listed: HashSet<OsString> = std::fs::read_dir(&folder)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            let mut urls = Vec::new();
+            let mut selected = Vec::new();
+            for (made, sent) in names {
+                let actual = if listed.contains(OsStr::new(made)) {
+                    made
+                } else {
+                    assert!(listed.contains(OsStr::new(sent)));
+                    sent
+                };
+                let requested = folder.join(sent);
+                assert_eq!(
+                    named(requested.as_os_str(), Path::new("")),
+                    (folder.as_os_str().to_owned(), Some(actual.into())),
+                    "the CLI selects the entry, not the sender's spelling: {group}/{sent}"
+                );
+                urls.push(crate::uri::file_uri(&requested));
+                selected.push(OsString::from(actual));
+            }
+            assert_eq!(
+                openings(Shown::Opened, &urls, None),
+                [Opening {
+                    location: Some(folder.into_os_string()),
+                    select: selected,
+                    ..Opening::default()
+                }],
+                "one open-URL batch selects all three entries, including both links"
+            );
+        }
     }
 
     #[cfg(target_os = "macos")]
