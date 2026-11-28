@@ -78,6 +78,15 @@ assert (app / "Resources/share/skwir/channel").read_text() == "macos\n", "the ap
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "skwir" and info["CFBundleIdentifier"] == "org.skwir.skwir", info
 assert info["CFBundleShortVersionString"] == version and info["LSMinimumSystemVersion"] == "12.0", info
+assert info["CFBundleVersion"] == re.match(r"\d+\.\d+\.\d+", version)[0], info
+# Sandboxed callers can reveal arbitrary items, without making Skwir a
+# default handler for those documents.
+assert info["CFBundleDocumentTypes"] == [{
+    "CFBundleTypeName": "Filesystem item",
+    "LSItemContentTypes": ["public.item"],
+    "CFBundleTypeRole": "Viewer",
+    "LSHandlerRank": "None",
+}], info
 # English and each language skwir offers, reviewed or as a draft (ADR-139,
 # 13, tools/words/offered: a line's first word is its tag), declared, each
 # with its .lproj saying skwir's name.

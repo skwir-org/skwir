@@ -128,45 +128,9 @@ body = b"".join(kind.encode() + struct.pack(">I", 8 + len(png)) + png
 out.write_bytes(b"icns" + struct.pack(">I", 8 + len(body)) + body)
 EOF
 
-# The languages skwir speaks (ADR-139, 13): English, and each it offers,
-# reviewed or as a draft (tools/words/offered, kept by `just words`: a
-# line's first word is its tag), declared so that macOS's own
-# menus and its per-app language follow, each an .lproj saying what
-# Info.plist says to a person (the brand alone, the same in every
-# language). A language only shipped, not offered, is left out: Automatic
-# never speaks it, and a Mac in it would mix macOS's menus in it with
-# skwir's English. The development region is English.
-languages="en $(sed '/^#/d; /^[[:space:]]*$/d' tools/words/offered | awk '{ print $1 }' | LC_ALL=C sort -u | tr '\n' ' ')"
-for language in $languages; do
-    mkdir -p "$app/Contents/Resources/$language.lproj"
-    cat > "$app/Contents/Resources/$language.lproj/InfoPlist.strings" <<'STRINGS'
-/* What Info.plist says to a person: skwir's name, the brand, the same in every language. */
-CFBundleName = "skwir";
-CFBundleDisplayName = "skwir";
-STRINGS
-done
-
-# shellcheck disable=SC2086 # one <string> per language
-cat > "$app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key><string>skwir</string>
-    <key>CFBundleDisplayName</key><string>skwir</string>
-    <key>CFBundleIdentifier</key><string>org.skwir.skwir</string>
-    <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleLocalizations</key><array>$(printf '<string>%s</string>' $languages)</array>
-    <key>CFBundleExecutable</key><string>skwir</string>
-    <key>CFBundleIconFile</key><string>skwir</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>$version</string>
-    <key>CFBundleVersion</key><string>$version</string>
-    <key>LSMinimumSystemVersion</key><string>12.0</string>
-    <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-PLIST
+# The same identity, non-default viewer claim and offered languages for
+# cross-built and native bundles (ADR-140, ADR-139).
+python3 tools/package/macos-plist.py "$app" "$version"
 
 # Signed ad hoc, as Apple silicon asks of anything it runs: each program,
 # PDFium, and the bundle's resources sealed.

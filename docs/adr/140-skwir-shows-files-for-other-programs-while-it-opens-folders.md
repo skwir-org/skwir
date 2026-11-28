@@ -3,10 +3,15 @@
 Status: accepted 2026-11-18, on the user's answer (asked whether skwir
 should take the desktop's "open in folder" requests and be the default
 file manager, they chose to start there, before a file chooser for
-other programs). Built on Linux; elsewhere refused (decision 7). Amends
+other programs). Initially built on Linux; see decision 7 for macOS. Amends
 ADR-115 and ADR-122: a launch may say what to select, and the program
 may start without a window. Amended 2026-11-19, the user asking for the
 row in Settings: decision 8.
+
+Amended 2026-11-28 for macOS file-viewer requests: LaunchServices already
+delivers open URLs to gpui, but Skwir treated every URL as a folder.
+Decision 7 now distinguishes the Linux bus service from macOS's opt-in
+file viewer.
 
 ## Context
 
@@ -110,12 +115,32 @@ row in Settings: decision 8.
    names to select in its folder and whether Properties shows, on the
    bus (`Finishing.Open`) and Windows' pipe (its message's second
    version) alike: both ends are always one build.
-7. **Only on Linux.** On macOS the Finder answers every "reveal"
-   (`NSWorkspace.activateFileViewerSelecting` names no other); on
-   Windows Explorer can be bypassed for folders by a verb of the user's,
+7. **The bus service is Linux-only.** On macOS, a user can choose Skwir
+   as `NSFileViewer` for `NSWorkspace.activateFileViewerSelectingURLs`.
+   This is an opt-in global preference, not a setting Skwir changes.
+   The bundle declares `public.item`, role `Viewer`, rank `None`, so
+   sandboxed senders can reveal files without making Skwir their default
+   document application. A folder-only declaration does not cover files.
+   gpui delivers these requests through `application:openURLs:`, like
+   ordinary open requests. Skwir normalizes them on scheduler workers,
+   in the lane of each path's mount, and uses the existing launch queue
+   both at startup and while running. Files and macOS packages reveal in
+   their parent; ordinary directories open themselves. A batch groups
+   selections by parent and removes duplicate paths. The CLI shares the
+   normalizer. Packages are identified by `NSWorkspace.isFilePackageAtPath`,
+   not an extension list. Unknown paths remain as given.
+   This handler does not distinguish reveal from open events, so a
+   directory reveal opens that directory rather than selecting it in its
+   parent. Different requests may complete in a different order across
+   workers; grouping applies within one delivered URL batch.
+   Changing the folder default is separate: macOS 27 rejects the tested
+   association APIs with `-50`, even when choosing Finder. Skwir does not
+   claim that capability or replace system Open and Save dialogs.
+   On Windows Explorer can be bypassed for folders by a verb of the user's,
    not for the shell's own "Open file location", and a handler that
-   fails breaks opening folders everywhere. Neither is attempted, and
-   `--file-manager` there says so (`file_manager::not_yet`, words for
+   fails breaks opening folders everywhere. That integration is not
+   attempted. `--file-manager` is still Linux-only and elsewhere says so
+   (`file_manager::not_yet`, words for
    what is not written for a system yet, as `system::not_yet_words`'
    are).
 8. **Settings says it** (amended 2026-11-19): General › Startup holds

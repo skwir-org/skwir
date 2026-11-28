@@ -1,0 +1,63 @@
+name: macOS folder associations
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Disposable Apple silicon host (standard runners only)
+        type: choice
+        default: macos-15
+        options:
+          - macos-15
+          - macos-26
+          - xcode-27
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-associations-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  associations:
+    name: Actual folder opening on ${{ inputs.runner || 'macos-15' }}
+    runs-on: ${{ inputs.runner || 'macos-15' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Download the exact tested downstream bundle (no Rust build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          mkdir -p target/associations
+          cd target/associations
+          archive=skwir-0.7.3-macos.1-macos-arm64.zip
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/BleedingDev/skwir/releases/download/macos-v0.7.3-macos.1/$archive"
+          echo "11bb02c7fceeee0aa4a39190fb963ac3fe5a536a415f607c3193d0cd96973937  $archive" | shasum -a 256 -c -
+          ditto -x -k "$archive" .
+          codesign --verify --deep --strict skwir.app
+          echo "02a007e3e25cf72d033c85e31763237d3aa0fe59f1850539e8f67ac629709769  skwir.app/Contents/MacOS/skwir" | shasum -a 256 -c -
+          test "$(skwir.app/Contents/MacOS/skwir --version)" = "skwir 0.7.3-macos.1+51e18c6e4a48"
+      - name: Observe associations and actual ordinary folder opens
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          python3 -u tools/package/macos-association-check.py \
+            --app target/associations/skwir.app \
+            --output target/associations/result.json \
+            2>&1 | tee target/associations/check.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ${{ inputs.runner || 'macos-15' }}-folder-associations
+          path: |
+            target/associations/result.json
+            target/associations/check.log
+          if-no-files-found: warn

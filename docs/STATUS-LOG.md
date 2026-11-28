@@ -24778,3 +24778,110 @@ with their keys.
   Tantivy, SQLite FTS5; others ruled out), the system's indexes as
   hints. Its measurements ran on a loaded machine: measure again before
   recording any.
+
+## 2026-11-28: macOS reveal requests select files in their folders
+
+- **The failures reproduced:** 0.7.2 treated a delivered file URL as a
+  folder and entered application packages. Its missing `public.item`
+  claim prevented a sandboxed sender's request from arriving. The live
+  checks passed 3 of 11 cases on 0.7.2. The first repair passed 8 of 11:
+  AppKit decomposed an NFC name, but the listing kept the stored name,
+  so its exact-name index found no selection.
+- **The repair:** the CLI and open-URL callback share the file, folder
+  and package classifier. The callback runs on mount-lane workers and
+  feeds the existing launch queue. macOS's `getattrlist` with
+  `ATTR_CMN_NAME` and `FSOPT_NOFOLLOW` supplies the stored basename
+  through core's filesystem seam. It preserves the requested symlink or
+  hard link without scanning a folder or rewriting Unicode.
+- **Checks:** the scoped `skwir-platform file_manager` tests passed on
+  Linux and macOS, including both NFC/NFD directions and link names.
+  Six Python tests passed. The
+  [native CI run](https://github.com/BleedingDev/skwir/actions/runs/46152946976)
+  built `0.7.3-macos.1+51e18c6e4a48` and passed all 11 live cases on
+  macOS 15. The downloaded, checksum-verified and code-signature-verified
+  bundle passed the same 11 cases on a physical macOS 27.2 Mac.
+- **What the live checks read:** the actual folder, completed listing,
+  selected names and selected count through the running app's command
+  interface. Cold and warm reveals, composed and decomposed names, a
+  three-file batch, `open -R`, `selectFile:`, ordinary folder opens,
+  application packages and a sandboxed sender passed. Regular documents
+  retained their other default applications.
+- **Isolation:** each run registers a uniquely identified copy outside
+  temporary folders. A small native application proves each sender's
+  route and HOME/TMPDIR before Skwir starts; kernel reads verify the
+  copy's environment during the run. Only the copy's private profile
+  enables the control interface. A global lock covers the temporary
+  `NSFileViewer` choice, which is restored and read back afterwards.
+- **Package scope:** this downstream prerelease builds Skwir natively
+  and uses the checksum-pinned 0.7.2 package's unchanged helpers and
+  runtime assets. It is not a new official upstream release or evidence
+  for untested macOS features.
+- **Left:** the tested public folder-default APIs still return `-50` on
+  macOS 27, including when choosing Finder. An ordinary open and a reveal
+  share the callback, so a folder opens itself rather than being selected
+  in its parent. Grouping covers one URL batch, not separate events.
+  Finder's desktop, system file dialogs and explicit Finder scripts are
+  unchanged.
+
+## 2026-11-28: folder associations on a disposable macOS 15 host
+
+- **The check:** the [isolated association run](https://github.com/BleedingDev/skwir/actions/runs/46164788620)
+  used macOS 15.8.2, build 24H232, and the checksum-verified downstream
+  `0.7.3-macos.1+51e18c6e4a48` bundle. It built no Rust code.
+  Both a native folder-viewer test application and an isolated Skwir copy
+  were tested. Explicit launches and a regular-file association proved
+  that the observation paths worked before the association cases ran.
+- **Global folder defaults worked:** choosing either application's
+  `public.folder` handler with the All or Viewer role returned zero.
+  Ordinary `open -g` delivered the folder to the chosen application.
+  Skwir's command interface reported the exact folder and a completed
+  listing. An independent default-opening AppKit call named the actual
+  recipient. A raw `LSHandlers` folder preference worked after refreshing
+  the runner's user-owned LaunchServices process, not before.
+- **Other choices did not work:** setting `public.directory` returned
+  zero but ordinary folders still opened in Finder. The per-file default
+  API rejected a folder with Cocoa error 513, although its regular-file
+  control succeeded. A directly written per-folder `OpenWith` attribute
+  read back exactly but did not change the opener.
+- **Independent cases:** the first run exposed stale in-memory choices
+  after restoring preferences. The corrected run refreshed the
+  disposable account's LaunchServices process and re-registered the
+  owned applications between cases. Every case asserted the original
+  Finder baseline before its mutation. Preferences and effective folder
+  defaults were both restored and read back at the end.
+- **Scope:** the script refuses to run outside a GitHub-hosted macOS
+  runner. These results establish working folder defaults on 15.8.2,
+  not a workaround for the API rejection and ignored preference observed
+  on macOS 27.2. They require neither a SIP change nor a system restart.
+
+## 2026-11-28: current macOS folder defaults checked separately
+
+- **Clean host:** the [macOS 27.0.1 association run](https://github.com/BleedingDev/skwir/actions/runs/46167009891)
+  used build 26A434 and the same checksum-verified Skwir bundle. Each
+  case began with Finder, and both the capable native test application
+  and Skwir were tried. All 18 diagnostic observations completed, with
+  preferences and effective folder defaults restored afterwards.
+- **Observed opening:** neither legacy All and Viewer folder setters,
+  modern AppKit type setters, a raw folder preference followed by a
+  LaunchServices refresh, nor a per-folder attribute made an ordinary
+  folder open in either candidate. The actual default-opening AppKit
+  call named Finder. The `file:` scheme setter also returned `-50`.
+  The explicit-launch and regular-file controls worked, so these
+  refusals were not evidence that the test application could not open
+  the requested folder.
+- **Physical Mac:** the modern folder setter also returned an
+  underlying `-50` on macOS 27.2, even when choosing Finder. Asking by a
+  folder's file URL returned `-10815`; choosing the `file:` scheme
+  returned `-50`. The original preferences read back unchanged.
+- **Volume experiment:** reports of accepted `public.volume` choices
+  prompted separate probes on an owned APFS image. Legacy All and
+  Viewer setters returned zero, but actual opening still chose Finder.
+  Modern asynchronous volume requests did not complete within 30
+  seconds and remain unverified. The [exploratory run](https://github.com/BleedingDev/skwir/actions/runs/46169060573)
+  is not a passing integration check: it also encountered a busy image
+  during cleanup. The temporary mounted-image probes were removed from
+  the maintained diagnostic rather than shipped as a working feature.
+- **Scope:** these checks establish no additional working default-folder
+  or volume integration on macOS 27. A full logout or reboot with the
+  preference installed was not tested. No SIP setting, system
+  application, or personal profile was changed.

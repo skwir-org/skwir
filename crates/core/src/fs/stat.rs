@@ -739,6 +739,63 @@ pub fn named(path: &Path) -> Option<(FileId, bool)> {
     Some((st.id, st.kind == EntryKind::Directory || st.nlink == 1))
 }
 
+/// The name this entry has on disk, not a normalized or display name.
+/// `ATTR_CMN_NAME` answers for the requested hard link; `FSOPT_NOFOLLOW`
+/// keeps a symlink's name rather than its target's. One metadata lookup,
+/// even in a large folder. A filesystem that cannot answer leaves the
+/// supplied name unchanged at the caller.
+#[cfg(target_os = "macos")]
+pub fn stored_name(path: &Path) -> Option<std::ffi::OsString> {
+    use std::ffi::{CStr, CString};
+
+    let path = CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
+    let mut attrs = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: libc::ATTR_CMN_NAME,
+        volattr: 0,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    // getattrlist packs a u32 byte count, an attrreference_t (relative
+    // offset and byte count), then the NUL-terminated name, padded to 4.
+    // PATH_MAX holds a name in the filesystem's UTF-8 representation.
+    const HEADER: usize = size_of::<u32>() + size_of::<libc::attrreference_t>();
+    let mut buffer = [0_u8; HEADER + libc::PATH_MAX as usize];
+    // SAFETY: path is NUL-terminated; attrs is the initialized native
+    // request, and buffer is writable for the full length passed.
+    #[allow(unsafe_code)]
+    let result = unsafe {
+        libc::getattrlist(
+            path.as_ptr(),
+            std::ptr::from_mut(&mut attrs).cast(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            libc::FSOPT_NOFOLLOW,
+        )
+    };
+    if result != 0 {
+        return None;
+    }
+    // Read the packed fields as bytes: neither the buffer nor its fields
+    // are assumed aligned. Check both the returned size and the reference.
+    let length = usize::try_from(u32::from_ne_bytes(buffer[..4].try_into().ok()?)).ok()?;
+    let data = buffer.get(..length)?;
+    let offset = i32::from_ne_bytes(data.get(4..8)?.try_into().ok()?);
+    let start = 4_usize.checked_add(usize::try_from(offset).ok()?)?;
+    let size = usize::try_from(u32::from_ne_bytes(data.get(8..12)?.try_into().ok()?)).ok()?;
+    if start < HEADER {
+        return None;
+    }
+    let name = CStr::from_bytes_with_nul(data.get(start..start.checked_add(size)?)?).ok()?;
+    let bytes = name.to_bytes();
+    if bytes.is_empty() || bytes.contains(&b'/') || matches!(bytes, b"." | b"..") {
+        return None;
+    }
+    Some(crate::os_path::from_bytes(bytes.to_vec()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{id_of, stat_path};
