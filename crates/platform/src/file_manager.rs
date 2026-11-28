@@ -702,8 +702,8 @@ mod tests {
         for file in [&first, &second, &third] {
             std::fs::write(file, b"example").unwrap();
         }
-        let uris = [&first, &second, &first, &third, &folder]
-            .map(|path| crate::uri::file_uri(path));
+        let uris =
+            [&first, &second, &first, &third, &folder].map(|path| crate::uri::file_uri(path));
         let expected = |folder: &Path, names: &[&str]| Opening {
             location: Some(folder.as_os_str().to_owned()),
             select: names.iter().map(OsString::from).collect(),
@@ -729,7 +729,10 @@ mod tests {
             ),
             (folder.into_os_string(), Some("draft #1.txt".into()))
         );
-        assert_eq!(named(OsStr::new("Maps"), root.path()), ("Maps".into(), None));
+        assert_eq!(
+            named(OsStr::new("Maps"), root.path()),
+            ("Maps".into(), None)
+        );
         assert_eq!(
             named(OsStr::new("missing.txt"), root.path()),
             ("missing.txt".into(), None)
@@ -771,7 +774,10 @@ mod tests {
         std::os::unix::fs::symlink(root.path().join("gone"), &broken).unwrap();
         assert_eq!(
             named(file_link.as_os_str(), Path::new("")),
-            (root.path().as_os_str().to_owned(), Some("file link.txt".into()))
+            (
+                root.path().as_os_str().to_owned(),
+                Some("file link.txt".into())
+            )
         );
         assert_eq!(
             named(folder_link.as_os_str(), Path::new("")),
@@ -808,7 +814,10 @@ mod tests {
         );
         assert_eq!(
             named(package.as_os_str(), Path::new("")),
-            (root.path().as_os_str().to_owned(), Some("Example.app".into()))
+            (
+                root.path().as_os_str().to_owned(),
+                Some("Example.app".into())
+            )
         );
     }
 

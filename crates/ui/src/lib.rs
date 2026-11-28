@@ -295,9 +295,9 @@ fn run_as(
         let (openings, wake) = (Arc::clone(&openings), app.waker_handle());
         let (scheduler, lifetime) = (app.scheduler.clone(), app.lifetime().child());
         application.on_open_urls(move |urls| {
-            let local = urls.into_iter().filter_map(|url| {
-                skwir_platform::uri::local_path_of(&url).map(|path| (url, path))
-            });
+            let local = urls
+                .into_iter()
+                .filter_map(|url| skwir_platform::uri::local_path_of(&url).map(|path| (url, path)));
             // A slow mounted server holds only its own lane, not every
             // request to open a local folder.
             for (lane, paths) in skwir_core::fs::reach::by_lane(local, |(_, path)| path) {
