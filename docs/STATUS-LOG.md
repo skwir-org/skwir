@@ -24778,3 +24778,47 @@ with their keys.
   Tantivy, SQLite FTS5; others ruled out), the system's indexes as
   hints. Its measurements ran on a loaded machine: measure again before
   recording any.
+
+## 2026-11-28: macOS reveal requests select files in their folders
+
+- **The failures reproduced:** 0.7.2 treated a delivered file URL as a
+  folder and entered application packages. Its missing `public.item`
+  claim prevented a sandboxed sender's request from arriving. The live
+  checks passed 3 of 11 cases on 0.7.2. The first repair passed 8 of 11:
+  AppKit decomposed an NFC name, but the listing kept the stored name,
+  so its exact-name index found no selection.
+- **The repair:** the CLI and open-URL callback share the file, folder
+  and package classifier. The callback runs on mount-lane workers and
+  feeds the existing launch queue. macOS's `getattrlist` with
+  `ATTR_CMN_NAME` and `FSOPT_NOFOLLOW` supplies the stored basename
+  through core's filesystem seam. It preserves the requested symlink or
+  hard link without scanning a folder or rewriting Unicode.
+- **Checks:** the scoped `skwir-platform file_manager` tests passed on
+  Linux and macOS, including both NFC/NFD directions and link names.
+  Six Python tests passed. The
+  [native CI run](https://github.com/BleedingDev/skwir/actions/runs/46152946976)
+  built `0.7.3-macos.1+51e18c6e4a48` and passed all 11 live cases on
+  macOS 15. The downloaded, checksum-verified and code-signature-verified
+  bundle passed the same 11 cases on a physical macOS 27.2 Mac.
+- **What the live checks read:** the actual folder, completed listing,
+  selected names and selected count through the running app's command
+  interface. Cold and warm reveals, composed and decomposed names, a
+  three-file batch, `open -R`, `selectFile:`, ordinary folder opens,
+  application packages and a sandboxed sender passed. Regular documents
+  retained their other default applications.
+- **Isolation:** each run registers a uniquely identified copy outside
+  temporary folders. A small native application proves each sender's
+  route and HOME/TMPDIR before Skwir starts; kernel reads verify the
+  copy's environment during the run. Only the copy's private profile
+  enables the control interface. A global lock covers the temporary
+  `NSFileViewer` choice, which is restored and read back afterwards.
+- **Package scope:** this downstream prerelease builds Skwir natively
+  and uses the checksum-pinned 0.7.2 package's unchanged helpers and
+  runtime assets. It is not a new official upstream release or evidence
+  for untested macOS features.
+- **Left:** the tested public folder-default APIs still return `-50` on
+  macOS 27, including when choosing Finder. An ordinary open and a reveal
+  share the callback, so a folder opens itself rather than being selected
+  in its parent. Grouping covers one URL batch, not separate events.
+  Finder's desktop, system file dialogs and explicit Finder scripts are
+  unchanged.

@@ -349,8 +349,10 @@ Left:
   together; ordinary folders open themselves. The bundle declares a
   non-default `public.item` Viewer for sandboxed reveal senders. Choosing
   Skwir as `NSFileViewer` is manual and optional
-  ([guide](guide.md#macos-show-in-finder)). Native runtime verification
-  is separate from cross-compilation. This does not replace Finder's
+  ([guide](guide.md#macos-show-in-finder)). The 11 native runtime checks
+  passed on macOS 15 in CI and macOS 27.2 on a physical Mac
+  (2026-11-28); these checks are separate from cross-compilation.
+  This does not replace Finder's
   desktop or system dialogs, and does not set the default for folders
   (the tested macOS 27 APIs refuse `-50`, including for Finder).
   Explorer cannot be replaced for the shell's own on Windows.
