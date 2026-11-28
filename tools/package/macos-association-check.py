@@ -4,6 +4,8 @@
 Uses the already-tested reveal fixture for the real app's private environment.
 OS refusals are results, not test failures. Invalid instrumentation or failed
 restoration fails the job. No Rust compilation, system restart or SIP changes.
+An asynchronous volume change without a completion is reported as unverified,
+not as a successful change, even when the remaining observations complete.
 """
 
 from __future__ import annotations
@@ -91,7 +93,8 @@ def main():
     viewer = reveal.FileViewer()
     original = preferences()
     original_viewer = viewer.read()
-    results = {"macos": checked("sw_vers").strip(), "cases": [], "instrumentation": {}}
+    results = {"macos": checked("sw_vers").strip(), "cases": [], "instrumentation": {},
+               "unverified": []}
     code = 2
     mounted_volume = None
 
@@ -108,8 +111,17 @@ def main():
                 str(SOURCE / "macos-association-probe.m"))
 
         def native(*arguments):
-            answer = checked(str(probe), *map(str, arguments), env=reveal.launch_env())
-            return json.loads(answer)
+            response = run(str(probe), *map(str, arguments), env=reveal.launch_env())
+            # This asynchronous API can wait for a user decision. Observe its
+            # bounded lack of completion, then still check the actual opener.
+            # It is an unverified outcome, never a successful change.
+            if response.returncode == 3 and arguments[0] == "modern-type" and arguments[-1] == "public.volume":
+                answer = json.loads(response.stdout)
+                if answer.get("timeout") is True:
+                    return {**answer, "ok": False, "completion": "unverified"}
+            if response.returncode:
+                raise RuntimeError(f"{probe} failed: {response.stderr or response.stdout}")
+            return json.loads(response.stdout)
 
         def refresh_launch_services():
             # Preference restoration alone does not invalidate lsd's in-memory
@@ -237,6 +249,8 @@ def main():
                     mutation = native("type", "public.volume", "viewer", bundle_id)
                 elif method == "volume_modern_api":
                     mutation = native("modern-type", app, "public.volume")
+                    if mutation.get("completion") == "unverified":
+                        results["unverified"].append(f"{label}/{method}")
                 elif method == "per_path_xattr":
                     attribute = {"version": 0, "path": str(app), "bundleidentifier": bundle_id}
                     write_association(target, attribute)
@@ -340,19 +354,52 @@ def main():
                 results["volume_cleanup_error"] = str(error)
                 detached = False
                 code = 2
-        # Never recursively remove a fixture while its image is still mounted.
-        if detached and not reveal.cleanup(fx, viewer):
-            results["fixture_cleanup_failed"] = True
-            if root.exists():
-                results["cleanup_residue"] = [
-                    {"name": path.name, "directory": path.is_dir(), "symlink": path.is_symlink()}
-                    for path in root.iterdir()
-                ]
-                print("cleanup residue: " + json.dumps(results["cleanup_residue"]), flush=True)
+        # Finder wrote .DS_Store after unmount, racing rmtree in a measured
+        # failure. Freeze that writer during namespace disposal, then resume it.
+        # Only the disposable account's verified, observed Finder is eligible.
+        paused = []
+        try:
+            finder_pids = {
+                case["native_default_open"]["pid"] for case in results["cases"]
+                if case["native_default_open"].get("recipient") == "com.apple.finder"
+            }
+            for pid in finder_pids:
+                if reveal.program_of(pid) != "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder":
+                    continue
+                owner = checked("ps", "-p", str(pid), "-o", "uid=").strip()
+                if owner != str(os.getuid()):
+                    raise RuntimeError("refusing to pause another account's Finder")
+                os.kill(pid, signal.SIGSTOP)
+                paused.append(pid)
+                deadline = time.monotonic() + 5
+                while not checked("ps", "-p", str(pid), "-o", "stat=").strip().startswith("T"):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("the disposable Finder did not stop writing")
+                    time.sleep(0.05)
+            # Never recursively remove a fixture while its image is mounted.
+            if detached and not reveal.cleanup(fx, viewer):
+                results["fixture_cleanup_failed"] = True
+                if root.exists():
+                    results["cleanup_residue"] = [
+                        {"name": path.name, "directory": path.is_dir(), "symlink": path.is_symlink()}
+                        for path in root.iterdir()
+                    ]
+                    print("cleanup residue: " + json.dumps(results["cleanup_residue"]), flush=True)
+                code = 2
+        except Exception as error:
+            results["fixture_cleanup_error"] = str(error)
             code = 2
+        finally:
+            for pid in paused:
+                try:
+                    if reveal.program_of(pid) == "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder":
+                        os.kill(pid, signal.SIGCONT)
+                except ProcessLookupError:
+                    pass
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(emit(results), indent=2) + "\n")
-        print(json.dumps(emit({"completed": code == 0, "cases": len(results["cases"]),
+        print(json.dumps(emit({"observations_complete": code == 0, "cases": len(results["cases"]),
+                              "unverified_cases": len(results["unverified"]),
                               "restored": results.get("restored", False)})), flush=True)
     return code
 
