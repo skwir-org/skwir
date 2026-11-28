@@ -208,9 +208,10 @@ def main():
             for method in ("per_path_api", "per_path_xattr", "folder_all_api",
                            "folder_viewer_api", "directory_all_api", "raw_folder_preference",
                            "modern_folder_api", "modern_folder_by_file_api", "file_scheme_api",
-                           "volume_all_api"):
-                item = volume if method == "volume_all_api" else target
-                expected_baseline = volume_baseline if method == "volume_all_api" else baseline
+                           "volume_all_api", "volume_viewer_api", "volume_modern_api"):
+                is_volume = method.startswith("volume_")
+                item = volume if is_volume else target
+                expected_baseline = volume_baseline if is_volume else baseline
                 reveal.stop(fx.canary)
                 reveal.stop(fx.bundle)
                 for folder in (target, control):
@@ -232,6 +233,10 @@ def main():
                     mutation = native("scheme", app, "file")
                 elif method == "volume_all_api":
                     mutation = native("type", "public.volume", "all", bundle_id)
+                elif method == "volume_viewer_api":
+                    mutation = native("type", "public.volume", "viewer", bundle_id)
+                elif method == "volume_modern_api":
+                    mutation = native("modern-type", app, "public.volume")
                 elif method == "per_path_xattr":
                     attribute = {"version": 0, "path": str(app), "bundleidentifier": bundle_id}
                     write_association(target, attribute)
@@ -249,12 +254,14 @@ def main():
                     content_type = "public.directory" if method == "directory_all_api" else "public.folder"
                     role = "viewer" if method == "folder_viewer_api" else "all"
                     mutation = native("type", content_type, role, bundle_id)
+                if is_volume:
+                    mutation["type_handlers"] = native("type-query", "public.volume")
                 after = {"target": native("query", item), "control": native("query", control)}
                 # Plain command-line open, no explicit application and no reveal.
                 opened = run("/usr/bin/open", "-g", str(item), env=reveal.launch_env())
                 record = {
                     "application": label, "method": method, "mutation": mutation,
-                    "scope": "volume" if method == "volume_all_api" else "folder",
+                    "scope": "volume" if is_volume else "folder",
                     "before": before, "after": after,
                     "plain_open": {"returncode": opened.returncode, "stderr": opened.stderr.strip()},
                 }
@@ -292,7 +299,7 @@ def main():
                     raise RuntimeError(f"default query and actual recipient disagree: {record}")
                 if method.startswith("per_path") and after["control"] != before["control"]:
                     raise RuntimeError("per-path operation changed the unmodified control folder")
-                if method == "volume_all_api" and after["control"] != before["control"]:
+                if is_volume and after["control"] != before["control"]:
                     raise RuntimeError("volume operation changed the unmodified ordinary folder")
                 results["cases"].append(record)
                 print(json.dumps(emit(record)), flush=True)
@@ -336,6 +343,12 @@ def main():
         # Never recursively remove a fixture while its image is still mounted.
         if detached and not reveal.cleanup(fx, viewer):
             results["fixture_cleanup_failed"] = True
+            if root.exists():
+                results["cleanup_residue"] = [
+                    {"name": path.name, "directory": path.is_dir(), "symlink": path.is_symlink()}
+                    for path in root.iterdir()
+                ]
+                print("cleanup residue: " + json.dumps(results["cleanup_residue"]), flush=True)
             code = 2
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(emit(results), indent=2) + "\n")
