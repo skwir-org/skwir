@@ -1199,6 +1199,12 @@ Unicode spelling, names the selection. The bundle declares a non-default
 macOS 15 in CI and macOS 27.2 on a physical Mac, with the actual location,
 completed listing and selected names read back. Checks and limits are in
 `docs/STATUS-LOG.md` (2026-11-28).
+Separate association checks on a disposable macOS 15.8.2 runner confirmed
+that `public.folder` defaults open folders in Skwir through an ordinary
+`open`, without an explicit application. The public API and a raw
+`LSHandlers` preference followed by a LaunchServices refresh worked.
+Per-folder associations did not. The same global choices remain rejected
+or ignored on the tested macOS 27.2 machine.
 
 ## Other programs' Open and Save dialogs (ADR-141, 2026-11-19)
 
@@ -1978,8 +1984,9 @@ portal's `OpenDirectory` for a sandboxed program, Zed); a Dolphin daemon
 holding the name, seen to keep it until it ends (a test's holder, not
 Dolphin); the startup id on Wayland.
 On macOS, the opt-in reveal integration was checked on real applications
-on 2026-11-28. Left: a public folder-default API that accepts the choice
-on current macOS, distinguishing a folder reveal from an ordinary open,
+on 2026-11-28. Folder defaults worked on macOS 15.8.2. Left: a working
+folder-default choice on the tested macOS 27.2, distinguishing a folder
+reveal from an ordinary open,
 and grouping selections across separate delivered URL events. This does
 not replace Finder's desktop or system Open and Save dialogs.
 

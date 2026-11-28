@@ -24822,3 +24822,34 @@ with their keys.
   in its parent. Grouping covers one URL batch, not separate events.
   Finder's desktop, system file dialogs and explicit Finder scripts are
   unchanged.
+
+## 2026-11-28: folder associations on a disposable macOS 15 host
+
+- **The check:** the [isolated association run](https://github.com/BleedingDev/skwir/actions/runs/46164788620)
+  used macOS 15.8.2, build 24H232, and the checksum-verified downstream
+  `0.7.3-macos.1+51e18c6e4a48` bundle. It built no Rust code.
+  Both a native folder-viewer test application and an isolated Skwir copy
+  were tested. Explicit launches and a regular-file association proved
+  that the observation paths worked before the association cases ran.
+- **Global folder defaults worked:** choosing either application's
+  `public.folder` handler with the All or Viewer role returned zero.
+  Ordinary `open -g` delivered the folder to the chosen application.
+  Skwir's command interface reported the exact folder and a completed
+  listing. An independent default-opening AppKit call named the actual
+  recipient. A raw `LSHandlers` folder preference worked after refreshing
+  the runner's user-owned LaunchServices process, not before.
+- **Other choices did not work:** setting `public.directory` returned
+  zero but ordinary folders still opened in Finder. The per-file default
+  API rejected a folder with Cocoa error 513, although its regular-file
+  control succeeded. A directly written per-folder `OpenWith` attribute
+  read back exactly but did not change the opener.
+- **Independent cases:** the first run exposed stale in-memory choices
+  after restoring preferences. The corrected run refreshed the
+  disposable account's LaunchServices process and re-registered the
+  owned applications between cases. Every case asserted the original
+  Finder baseline before its mutation. Preferences and effective folder
+  defaults were both restored and read back at the end.
+- **Scope:** the script refuses to run outside a GitHub-hosted macOS
+  runner. These results establish working folder defaults on 15.8.2,
+  not a workaround for the API rejection and ignored preference observed
+  on macOS 27.2. They require neither a SIP change nor a system restart.
