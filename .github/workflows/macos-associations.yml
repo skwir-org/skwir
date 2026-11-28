@@ -2,6 +2,15 @@ name: macOS folder associations
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Disposable Apple silicon host (standard runners only)
+        type: choice
+        default: macos-15
+        options:
+          - macos-15
+          - macos-26
+          - xcode-27
 
 permissions:
   contents: read
@@ -12,8 +21,8 @@ concurrency:
 
 jobs:
   associations:
-    name: Actual folder opening on macOS 15
-    runs-on: macos-15
+    name: Actual folder opening on ${{ inputs.runner || 'macos-15' }}
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -47,7 +56,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: macos-15-folder-associations
+          name: ${{ inputs.runner || 'macos-15' }}-folder-associations
           path: |
             target/associations/result.json
             target/associations/check.log

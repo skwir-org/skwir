@@ -1,6 +1,7 @@
 // Native association APIs, called only by the disposable-host diagnostic.
 #import <AppKit/AppKit.h>
 #import <CoreServices/CoreServices.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <stdio.h>
 
 static void print_json(NSDictionary *value) {
@@ -11,8 +12,12 @@ static void print_json(NSDictionary *value) {
 }
 
 static NSDictionary *error_json(NSError *error) {
-    return error ? @{@"ok": @NO, @"domain": error.domain, @"code": @(error.code),
-                     @"description": error.localizedDescription} : @{@"ok": @YES};
+    if (!error) return @{@"ok": @YES};
+    NSMutableDictionary *result = [@{@"ok": @NO, @"domain": error.domain,
+        @"code": @(error.code), @"description": error.localizedDescription} mutableCopy];
+    NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+    if ([underlying isKindOfClass:NSError.class]) result[@"underlying"] = error_json(underlying);
+    return result;
 }
 
 int main(int argc, const char **argv) {
@@ -37,7 +42,30 @@ int main(int argc, const char **argv) {
                          @"application": app.path ?: @""});
             return 0;
         }
-        if ([mode isEqualToString:@"path"] && argc == 4) {
+        if ([mode isEqualToString:@"modern-type"] && argc == 4) {
+            UTType *type = [UTType typeWithIdentifier:@(argv[3])];
+            if (!type) return 2;
+            [workspace setDefaultApplicationAtURL:[NSURL fileURLWithPath:@(argv[2])]
+                               toOpenContentType:type
+                               completionHandler:^(NSError *error) {
+                print_json(error_json(error));
+                done = YES;
+            }];
+        } else if ([mode isEqualToString:@"modern-file-type"] && argc == 4) {
+            [workspace setDefaultApplicationAtURL:[NSURL fileURLWithPath:@(argv[2])]
+                    toOpenContentTypeOfFileAtURL:[NSURL fileURLWithPath:@(argv[3])]
+                               completionHandler:^(NSError *error) {
+                print_json(error_json(error));
+                done = YES;
+            }];
+        } else if ([mode isEqualToString:@"scheme"] && argc == 4) {
+            [workspace setDefaultApplicationAtURL:[NSURL fileURLWithPath:@(argv[2])]
+                            toOpenURLsWithScheme:@(argv[3])
+                               completionHandler:^(NSError *error) {
+                print_json(error_json(error));
+                done = YES;
+            }];
+        } else if ([mode isEqualToString:@"path"] && argc == 4) {
             [workspace setDefaultApplicationAtURL:[NSURL fileURLWithPath:@(argv[2])]
                                  toOpenFileAtURL:[NSURL fileURLWithPath:@(argv[3])]
                                completionHandler:^(NSError *error) {

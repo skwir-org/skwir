@@ -103,7 +103,7 @@ def main():
         fx.build(args.app.resolve(), reveal.app_executable(args.app.resolve()))
         probe = root / "associations"
         checked("clang", "-fobjc-arc", "-Wall", "-framework", "AppKit",
-                "-framework", "CoreServices", "-o", str(probe),
+                "-framework", "CoreServices", "-framework", "UniformTypeIdentifiers", "-o", str(probe),
                 str(SOURCE / "macos-association-probe.m"))
 
         def native(*arguments):
@@ -142,6 +142,11 @@ def main():
             "CFBundleTypeName": "Diagnostic folder",
             "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Owner",
             "LSItemContentTypes": ["public.folder", "public.directory"],
+        }]
+        info["CFBundleURLTypes"] = [{
+            "CFBundleURLName": "Diagnostic file URL",
+            "CFBundleURLSchemes": ["file"],
+            "CFBundleTypeRole": "Viewer",
         }]
         info_path.write_bytes(plistlib.dumps(info))
         checked("codesign", "--force", "--sign", "-", str(fx.canary))
@@ -183,7 +188,8 @@ def main():
             (fx.bundle, fx.bundle_id, "skwir"),
         ):
             for method in ("per_path_api", "per_path_xattr", "folder_all_api",
-                           "folder_viewer_api", "directory_all_api", "raw_folder_preference"):
+                           "folder_viewer_api", "directory_all_api", "raw_folder_preference",
+                           "modern_folder_api", "modern_folder_by_file_api", "file_scheme_api"):
                 reveal.stop(fx.canary)
                 reveal.stop(fx.bundle)
                 for folder in (target, control):
@@ -197,6 +203,12 @@ def main():
                     raise RuntimeError(f"case not isolated: baseline {baseline}, got {before}")
                 if method == "per_path_api":
                     mutation = native("path", app, target)
+                elif method == "modern_folder_api":
+                    mutation = native("modern-type", app, "public.folder")
+                elif method == "modern_folder_by_file_api":
+                    mutation = native("modern-file-type", app, target)
+                elif method == "file_scheme_api":
+                    mutation = native("scheme", app, "file")
                 elif method == "per_path_xattr":
                     attribute = {"version": 0, "path": str(app), "bundleidentifier": bundle_id}
                     write_association(target, attribute)
