@@ -1,0 +1,104 @@
+name: macOS reveal
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional version for a downstream test release
+        required: false
+        type: string
+      verify:
+        description: Run the live AppKit integration checks after building
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-reveal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix-regressions:
+    name: Shared file-opening rules on Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: target/reveal-linux
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Pinned Rust
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/reveal-linux
+          key: reveal-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            reveal-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+      - run: cargo test --locked -p skwir-platform file_manager
+
+  native:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: target/macos-native
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      RELEASE_VERSION: ${{ inputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Apple silicon and pinned Rust
+        run: |
+          test "$(uname -m)" = arm64
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal --component rustfmt
+      - uses: actions/cache/restore@v5
+        id: cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/macos-native
+          key: macos-reveal-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            macos-reveal-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+      - name: Folder and selection regressions
+        run: cargo test --locked -p skwir-platform file_manager
+      - name: Bundle declarations
+        run: python3 -B -m unittest discover -s tools/package -p 'test_macos*.py'
+      - name: Build and assemble the native app
+        run: python3 tools/package/macos-native.py --version "$RELEASE_VERSION"
+      - uses: actions/cache/save@v5
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/macos-native
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - name: Exercise the actual app through macOS
+        if: inputs.verify
+        run: python3 tools/package/macos-reveal-check.py --app target/package/macos-native/skwir.app
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: skwir-macos-reveal
+          path: |
+            target/package/macos-native/*.zip
+            target/package/macos-native/*.sha256
+          if-no-files-found: error
