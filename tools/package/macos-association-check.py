@@ -93,6 +93,7 @@ def main():
     original_viewer = viewer.read()
     results = {"macos": checked("sw_vers").strip(), "cases": [], "instrumentation": {}}
     code = 2
+    mounted_volume = None
 
     def emit(value):
         # Public CI artifacts contain synthetic paths, not user machine details.
@@ -141,7 +142,7 @@ def main():
         info["CFBundleDocumentTypes"] = [{
             "CFBundleTypeName": "Diagnostic folder",
             "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Owner",
-            "LSItemContentTypes": ["public.folder", "public.directory"],
+            "LSItemContentTypes": ["public.folder", "public.directory", "public.volume"],
         }]
         info["CFBundleURLTypes"] = [{
             "CFBundleURLName": "Diagnostic file URL",
@@ -182,6 +183,23 @@ def main():
         results["instrumentation"]["regular_file_api"] = positive_result
         baseline = {"target": native("query", target), "control": native("query", control)}
         results["instrumentation"]["baseline"] = baseline
+        # A mounted disk is a separate content type, not another folder alias.
+        # Create and detach only this disposable host's owned sparse image.
+        volume = root / "volume"
+        volume.mkdir()
+        image = root / "volume.sparseimage"
+        checked("hdiutil", "create", "-size", "64m", "-fs", "APFS", "-type", "SPARSE",
+                "-volname", "Skwir Association Volume", str(image))
+        mounted_volume = volume
+        checked("hdiutil", "attach", "-nobrowse", "-noautoopen", "-mountpoint", str(volume),
+                str(image))
+        resource = native("resource", volume)
+        if not resource.get("is_volume") or not os.path.ismount(volume):
+            raise RuntimeError(f"the volume fixture is not a mounted volume: {resource}")
+        (volume / "association-check.txt").write_text("synthetic volume association fixture\n")
+        volume_baseline = {"target": native("query", volume), "control": native("query", control)}
+        results["instrumentation"]["volume"] = {
+            "resource": resource, "baseline": volume_baseline}
 
         for app, bundle_id, label in (
             (fx.canary, fx.canary_id, "capable_canary"),
@@ -189,7 +207,10 @@ def main():
         ):
             for method in ("per_path_api", "per_path_xattr", "folder_all_api",
                            "folder_viewer_api", "directory_all_api", "raw_folder_preference",
-                           "modern_folder_api", "modern_folder_by_file_api", "file_scheme_api"):
+                           "modern_folder_api", "modern_folder_by_file_api", "file_scheme_api",
+                           "volume_all_api"):
+                item = volume if method == "volume_all_api" else target
+                expected_baseline = volume_baseline if method == "volume_all_api" else baseline
                 reveal.stop(fx.canary)
                 reveal.stop(fx.bundle)
                 for folder in (target, control):
@@ -198,9 +219,9 @@ def main():
                 restore_handlers(original)
                 refresh_launch_services()
                 fx.canary_log.write_text("")
-                before = {"target": native("query", target), "control": native("query", control)}
-                if before != baseline:
-                    raise RuntimeError(f"case not isolated: baseline {baseline}, got {before}")
+                before = {"target": native("query", item), "control": native("query", control)}
+                if before != expected_baseline:
+                    raise RuntimeError(f"case not isolated: baseline {expected_baseline}, got {before}")
                 if method == "per_path_api":
                     mutation = native("path", app, target)
                 elif method == "modern_folder_api":
@@ -209,6 +230,8 @@ def main():
                     mutation = native("modern-file-type", app, target)
                 elif method == "file_scheme_api":
                     mutation = native("scheme", app, "file")
+                elif method == "volume_all_api":
+                    mutation = native("type", "public.volume", "all", bundle_id)
                 elif method == "per_path_xattr":
                     attribute = {"version": 0, "path": str(app), "bundleidentifier": bundle_id}
                     write_association(target, attribute)
@@ -226,11 +249,12 @@ def main():
                     content_type = "public.directory" if method == "directory_all_api" else "public.folder"
                     role = "viewer" if method == "folder_viewer_api" else "all"
                     mutation = native("type", content_type, role, bundle_id)
-                after = {"target": native("query", target), "control": native("query", control)}
+                after = {"target": native("query", item), "control": native("query", control)}
                 # Plain command-line open, no explicit application and no reveal.
-                opened = run("/usr/bin/open", "-g", str(target), env=reveal.launch_env())
+                opened = run("/usr/bin/open", "-g", str(item), env=reveal.launch_env())
                 record = {
                     "application": label, "method": method, "mutation": mutation,
+                    "scope": "volume" if method == "volume_all_api" else "folder",
                     "before": before, "after": after,
                     "plain_open": {"returncode": opened.returncode, "stderr": opened.stderr.strip()},
                 }
@@ -239,7 +263,7 @@ def main():
                 if after["target"]["bundle_id"] == bundle_id:
                     if label == "skwir":
                         reveal.await_listening(fx, 30)
-                        shown = reveal.await_shown(fx, 20, target, ())
+                        shown = reveal.await_shown(fx, 20, item, ())
                         reveal.verify_env(fx)
                         record["actual_open"] = {
                             "recipient": bundle_id, "location": shown.location,
@@ -250,7 +274,7 @@ def main():
                         events = []
                         while time.monotonic() < deadline:
                             events = [json.loads(line) for line in fx.canary_log.read_text().splitlines() if line]
-                            if any(e["event"] == "opened" and e["paths"] == [str(target)] for e in events):
+                            if any(e["event"] == "opened" and e["paths"] == [str(item)] for e in events):
                                 break
                             time.sleep(0.2)
                         else:
@@ -258,16 +282,18 @@ def main():
                         for event in events:
                             if fx.unisolated(event["env"]):
                                 raise RuntimeError("canary opened outside the fixture environment")
-                        record["actual_open"] = {"recipient": bundle_id, "location": str(target)}
+                        record["actual_open"] = {"recipient": bundle_id, "location": str(item)}
                 # Independent default-opening AppKit API reports the actual
                 # recipient even when Finder, for which we have no control socket.
-                record["native_default_open"] = native("open", target)
+                record["native_default_open"] = native("open", item)
                 if not record["native_default_open"].get("ok"):
                     raise RuntimeError(f"default AppKit opening failed: {record}")
                 if record["native_default_open"]["recipient"] != after["target"]["bundle_id"]:
                     raise RuntimeError(f"default query and actual recipient disagree: {record}")
                 if method.startswith("per_path") and after["control"] != before["control"]:
                     raise RuntimeError("per-path operation changed the unmodified control folder")
+                if method == "volume_all_api" and after["control"] != before["control"]:
+                    raise RuntimeError("volume operation changed the unmodified ordinary folder")
                 results["cases"].append(record)
                 print(json.dumps(emit(record)), flush=True)
         for folder in (target, control):
@@ -278,6 +304,9 @@ def main():
         restored = {"target": native("query", target), "control": native("query", control)}
         if restored != baseline:
             raise RuntimeError(f"effective defaults not restored: {restored}")
+        restored_volume = {"target": native("query", volume), "control": native("query", control)}
+        if restored_volume != volume_baseline:
+            raise RuntimeError(f"effective volume default not restored: {restored_volume}")
         results["effective_defaults_restored"] = True
         code = 0
     except Exception as error:
@@ -292,7 +321,20 @@ def main():
         except Exception as error:
             results["cleanup_error"] = str(error)
             code = 2
-        if not reveal.cleanup(fx, viewer):
+        detached = True
+        if mounted_volume is not None and os.path.ismount(mounted_volume):
+            try:
+                reveal.stop(fx.root)
+                checked("hdiutil", "detach", str(mounted_volume))
+                if os.path.ismount(mounted_volume):
+                    raise RuntimeError("the owned volume is still mounted")
+                results["volume_detached"] = True
+            except Exception as error:
+                results["volume_cleanup_error"] = str(error)
+                detached = False
+                code = 2
+        # Never recursively remove a fixture while its image is still mounted.
+        if detached and not reveal.cleanup(fx, viewer):
             results["fixture_cleanup_failed"] = True
             code = 2
         args.output.parent.mkdir(parents=True, exist_ok=True)
