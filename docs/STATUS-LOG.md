@@ -24853,3 +24853,35 @@ with their keys.
   runner. These results establish working folder defaults on 15.8.2,
   not a workaround for the API rejection and ignored preference observed
   on macOS 27.2. They require neither a SIP change nor a system restart.
+
+## 2026-11-28: current macOS folder defaults checked separately
+
+- **Clean host:** the [macOS 27.0.1 association run](https://github.com/BleedingDev/skwir/actions/runs/46167009891)
+  used build 26A434 and the same checksum-verified Skwir bundle. Each
+  case began with Finder, and both the capable native test application
+  and Skwir were tried. All 18 diagnostic observations completed, with
+  preferences and effective folder defaults restored afterwards.
+- **Observed opening:** neither legacy All and Viewer folder setters,
+  modern AppKit type setters, a raw folder preference followed by a
+  LaunchServices refresh, nor a per-folder attribute made an ordinary
+  folder open in either candidate. The actual default-opening AppKit
+  call named Finder. The `file:` scheme setter also returned `-50`.
+  The explicit-launch and regular-file controls worked, so these
+  refusals were not evidence that the test application could not open
+  the requested folder.
+- **Physical Mac:** the modern folder setter also returned an
+  underlying `-50` on macOS 27.2, even when choosing Finder. Asking by a
+  folder's file URL returned `-10815`; choosing the `file:` scheme
+  returned `-50`. The original preferences read back unchanged.
+- **Volume experiment:** reports of accepted `public.volume` choices
+  prompted separate probes on an owned APFS image. Legacy All and
+  Viewer setters returned zero, but actual opening still chose Finder.
+  Modern asynchronous volume requests did not complete within 30
+  seconds and remain unverified. The [exploratory run](https://github.com/BleedingDev/skwir/actions/runs/46169060573)
+  is not a passing integration check: it also encountered a busy image
+  during cleanup. The temporary mounted-image probes were removed from
+  the maintained diagnostic rather than shipped as a working feature.
+- **Scope:** these checks establish no additional working default-folder
+  or volume integration on macOS 27. A full logout or reboot with the
+  preference installed was not tested. No SIP setting, system
+  application, or personal profile was changed.

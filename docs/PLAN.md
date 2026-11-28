@@ -1204,7 +1204,11 @@ that `public.folder` defaults open folders in Skwir through an ordinary
 `open`, without an explicit application. The public API and a raw
 `LSHandlers` preference followed by a LaunchServices refresh worked.
 Per-folder associations did not. The same global choices remain rejected
-or ignored on the tested macOS 27.2 machine.
+or ignored on a clean macOS 27.0.1 runner and the tested macOS 27.2
+machine. Modern AppKit setters and the `file:` scheme did not provide
+another route. Exploratory volume checks did not establish a working
+replacement either. The remaining work does not assume that changing a
+stored handler changes the application that actually opens a path.
 
 ## Other programs' Open and Save dialogs (ADR-141, 2026-11-19)
 

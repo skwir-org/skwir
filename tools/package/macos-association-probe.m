@@ -26,31 +26,6 @@ int main(int argc, const char **argv) {
         NSString *mode = @(argv[1]);
         NSWorkspace *workspace = NSWorkspace.sharedWorkspace;
         __block BOOL done = NO;
-        if ([mode isEqualToString:@"type-query"] && argc == 3) {
-            NSString *identifier = @(argv[2]);
-            UTType *type = [UTType typeWithIdentifier:identifier];
-            NSURL *app = type ? [workspace URLForApplicationToOpenContentType:type] : nil;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            NSString *all = CFBridgingRelease(LSCopyDefaultRoleHandlerForContentType(
-                (__bridge CFStringRef)identifier, kLSRolesAll));
-            NSString *viewer = CFBridgingRelease(LSCopyDefaultRoleHandlerForContentType(
-                (__bridge CFStringRef)identifier, kLSRolesViewer));
-#pragma clang diagnostic pop
-            print_json(@{@"all": all ?: @"", @"viewer": viewer ?: @"",
-                         @"workspace": app ? ([NSBundle bundleWithURL:app].bundleIdentifier ?: @"") : @""});
-            return 0;
-        }
-        if ([mode isEqualToString:@"resource"] && argc == 3) {
-            NSURL *url = [NSURL fileURLWithPath:@(argv[2])];
-            id type = nil, volume = nil;
-            NSError *error = nil;
-            BOOL ok = [url getResourceValue:&type forKey:NSURLContentTypeKey error:&error]
-                && [url getResourceValue:&volume forKey:NSURLIsVolumeKey error:&error];
-            print_json(ok ? @{@"content_type": ((UTType *)type).identifier ?: @"",
-                             @"is_volume": volume ?: @NO} : error_json(error));
-            return 0;
-        }
         if ([mode isEqualToString:@"type"] && argc == 5) {
             LSRolesMask role = [@(argv[3]) isEqualToString:@"viewer"] ? kLSRolesViewer : kLSRolesAll;
 #pragma clang diagnostic push
