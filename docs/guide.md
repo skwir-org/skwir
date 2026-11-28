@@ -1312,6 +1312,58 @@ Show in Folder may fail, the bus starting a program that is gone; and
 take the line `org.freedesktop.impl.portal.FileChooser=skwir` out of
 your portal configuration.
 
+#### macOS Show in Finder
+
+Skwir can receive other applications' **Show in Finder** requests when
+you opt in to macOS's `NSFileViewer` preference. This does not replace
+Finder's desktop, change document defaults, or replace system Open and
+Save dialogs. Applications that explicitly launch Finder still use Finder.
+Skwir's own **Show in Skwir** action starts Skwir directly. Its internal
+**Show in folder** action navigates within Skwir. Neither sends another
+system reveal request, so neither needs a per-application viewer override.
+
+1. Install `skwir.app` in Applications and open it once.
+2. Record your existing preference:
+
+   ```sh
+   defaults read -g NSFileViewer
+   ```
+
+   An error saying the preference does not exist means macOS uses its
+   default. Keep any existing value so you can restore it.
+3. To opt in, run:
+
+   ```sh
+   defaults write -g NSFileViewer -string org.skwir.skwir
+   ```
+
+4. Restart the sending application if it keeps using the old viewer.
+   Try **Show in Finder** on a file in that application.
+
+Skwir opens the parent folder and selects the file. Files delivered in
+one request are selected together in each parent folder. Separate
+requests are handled separately. macOS app bundles and other packages
+are selected in their parent, not browsed as directories. Ordinary
+directories open as directories, including when a sender asks to reveal
+one. The open-URL handler does not distinguish open from reveal events.
+Remote URLs are ignored; a path on an already mounted remote volume is
+handled on a worker. A missing or unreadable path remains the requested
+location rather than guessing whether it was a file.
+
+Before removing Skwir, restore your recorded `NSFileViewer` value with
+`defaults write -g NSFileViewer -string <previous-value>`. If the
+preference did not exist before opting in, remove it:
+
+```sh
+defaults delete -g NSFileViewer
+```
+
+Restart senders that cached the preference. Skwir never writes this
+preference itself. Changing the default application for all folders is a
+different mechanism. The tested macOS 27 association APIs reject that
+change with error `-50`, even when choosing Finder; this integration
+does not depend on those APIs.
+
 ### New versions
 
 A copy of Skwir downloaded from its website (the AppImage, the tarball,

@@ -145,7 +145,10 @@ fn main() -> anyhow::Result<()> {
     // viewer's Show in Skwir starts), as another program's ShowItems does
     // (ADR-140).
     let (location, select) = match args.first() {
-        Some(arg) => file_named(arg, &cwd),
+        Some(arg) => {
+            let (location, select) = skwir_platform::file_manager::named(arg, &cwd);
+            (Some(location), select.into_iter().collect())
+        }
         None => (None, Vec::new()),
     };
     let opening = skwir_platform::handover::Opening {
@@ -214,22 +217,6 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(ASKED_NOTHING);
     }
     ran
-}
-
-/// What a launch's first argument opens: a file named (not a folder) as
-/// its folder, its name to select there; anything else as it is.
-fn file_named(
-    arg: &std::ffi::OsStr,
-    cwd: &std::path::Path,
-) -> (Option<std::ffi::OsString>, Vec<std::ffi::OsString>) {
-    let path = cwd.join(arg);
-    let file = std::fs::metadata(&path).is_ok_and(|metadata| !metadata.is_dir());
-    match (file, path.parent(), path.file_name()) {
-        (true, Some(folder), Some(name)) => {
-            (Some(folder.as_os_str().to_owned()), vec![name.to_owned()])
-        }
-        _ => (Some(arg.to_owned()), Vec::new()),
-    }
 }
 
 /// The system's languages and Skwir's catalogs, before anything says a

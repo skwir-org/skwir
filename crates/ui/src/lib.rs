@@ -287,23 +287,39 @@ fn run_as(
     if !viewing {
         application.on_reopen(|cx| finishing::reopen(cx, None, false));
     }
-    // macOS: folders the Finder or the Dock opens in the running program
-    // (ADR-122), handed in as a launch's are, at the next wake. A viewer's
-    // program takes nothing in (ADR-151, 1).
+    // macOS: LaunchServices delivers URLs at startup and while running.
+    // Classify them off the window thread: a file (or package) reveals in
+    // its parent, ordinary folders open. The existing launch queue applies
+    // their selections after listing (ADR-140). A viewer takes nothing in.
     if !viewing {
         let (openings, wake) = (Arc::clone(&openings), app.waker_handle());
+        let (scheduler, lifetime) = (app.scheduler.clone(), app.lifetime().child());
         application.on_open_urls(move |urls| {
-            let opened: Vec<skwir_platform::handover::Opening> = urls
-                .iter()
-                .filter_map(|url| skwir_platform::uri::local_path_of(url))
-                .map(|path| skwir_platform::handover::Opening {
-                    location: Some(path.into_os_string()),
-                    ..skwir_platform::handover::Opening::default()
-                })
-                .collect();
-            if !opened.is_empty() {
-                openings.lock().extend(opened);
-                wake();
+            let local = urls.into_iter().filter_map(|url| {
+                skwir_platform::uri::local_path_of(&url).map(|path| (url, path))
+            });
+            // A slow mounted server holds only its own lane, not every
+            // request to open a local folder.
+            for (lane, paths) in skwir_core::fs::reach::by_lane(local, |(_, path)| path) {
+                let urls = paths.into_iter().map(|(url, _)| url).collect::<Vec<_>>();
+                let (openings, wake) = (Arc::clone(&openings), Arc::clone(&wake));
+                scheduler.spawn_in(
+                    lane,
+                    skwir_core::scheduler::Priority::Normal,
+                    "open-urls",
+                    lifetime.child(),
+                    move || {
+                        let opened = skwir_platform::file_manager::openings(
+                            skwir_platform::file_manager::Shown::Opened,
+                            &urls,
+                            None,
+                        );
+                        if !opened.is_empty() {
+                            openings.lock().extend(opened);
+                            wake();
+                        }
+                    },
+                );
             }
         });
     }

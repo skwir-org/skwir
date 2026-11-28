@@ -343,9 +343,18 @@ Left:
   `Exec` codes. Open With lists nothing off Linux (Launch Services and
   Windows' association handlers are not read).
 - Show in folder for other programs (ADR-140, `platform/file_manager.rs`,
-  the FileManager1 object in `handover.rs`): Linux's alone, by decision
-  (the Finder answers every reveal on macOS; Explorer cannot be
-  replaced for the shell's own on Windows). `--file-manager` errors
+  the FileManager1 object in `handover.rs`): the bus service is Linux's
+  alone. macOS open URLs use the shared file-and-package normalizer on
+  workers, then the UI's launch queue. Files in one parent are selected
+  together; ordinary folders open themselves. The bundle declares a
+  non-default `public.item` Viewer for sandboxed reveal senders. Choosing
+  Skwir as `NSFileViewer` is manual and optional
+  ([guide](guide.md#macos-show-in-finder)). Native runtime verification
+  is separate from cross-compilation. This does not replace Finder's
+  desktop or system dialogs, and does not set the default for folders
+  (the tested macOS 27 APIs refuse `-50`, including for Finder).
+  Explorer cannot be replaced for the shell's own on Windows.
+  `--file-manager` errors
   "not available on \<system\> yet" **(n)**; `file_manager::follow`
   follows nothing **(u)**. The pipe's message carries what to select
   (its second version), its tests under Wine.

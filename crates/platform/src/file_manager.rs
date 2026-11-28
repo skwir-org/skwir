@@ -6,10 +6,13 @@
 //! answers nothing and takes its file back. The choice is the desktop's
 //! own: skwir keeps none of its own.
 //!
-//! Linux alone: elsewhere [`follow`] follows nothing (ADR-140, 7).
+//! Linux's bus integration alone: elsewhere [`follow`] follows nothing.
+//! macOS open URLs use [`Shown::Opened`] through the UI's launch queue
+//! (ADR-140, 7).
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
 use crate::handover::Opening;
 
@@ -41,6 +44,56 @@ pub enum Shown {
     Items,
     /// `ShowItemProperties`: as [`Shown::Items`], Properties shown.
     Properties,
+    /// Open URLs: ordinary folders opened, files and macOS packages
+    /// selected in their parent. Reads the filesystem: call on a worker.
+    Opened,
+}
+
+/// What a named launch opens: a file or macOS package is selected in its
+/// parent, an ordinary folder opens as itself. Unknown paths and plugin
+/// locations stay as given. Relative paths are read against `cwd`.
+///
+/// Reads the filesystem (and macOS's package registry): never call on the
+/// window thread. Shared by the CLI and the application's open-URL handler.
+#[must_use]
+pub fn named(arg: &OsStr, cwd: &Path) -> (OsString, Option<OsString>) {
+    use skwir_core::entry::EntryKind;
+
+    let path = cwd.join(arg);
+    let reveal = skwir_core::fs::stat::stat_path(&path).is_some_and(|entry| match entry.opens() {
+        EntryKind::Directory => package(&path),
+        // As with the CLI's previous metadata call, a link whose target
+        // cannot be read is left as given.
+        EntryKind::Symlink | EntryKind::Unknown => false,
+        EntryKind::File
+        | EntryKind::Fifo
+        | EntryKind::Socket
+        | EntryKind::CharDevice
+        | EntryKind::BlockDevice => true,
+    });
+    match (reveal, path.parent(), path.file_name()) {
+        (true, Some(folder), Some(name)) => (folder.as_os_str().to_owned(), Some(name.to_owned())),
+        _ => (arg.to_owned(), None),
+    }
+}
+
+/// Ask the system, not a list of extensions: document packages and app
+/// bundles are directories on disk but items to reveal in their parent.
+fn package(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        path.to_str().is_some_and(|path| {
+            objc2::rc::autoreleasepool(|_| {
+                objc2_app_kit::NSWorkspace::sharedWorkspace()
+                    .isFilePackageAtPath(&objc2_foundation::NSString::from_str(path))
+            })
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 /// The launches a request comes to: each folder of `uris`
@@ -50,6 +103,7 @@ pub enum Shown {
 /// else is passed over (an address on a server is the remote plugin's
 /// to open, ADR-077). The desktop's token brings the window of the last
 /// forward. A folder named twice is one launch, an item twice once.
+/// [`Shown::Opened`] reads each path's type: call it on a worker.
 #[must_use]
 pub fn openings(shown: Shown, uris: &[String], token: Option<String>) -> Vec<Opening> {
     let paths = uris.iter().filter_map(|uri| local(uri));
@@ -61,6 +115,10 @@ pub fn openings(shown: Shown, uris: &[String], token: Option<String>) -> Vec<Ope
             continue;
         }
         let (folder, name) = match (shown, path.parent(), path.file_name()) {
+            (Shown::Opened, _, _) => {
+                let (folder, name) = named(path.as_os_str(), Path::new(""));
+                (PathBuf::from(folder), name)
+            }
             (Shown::Folders, _, _) | (_, None, _) | (_, _, None) => (path, None),
             (_, Some(parent), Some(name)) => (parent.to_path_buf(), Some(name.to_owned())),
         };
@@ -86,7 +144,22 @@ pub fn openings(shown: Shown, uris: &[String], token: Option<String>) -> Vec<Ope
 /// absolute path as given.
 fn local(uri: &str) -> Option<PathBuf> {
     if uri.starts_with("file:") {
-        return crate::uri::local_path_of(uri);
+        // These requests name filesystem paths, not URL queries or
+        // fragments. Literal #, ? and % in names must be percent-encoded.
+        if uri.contains(['?', '#']) {
+            return None;
+        }
+        let mut bytes = uri.as_bytes().iter();
+        while let Some(byte) = bytes.next() {
+            if *byte == b'%'
+                && !(bytes.next().is_some_and(u8::is_ascii_hexdigit)
+                    && bytes.next().is_some_and(u8::is_ascii_hexdigit))
+            {
+                return None;
+            }
+        }
+        return crate::uri::local_path_of(uri)
+            .filter(|path| !path.as_os_str().as_encoded_bytes().contains(&0));
     }
     let path = PathBuf::from(uri);
     path.is_absolute().then_some(path)
@@ -557,10 +630,7 @@ pub(crate) mod linux {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
     use super::*;
-    #[cfg(unix)]
-    use std::ffi::OsString;
 
     // The paths the tests name are Unix's.
     #[cfg(unix)]
@@ -614,6 +684,132 @@ mod tests {
             ]
         );
         assert!(openings(Shown::Items, &["sftp://host/x".into()], None).is_empty());
+    }
+
+    /// The macOS URL handler must not turn a file into a folder location.
+    /// One request selects all the files of each parent, not one window
+    /// per file; ordinary folders still open as folders.
+    #[test]
+    fn opened_urls_reveal_files_together_and_open_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("A traveller's notes");
+        let other = root.path().join("Maps");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let first = folder.join("draft #1.txt");
+        let second = folder.join("tröisième %.txt");
+        let third = other.join("map.txt");
+        for file in [&first, &second, &third] {
+            std::fs::write(file, b"example").unwrap();
+        }
+        let uris = [&first, &second, &first, &third, &folder]
+            .map(|path| crate::uri::file_uri(path));
+        let expected = |folder: &Path, names: &[&str]| Opening {
+            location: Some(folder.as_os_str().to_owned()),
+            select: names.iter().map(OsString::from).collect(),
+            ..Opening::default()
+        };
+        assert_eq!(
+            openings(Shown::Opened, &uris, None),
+            [
+                expected(&folder, &["draft #1.txt", "tröisième %.txt"]),
+                expected(&other, &["map.txt"]),
+            ]
+        );
+        assert_eq!(
+            openings(Shown::Opened, &[crate::uri::file_uri(&other)], None),
+            [expected(&other, &[])]
+        );
+        // The CLI and open-URL requests have the same owner; relative
+        // arguments resolve against the launch's cwd, not the process's.
+        assert_eq!(
+            named(
+                Path::new("A traveller's notes/draft #1.txt").as_os_str(),
+                root.path()
+            ),
+            (folder.into_os_string(), Some("draft #1.txt".into()))
+        );
+        assert_eq!(named(OsStr::new("Maps"), root.path()), ("Maps".into(), None));
+        assert_eq!(
+            named(OsStr::new("missing.txt"), root.path()),
+            ("missing.txt".into(), None)
+        );
+    }
+
+    #[test]
+    fn opened_urls_ignore_foreign_and_malformed_addresses() {
+        let urls = [
+            "sftp://server.example/notes.txt",
+            "https://example.com/notes.txt",
+            "file://server.example/notes.txt",
+            "file:",
+            "file://",
+            "file:///notes.txt?query",
+            "file:///notes.txt#fragment",
+            "file:///bad%escape.txt",
+            "file:///bad%.txt",
+            "file:///bad%00name.txt",
+            "relative/notes.txt",
+        ]
+        .map(String::from);
+        assert!(openings(Shown::Opened, &urls, None).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_links_keep_their_names_and_open_directory_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("original.txt");
+        let folder = root.path().join("folder");
+        let file_link = root.path().join("file link.txt");
+        let folder_link = root.path().join("folder link");
+        let broken = root.path().join("broken link");
+        std::fs::write(&file, b"example").unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        std::os::unix::fs::symlink(&file, &file_link).unwrap();
+        std::os::unix::fs::symlink(&folder, &folder_link).unwrap();
+        std::os::unix::fs::symlink(root.path().join("gone"), &broken).unwrap();
+        assert_eq!(
+            named(file_link.as_os_str(), Path::new("")),
+            (root.path().as_os_str().to_owned(), Some("file link.txt".into()))
+        );
+        assert_eq!(
+            named(folder_link.as_os_str(), Path::new("")),
+            (folder_link.into_os_string(), None)
+        );
+        assert_eq!(
+            named(broken.as_os_str(), Path::new("")),
+            (broken.into_os_string(), None)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn opened_macos_packages_reveal_instead_of_browsing_the_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("Example.app");
+        std::fs::create_dir_all(package.join("Contents")).unwrap();
+        std::fs::write(
+            package.join("Contents/Info.plist"),
+            b"<?xml version=\"1.0\"?><plist version=\"1.0\"><dict>\
+              <key>CFBundlePackageType</key><string>APPL</string>\
+              <key>CFBundleIdentifier</key><string>org.example.fixture</string>\
+              </dict></plist>",
+        )
+        .unwrap();
+        let opened = openings(Shown::Opened, &[crate::uri::file_uri(&package)], None);
+        assert_eq!(
+            opened,
+            [Opening {
+                location: Some(root.path().as_os_str().to_owned()),
+                select: vec!["Example.app".into()],
+                ..Opening::default()
+            }]
+        );
+        assert_eq!(
+            named(package.as_os_str(), Path::new("")),
+            (root.path().as_os_str().to_owned(), Some("Example.app".into()))
+        );
     }
 
     #[cfg(target_os = "linux")]
