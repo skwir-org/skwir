@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import signal
 import subprocess
 import sys
 import time
@@ -109,6 +110,30 @@ def main():
             answer = checked(str(probe), *map(str, arguments), env=reveal.launch_env())
             return json.loads(answer)
 
+        def refresh_launch_services():
+            # Preference restoration alone does not invalidate lsd's in-memory
+            # choice. This is a disposable CI account, never the user's session.
+            pids = run("/usr/bin/pgrep", "-u", str(os.getuid()), "-x", "lsd")
+            for value in pids.stdout.split():
+                pid = int(value)
+                if reveal.program_of(pid) != "/usr/libexec/lsd":
+                    raise RuntimeError("refusing to signal an unverified LaunchServices process")
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                deadline = time.monotonic() + 5
+                while reveal.program_of(pid) == "/usr/libexec/lsd":
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("the owned LaunchServices process did not stop")
+                    time.sleep(0.05)
+            # A fresh query starts the service again. Explicit registrations
+            # under Caches may be transient, so re-register both owned bundles.
+            native("query", target)
+            for bundle, identifier in ((fx.canary, fx.canary_id), (fx.bundle, fx.bundle_id)):
+                checked(str(reveal.LSREGISTER), "-f", str(bundle))
+                fx.found(bundle, identifier)
+
         # A known-capable folder viewer distinguishes OS policy from Skwir's
         # deliberately non-default public.item declaration.
         info_path = fx.canary / "Contents/Info.plist"
@@ -150,6 +175,8 @@ def main():
         if read_association(positive).get("bundleidentifier") != "com.apple.TextEdit":
             raise RuntimeError("regular-file positive control lacks the expected stored association")
         results["instrumentation"]["regular_file_api"] = positive_result
+        baseline = {"target": native("query", target), "control": native("query", control)}
+        results["instrumentation"]["baseline"] = baseline
 
         for app, bundle_id, label in (
             (fx.canary, fx.canary_id, "capable_canary"),
@@ -157,14 +184,17 @@ def main():
         ):
             for method in ("per_path_api", "per_path_xattr", "folder_all_api",
                            "folder_viewer_api", "directory_all_api", "raw_folder_preference"):
-                restore_handlers(original)
+                reveal.stop(fx.canary)
+                reveal.stop(fx.bundle)
                 for folder in (target, control):
                     if "com.apple.LaunchServices.OpenWith" in attributes(folder):
                         checked("xattr", "-d", "com.apple.LaunchServices.OpenWith", str(folder))
-                reveal.stop(fx.canary)
-                reveal.stop(fx.bundle)
+                restore_handlers(original)
+                refresh_launch_services()
                 fx.canary_log.write_text("")
                 before = {"target": native("query", target), "control": native("query", control)}
+                if before != baseline:
+                    raise RuntimeError(f"case not isolated: baseline {baseline}, got {before}")
                 if method == "per_path_api":
                     mutation = native("path", app, target)
                 elif method == "per_path_xattr":
@@ -178,6 +208,8 @@ def main():
                     handlers.append({"LSHandlerContentType": "public.folder", "LSHandlerRoleAll": bundle_id})
                     checked("defaults", "write", DOMAIN, "LSHandlers", plistlib.dumps(handlers).decode())
                     mutation = {"stored_exactly": preferences().get("LSHandlers") == handlers}
+                    mutation["before_service_refresh"] = native("query", target)
+                    refresh_launch_services()
                 else:
                     content_type = "public.directory" if method == "directory_all_api" else "public.folder"
                     role = "viewer" if method == "folder_viewer_api" else "all"
@@ -226,6 +258,15 @@ def main():
                     raise RuntimeError("per-path operation changed the unmodified control folder")
                 results["cases"].append(record)
                 print(json.dumps(emit(record)), flush=True)
+        for folder in (target, control):
+            if "com.apple.LaunchServices.OpenWith" in attributes(folder):
+                checked("xattr", "-d", "com.apple.LaunchServices.OpenWith", str(folder))
+        restore_handlers(original)
+        refresh_launch_services()
+        restored = {"target": native("query", target), "control": native("query", control)}
+        if restored != baseline:
+            raise RuntimeError(f"effective defaults not restored: {restored}")
+        results["effective_defaults_restored"] = True
         code = 0
     except Exception as error:
         results["error"] = str(error)
